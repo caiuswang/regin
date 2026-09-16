@@ -106,7 +106,8 @@ def test_a_task_with_no_comments_has_the_prompt_it_had_before(
 
     Pinned as a literal rather than recomposed from the helpers, because a
     prompt assembled from the code under test would agree with any change it
-    made.
+    made. A task under no feature gains no `<feature>` block either: it is one
+    more thing that is absent rather than empty.
     """
     task_id = _armed(flask_client, "shelf", body="wire the thing")
 
@@ -114,13 +115,6 @@ def test_a_task_with_no_comments_has_the_prompt_it_had_before(
 
     assert prompt == (
         "wire the thing"
-        "\n\n<feature>\n"
-        "This run is a session of feature regin:1; regin attributes it "
-        "automatically. If you find something the feature got wrong, declare "
-        "it against that key: `regin defects open \"<what>\" --feature "
-        "regin:1 --session <session id>`. Shipping is the operator's act on "
-        "the feature's task page, not yours.\n"
-        "</feature>"
         "\n\n<finish>\n"
         "This work was launched from a regin task. Running the command below "
         "is the ONLY thing that marks the task complete and releases whatever "
@@ -191,18 +185,22 @@ def test_a_single_oversized_comment_is_still_delivered(flask_client, launcher):
 
 # 6 ── scope: this task's threads, not its parent's
 
-def test_a_parents_comment_does_not_reach_a_childs_run(flask_client, launcher):
-    """A parent's comments are addressed to the feature; a child's run is one
-    concrete piece of work, and carrying the feature's whole discussion into
-    every round is how a prompt rots."""
-    parent_id = _armed(flask_client, "the feature", body="build the feature")
-    child_id = _armed(flask_client, "a step", body="wire the thing")
-    assert flask_client.patch(f"/api/tasks/{child_id}",
-                              json={"parent_id": parent_id}).status_code == 200
-    _comment(parent_id, "feature-wide discussion")
-    _comment(child_id, "this step only")
+def test_a_sibling_tasks_comments_do_not_reach_this_run(flask_client,
+                                                        launcher):
+    """A run is one concrete piece of work, and carrying the whole feature's
+    discussion into every round is how a prompt rots. Only this task's own
+    threads travel."""
+    from lib.features import store as feature_store
 
-    block = _block(_launch(flask_client, launcher, child_id)[0])
+    feature = feature_store.create("the feature")
+    sibling = _armed(flask_client, "another step", body="build that")
+    mine = _armed(flask_client, "a step", body="wire the thing")
+    for task_id in (sibling, mine):
+        feature_store.adopt_task(feature.id, task_id)
+    _comment(sibling, "feature-wide discussion")
+    _comment(mine, "this step only")
+
+    block = _block(_launch(flask_client, launcher, mine)[0])
 
     assert "this step only" in block
     assert "feature-wide discussion" not in block
@@ -212,7 +210,11 @@ def test_a_parents_comment_does_not_reach_a_childs_run(flask_client, launcher):
 
 def test_the_followup_block_sits_between_tracker_and_feature(flask_client,
                                                              launcher):
+    from lib.features import store as feature_store
+
+    feature = feature_store.create("the feature")
     task_id = _armed(flask_client, "shelf", body="wire the thing")
+    feature_store.adopt_task(feature.id, task_id)
     _comment(task_id, "one more thing")
 
     prompt = _launch(flask_client, launcher, task_id)[0]
@@ -221,15 +223,17 @@ def test_the_followup_block_sits_between_tracker_and_feature(flask_client,
     assert prompt.index("<followup>") < prompt.index("<finish>")
 
 
-def test_the_followup_block_follows_the_tracker_block(flask_client, launcher,
-                                                      monkeypatch):
+def test_the_followup_block_follows_the_tracker_block(flask_client, launcher):
     """`<tracker>` declares the external issue is the source of truth; the
     local notes arrive after that as "and here is what was said here"."""
+    from lib.features import store as feature_store
+
+    feature = feature_store.create("the feature", origin="linear",
+                                   external_ref="CAI-1",
+                                   external_url="https://x/CAI-1")
     task_id = _armed(flask_client, "shelf", body="wire the thing")
+    feature_store.adopt_task(feature.id, task_id)
     _comment(task_id, "one more thing")
-    monkeypatch.setattr(runs.links, "list_links", lambda _id: [
-        {"provider": "linear", "external_key": "CAI-1",
-         "url": "https://linear.app/acme/issue/CAI-1", "issue": {}}])
 
     prompt = _launch(flask_client, launcher, task_id)[0]
 

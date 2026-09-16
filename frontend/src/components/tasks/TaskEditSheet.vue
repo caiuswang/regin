@@ -13,7 +13,6 @@ import Dialog from '../ui/Dialog.vue'
 import Input from '../ui/Input.vue'
 import Select from '../ui/Select.vue'
 import TaskImageStrip from './TaskImageStrip.vue'
-import TaskParentField from './TaskParentField.vue'
 import Textarea from '../ui/Textarea.vue'
 import { PRIORITIES } from '../../utils/taskMeta.js'
 import { imageFilesFrom } from '../../utils/imageFiles'
@@ -126,7 +125,6 @@ async function submit() {
           />
         </div>
       </div>
-      <TaskParentField v-model="draft.parent_id" :child="task.id" />
       <div>
         <span class="field-label">Images</span>
         <TaskImageStrip

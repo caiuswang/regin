@@ -139,6 +139,14 @@ current task, a fix, or a caller ("used by X", "added for the Y flow"); that bel
 in the commit message or PR description, not the source. If deleting a comment
 wouldn't confuse a future reader, delete it.
 
+### Specs
+
+A feature's spec lives on the feature row (`features.body` — `regin feature
+new --spec`, `regin feature spec <ID> --file -`), or in the issue when the
+feature is tracked remotely. Do not write a spec file into `docs/` unless the
+user asks for one: nothing re-reads it, so it states the design as it was the
+day it was typed while the row beside it moves on.
+
 ### Settings
 
 - All paths/flags come off the `settings` singleton in `lib/settings.py` (pydantic-settings). Don't read env vars directly.

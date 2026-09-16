@@ -1,5 +1,5 @@
 /**
- * The feature ledger page (CAI-247).
+ * The feature ledger page.
  *
  * The ledger payload is stubbed rather than seeded: every assertion here is
  * about how a figure and its qualifier survive being rendered, and binding
@@ -10,13 +10,14 @@ import { test, expect } from './auth-fixture.js'
 
 function ledger(overrides = {}) {
   return {
-    key: 'CAI-242',
+    id: 242, title: 'Feature ledger', origin: 'native',
+    external_ref: null, external_url: null, sync_error: null,
     stage: {
-      feature_key: 'CAI-242', stage: 'shipped',
-      blurb: 'completed and never walked back',
-      rounds: 1, open_defects: 0, escapes: 0,
+      stage: 'shipped', blurb: 'completed and never walked back',
+      rounds: 1, claimed_at: '2026-09-13 05:40:00',
+      open_defects: 0, escapes: 0,
     },
-    stage_synced_at: '2026-09-13 05:40:00',
+    synced_at: null, stage_live: true,
     cost: { usd: 41.9, sessions: 3, recalled: 1, shared: 0, gaps: {} },
     work_time: { active_work_ms: 5_400_000, gaps: {} },
     tokens: { input: 1200, output: 3400 },
@@ -30,7 +31,7 @@ function ledger(overrides = {}) {
       ],
       gaps: { traceless_runs: 0 },
     },
-    defects: { open: 0, total: 0, escapes: 0, gaps: {} },
+    defects: { open: 0, total: 0, escapes: 0 },
     coverage: {
       declared_sessions: 13, all_sessions: 2935,
       declared_usd: 57.24, all_usd: 23251.49,
@@ -46,7 +47,7 @@ async function stub(page, body) {
 
 test('the cost figure carries its bound inside the glyph', async ({ page }) => {
   await stub(page, ledger())
-  await page.goto('/features/CAI-242')
+  await page.goto('/features/242')
 
   const tile = page.getByTestId('figure-cost')
   await expect(tile).toContainText('≤ $41.90')
@@ -66,7 +67,7 @@ test('an empty ledger renders none declared, never $0.00', async ({ page }) => {
     cost: { usd: null, sessions: 0, recalled: 0, shared: 0, gaps: {} },
     sessions: { rows: [], gaps: { traceless_runs: 0 } },
   }))
-  await page.goto('/features/CAI-242')
+  await page.goto('/features/242')
 
   const tile = page.getByTestId('figure-cost')
   await expect(tile.locator('.fig-value')).toHaveText('none declared')
@@ -81,7 +82,7 @@ test('an absent figure shrinks rather than shouting', async ({ page }) => {
   await stub(page, ledger({
     cost: { usd: null, sessions: 0, recalled: 0, shared: 0, gaps: {} },
   }))
-  await page.goto('/features/CAI-242')
+  await page.goto('/features/242')
 
   const size = await page.getByTestId('figure-cost').locator('.fig-value')
     .evaluate((el) => parseFloat(getComputedStyle(el).fontSize))
@@ -95,7 +96,7 @@ test('a gap renders inside the tile it qualifies', async ({ page }) => {
       gaps: { no_usage_captured: 2 },
     },
   }))
-  await page.goto('/features/CAI-242')
+  await page.goto('/features/242')
 
   await expect(page.getByTestId('figure-cost'))
     .toContainText('2 no-usage-captured')
@@ -114,7 +115,7 @@ test('the escalation rail fires only where a gap exceeds its figure',
         active_work_ms: 5_400_000, gaps: { zero_duration: 9 },
       },
     }))
-    await page.goto('/features/CAI-242')
+    await page.goto('/features/242')
 
     // 2 gaps against 3 sessions: counted, not alarmed.
     await expect(page.getByTestId('figure-cost')).not.toHaveClass(/is-escalated/)
@@ -129,7 +130,7 @@ test('gaps outnumbering the rows become ghost rows', async ({ page }) => {
       gaps: { traceless_runs: 4 },
     },
   }))
-  await page.goto('/features/CAI-242')
+  await page.goto('/features/242')
 
   const ghosts = page.locator('.ev-ghost')
   await expect(ghosts).toHaveCount(1)
@@ -137,25 +138,43 @@ test('gaps outnumbering the rows become ghost rows', async ({ page }) => {
   await expect(ghosts.first()).toContainText('traceless-runs')
 })
 
-test('stage null renders no chip at all', async ({ page }) => {
-  await stub(page, ledger({ stage: null, stage_synced_at: null }))
-  await page.goto('/features/CAI-242')
+test('a native feature says it is live and offers no refresh', async ({ page }) => {
+  await stub(page, ledger())
+  await page.goto('/features/242')
 
-  await expect(page.getByTestId('stage-not-fetched'))
-    .toHaveText(/stage not fetched/)
-  await expect(page.locator('.stage-line-main .badge')).toHaveCount(0)
-  // No stage means no "as of": only a successful fetch writes the timestamp.
+  // The stage is derived in this database, so there is nothing to be as-of
+  // and nothing to fetch — and, unlike before, no "stage not fetched" either.
+  await expect(page.getByTestId('stage-live')).toBeVisible()
+  await expect(page.locator('.stage-line-main .badge')).toHaveCount(1)
   await expect(page.locator('.stage-freshness')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: /Refresh/ })).toHaveCount(0)
 })
+
+test('a remote feature names its reference and offers the refresh',
+  async ({ page }) => {
+    await stub(page, ledger({
+      origin: 'linear', external_ref: 'CAI-274',
+      external_url: 'https://linear.app/x/CAI-274',
+      synced_at: '2026-09-13 05:40:00', stage_live: false,
+    }))
+    await page.goto('/features/242')
+
+    await expect(page.getByTestId('stage-ref')).toHaveText('CAI-274')
+    await expect(page.locator('.stage-freshness')).toContainText('as of')
+    await expect(page.getByRole('button', { name: /Refresh/ })).toBeVisible()
+  })
 
 test('a failed refresh is an inline note that says the stage is unchanged',
   async ({ page }) => {
-    await stub(page, ledger())
-    await page.route(/\/stage\/refresh$/, (route) =>
+    await stub(page, ledger({
+      origin: 'linear', external_ref: 'CAI-274',
+      synced_at: '2026-09-13 05:40:00', stage_live: false,
+    }))
+    await page.route(/\/features\/242\/refresh$/, (route) =>
       route.fulfill({ status: 502, json: { error: 'linear is unreachable' } }))
-    await page.goto('/features/CAI-242')
+    await page.goto('/features/242')
 
-    await page.getByRole('button', { name: /Refresh the stage/ }).click()
+    await page.getByRole('button', { name: /Refresh/ }).click()
 
     const note = page.locator('.stage-fail')
     await expect(note).toBeVisible()
@@ -167,26 +186,26 @@ test('a failed refresh is an inline note that says the stage is unchanged',
 
 test('the session row short id links into the trace', async ({ page }) => {
   await stub(page, ledger())
-  await page.goto('/features/CAI-242')
+  await page.goto('/features/242')
 
   const id = page.locator('.ev-id').first()
   await expect(id).toHaveText('abcdef01')
   await expect(id).toHaveAttribute('href', '/trace/sessions/abcdef0123456789')
 })
 
-test('a task-lane row offers no un-declare and names its task', async ({ page }) => {
+test('a run-lane row offers no un-declare and names its task', async ({ page }) => {
   await stub(page, ledger({
     sessions: {
       rows: [{
         trace_id: 'abcdef0123456789', short_trace: 'abcdef01',
         date: '2026-09-01', title: 'ran from a task',
-        cost_usd: 4.2, provenance: 'task-link', round: null, is_primary: true,
+        cost_usd: 4.2, provenance: 'run', round: null, is_primary: true,
         task_id: 44,
       }],
       gaps: { traceless_runs: 0 },
     },
   }))
-  await page.goto('/features/CAI-242')
+  await page.goto('/features/242')
 
   await expect(page.locator('.ev-tag-link')).toHaveText('task #44')
   await expect(page.locator('.ev-tag-link')).toHaveAttribute('href', '/tasks/44')

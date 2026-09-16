@@ -7,6 +7,7 @@
 // evidence a reader needs to decide which feature caused it.
 import Badge from '../Badge.vue'
 import DefectActions from './DefectActions.vue'
+import { shortDate } from '../../utils/ledgerFormat'
 
 defineProps({
   defect: { type: Object, required: true },
@@ -18,17 +19,23 @@ defineEmits(['changed'])
 <template>
   <li class="card">
     <div class="head">
-      <span class="id">#{{ defect.id }}</span>
+      <!-- The id is the row's address. A list is a predicate plus a page
+           position, and neither survives being sent to someone else; a
+           defect that cannot be linked to can only be pointed at by
+           describing it. -->
+      <router-link class="id" :to="`/defects/${defect.id}`"
+                   :data-testid="`defect-permalink-${defect.id}`"
+      >#{{ defect.id }}</router-link>
       <Badge :color="defect.status === 'open' ? 'amber' : 'green'"
              :label="defect.status" />
       <span class="round">round {{ defect.round }}</span>
-      <router-link v-if="defect.feature_key" class="key"
-                   :to="`/features/${defect.feature_key}`">
-        {{ defect.feature_key }}
+      <router-link v-if="defect.feature_id" class="key"
+                   :to="`/features/${defect.feature_id}`">
+        {{ defect.feature_title || `#${defect.feature_id}` }}
       </router-link>
       <span v-else class="unblamed">unattributed</span>
       <span class="spacer" />
-      <span class="when">{{ defect.opened_at }}</span>
+      <span class="when" :title="defect.opened_at">{{ shortDate(defect.opened_at) }}</span>
     </div>
 
     <p class="symptom">{{ defect.symptom }}</p>
@@ -42,18 +49,24 @@ defineEmits(['changed'])
         <dt>missing check</dt>
         <dd>{{ defect.missing_check }}</dd>
       </template>
-      <template v-if="defect.fix_external_key">
+      <template v-if="defect.fix_task_id">
         <dt>fix item</dt>
-        <dd class="mono">{{ defect.fix_external_key }}</dd>
+        <dd>
+          <router-link class="mono" :to="`/tasks/${defect.fix_task_id}`"
+          >task #{{ defect.fix_task_id }}</router-link>
+        </dd>
       </template>
-      <template v-if="defect.blamed_against_state">
+      <!-- The event blame was assigned against. An escape is `shipped` — one
+           comparison against an immutable row, so there is no "we never
+           looked" reading to render as a gap. -->
+      <template v-if="defect.blamed_event_kind">
         <dt>blamed against</dt>
-        <dd class="mono">{{ defect.blamed_against_state }}</dd>
+        <dd class="mono">{{ defect.blamed_event_kind }}</dd>
       </template>
     </dl>
 
     <DefectActions :defect="defect" :can-write="canWrite"
-                   @changed="(row) => $emit('changed', row)" />
+                   @changed="(msg) => $emit('changed', msg)" />
   </li>
 </template>
 
@@ -69,8 +82,9 @@ defineEmits(['changed'])
 }
 .id {
     font-family: var(--font-mono, monospace); font-weight: 600;
-    color: var(--color-fg);
+    color: var(--color-fg); text-decoration: none;
 }
+.id:hover { text-decoration: underline; }
 .round { font-variant-numeric: tabular-nums; }
 .key {
     font-family: var(--font-mono, monospace); font-weight: 600;

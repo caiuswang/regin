@@ -1,11 +1,15 @@
-"""Acceptance items for CAI-236 — what `feature stage` says, and the ledger
-that sits beside it.
+"""What `feature stage` says, and the ledger that sits beside it.
 
 Two commands, not one. `feature stage` is what the pipeline skill runs *first*
 and what `regin gate pipeline-ran` counts, so it stays a glance; the ledger is
-the report, and the two have genuinely different failure modes — `stage` cannot
-answer at all without the tracker, the ledger is mostly local and stays useful
-with the tracker down.
+the report.
+
+They used to have genuinely different failure modes — `stage` could not answer
+at all without the tracker, so it exited 2, while the ledger stayed useful with
+the tracker down and printed `unknown` for the one field it could not fetch.
+Both of those are gone: the stage is the feature's last `feature_events` row
+plus a count of escapes, so there is no unreachable reading left, and `unknown`
+has nothing to describe.
 """
 
 from __future__ import annotations
@@ -15,141 +19,121 @@ import json
 from typer.testing import CliRunner
 
 from cli.app import app
-from lib.defects import stage as stage_module
 from lib.defects import store
-from lib.features import ledger
+from lib.features import events, store as feature_store
 
 runner = CliRunner()
-KEY = "CAI-242"
 
 
-def _declare(key, trace, tracker_issue, attributing_trace, **kw):
-    tracker_issue(key, **kw)
-    attributing_trace(trace)
-    return runner.invoke(app, ["feature", "attribute", key,
-                               "--session", trace])
-
-
-def _blame(symptom, key, state):
-    """Open a defect already carrying the state it was blamed against."""
-    row = store.record(symptom, feature_key=key)
-    from sqlmodel import text
-    from lib.orm import SessionLocal
-    with SessionLocal() as s:
-        s.exec(text("UPDATE defects SET blamed_against_state = :st "
-                    "WHERE id = :i").bindparams(st=state, i=row.id))
-        s.commit()
+def _feature(title="a feature", *, stage=None):
+    row = feature_store.create(title)
+    if stage is not None:
+        events.append(row.id, stage, declared_by=events.OPERATOR)
     return row
+
+
+def _declare(feature_id, trace, attributing_trace):
+    attributing_trace(trace)
+    return runner.invoke(app, ["feature", "attribute", str(feature_id),
+                               "--session", trace])
 
 
 # ── `feature stage` ───────────────────────────────────────────
 
-def test_feature_stage_prints_two_lines_and_gains_only_escapes(tracker_issue):
-    tracker_issue(KEY, state_category="started")
+def test_feature_stage_prints_two_lines_and_gains_only_escapes():
+    feature = _feature(stage=events.BUILD_STARTED)
 
-    result = runner.invoke(app, ["feature", "stage", KEY])
+    result = runner.invoke(app, ["feature", "stage", str(feature.id)])
 
     lines = [ln for ln in result.output.strip().splitlines() if ln.strip()]
     assert len(lines) == 2, result.output
     assert "escapes=" in lines[0]
 
 
-def test_a_shipped_feature_with_open_escapes_reads_escaped(tracker_issue):
-    """`reworking` could never fire again — constraint 4 forbids reopening the
-    parent. "shipped, and bugs have been blamed on it since" is the live
-    reading, and it is the one-word answer to *how is this going*."""
-    tracker_issue(KEY, state_category="completed")
-    _blame("it leaks", KEY, "completed")
+def test_a_shipped_feature_with_open_escapes_reads_escaped():
+    """"shipped, and bugs have been blamed on it since" is the live reading,
+    and it is the one-word answer to *how is this going*."""
+    feature = _feature(stage=events.SHIPPED)
+    store.record("it leaks", feature_id=feature.id)
 
-    result = stage_module.stage_for_key(KEY)
-
-    assert result.name == "escaped"
-    assert result.escapes == 1
+    assert events.stage(feature.id) == events.STAGE_ESCAPED
 
 
-def test_a_shipped_feature_with_no_escapes_reads_shipped(tracker_issue):
-    tracker_issue(KEY, state_category="completed")
-    _blame("caught before ship", KEY, "started")
+def test_a_shipped_feature_with_no_escapes_reads_shipped():
+    """A defect blamed while the feature was still building is not an escape,
+    and shipping afterwards does not make it one — the pointer names the event
+    blame was assigned against, and that event cannot change."""
+    feature = _feature(stage=events.BUILD_STARTED)
+    store.record("caught before ship", feature_id=feature.id)
+    events.append(feature.id, events.SHIPPED, declared_by=events.OPERATOR)
 
-    result = stage_module.stage_for_key(KEY)
-
-    assert result.name == "shipped"
-    assert result.escapes == 0
+    assert events.stage(feature.id) == events.STAGE_SHIPPED
 
 
 def test_reworking_is_not_in_the_stage_vocabulary():
     """Deleted, not re-read: keeping the name would lie, because nothing is
-    being reworked and the board still says Done. (The module still *names* it
-    in prose, explaining why it went — that is the point of the record.)"""
-    vocabulary = {stage_module.SPEC, stage_module.BUILDING,
-                  stage_module.SHIPPED, stage_module.ESCAPED}
-
-    assert "reworking" not in vocabulary
-    assert not hasattr(stage_module, "REWORKING")
-    assert set(stage_module._BLURB) == vocabulary
-    assert stage_module.ESCAPED == "escaped"
+    being reworked and the board still says Done."""
+    assert "reworking" not in set(events.STAGES)
+    assert not hasattr(events, "REWORKING")
+    assert set(events.STAGES) == {"spec", "building", "shipped", "escaped",
+                                 "abandoned"}
 
 
-def test_stage_to_dict_stays_flat_and_gains_one_key():
-    """Three live consumers — the span attributes, the task-link payload and
-    `TaskLinkCard.vue`. Span attributes are flat key/values by nature, so
-    nesting breaks all three for nothing."""
-    payload = stage_module.Stage(name="shipped", rounds=1, open_defects=0,
-                                 escapes=2, key=KEY).to_dict()
+def test_the_feature_stage_span_carries_the_id_it_reports_on(posted_spans):
+    """The gate counts span *names*, so the attribute rename cannot move it —
+    but the attributes are this command's output contract, and a reader of the
+    trace needs the id they can actually open."""
+    feature = _feature(stage=events.BUILD_STARTED)
 
-    assert set(payload) == {"feature_key", "stage", "blurb", "rounds",
-                            "open_defects", "escapes"}
-    assert all(not isinstance(v, (dict, list)) for v in payload.values())
-
-
-def test_the_feature_stage_span_still_carries_every_existing_attribute(
-        tracker_issue, posted_spans):
-    tracker_issue(KEY, state_category="started")
-
-    runner.invoke(app, ["feature", "stage", KEY, "--session", "t-span"])
+    runner.invoke(app, ["feature", "stage", str(feature.id),
+                        "--session", "t-span"])
 
     attributes = [p["attributes"] for p in posted_spans
                   if p["name"] == "feature.stage"][0]
     assert {"stage", "blurb", "rounds", "open_defects"} <= set(attributes)
-    # CAI-235's correction: one fact, one spelling.
-    assert attributes["feature_key"] == KEY
-    assert "key" not in attributes
+    assert attributes["feature_id"] == feature.id
+    assert "feature_key" not in attributes
 
 
-def test_feature_stage_still_exits_two_when_the_tracker_is_unreachable(
-        no_tracker):
-    """There the tracker *is* the answer."""
-    assert runner.invoke(app, ["feature", "stage", KEY]).exit_code == 2
+def test_feature_stage_exits_two_only_on_an_id_that_names_nothing(no_tracker):
+    """It used to exit 2 when no tracker answered, because the tracker *was*
+    the answer. The only unanswerable question left is a feature that does not
+    exist."""
+    assert runner.invoke(app, ["feature", "stage", "9999"]).exit_code == 2
+    feature = _feature()
+    assert runner.invoke(app, ["feature", "stage",
+                               str(feature.id)]).exit_code == 0
 
 
 # ── `feature ledger` ──────────────────────────────────────────
 
-def test_feature_ledger_leads_with_the_stage_line(
-        session_row, tracker_issue, attributing_trace):
+def test_feature_ledger_leads_with_the_stage_line(session_row,
+                                                  attributing_trace):
     """The stage frames every number under it — `$31.80` means something
     different on a `spec` than on a `shipped`."""
+    feature = _feature(stage=events.SHIPPED)
     session_row("t1", cost=31.80)
-    _declare(KEY, "t1", tracker_issue, attributing_trace,
-             state_category="completed")
+    _declare(feature.id, "t1", attributing_trace)
 
-    output = runner.invoke(app, ["feature", "ledger", KEY]).output
-    first = [ln for ln in output.splitlines() if ln.strip()][0]
+    output = runner.invoke(app, ["feature", "ledger", str(feature.id)]).output
+    lines = [ln for ln in output.splitlines() if ln.strip()]
 
-    assert "shipped" in first
-    assert "31.80" not in first
+    assert "shipped" in lines[1]
+    assert "31.80" not in lines[1]
 
 
 def test_feature_ledger_lists_sessions_by_date_short_trace_and_title(
-        session_row, tracker_issue, attributing_trace):
+        session_row, attributing_trace):
     """`regin stats sessions`' convention verbatim, so an id carries by eye
     between the two surfaces. The list is the *evidence* for an upper-bound
     figure — a bare count gives a reader no way to check it."""
+    feature = _feature()
     session_row("cc72f3a2-0198-4263-9866-ca3b251ce452", cost=2.48,
                 title="Build the feature ledger", started="2026-09-13 10:00:00")
-    _declare(KEY, "cc72f3a2-0198-4263-9866-ca3b251ce452", tracker_issue,
+    _declare(feature.id, "cc72f3a2-0198-4263-9866-ca3b251ce452",
              attributing_trace)
 
-    output = runner.invoke(app, ["feature", "ledger", KEY]).output
+    output = runner.invoke(app, ["feature", "ledger", str(feature.id)]).output
 
     assert "2026-09-13" in output
     assert "cc72f3a2" in output
@@ -158,78 +142,68 @@ def test_feature_ledger_lists_sessions_by_date_short_trace_and_title(
 
 
 def test_a_recalled_session_row_shows_a_dash_for_its_round(
-        session_row, tracker_issue, attributing_trace):
+        session_row, attributing_trace):
+    feature = _feature()
     session_row("t-recalled", cost=1.00, title="somebody else's day")
-    tracker_issue(KEY, rounds=3)
     attributing_trace("t-me")
-    runner.invoke(app, ["feature", "attribute", KEY, "--session", "t-recalled"])
+    runner.invoke(app, ["feature", "attribute", str(feature.id),
+                        "--session", "t-recalled"])
 
-    row = [ln for ln in runner.invoke(app, ["feature", "ledger", KEY]).output
-           .splitlines() if "t-recall" in ln][0]
+    row = [ln for ln in runner.invoke(
+        app, ["feature", "ledger", str(feature.id)]).output.splitlines()
+        if "t-recall" in ln][0]
 
     assert "recalled" in row
-    assert "3" not in row.split("recalled")[-1]
     assert "—" in row
 
 
-def test_feature_ledger_exits_zero_when_the_tracker_is_unreachable(
-        session_row, tracker_issue, attributing_trace, tracker_down):
-    """Its substance is local and correct; exiting non-zero would withhold a
-    correct answer because one field could not be fetched."""
-    session_row("t1", cost=5.00)
-    _declare(KEY, "t1", tracker_issue, attributing_trace)
-    tracker_down()
+def test_the_ledger_reports_the_features_own_title_not_a_tasks(native_task):
+    """Two titles, two questions. `features.title` is the authority for what
+    is being delivered; a task's says what one step does."""
+    feature = _feature("what the feature delivers")
+    feature_store.adopt_task(feature.id, native_task(title="one step"))
 
-    result = runner.invoke(app, ["feature", "ledger", KEY])
+    output = runner.invoke(app, ["feature", "ledger", str(feature.id)]).output
 
-    assert result.exit_code == 0, result.output
-    assert "unknown" in result.output
-    assert "5.00" in result.output
-
-
-def test_unknown_never_appears_as_a_stage_name_in_json_or_a_span(
-        session_row, tracker_issue, attributing_trace, tracker_down):
-    """A render-only string, not a fifth stage. It is a statement about us,
-    not about the feature."""
-    session_row("t1", cost=5.00)
-    _declare(KEY, "t1", tracker_issue, attributing_trace)
-    tracker_down()
-
-    payload = json.loads(
-        runner.invoke(app, ["feature", "ledger", KEY, "--json"]).output)
-
-    assert payload["stage"] is None
-    assert "unknown" not in json.dumps(payload.get("stage"))
-    assert stage_module.stage_from_snapshot(None) is None
+    assert "what the feature delivers" in output
+    assert "one step" not in output
 
 
 def test_feature_ledger_leaves_no_span(session_row, posted_spans,
-                                       tracker_issue, attributing_trace):
+                                       attributing_trace):
     """A second span named `feature.stage` would let an idle report satisfy
     the gate. One fingerprint, one command."""
+    feature = _feature()
     session_row("t1", cost=5.00)
-    _declare(KEY, "t1", tracker_issue, attributing_trace)
+    _declare(feature.id, "t1", attributing_trace)
     posted_spans.clear()
 
-    runner.invoke(app, ["feature", "ledger", KEY, "--session", "t1"])
+    runner.invoke(app, ["feature", "ledger", str(feature.id),
+                        "--session", "t1"])
 
     assert posted_spans == []
 
 
 def test_feature_ledger_json_groups_each_gap_under_its_figure(
-        session_row, tracker_issue, attributing_trace):
+        session_row, attributing_trace):
     """Flattened they read as noise: a reader cannot tell which number
-    `no_usage_captured` qualifies."""
+    `no_usage_captured` qualifies.
+
+    `defects` carries no `gaps` any more, and that is the point: its two —
+    `state_unknown` and `unknown_vocabulary` — described the readings a cached
+    state *string* could have, and a pointer at an append-only row has none.
+    """
+    feature = _feature()
     session_row("t-nousage", cost=None)
     session_row("t-zero", cost=1.00, active_work_ms=0)
-    _declare(KEY, "t-nousage", tracker_issue, attributing_trace)
-    _declare(KEY, "t-zero", tracker_issue, attributing_trace)
+    _declare(feature.id, "t-nousage", attributing_trace)
+    _declare(feature.id, "t-zero", attributing_trace)
 
-    payload = json.loads(
-        runner.invoke(app, ["feature", "ledger", KEY, "--json"]).output)
+    payload = json.loads(runner.invoke(
+        app, ["feature", "ledger", str(feature.id), "--json"]).output)
 
     assert payload["cost"]["gaps"]["no_usage_captured"] == 1
     assert payload["work_time"]["gaps"]["zero_duration"] == 1
     assert "traceless_runs" in payload["sessions"]["gaps"]
-    assert "state_unknown" in payload["defects"]["gaps"]
+    assert "gaps" not in payload["defects"]
     assert "gaps" not in payload

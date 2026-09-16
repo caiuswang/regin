@@ -1,6 +1,6 @@
-"""The reverse lookup a trace view reads (CAI-256).
+"""The reverse lookup a trace view reads.
 
-`sessions_for_feature` merges declared rows with the task lane; the reverse
+`sessions_for_feature` merges declared rows with the run lane; the reverse
 direction did not, and on the live database that gap covered 22 of 23
 attributed traces. These pin the merged reader and, just as importantly, pin
 that the blame lookup underneath `@session` did not move with it.
@@ -13,31 +13,35 @@ import pytest
 from lib.features import attribution
 
 
-def test_merged_lookup_includes_task_lane_traces(session_row, task_lane):
+def test_merged_lookup_includes_run_lane_traces(session_row, task_lane,
+                                                feature_row):
+    feature = feature_row()
     session_row("t-lane")
-    task_lane(801, ["CAI-900"], [("t-lane", "done")])
+    task_lane(801, feature.id, [("t-lane", "done")])
 
     rows = attribution.attributions_for_session("t-lane")
 
-    assert [(r.feature_key, r.provenance) for r in rows] == [
-        ("CAI-900", attribution.TASK_LINK)]
+    assert [(r.feature_id, r.provenance) for r in rows] == [
+        (feature.id, attribution.RUN)]
 
 
-def test_merged_lookup_includes_declared_rows(session_row):
+def test_merged_lookup_includes_declared_rows(session_row, feature_row):
+    feature = feature_row()
     session_row("t-declared")
-    attribution.attribute("CAI-901", "t-declared")
+    attribution.attribute(feature.id, "t-declared")
 
     rows = attribution.attributions_for_session("t-declared")
 
-    assert [(r.feature_key, r.provenance) for r in rows] == [
-        ("CAI-901", attribution.RECALLED)]
+    assert [(r.feature_id, r.provenance) for r in rows] == [
+        (feature.id, attribution.RECALLED)]
 
 
-def test_a_declared_row_wins_over_the_same_key_in_the_task_lane(
-        session_row, task_lane):
+def test_a_declared_row_wins_over_the_same_feature_in_the_run_lane(
+        session_row, task_lane, feature_row):
+    feature = feature_row()
     session_row("t-both")
-    task_lane(802, ["CAI-902"], [("t-both", "done")])
-    attribution.attribute("CAI-902", "t-both", primary=True)
+    task_lane(802, feature.id, [("t-both", "done")])
+    attribution.attribute(feature.id, "t-both", primary=True)
 
     rows = attribution.attributions_for_session("t-both")
 
@@ -46,53 +50,59 @@ def test_a_declared_row_wins_over_the_same_key_in_the_task_lane(
     assert rows[0].is_primary == 1
 
 
-def test_merged_lookup_carries_the_task_id_for_a_task_lane_row(
-        session_row, task_lane):
+def test_merged_lookup_carries_the_task_id_for_a_run_lane_row(
+        session_row, task_lane, feature_row):
+    feature = feature_row()
     session_row("t-tagged")
-    task_lane(803, ["CAI-903"], [("t-tagged", "done")])
+    task_lane(803, feature.id, [("t-tagged", "done")])
 
     row = attribution.attributions_for_session("t-tagged")[0]
 
     assert row.task_id == 803
 
 
-def test_a_declared_row_carries_no_task_id(session_row):
+def test_a_declared_row_carries_no_task_id(session_row, feature_row):
+    feature = feature_row()
     session_row("t-plain")
-    attribution.attribute("CAI-904", "t-plain")
+    attribution.attribute(feature.id, "t-plain")
 
     assert attribution.attributions_for_session("t-plain")[0].task_id is None
 
 
-def test_features_for_session_is_unchanged(session_row, task_lane):
-    """The blame lookup stays declarations-only: `regin defects blame
-    @session` demands an explicit claim, and widening it here would change
-    what shipped CLI accepts."""
+def test_features_for_session_is_unchanged(session_row, task_lane,
+                                           feature_row):
+    """The blame lookup stays declarations-only: `--feature @session` demands
+    an explicit claim, and widening it here would change what the shipped CLI
+    accepts."""
+    feature = feature_row()
     session_row("t-lane-only")
-    task_lane(804, ["CAI-905"], [("t-lane-only", "done")])
+    task_lane(804, feature.id, [("t-lane-only", "done")])
 
     assert attribution.features_for_session("t-lane-only") == []
 
 
-def test_declared_feature_is_unchanged(session_row, task_lane):
+def test_declared_feature_is_unchanged(session_row, task_lane, feature_row):
+    feature = feature_row()
     session_row("t-lane-blame")
-    task_lane(805, ["CAI-906"], [("t-lane-blame", "done")])
+    task_lane(805, feature.id, [("t-lane-blame", "done")])
 
     with pytest.raises(attribution.NoDeclaration):
         attribution.declared_feature("t-lane-blame")
 
 
 def test_trace_view_and_feature_page_agree_on_every_attributed_trace(
-        session_row, task_lane):
+        session_row, task_lane, feature_row):
     """The disagreement this function exists to close, stated as a property."""
+    feature = feature_row()
     session_row("t-a")
     session_row("t-b")
-    task_lane(806, ["CAI-907"], [("t-a", "done")])
-    attribution.attribute("CAI-907", "t-b")
+    task_lane(806, feature.id, [("t-a", "done")])
+    attribution.attribute(feature.id, "t-b")
 
     forward = {row.trace_id for row in
-               attribution.sessions_for_feature("CAI-907")}
+               attribution.sessions_for_feature(feature.id)}
     reverse = {trace for trace in forward
-               if any(r.feature_key == "CAI-907"
+               if any(r.feature_id == feature.id
                       for r in attribution.attributions_for_session(trace))}
 
     assert reverse == forward
@@ -104,11 +114,11 @@ def test_an_unattributed_session_has_no_rows(session_row):
     assert attribution.attributions_for_session("t-none") == []
 
 
-def test_an_ambiguous_task_link_contributes_no_row(session_row, task_lane):
-    """`sessions_for_feature` refuses an ambiguous link rather than charging
-    one session to two features; the reverse direction cannot quietly do what
-    the forward one refuses."""
-    session_row("t-ambiguous")
-    task_lane(807, ["CAI-908", "CAI-909"], [("t-ambiguous", "done")])
+def test_a_task_under_no_feature_contributes_no_row(session_row, task_lane):
+    """The ambiguity guard this replaced refused a task holding two feature
+    keys. A task holds one column, so the only remaining state is holding
+    none — which is a real state, and contributes nothing."""
+    session_row("t-unfeatured")
+    task_lane(807, None, [("t-unfeatured", "done")])
 
-    assert attribution.attributions_for_session("t-ambiguous") == []
+    assert attribution.attributions_for_session("t-unfeatured") == []

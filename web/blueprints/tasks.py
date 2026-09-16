@@ -52,9 +52,11 @@ from lib.auth import get_current_user, require_auth, require_editor, require_sco
 from lib.orm import SessionLocal
 from lib.orm.models.api_keys import SCOPE_TASK_CAPTURE
 from lib.agent_sdk import worktree
-from lib.orm.models.tasks import AgentTask, AgentTaskRun
+from lib.orm.models.tasks import (
+    AgentTask, AgentTaskRun, RUN_STATUS_ARMED,
+)
 from lib.settings import settings
-from lib.tasks import (arm, capture, deps, grain, images, links, query,
+from lib.tasks import (arm, capture, deps, images, query,
                        ratelimit, runs, store)
 from lib.tasks import integrations
 from lib.utils.pagination import clamp_size, keyset_page_stmt
@@ -182,39 +184,11 @@ def api_list_tasks():
         totals = None if cursor else query.counts(session, filters)
     envelope = page.to_envelope()
     _with_images(envelope["items"])
-    _with_grain_counts(envelope["items"])
+    _with_run_counts(envelope["items"])
     envelope["status_filter"] = filters["status"]
     if totals is not None:
         envelope["counts"] = totals
     return jsonify(envelope)
-
-
-@tasks_bp.route('/api/tasks/grain-candidates', methods=['GET'])
-@require_auth
-def api_grain_candidates():
-    """The tasks the grain would accept on one side of a parentage.
-
-    `child=<id>` asks who may be that task's parent — `child=0` for a task the
-    composer has not captured yet; `parent=<id>` asks who may become a run of
-    it. Exactly one side is named, and every row comes back from
-    `refuse_bad_parentage` itself: a picker that offered an act the server
-    refuses is a control that lies, and a second copy of the rule in the
-    browser is a copy that drifts.
-    """
-    try:
-        child = query.parse_int(
-            (request.args.get("child") or "").strip() or None, "child")
-        parent = query.parse_int(
-            (request.args.get("parent") or "").strip() or None, "parent")
-    except query.FilterRejected as exc:
-        return _rejected_filter(exc)
-    if (child is None) == (parent is None):
-        return jsonify({
-            "error": "name exactly one side: child=<id> or parent=<id>",
-            "field": "child"}), 400
-    return jsonify(grain.candidates(
-        child_id=child, parent_id=parent,
-        q=(request.args.get("q") or "").strip()[:query.Q_MAX]))
 
 
 @tasks_bp.route('/api/tasks/counts', methods=['GET'])
@@ -268,42 +242,61 @@ def api_bulk_update_tasks():
     return jsonify(result)
 
 
-def _with_grain_counts(items: list[dict]) -> None:
-    """`child_count` and `run_count` per row, one grouped query each.
+def _with_run_counts(items: list[dict]) -> None:
+    """`run_count` and the pending attempt per row, two grouped queries.
 
-    On the page rather than in `serialize`, for the reason `grain.counts_for`
-    gives: a count per row is the N+1 the keyset cursor exists to avoid, and
-    a `GROUP BY` over the page's ids is not.
+    On the page rather than in `serialize`: a read per row is the N+1 the
+    keyset cursor exists to avoid, and a query over the page's ids is not.
+
+    `armed` rides along because the arm sheet seeds its draft from whatever the
+    task was last armed with, and those parameters live on the attempt now —
+    so a row that could not carry them would open an empty sheet over a task
+    that is armed.
+
+    `child_count` went with the two-level grain. A task has attempts and a
+    feature, and neither of those is a child task.
     """
     if not items:
         return
+    from lib.tasks import runs  # noqa: PLC0415
+
     ids = [row["id"] for row in items]
     with SessionLocal() as session:
-        children = dict(session.exec(
-            select(AgentTask.parent_id, func.count(AgentTask.id))
-            .where(AgentTask.parent_id.in_(ids))
-            .group_by(AgentTask.parent_id)).all())
         attempts = dict(session.exec(
             select(AgentTaskRun.task_id, func.count(AgentTaskRun.id))
-            .where(AgentTaskRun.task_id.in_(ids))
+            .where(AgentTaskRun.task_id.in_(ids),
+                   AgentTaskRun.status != RUN_STATUS_ARMED)
             .group_by(AgentTaskRun.task_id)).all())
+        pending = {row.task_id: row for row in session.exec(
+            select(AgentTaskRun)
+            .where(AgentTaskRun.task_id.in_(ids),
+                   AgentTaskRun.status == RUN_STATUS_ARMED)).all()}
     for row in items:
-        row["child_count"] = children.get(row["id"], 0)
         row["run_count"] = attempts.get(row["id"], 0)
+        armed = pending.get(row["id"])
+        row["armed"] = runs.serialize_attempt(armed) if armed else None
 
 
 def _detail(task: dict, task_id: int) -> dict:
-    """The detail envelope: the row, its grain, and the feature key it holds.
+    """The detail envelope: the row, its pending attempt, and its feature.
 
-    `feature_key` is resolved here rather than built from the id on the page,
-    because a task linked to another tracker is a run of *that* issue and its
-    key is the link's. A page composing `regin:<id>` would file the task's
-    defects under a key the ledger counts against nobody.
+    The feature rides back resolved rather than as a bare id, because the page
+    renders its title and stage — and `features.title` is the authority for
+    that name, never this task's own title.
     """
+    from lib.features import events as feature_events  # noqa: PLC0415
+    from lib.features import store as feature_store  # noqa: PLC0415
+    from lib.tasks import runs  # noqa: PLC0415
+
+    feature = (feature_store.get(task["feature_id"])
+               if task.get("feature_id") is not None else None)
     return {"task": _one_with_images(task),
-            "grain": grain.counts_for(task_id),
-            "feature_key": links.feature_key_for_task(
-                task_id, task.get("parent_id"))}
+            "armed": runs.armed_attempt(task_id),
+            "feature": None if feature is None else {
+                "id": feature.id, "title": feature.title,
+                "origin": feature.origin,
+                "external_ref": feature.external_ref,
+                "stage": feature_events.stage(feature.id)}}
 
 
 @tasks_bp.route('/api/tasks/<int:task_id>', methods=['GET'])
@@ -318,9 +311,6 @@ def api_get_task(task_id: int):
     task = store.get_task(task_id)
     if task is None:
         return _unknown_task()
-    # The grain, as two counts rather than two list reads: the detail page
-    # renders a feature and a run differently, and resolving that by fetching
-    # the children would make this route scan after all.
     return jsonify(_detail(task, task_id))
 
 
@@ -340,23 +330,28 @@ def api_update_task(task_id: int):
         return jsonify({"error": str(exc), "field": "status"}), 400
     except store.UnknownProject as exc:
         return jsonify({"error": str(exc), "field": "project_id"}), 400
-    except grain.GrainRejected as exc:
-        # A parentage the two grains do not admit. 400 naming the field, like
-        # every other refusal here — the message names both rows.
-        log.error("task_grain_rejected", task_id=task_id, detail=str(exc))
-        return jsonify({"error": str(exc), "field": "parent_id"}), 400
+    except feature_store_error() as exc:
+        return jsonify({"error": str(exc), "field": "feature_id"}), 400
     if task is None:
         return _unknown_task()
-    # The grain rides back with the row: an edit can change it — setting a
-    # `parent_id` makes this task a run — and the page's ship control reads it
-    # to decide whether the claim is even offered.
     return jsonify(_detail(task, task_id))
+
+
+def feature_store_error():
+    """`lib.features.store.FeatureError`, imported lazily.
+
+    An edit may move the task between features, and naming one that does not
+    exist is a 400 on that field — the same posture every other refusal here
+    takes.
+    """
+    from lib.features.store import FeatureError  # noqa: PLC0415
+    return FeatureError
 
 
 @tasks_bp.route('/api/tasks/<int:task_id>', methods=['DELETE'])
 @require_editor
 def api_delete_task(task_id: int):
-    """Remove a task for good, with its attempts, images, links and edges.
+    """Remove a task for good, with its attempts, images and edges.
 
     Distinct from `PATCH {status: 'archived'}`, which keeps the row and can be
     undone — nothing here can, so the refusal is a 409 the caller shows rather
@@ -465,11 +460,14 @@ def _fire_after_write(task_id: int) -> None:
 @tasks_bp.route('/api/tasks/<int:task_id>/arm', methods=['POST'])
 @require_editor
 def api_arm_task(task_id: int):
-    """Write a task's execution parameters and mark it `armed`.
+    """Parameterise the task's next attempt and mark it `armed`.
 
-    The only route that may set one. The allowlist mirrors `launch_run`'s
-    signature, so a field it accepts is a field the launch honors, and anything
-    else is a 400 naming it rather than a silent drop.
+    The only route that may set an execution parameter. The allowlist mirrors
+    `launch_run`'s signature, so a field it accepts is a field the launch
+    honors, and anything else is a 400 naming it rather than a silent drop.
+
+    The parameters land on an `armed` **run row** — the pending attempt — so a
+    rerun under different ones is a second row there rather than a second task.
     """
     try:
         fields = arm.parse_arm(request.get_json(silent=True))
@@ -487,7 +485,7 @@ def api_arm_task(task_id: int):
     # have finished long before anyone armed it, and no completion is left to
     # notice.
     _fire_after_write(task_id)
-    return jsonify({"task": store.get_task(task_id)})
+    return jsonify(_detail(store.get_task(task_id), task_id))
 
 
 @tasks_bp.route('/api/tasks/<int:task_id>/run', methods=['POST'])
@@ -634,7 +632,7 @@ def api_task_graph():
                               cap=cap))
 
 
-# ── issue-tracker links ──────────────────────────────────────
+# ── issue trackers ───────────────────────────────────────────
 
 @tasks_bp.route('/api/task-integrations', methods=['GET'])
 @require_auth
@@ -647,97 +645,6 @@ def api_task_integrations():
     """
     return jsonify({"providers": integrations.provider_rows()})
 
-
-@tasks_bp.route('/api/tasks/links/preview', methods=['POST'])
-@require_editor
-def api_preview_task_link():
-    """Resolve a pasted reference and return the issue, writing nothing.
-
-    The composer calls this before the task exists, so a dialog closed without
-    capturing leaves no row anywhere. Unlike an attach, a fetch that fails is
-    a 400 rather than a stored sync error: there is no link yet to carry it.
-    """
-    payload = request.get_json(silent=True) or {}
-    ref = (payload.get("ref") or "").strip()
-    if not ref:
-        return jsonify({"error": "ref required", "field": "ref"}), 400
-    try:
-        preview = links.preview(ref, (payload.get("provider") or "").strip())
-    except integrations.AmbiguousRef as exc:
-        return jsonify({"error": str(exc), "field": "provider",
-                        "candidates": exc.candidates}), 409
-    except integrations.IntegrationError as exc:
-        log.error("task_link_preview_rejected", detail=str(exc))
-        return jsonify({"error": str(exc), "field": "ref"}), 400
-    return jsonify(preview)
-
-
-@tasks_bp.route('/api/tasks/<int:task_id>/links', methods=['GET'])
-@require_auth
-def api_list_task_links(task_id: int):
-    """A task's linked issues, each with its last cached snapshot.
-
-    A read never fetches from the remote — the snapshot's age is stated
-    (`synced_at`) and refreshed on request, so opening a task cannot turn into
-    a poll against someone else's API.
-    """
-    if store.get_task(task_id) is None:
-        return _unknown_task()
-    return jsonify({"links": links.list_links(task_id)})
-
-
-@tasks_bp.route('/api/tasks/<int:task_id>/links', methods=['POST'])
-@require_editor
-def api_attach_task_link(task_id: int):
-    """Link a task to another tracker's issue by URL or identifier.
-
-    Only another tracker's: a native ref is refused, because a regin task is
-    already a feature and linking one to another would move a feature between
-    trackers.
-    """
-    if store.get_task(task_id) is None:
-        return _unknown_task()
-    payload = request.get_json(silent=True) or {}
-    ref = (payload.get("ref") or "").strip()
-    if not ref:
-        return jsonify({"error": "ref required", "field": "ref"}), 400
-    try:
-        link = links.attach(task_id, ref,
-                            (payload.get("provider") or "").strip())
-    except integrations.AmbiguousRef as exc:
-        return jsonify({"error": str(exc), "field": "provider",
-                        "candidates": exc.candidates}), 409
-    except integrations.IntegrationError as exc:
-        return _rejected_link(task_id, exc)
-    if link is None:
-        return _unknown_link()
-    return jsonify({"link": link}), 201
-
-
-@tasks_bp.route('/api/tasks/<int:task_id>/links/<int:link_id>/refresh',
-                methods=['POST'])
-@require_editor
-def api_refresh_task_link(task_id: int, link_id: int):
-    """Re-fetch one link's snapshot. The only thing that ever refreshes one."""
-    try:
-        link = links.refresh(task_id, link_id)
-    except integrations.IntegrationError as exc:
-        return _rejected_link(task_id, exc)
-    if link is None:
-        return _unknown_link()
-    return jsonify({"link": link})
-
-
-@tasks_bp.route('/api/tasks/<int:task_id>/links/<int:link_id>',
-                methods=['DELETE'])
-@require_editor
-def api_detach_task_link(task_id: int, link_id: int):
-    if not links.detach(task_id, link_id):
-        return _unknown_link()
-    return jsonify({"detached": link_id})
-
-
-# ── comments ─────────────────────────────────────────────────
 
 @tasks_bp.route('/api/tasks/<int:task_id>/comments', methods=['GET'])
 @require_auth
@@ -809,12 +716,3 @@ def api_resolve_task_comment_thread(task_id: int, thread_id: int):
     return jsonify({"thread": thread})
 
 
-def _unknown_link():
-    """404 — the link id is not this task's, or it was detached while a fetch
-    for it was still in flight."""
-    return jsonify({"error": "unknown link"}), 404
-
-
-def _rejected_link(task_id: int, exc: Exception):
-    log.error("task_link_rejected", task_id=task_id, detail=str(exc))
-    return jsonify({"error": str(exc), "field": "ref"}), 400

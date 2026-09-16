@@ -9,9 +9,15 @@ export const CUSTOM_MODEL = '__custom__'
 // launched CLI resolves any skill on the operator's own disk.
 export const CUSTOM_SKILL = '__custom__'
 
-/** A draft seeded from whatever the task was last armed with. */
+/** A draft seeded from whatever the task was last armed with.
+ *
+ * Read off the task's PENDING ATTEMPT, not the task: an attempt is what spends
+ * the parameters, and re-arming replaces that one row rather than editing a
+ * column two attempts would have had to share.
+ */
 export function armDraft(task) {
-  const params = task?.params || {}
+  const armed = task?.armed || {}
+  const params = armed.params || {}
   const worktree = params.worktree || {}
   const skill = params.skill || {}
   return {
@@ -27,8 +33,8 @@ export function armDraft(task) {
     useWorktree: !!worktree.branch,
     worktreeBranch: worktree.branch || '',
     worktreeBase: worktree.base || '',
-    verify_cmd: task?.verify_cmd || '',
-    autorun: !!task?.autorun,
+    verify_cmd: armed.verify_cmd || '',
+    autorun: !!armed.autorun,
   }
 }
 

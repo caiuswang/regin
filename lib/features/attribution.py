@@ -1,23 +1,31 @@
-"""Which sessions built a feature, and the act that says so (CAI-231, CAI-235,
-CAI-239).
+"""Which sessions built a feature, and the act that says so (regin:82).
 
 **Nothing here infers an attribution.** No cwd heuristic, no branch-name
 convention — nothing in regin captures a branch anywhere — and no top-N-by-cost
-sweep. A session is attributed because a human declared it or because a task
-the operator linked to the feature launched it. Unattributed is a first-class
-state and stays the absence of a row.
+sweep. A session is attributed because a human declared it or because a run of
+a task under the feature produced it. Unattributed is a first-class state and
+stays the absence of a row.
 
 Two readings have to agree for the counts downstream to mean anything:
 
 * **A run and the conversation it drove are one session.** An SDK run is traced
   under its own id and the conversation it drives is another row in `sessions`;
-  `agent_run_sessions` joins the pair. Counting both inflates the session count
-  and splits the cost across two rows. The conversation is canonical — one
-  capture path, no arithmetic across the pair.
+  `agent_run_sessions` joins the pair, and holds two rows for at least one
+  trace. Counting both inflates the session count and splits the cost, so every
+  read collapses on `ORDER BY id LIMIT 1`. The rule used to live in
+  `lane.py`'s `CANONICAL_TRACE` and fired in only one of its three call sites,
+  which is why the index once counted 51 sessions where the ledger counted 50.
 * **Provenance is decided by identity.** Attributing your own trace is
   `declared`; attributing another, or running from a shell with no trace at
   all, is `recalled`. No window to tune, and the borderline case — declaring
   your own session as it ends — correctly reads `declared`.
+
+The path from a feature to its runs' sessions is now **two joins**:
+`run.trace_id → run.task_id → task.feature_id`. It replaced a four-CTE chain
+whose job was to reconcile three different ways a task could hold a feature
+key, plus an `ambiguous` guard for the tasks that held two. A single foreign
+key makes both unnecessary — a task belongs to at most one feature because it
+has one column to say so in.
 """
 
 from __future__ import annotations
@@ -28,28 +36,35 @@ from typing import Optional
 from sqlmodel import select, text
 
 from lib.activity_log import get_activity_logger
-from lib.features import lane as lane_module
 from lib.orm import SessionLocal
-from lib.orm.models.features import (
-    DECLARED, RECALLED, TASK_LINK, SessionFeature,
-)
+from lib.orm.models.features import DECLARED, RECALLED, RUN, SessionFeature
 
 log = get_activity_logger("defects")
 
-__all__ = ["DECLARED", "RECALLED", "TASK_LINK", "AmbiguousTaskLink",
-           "AttributedSession", "Attribution", "attribute",
-           "attributions_for_session", "canonical_trace", "declared_feature",
-           "features_for_session", "sessions_for_feature", "traceless_runs",
-           "unattribute"]
+__all__ = ["DECLARED", "RECALLED", "RUN", "AttributedSession", "Attribution",
+           "attribute", "attributions_for_session", "canonical_trace",
+           "declared_feature", "features_for_session", "sessions_for_feature",
+           "traceless_runs", "unattribute"]
 
+#: One `agent_run_sessions` row per trace, chosen by id. A correlated subquery
+#: rather than a `LEFT JOIN`, because the join is what fans a run out into two
+#: sessions when the alias table holds two rows for it.
+CANONICAL_TRACE = """
+COALESCE((SELECT a.cli_session_id FROM agent_run_sessions a
+          WHERE a.trace_id = r.trace_id ORDER BY a.id LIMIT 1),
+         r.trace_id)"""
 
-class AmbiguousTaskLink(RuntimeError):
-    """One task links two issues, so its runs belong to neither.
-
-    The posture `lib/tasks/integrations/registry.py` takes on an ambiguous
-    paste, for the same reason: first-wins would silently charge one session's
-    whole cost to one of two features and nobody would ever see the choice.
-    """
+#: `(feature_id, canonical trace, task_id)` for every run that produced a
+#: trace. Two joins and one collapse rule — the whole lane.
+LANE = f"""
+lane AS (
+    SELECT t.feature_id AS feature_id,
+           {CANONICAL_TRACE} AS trace_id,
+           r.task_id AS task_id
+    FROM agent_task_runs r
+    JOIN agent_tasks t ON t.id = r.task_id
+    WHERE r.trace_id IS NOT NULL AND t.feature_id IS NOT NULL
+)"""
 
 
 class NoDeclaration(RuntimeError):
@@ -64,9 +79,9 @@ class AttributedSession:
     provenance: str
     is_primary: int
     round: Optional[int] = None
-    #: The task whose link put this session here. Only a `task-link` row has
-    #: one — it is the provenance's evidence, and a tag naming no task is a
-    #: provenance nobody can audit.
+    #: The run whose task put this session here. Only a `run` row has one — it
+    #: is the provenance's evidence, and a tag naming no run is a provenance
+    #: nobody can audit.
     task_id: Optional[int] = None
 
 
@@ -74,7 +89,7 @@ class AttributedSession:
 class Attribution:
     """One feature of a session — the reverse of `AttributedSession`."""
 
-    feature_key: str
+    feature_id: int
     provenance: str
     is_primary: int
     round: Optional[int] = None
@@ -100,49 +115,22 @@ def canonical_trace(trace_id: str) -> str:
     return row[0] if row else trace_id
 
 
-def _lane_traces(feature_key: str) -> list[tuple]:
-    """`(canonical trace, task id)` for every run reachable through the lane.
+def _lane_traces(feature_id: int) -> list[tuple]:
+    """`(canonical trace, task id)` for every run of this feature.
 
-    Derived on every read rather than copied into `session_features`: the link
-    — or the parentage — is the operator's live assertion, and a stored copy
-    would be a stale second opinion of it.
-
-    The task id rides along because it is the provenance's evidence — the tag
-    `task #44` has to name a task somebody can open.
-    """
-    _refuse_ambiguous(feature_key)
-    with SessionLocal() as session:
-        rows = session.exec(text(lane_module.with_lane(
-            " SELECT DISTINCT trace_id, task_id FROM lane WHERE key = :k"
-        )).bindparams(k=feature_key)).all()
-    return [(row[0], row[1]) for row in rows]
-
-
-def _refuse_ambiguous(feature_key: str) -> None:
-    """Refuse a task naming two feature keys, one of them this one.
-
-    The guard lives beside the lane so every reader of it inherits the refusal.
-    `index._LANE` had none, which is how a two-link task made the index
-    double-count sessions the ledger refuses to count at all.
+    Derived on every read rather than copied into `session_features`: the
+    task's placement under the feature is the operator's live assertion, and a
+    stored copy would be a stale second opinion of it.
     """
     with SessionLocal() as session:
         rows = session.exec(text(
-            f"WITH {lane_module.LANE}"
-            " SELECT a.task_id, GROUP_CONCAT(DISTINCT o.key)"
-            " FROM ambiguous a JOIN owns o ON o.task_id = a.task_id"
-            " WHERE a.task_id IN (SELECT task_id FROM owns WHERE key = :k)"
-            " GROUP BY a.task_id"
-        ).bindparams(k=feature_key)).all()
-    if rows:
-        task_id, keys = rows[0]
-        named = (keys or "").replace(",", ", ")
-        raise AmbiguousTaskLink(
-            f"task {task_id} names {len(named.split(', '))} features "
-            f"({named}) — say which one owns its sessions rather than "
-            "charging one session to both")
+            f"WITH {LANE} SELECT DISTINCT trace_id, task_id FROM lane"
+            " WHERE feature_id = :f"
+        ).bindparams(f=feature_id)).all()
+    return [(row[0], row[1]) for row in rows]
 
 
-def traceless_runs(feature_key: str) -> int:
+def traceless_runs(feature_id: int) -> int:
     """Runs of this feature that produced no trace at all.
 
     Reported beside the session list rather than dropped: a feature that burned
@@ -150,8 +138,10 @@ def traceless_runs(feature_key: str) -> int:
     """
     with SessionLocal() as session:
         row = session.exec(text(
-            f"WITH {lane_module.LANE}{lane_module.TRACELESS}"
-        ).bindparams(k=feature_key)).first()
+            "SELECT COUNT(*) FROM agent_task_runs r"
+            " JOIN agent_tasks t ON t.id = r.task_id"
+            " WHERE t.feature_id = :f AND r.trace_id IS NULL"
+        ).bindparams(f=feature_id)).first()
     return int(row[0] or 0)
 
 
@@ -163,12 +153,12 @@ def features_for_session(trace_id: str) -> list[SessionFeature]:
             select(SessionFeature)
             .where(SessionFeature.trace_id == canonical)
             .order_by(SessionFeature.is_primary.desc(),
-                      SessionFeature.feature_key)).all()
+                      SessionFeature.feature_id)).all()
         return list(rows)
 
 
-def sessions_for_feature(feature_key: str) -> list[AttributedSession]:
-    """The sessions of a feature: declared rows and the task lane, merged.
+def sessions_for_feature(feature_id: int) -> list[AttributedSession]:
+    """The sessions of a feature: declared rows and the run lane, merged.
 
     Every run that produced a trace counts whatever its status — `done`,
     `failed`, and open rows never settled by their callback. The tokens were
@@ -178,49 +168,45 @@ def sessions_for_feature(feature_key: str) -> list[AttributedSession]:
     with SessionLocal() as session:
         declared = list(session.exec(
             select(SessionFeature)
-            .where(SessionFeature.feature_key == feature_key)).all())
+            .where(SessionFeature.feature_id == feature_id)).all())
         primary_elsewhere = {
             r[0] for r in session.exec(text(
                 "SELECT trace_id FROM session_features "
-                "WHERE is_primary = 1 AND feature_key != :k"
-            ).bindparams(k=feature_key)).all()}
+                "WHERE is_primary = 1 AND feature_id != :f"
+            ).bindparams(f=feature_id)).all()}
 
     rows: dict[str, AttributedSession] = {
         row.trace_id: AttributedSession(
             trace_id=row.trace_id, provenance=row.provenance,
             is_primary=row.is_primary, round=row.round)
         for row in declared}
-    for trace, task_id in _lane_traces(feature_key):
+    for trace, task_id in _lane_traces(feature_id):
         if trace in rows:
             continue
         rows[trace] = AttributedSession(
-            trace_id=trace, provenance=TASK_LINK,
+            trace_id=trace, provenance=RUN,
             is_primary=0 if trace in primary_elsewhere else 1,
             task_id=task_id)
     return sorted(rows.values(), key=lambda r: r.trace_id)
 
 
 def _lane_features_for(canonical: str) -> list[tuple]:
-    """`(feature_key, task_id)` every declaration puts this session under.
+    """`(feature_id, task_id)` every run puts this session under.
 
     The same lane read backwards: a run's trace and the conversation it drove
     are one session, so the match is on the canonical id rather than on
     whichever of the pair the run recorded.
-
-    A task naming two features contributes nothing — the lane already excludes
-    it — exactly as it contributes nothing to `sessions_for_feature`. The
-    reverse direction cannot quietly charge a session to a feature the forward
-    direction refuses to charge it to.
     """
     with SessionLocal() as session:
-        rows = session.exec(text(lane_module.with_lane(
-            " SELECT DISTINCT key, task_id FROM lane WHERE trace_id = :c"
-        )).bindparams(c=canonical)).all()
+        rows = session.exec(text(
+            f"WITH {LANE} SELECT DISTINCT feature_id, task_id FROM lane"
+            " WHERE trace_id = :c"
+        ).bindparams(c=canonical)).all()
     return [(row[0], row[1]) for row in rows]
 
 
 def attributions_for_session(trace_id: str) -> list[Attribution]:
-    """Every feature this session is counted under, declared rows and the task
+    """Every feature this session is counted under, declared rows and the run
     lane merged.
 
     The mirror of `sessions_for_feature`, and deliberately *not* the same
@@ -228,44 +214,45 @@ def attributions_for_session(trace_id: str) -> list[Attribution]:
     session claim", which is what blame demands; this one answers "what does
     the ledger count this session against", which is what a reader is owed.
     Measured on the live database, 22 of 23 attributed traces reach their
-    feature only through the task lane, so a display built on the narrower
+    feature only through the run lane, so a display built on the narrower
     reader would call them unattributed while the feature page counted them.
     """
     canonical = canonical_trace(trace_id)
     declared = features_for_session(canonical)
-    rows = {row.feature_key: Attribution(
-        feature_key=row.feature_key, provenance=row.provenance,
+    rows = {row.feature_id: Attribution(
+        feature_id=row.feature_id, provenance=row.provenance,
         is_primary=row.is_primary, round=row.round) for row in declared}
-    for key, task_id in _lane_features_for(canonical):
-        if key in rows:
+    for feature_id, task_id in _lane_features_for(canonical):
+        if feature_id in rows:
             continue
-        rows[key] = Attribution(feature_key=key, provenance=TASK_LINK,
-                                is_primary=1, task_id=task_id)
-    return sorted(rows.values(),
-                  key=lambda r: (-r.is_primary, r.feature_key))
+        rows[feature_id] = Attribution(feature_id=feature_id, provenance=RUN,
+                                       is_primary=1, task_id=task_id)
+    return sorted(rows.values(), key=lambda r: (-r.is_primary, r.feature_id))
 
 
-def unattribute(feature_key: str, trace_id: str) -> bool:
+def unattribute(feature_id: int, trace_id: str) -> bool:
     """Withdraw a declaration. True when a row was removed.
 
     False — never an error — when the session reaches the feature through the
-    task lane instead: there is no row to delete, because the assertion is the
-    link on the task, and withdrawing it is an act on that task.
+    run lane instead: there is no row to delete, because the assertion is the
+    task's placement under the feature, and withdrawing it is an act on that
+    task.
     """
-    key, target = _checked(feature_key, trace_id)
+    target = _checked(feature_id, trace_id)
     canonical = canonical_trace(target)
     with SessionLocal() as session:
         row = session.exec(
             select(SessionFeature).where(
                 SessionFeature.trace_id == canonical,
-                SessionFeature.feature_key == key)).first()
+                SessionFeature.feature_id == feature_id)).first()
         if row is None:
-            log.read("feature_unattribute_missed", feature_key=key,
+            log.read("feature_unattribute_missed", feature_id=feature_id,
                      trace_id=canonical)
             return False
         session.delete(row)
         session.commit()
-    log.write("feature_unattributed", feature_key=key, trace_id=canonical)
+    log.write("feature_unattributed", feature_id=feature_id,
+              trace_id=canonical)
     return True
 
 
@@ -298,70 +285,65 @@ def _apply_primary(session, siblings: list, row: SessionFeature,
         session.add(sibling)
 
 
-def _row_for(session, canonical: str, key: str) -> tuple:
+def _row_for(session, canonical: str, feature_id: int) -> tuple:
     """The `(siblings, row)` pair for this trace, creating the row if new."""
     siblings = list(session.exec(
         select(SessionFeature)
         .where(SessionFeature.trace_id == canonical)).all())
-    row = next((s for s in siblings if s.feature_key == key), None)
+    row = next((s for s in siblings if s.feature_id == feature_id), None)
     if row is None:
-        row = SessionFeature(trace_id=canonical, feature_key=key)
+        row = SessionFeature(trace_id=canonical, feature_id=feature_id)
         siblings.append(row)
     return siblings, row
 
 
-def _checked(feature_key: str, trace_id: str) -> tuple:
-    key, target = (feature_key or "").strip(), (trace_id or "").strip()
-    if not key:
-        raise ValueError("attribution needs a feature key")
+def _checked(feature_id: int, trace_id: str) -> str:
+    target = (trace_id or "").strip()
+    if feature_id is None:
+        raise ValueError("attribution needs a feature")
     if not target:
         raise ValueError("attribution needs a session")
-    return key, target
+    return target
 
 
-def attribute(feature_key: str, trace_id: str, *, primary: bool = False,
+def attribute(feature_id: int, trace_id: str, *, primary: bool = False,
               attributing_trace: Optional[str] = None) -> SessionFeature:
     """Declare that a session was building a feature.
 
-    Runnable at any point, including long after the session ended — CAI-239
-    makes the late claim the normal case, and nothing here is time-bounded.
+    Runnable at any point, including long after the session ended — the late
+    claim is the normal case, and nothing here is time-bounded.
     """
-    key, target = _checked(feature_key, trace_id)
+    target = _checked(feature_id, trace_id)
     canonical = canonical_trace(target)
     provenance = _provenance_for(target, attributing_trace)
 
     with SessionLocal() as session:
-        siblings, row = _row_for(session, canonical, key)
+        siblings, row = _row_for(session, canonical, feature_id)
         row.provenance = provenance
-        row.round = _round_at_claim(key) if provenance == DECLARED else None
+        row.round = _round_at_claim(feature_id) if provenance == DECLARED \
+            else None
         _apply_primary(session, siblings, row, primary)
         session.add(row)
         session.commit()
         session.refresh(row)
-        log.write("feature_attributed", feature_key=key, trace_id=canonical,
-                  provenance=provenance, is_primary=row.is_primary)
+        log.write("feature_attributed", feature_id=feature_id,
+                  trace_id=canonical, provenance=provenance,
+                  is_primary=row.is_primary)
         return row
 
 
-def _round_at_claim(feature_key: str) -> Optional[int]:
-    """The round the tracker reports right now, or None when it cannot answer.
+def _round_at_claim(feature_id: int) -> int:
+    """The round this feature stands at right now.
 
-    None rather than `1`: a real never-reopened feature reads `1`, so the floor
-    must not double as "we could not look".
+    Always answerable, unlike the tracker fetch it replaces: it is a count of
+    local events. So there is no longer a NULL meaning "we could not look" on
+    a `declared` row, and `1` unambiguously means never walked back.
     """
-    from lib.defects import tracker  # noqa: PLC0415  (circular at import time)
-    from lib.tasks.integrations import IntegrationError  # noqa: PLC0415
-    from lib.tasks import issue_cache  # noqa: PLC0415
-    try:
-        provider, ref = tracker.resolve(feature_key)
-        issue = provider.fetch_issue(ref)
-    except (tracker.TrackerUnavailable, IntegrationError):
-        return None
-    issue_cache.remember(ref.provider, ref.key, issue)
-    return issue.rounds
+    from lib.features import events  # noqa: PLC0415  (circular at import time)
+    return events.rounds(feature_id)
 
 
-def declared_feature(trace_id: str) -> str:
+def declared_feature(trace_id: str) -> int:
     """Resolve `@session` — the feature this session declared.
 
     Refuses on nothing declared, on two declared, and on a trace nobody knows.
@@ -377,10 +359,11 @@ def declared_feature(trace_id: str) -> str:
     if not rows:
         raise NoDeclaration(
             f"{trace_id} declared no feature — "
-            f"`regin feature attribute <KEY> --session {trace_id}` first")
+            f"`regin feature attribute <ID> --session {trace_id}` first")
     if len(rows) > 1:
-        keys = ", ".join(sorted(r.feature_key for r in rows))
+        named = ", ".join(str(r.feature_id) for r in sorted(
+            rows, key=lambda r: r.feature_id))
         raise NoDeclaration(
-            f"{trace_id} declared two features ({keys}) — name the one that "
+            f"{trace_id} declared two features ({named}) — name the one that "
             "caused the bug, which is not necessarily either of them")
-    return rows[0].feature_key
+    return rows[0].feature_id

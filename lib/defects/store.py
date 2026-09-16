@@ -7,9 +7,11 @@ caught this*, attribution stays late-binding so a defect can wait unattributed
 instead of being guessed onto the wrong feature, and the round only ever moves
 through `reopen` — a declared act, never a re-typed string.
 
-`feature_key` names **the feature that caused the bug**, which is not
+`feature_id` names **the feature that caused the bug**, which is not
 necessarily the one the reporting session was working on. Nothing here
-propagates a session's declared feature onto a defect.
+propagates a session's declared feature onto a defect, and `reported_by_trace`
+carries the invariant in its own name: it records who reported it, never who
+caused it.
 """
 
 from __future__ import annotations
@@ -23,9 +25,14 @@ from typing import Iterable, Optional
 from sqlmodel import select
 
 from lib.activity_log import get_activity_logger
+from lib.defects import query as defect_query
 from lib.orm import SessionLocal
 from lib.orm.models.defects import (
-    FEATURE_KEY_MAX, STATUS_CLOSED, STATUS_OPEN, SYMPTOM_MAX, Defect,
+    STATUS_CLOSED, STATUS_OPEN, SYMPTOM_MAX, Defect,
+)
+from lib.tasks.query import like_pattern
+from lib.utils.pagination import (
+    DEFAULT_PAGE_SIZE, Page, paginate_query_stmt,
 )
 
 log = get_activity_logger("defects")
@@ -52,30 +59,6 @@ def symptom_key(symptom: str) -> str:
     return _WHITESPACE.sub(" ", symptom).strip().lower()
 
 
-def normalize_key(feature_key: Optional[str]) -> Optional[str]:
-    """The feature key as it will be stored, or None for unattributed.
-
-    `feature_key` is identity — every reader joins on it by equality — so a
-    padded or empty one is not a cosmetic flaw. `' CAI-206'` is a key
-    `for_feature('CAI-206')` cannot find and a *second feature* in the index's
-    population, and `''` is a row `unattributed()` does not return either, so
-    it belongs to no listable scope at all. Normalizing at the one writer is
-    what makes `attribute`'s existing strip a rule rather than that caller's
-    habit.
-    """
-    stripped = (feature_key or "").strip()
-    return stripped or None
-
-
-def _check_key(feature_key: Optional[str]) -> None:
-    """The cap the model declares for `feature_key`, enforced where the row is
-    written. Declared and unenforced, it was a claim about the data nothing
-    made true — the column is bare `TEXT`."""
-    if feature_key and len(feature_key) > FEATURE_KEY_MAX:
-        raise DefectError(
-            f"a feature key is at most {FEATURE_KEY_MAX} characters")
-
-
 def _check_symptom(symptom: str) -> None:
     if len(symptom.strip()) > SYMPTOM_MAX:
         raise DefectError(
@@ -95,13 +78,13 @@ def get(defect_id: int) -> Defect:
         return _get(session, defect_id)
 
 
-def _existing(session, feature_key: str, key: str) -> Optional[Defect]:
+def _existing(session, feature_id: int, key: str) -> Optional[Defect]:
     return session.exec(
-        select(Defect).where(Defect.feature_key == feature_key,
+        select(Defect).where(Defect.feature_id == feature_id,
                              Defect.symptom_key == key)).first()
 
 
-def _existing_in_session(session, session_id: str,
+def _existing_in_session(session, trace_id: str,
                          key: str) -> Optional[Defect]:
     """The unattributed twin of `_existing`, matching the partial unique index.
 
@@ -109,8 +92,8 @@ def _existing_in_session(session, session_id: str,
     is two independent reports, and collapsing them would lose a real count.
     """
     return session.exec(
-        select(Defect).where(Defect.feature_key.is_(None),
-                             Defect.session_id == session_id,
+        select(Defect).where(Defect.feature_id.is_(None),
+                             Defect.reported_by_trace == trace_id,
                              Defect.symptom_key == key)).first()
 
 
@@ -123,17 +106,36 @@ def _union_paths(row: Defect, extra: Iterable[str]) -> Optional[str]:
     return json.dumps(merged) if merged else None
 
 
-def _bind_blame(row: Defect) -> None:
-    """Freeze the tracker's state for the feature blamed, once and only once.
+def _require_feature(feature_id: Optional[int]) -> None:
+    """Refuse a feature that does not exist, rather than letting the foreign
+    key surface as a 500.
 
-    A failed fetch writes NULL and the defect still lands: losing a report to a
-    network blip corrupts the ledger the metric reads, which is worse than
-    losing one field. See `lib/defects/escapes.py`.
+    The padding and blank-string normalisation this replaced existed because
+    the key was a free string — `' CAI-206'` was a second feature nobody could
+    spell. An integer has no spelling to normalize, but it can still name
+    nothing, and that is the one check left worth making at the writer.
     """
-    if not row.feature_key or row.blamed_against_state is not None:
+    if feature_id is None:
+        return
+    from lib.orm.models.features import Feature  # noqa: PLC0415
+
+    with SessionLocal() as session:
+        if session.get(Feature, feature_id) is None:
+            raise DefectError(f"no feature {feature_id}")
+
+
+def _bind_blame(row: Defect) -> None:
+    """Point the defect at the feature's current last event, once per blame.
+
+    No fetch, no failure mode, no gap to count: the event is a local row that
+    already exists. Its predecessor asked a tracker for a state word, so a
+    network blip decided whether an escape was countable — which is why the
+    old column had two gap counters and this one has none.
+    """
+    if row.feature_id is None or row.blamed_event_id is not None:
         return
     from lib.defects import escapes  # noqa: PLC0415  (circular at import time)
-    row.blamed_against_state = escapes.blame_state(row.feature_key)
+    row.blamed_event_id = escapes.blame_pointer(row.feature_id)
 
 
 @dataclass(frozen=True)
@@ -148,13 +150,13 @@ class Recorded:
         return self.outcome == DEDUPED
 
 
-def record_reporting(symptom: str, *, feature_key: Optional[str] = None,
+def record_reporting(symptom: str, *, feature_id: Optional[int] = None,
                      session_id: Optional[str] = None,
                      suspect_paths: Iterable[str] = ()) -> Recorded:
     """Open a defect, or report the one already tracking this symptom.
 
-    Dedup runs on whichever axis the row has: `(feature_key, symptom_key)` when
-    attributed, `(session_id, symptom_key)` when not. A row with neither has
+    Dedup runs on whichever axis the row has: `(feature_id, symptom_key)` when
+    attributed, `(reported_by_trace, symptom_key)` when not. A row with neither has
     nothing to collide with and is always distinct — that is a real record, not
     a defect in the record-keeping.
 
@@ -164,29 +166,28 @@ def record_reporting(symptom: str, *, feature_key: Optional[str] = None,
     """
     if not symptom.strip():
         raise DefectError("a defect needs a symptom")
-    feature_key = normalize_key(feature_key)
     _check_symptom(symptom)
-    _check_key(feature_key)
+    _require_feature(feature_id)
     key = symptom_key(symptom)
     paths = list(suspect_paths)
     with SessionLocal() as session:
         found = None
-        if feature_key is not None:
-            found = _existing(session, feature_key, key)
+        if feature_id is not None:
+            found = _existing(session, feature_id, key)
         elif session_id:
             found = _existing_in_session(session, session_id, key)
         if found is not None:
             return Recorded(_dedup_hit(session, found, paths), DEDUPED)
         row = Defect(
-            feature_key=feature_key, symptom=symptom.strip(), symptom_key=key,
-            session_id=session_id, opened_at=_now(), updated_at=_now(),
+            feature_id=feature_id, symptom=symptom.strip(), symptom_key=key,
+            reported_by_trace=session_id, opened_at=_now(), updated_at=_now(),
             suspect_paths_json=json.dumps(paths) if paths else None)
         _bind_blame(row)
         session.add(row)
         session.commit()
         session.refresh(row)
-        log.write("defect_opened", defect_id=row.id, feature_key=feature_key,
-                  blamed_against_state=row.blamed_against_state)
+        log.write("defect_opened", defect_id=row.id, feature_id=feature_id,
+                  blamed_event_id=row.blamed_event_id)
         return Recorded(row, OPENED)
 
 
@@ -202,15 +203,15 @@ def _dedup_hit(session, found: Defect, paths: list[str]) -> Defect:
     session.commit()
     session.refresh(found)
     log.read("defect_deduped", defect_id=found.id,
-             feature_key=found.feature_key)
+             feature_id=found.feature_id)
     return found
 
 
-def record(symptom: str, *, feature_key: Optional[str] = None,
+def record(symptom: str, *, feature_id: Optional[int] = None,
            session_id: Optional[str] = None,
            suspect_paths: Iterable[str] = ()) -> Defect:
     """`record_reporting`, for callers that do not need the outcome."""
-    return record_reporting(symptom, feature_key=feature_key,
+    return record_reporting(symptom, feature_id=feature_id,
                             session_id=session_id,
                             suspect_paths=suspect_paths).defect
 
@@ -269,7 +270,7 @@ def close(defect_id: int, *, missing_check: str) -> Defect:
         return row
 
 
-def attribute(defect_id: int, feature_key: str) -> Defect:
+def attribute(defect_id: int, feature_id: int) -> Defect:
     """Late-bind a defect to the feature that caused it — normally once blame
     on the fix commit names the origin, not at report time.
 
@@ -278,34 +279,33 @@ def attribute(defect_id: int, feature_key: str) -> Defect:
     defects-per-feature, the metric this ledger exists for. `merge` is the way
     out, because it is the operator asserting the two are the same.
     """
-    key = normalize_key(feature_key)
-    if key is None:
-        raise DefectError("attribution needs a feature key")
-    _check_key(key)
+    if feature_id is None:
+        raise DefectError("attribution needs a feature")
+    _require_feature(feature_id)
     with SessionLocal() as session:
         row = _get(session, defect_id)
-        clash = _existing(session, key, row.symptom_key)
+        clash = _existing(session, feature_id, row.symptom_key)
         if clash is not None and clash.id != row.id:
             raise DefectError(
-                f"#{clash.id} already reports this symptom for {key} — "
-                f"`regin defects merge {row.id} --into {clash.id}` if they "
-                "are the same bug")
+                f"#{clash.id} already reports this symptom for feature "
+                f"{feature_id} — `regin defects merge {row.id} --into "
+                f"{clash.id}` if they are the same bug")
         # Re-attribution is a NEW blame against a DIFFERENT feature, so the
-        # snapshot is re-taken. Write-once is per blame, not per row: keeping
-        # the first feature's `state_category` would leave the escape verdict
-        # describing a feature this defect is no longer blamed on — one
-        # feature's escape counted against another's ledger.
-        if row.feature_key and row.feature_key != key:
-            row.blamed_against_state = None
-        row.feature_key = key
+        # pointer is re-taken. Write-once is per blame, not per row: keeping
+        # the first feature's event would leave the escape verdict describing
+        # a feature this defect is no longer blamed on — one feature's escape
+        # counted against another's ledger.
+        if row.feature_id is not None and row.feature_id != feature_id:
+            row.blamed_event_id = None
+        row.feature_id = feature_id
         _bind_blame(row)
         row.updated_at = _now()
         session.add(row)
         session.commit()
         session.refresh(row)
         log.write("defect_attributed", defect_id=row.id,
-                  feature_key=row.feature_key,
-                  blamed_against_state=row.blamed_against_state)
+                  feature_id=row.feature_id,
+                  blamed_event_id=row.blamed_event_id)
         return row
 
 
@@ -327,17 +327,15 @@ def merge(duplicate_id: int, *, into: int) -> Defect:
     with SessionLocal() as session:
         dup = _get(session, duplicate_id)
         keeper = _get(session, into)
-        if (dup.fix_external_key and keeper.fix_external_key
-                and (dup.fix_provider, dup.fix_external_key)
-                != (keeper.fix_provider, keeper.fix_external_key)):
+        if (dup.fix_task_id and keeper.fix_task_id
+                and dup.fix_task_id != keeper.fix_task_id):
             raise DefectError(
                 f"#{dup.id} and #{keeper.id} point at different fix items "
-                f"({dup.fix_external_key} and {keeper.fix_external_key}) — "
+                f"(tasks {dup.fix_task_id} and {keeper.fix_task_id}) — "
                 "somebody thought these were two bugs; detach one first")
         keeper.suspect_paths_json = _union_paths(keeper, _paths(dup))
-        if not keeper.fix_external_key and dup.fix_external_key:
-            keeper.fix_provider = dup.fix_provider
-            keeper.fix_external_key = dup.fix_external_key
+        if not keeper.fix_task_id and dup.fix_task_id:
+            keeper.fix_task_id = dup.fix_task_id
         keeper.updated_at = _now()
         session.delete(dup)
         session.add(keeper)
@@ -348,85 +346,87 @@ def merge(duplicate_id: int, *, into: int) -> Defect:
         return keeper
 
 
-def set_fix_item(defect_id: int, provider: str, external_key: str) -> Defect:
-    """Point a defect at the tracker item that will close it.
+def set_fix_item(defect_id: int, task_id: int) -> Defect:
+    """Point a defect at the task that will close it.
+
+    A foreign key rather than the `(provider, external_key)` pair it replaces:
+    every item regin can point at is a row in `agent_tasks` now, so the loop
+    closes in the schema and a reader can join it instead of re-parsing a
+    string. The cost, stated: a defect can no longer be pointed at a remote
+    issue that has no task here.
 
     Last-writer-wins, unlike `session_features.is_primary`: that flag is a
     claim about the past that a later session could silently rewrite, while a
     fix item points at future work and legitimately moves. Nothing is counted
     from it, so a rewrite corrupts no metric.
     """
-    if not (provider or "").strip() or not (external_key or "").strip():
-        raise DefectError("a fix item needs a provider and a key")
+    from lib.orm.models.tasks import AgentTask  # noqa: PLC0415
+
     with SessionLocal() as session:
         row = _get(session, defect_id)
-        row.fix_provider = provider.strip()
-        row.fix_external_key = external_key.strip()
+        if session.get(AgentTask, task_id) is None:
+            raise DefectError(f"no task {task_id}")
+        row.fix_task_id = task_id
         row.updated_at = _now()
         session.add(row)
         session.commit()
         session.refresh(row)
         log.write("defect_fix_item_set", defect_id=row.id,
-                  fix_external_key=row.fix_external_key)
+                  fix_task_id=row.fix_task_id)
         return row
 
 
 def clear_fix_item(defect_id: int) -> Defect:
     with SessionLocal() as session:
         row = _get(session, defect_id)
-        row.fix_provider = None
-        row.fix_external_key = None
+        row.fix_task_id = None
         row.updated_at = _now()
         session.add(row)
         session.commit()
         session.refresh(row)
-        log.write("defect_fix_item_set", defect_id=row.id,
-                  fix_external_key=None)
+        log.write("defect_fix_item_set", defect_id=row.id, fix_task_id=None)
         return row
 
 
-def by_fix_item(provider: str, external_key: str) -> list[Defect]:
-    """Every defect one fix item is meant to close — the batch-fix query.
+def by_fix_item(task_id: int) -> list[Defect]:
+    """Every defect one task is meant to close — the batch-fix query.
 
     There is deliberately no bulk-close verb: that is where the missing-check
     answer gets rubber-stamped.
     """
     with SessionLocal() as session:
         rows = session.exec(
-            select(Defect).where(Defect.fix_provider == provider,
-                                 Defect.fix_external_key == external_key)
-            .order_by(Defect.id)).all()
+            select(Defect).where(Defect.fix_task_id == task_id)
+            .order_by(Defect.id.desc())).all()
         return list(rows)
 
 
 def fix_states(rows: Iterable[Defect]) -> dict:
-    """`{defect_id: state_category}` for each row carrying a fix item.
+    """`{defect_id: task status}` for each row carrying a fix item.
 
-    Read on demand rather than cached: this is a CLI read over a handful of
-    rows, so a cache would buy nothing and carry the staleness. An unreachable
-    tracker yields `unknown` — never "in sync", which would be a claim about
-    two axes that do not measure the same thing.
+    A local read now, so there is no unreachable-tracker reading to report and
+    no cache to go stale. A fix task somebody deleted yields nothing at all
+    rather than "in sync", which would be a claim about two axes that do not
+    measure the same thing.
     """
-    from lib.defects import escapes  # noqa: PLC0415  (circular at import time)
-    from lib.tasks.integrations.base import STATE_UNKNOWN  # noqa: PLC0415
-    out: dict = {}
-    seen: dict = {}
-    for row in rows:
-        if not row.fix_external_key:
-            continue
-        key = row.fix_external_key
-        if key not in seen:
-            seen[key] = escapes.blame_state(key) or STATE_UNKNOWN
-        out[row.id] = seen[key]
-    return out
+    from lib.orm.models.tasks import AgentTask  # noqa: PLC0415
+
+    ids = {row.fix_task_id for row in rows if row.fix_task_id}
+    if not ids:
+        return {}
+    with SessionLocal() as session:
+        status = {task_id: session.get(AgentTask, task_id) for task_id in ids}
+    return {row.id: status[row.fix_task_id].status
+            for row in rows
+            if row.fix_task_id and status.get(row.fix_task_id) is not None}
 
 
-def for_feature(feature_key: str) -> list[Defect]:
+def for_feature(feature_id: int) -> list[Defect]:
     with SessionLocal() as session:
         rows = session.exec(
-            select(Defect).where(Defect.feature_key == feature_key)
-            .order_by(Defect.id)).all()
-        log.read("defects_listed", feature_key=feature_key, count=len(rows))
+            select(Defect).where(Defect.feature_id == feature_id)
+            .order_by(Defect.id.desc())).all()
+        log.read("defects_listed", feature_id=feature_id, count=len(rows))
         return list(rows)
 
 
@@ -441,7 +441,7 @@ def latest_open_for_session(session_id: str) -> Optional[Defect]:
     with SessionLocal() as session:
         return session.exec(
             select(Defect)
-            .where(Defect.session_id == session_id,
+            .where(Defect.reported_by_trace == session_id,
                    Defect.status == STATUS_OPEN)
             .order_by(Defect.id.desc())).first()
 
@@ -463,8 +463,121 @@ def every() -> list[Defect]:
 
 
 def unattributed() -> list[Defect]:
+    """Newest first, the one direction every scope reads in.
+
+    These four helpers used to disagree — `every()` descending, the other
+    three ascending — so the CLI reversed its list on the same pill press the
+    page did. The web list is `listing()` now; these stay for the terminal and
+    for internal counts, and they hold the same order so the two surfaces
+    cannot describe the ledger differently.
+    """
     with SessionLocal() as session:
         rows = session.exec(
-            select(Defect).where(Defect.feature_key.is_(None))
-            .order_by(Defect.id)).all()
+            select(Defect).where(Defect.feature_id.is_(None))
+            .order_by(Defect.id.desc())).all()
         return list(rows)
+
+
+# ── The list ──────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class ListRow:
+    """One line of a defect list, with the two facts a row renders that are
+    not columns on `defects`.
+
+    They arrive **on the row**, from the same statement, because the two ways
+    of getting them here before were a session per row (`_blamed_kind`) and a
+    store call per row (`feature_store.get`) — an unbounded query times an
+    N+1. A figure that costs a query per row is a figure that stops being
+    affordable exactly when the ledger gets interesting.
+    """
+
+    defect: Defect
+    feature_title: Optional[str]
+    blamed_event_kind: Optional[str]
+
+
+def _sort_column(key: str):
+    from lib.orm.models.features import Feature  # noqa: PLC0415
+
+    return {
+        defect_query.SORT_OPENED: Defect.opened_at,
+        defect_query.SORT_UPDATED: Defect.updated_at,
+        defect_query.SORT_ROUND: Defect.round,
+        defect_query.SORT_STATUS: Defect.status,
+        defect_query.SORT_FEATURE: Feature.title,
+    }[key]
+
+
+def _ordered(stmt, sort):
+    """Apply the sort, tie-broken by `id`.
+
+    The tiebreaker follows the sort's own direction rather than being pinned
+    ascending: `opened_at` has second resolution, so a page of defects filed
+    in the same second is ordered *entirely* by the tiebreaker, and a
+    newest-first list whose ties read oldest-first is the reported bug in
+    miniature. Either direction is a total order, which is what keeps a row
+    from landing on two pages or on none.
+    """
+    descending = sort.dir == defect_query.DESC
+    column = _sort_column(sort.key)
+    return stmt.order_by(column.desc() if descending else column.asc(),
+                         Defect.id.desc() if descending else Defect.id.asc())
+
+
+def _by_project(stmt, query):
+    from lib.orm.models.features import Feature  # noqa: PLC0415
+
+    if query.project_id is not None:
+        return stmt.where(Feature.project_id == query.project_id)
+    if query.project_none:
+        # The outer join already renders an unattributed defect's project as
+        # NULL, which is the answer the ledger gives: it has none. One
+        # predicate covers both halves of R4's `none` scope, so the two
+        # cannot drift apart.
+        return stmt.where(Feature.project_id.is_(None))
+    return stmt
+
+
+def _narrowed(stmt, query):
+    if query.fix_task_id is not None:
+        stmt = stmt.where(Defect.fix_task_id == query.fix_task_id)
+    if query.feature_id is not None:
+        stmt = stmt.where(Defect.feature_id == query.feature_id)
+    if query.unattributed:
+        stmt = stmt.where(Defect.feature_id.is_(None))
+    if query.status:
+        stmt = stmt.where(Defect.status == query.status)
+    if query.q:
+        stmt = stmt.where(Defect.symptom.like(like_pattern(query.q),
+                                              escape="\\"))
+    return _by_project(stmt, query)
+
+
+def listing_stmt(query):
+    """The one statement every defect list runs."""
+    from lib.orm.models.features import Feature, FeatureEvent  # noqa: PLC0415
+
+    stmt = (select(Defect, Feature.title, FeatureEvent.kind)
+            .join(Feature, Feature.id == Defect.feature_id, isouter=True)
+            .join(FeatureEvent, FeatureEvent.id == Defect.blamed_event_id,
+                  isouter=True))
+    return _ordered(_narrowed(stmt, query), query.sort)
+
+
+def listing(query=None, *, page: int = 0,
+            size: int = DEFAULT_PAGE_SIZE) -> Page:
+    """One page of the ledger under `query`.
+
+    Bounded, because the alternative was every row the table holds: `total`
+    still describes the whole filtered population, so a surface can say
+    "50 of 1 204" rather than implying it has shown everything.
+    """
+    query = query or defect_query.DefectQuery()
+    with SessionLocal() as session:
+        result = paginate_query_stmt(
+            session, listing_stmt(query), page, size,
+            row_to_dict=lambda row: ListRow(row[0], row[1], row[2]))
+    log.read("defects_listed", scope=query.scope, count=len(result.items),
+             total=result.total)
+    return result

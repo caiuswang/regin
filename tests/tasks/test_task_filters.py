@@ -347,8 +347,11 @@ def test_a_dropped_repo_leaves_its_tasks_in_the_backlog(flask_client):
     assert task["project_id"] == pid
     listed = flask_client.get(f"/api/tasks?project_id={pid}",
                               headers=EDITOR).get_json()["items"]
+    # `run_count` and `armed` are page-level additions, not part of the row a
+    # detail read returns: both are grouped queries the list does once for
+    # every id on it.
     assert [{k: v for k, v in row.items()
-             if k not in ("child_count", "run_count")} for row in listed] == [task]
+             if k not in ("run_count", "armed")} for row in listed] == [task]
 
 
 # ── every surface that can set a project ─────────────────────
@@ -388,3 +391,30 @@ def test_an_edit_that_does_not_mention_the_project_leaves_it_alone(flask_client)
                                 json={"title": "renamed"},
                                 headers=EDITOR).get_json()["task"]
     assert edited["project_id"] == pid
+
+
+# ── the axes the toolbar can now reach ───────────────────────
+
+def test_assignee_narrows_to_one_persons_claims(flask_client, native_task):
+    mine = native_task(title="claimed", assignee=2)
+    native_task(title="someone else's", assignee=3)
+    native_task(title="nobody's")
+
+    assert _ids(flask_client, "?assignee=2") == [mine]
+
+
+def test_an_unknown_assignee_is_refused_not_dropped(flask_client, native_task):
+    native_task(title="claimed", assignee=2)
+
+    # Dropped, this would answer with the whole backlog under a control that
+    # says one person's name.
+    assert flask_client.get("/api/tasks?assignee=nobody",
+                            headers=EDITOR).status_code == 400
+
+
+def test_tag_and_source_narrow_the_feed(flask_client, native_task):
+    tagged = native_task(title="tagged", tags_json='["release"]', source="cli")
+    native_task(title="other tag", tags_json='["ui"]', source="cli")
+    native_task(title="other source", tags_json='["release"]', source="linear")
+
+    assert _ids(flask_client, "?tag=release&source=cli") == [tagged]

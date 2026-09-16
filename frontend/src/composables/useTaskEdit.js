@@ -18,9 +18,9 @@ function draftFrom(task) {
     // '' is the backlog, and a Select round-trips strings — the save converts
     // it back to the null the server reads as "unfile this".
     project_id: task.project_id == null ? '' : String(task.project_id),
-    // Same round-trip for the grain: '' is top-level, and clearing it is the
-    // detach — an act, not an omission.
-    parent_id: task.parent_id == null ? '' : String(task.parent_id),
+    // Same round-trip for the feature: '' is "under no feature", and clearing
+    // it is the detach — an act, not an omission.
+    feature_id: task.feature_id == null ? '' : String(task.feature_id),
   }
 }
 
@@ -63,8 +63,8 @@ export function useTaskEdit(task) {
       project_id: draft.value.project_id
         ? Number(draft.value.project_id)
         : null,
-      parent_id: draft.value.parent_id
-        ? Number(draft.value.parent_id)
+      feature_id: draft.value.feature_id
+        ? Number(draft.value.feature_id)
         : null,
     })
     saving.value = false

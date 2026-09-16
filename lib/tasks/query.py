@@ -89,7 +89,8 @@ def parse_filters(args) -> dict:
     raw_project = (args.get("project_id") or "").strip()
     unassigned = raw_project == "none"
 
-    # `root_only` narrows the feed to the feature grain. Off by default and
+    # `root_only` narrows the feed to the tasks under no feature. Off by
+    # default and
     # deliberately so: a run is a task like any other, and hiding one from the
     # backlog by default would make the counts beside the feed describe
     # something other than the backlog.
@@ -97,9 +98,13 @@ def parse_filters(args) -> dict:
 
     return {
         "status": _enum(args, "status", TASK_STATUSES),
-        "root_only": root_only,
-        "parent_id": parse_int((args.get("parent_id") or "").strip() or None,
-                               "parent_id"),
+        "unfeatured": root_only,
+        "feature_id": parse_int((args.get("feature_id") or "").strip() or None,
+                                "feature_id"),
+        # Who claimed it. A filter, never a write: claiming is an act the task
+        # surface leaves to `PATCH /tasks/<id>`.
+        "assignee": parse_int((args.get("assignee") or "").strip() or None,
+                              "assignee"),
         "sort": _enum(args, "sort", SORTS, SORT_CREATED_DESC),
         "priority": _enum(args, "priority", TASK_PRIORITIES),
         "q": (args.get("q") or "").strip()[:Q_MAX],
@@ -152,6 +157,8 @@ def apply_filters(stmt, filters: dict, *, ignore_status: bool = False):
         stmt = stmt.where(AgentTask.source == filters["source"])
     if filters["priority"]:
         stmt = stmt.where(AgentTask.priority == filters["priority"])
+    if filters.get("assignee") is not None:
+        stmt = stmt.where(AgentTask.assignee == filters["assignee"])
     return _by_grain(_by_project(stmt, filters), filters)
 
 
@@ -166,16 +173,16 @@ def _by_project(stmt, filters: dict):
 
 
 def _by_grain(stmt, filters: dict):
-    """Narrow to one feature's runs, or to the features themselves.
+    """Narrow to one feature's tasks, or to the tasks under no feature.
 
-    `parent_id` wins over `root_only` when both are given: naming a parent is
-    the more specific request, and a query that asked for both would otherwise
-    return nothing at all and look like an empty backlog.
+    `feature_id` wins over `unfeatured` when both are given: naming a feature
+    is the more specific request, and a query that asked for both would
+    otherwise return nothing at all and look like an empty backlog.
     """
-    if filters.get("parent_id") is not None:
-        return stmt.where(AgentTask.parent_id == filters["parent_id"])
-    if filters.get("root_only"):
-        return stmt.where(AgentTask.parent_id.is_(None))
+    if filters.get("feature_id") is not None:
+        return stmt.where(AgentTask.feature_id == filters["feature_id"])
+    if filters.get("unfeatured"):
+        return stmt.where(AgentTask.feature_id.is_(None))
     return stmt
 
 

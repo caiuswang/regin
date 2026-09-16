@@ -18,6 +18,7 @@ import { computed } from 'vue'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
 import { gapList, gapTotal, money } from '../../utils/ledgerFormat'
+import { SESSIONS_ANCHOR } from '../../utils/featureLinks'
 
 const props = defineProps({
   rows: { type: Array, default: () => [] },
@@ -35,7 +36,11 @@ const ghosts = computed(() => gapTotal(props.gaps) > props.rows.length)
 </script>
 
 <template>
-  <div class="ev">
+  <!-- The address the sessions figure links to. A count is a claim about rows,
+       and a claim with no way through to the rows is the one-way street this
+       id closes; the sessions LIST cannot be scoped to a feature by URL, so
+       this page is where "9 sessions" resolves. -->
+  <div :id="SESSIONS_ANCHOR" class="ev">
     <div v-if="!rows.length" class="ev-empty" data-testid="none-declared">
       <strong>none declared</strong>
       <p>
@@ -58,10 +63,10 @@ const ghosts = computed(() => gapTotal(props.gaps) > props.rows.length)
         <span class="ev-title" :title="r.title">{{ r.title || '—' }}</span>
 
         <span v-if="!r.is_primary" class="ev-tag ev-tag-shared">shared</span>
-        <!-- The tag is the reason this session is counted, so a `task-link`
-             one that names no task is a provenance nobody can audit. -->
+        <!-- The tag is the reason this session is counted, so a `run` one
+             that names no task is a provenance nobody can audit. -->
         <router-link
-          v-else-if="r.provenance === 'task-link' && r.task_id"
+          v-else-if="r.provenance === 'run' && r.task_id"
           class="ev-tag ev-tag-link"
           :to="`/tasks/${r.task_id}`"
         >task #{{ r.task_id }}</router-link>
@@ -82,7 +87,7 @@ const ghosts = computed(() => gapTotal(props.gaps) > props.rows.length)
              possible-but-not-now. The tag beside it points at the task where
              the assertion can actually be withdrawn. -->
         <Button
-          v-if="canUndeclare && r.provenance !== 'task-link'"
+          v-if="canUndeclare && r.provenance !== 'run'"
           class="ev-undeclare"
           variant="ghost" size="sm"
           :aria-label="`Un-declare ${r.short_trace} from this feature`"

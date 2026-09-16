@@ -18,8 +18,11 @@ Subcommands:
   list    — the backlog, newest first
   show    — one task in full
   delete  — remove a task and everything keyed to it
-  ship    — claim a top-level task done (the done-claim)
   finish  — report a run's work done (the agent's own final step)
+
+The done-claim is **not** here. It is an act on a feature, and a feature is its
+own row now: `regin feature ship <ID>`. It lived on a task because a top-level
+task used to BE the feature, which is exactly the overload regin:82 removed.
 """
 
 from __future__ import annotations
@@ -184,36 +187,6 @@ def cmd_delete(
         print(str(exc))
         raise typer.Exit(code=1)
     _emit(deleted, json, lambda t: print(f"deleted #{t['id']}  {t['title']}"))
-
-
-@tasks_app.command("ship", help="Claim a feature done — the done-claim.")
-def cmd_ship(
-    task_id: int = typer.Argument(..., help="Top-level task id."),
-    json: bool = typer.Option(False, "--json",
-                              help="Emit machine-readable JSON."),
-) -> None:
-    """Move a top-level task to `done`: the native analogue of moving a Linear
-    issue to Done, and the boundary every later defect is blamed against.
-
-    A direct DB write, like `add` and `delete` and unlike `finish`. A
-    done-claim releases no dependents, so it launches nothing and therefore
-    must keep working with the server stopped — which is exactly when someone
-    finishing a feature wants to record it.
-
-    Refused on a run: a task with a parent, or one holding runs of its own, is
-    the wrong grain, and the refusal names which.
-    """
-    try:
-        shipped = store.ship_task(task_id)
-    except store.TransitionRejected as exc:
-        print(str(exc))
-        raise typer.Exit(code=1)
-    if shipped is None:
-        print(f"no task #{task_id}")
-        raise typer.Exit(code=1)
-    _emit(shipped, json,
-          lambda t: print(f"shipped #{t['id']}  {t['title']}  "
-                          f"rounds={t['rounds']}"))
 
 
 @tasks_app.command(

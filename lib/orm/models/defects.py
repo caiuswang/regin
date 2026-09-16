@@ -5,16 +5,25 @@ lifecycle axes a memory has none of — open/closed, a round counter, attributed
 or not. Folding those into tags would put two axes on one column. The *lesson*
 a defect yields when it closes is still a memory.
 
-A NULL `feature_key` is **unattributed**, and that is a first-class state, not
-a gap to be filled by a guess: a wrong parent inflates one feature's rounds and
+A NULL `feature_id` is **unattributed**, and that is a first-class state, not a
+gap to be filled by a guess: a wrong parent inflates one feature's rounds and
 exonerates another, and the result is corrupted data that looks fine.
+
+`blamed_event_id` is the escape verdict, and it is a **pointer at an immutable
+row** rather than a cached word. Its predecessor was a nullable
+`blamed_against_state` string that could be absent (nobody looked), stale, or
+hold a vocabulary regin did not carry — three readings for one column. An
+event cannot go stale, so "did this feature have shipped when we blamed it"
+is one comparison with no gaps to count.
 """
 
 from __future__ import annotations
 
 from typing import Optional
 
-from sqlmodel import Column, Field, Index, Integer, Text, UniqueConstraint, text
+from sqlmodel import (
+    Column, Field, ForeignKey, Index, Integer, Text, UniqueConstraint, text,
+)
 
 from lib.orm.base import Base
 
@@ -22,7 +31,6 @@ STATUS_OPEN = "open"
 STATUS_CLOSED = "closed"
 
 SYMPTOM_MAX = 4000
-FEATURE_KEY_MAX = 200
 
 
 class Defect(Base, table=True):
@@ -30,7 +38,7 @@ class Defect(Base, table=True):
 
     __tablename__ = "defects"
     __table_args__ = (
-        UniqueConstraint("feature_key", "symptom_key",
+        UniqueConstraint("feature_id", "symptom_key",
                          name="uq_defects_feature_symptom"),
         # An unattributed defect dedups within its session. A partial index
         # rather than a Python check because its sibling above already is one:
@@ -38,22 +46,27 @@ class Defect(Base, table=True):
         # one of them quietly stops holding. NULL never collides in SQLite, so
         # a row with neither feature nor session stays distinct — which is
         # correct, there is nothing for it to collide with.
-        Index("uq_defects_session_symptom", "session_id", "symptom_key",
-              unique=True, sqlite_where=text("feature_key IS NULL")),
-        Index("idx_defects_fix_item", "fix_provider", "fix_external_key"),
+        Index("uq_defects_session_symptom", "reported_by_trace", "symptom_key",
+              unique=True, sqlite_where=text("feature_id IS NULL")),
     )
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    feature_key: Optional[str] = Field(
-        default=None, sa_column=Column("feature_key", Text))
+    feature_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column("feature_id", Integer,
+                         ForeignKey("features.id", ondelete="SET NULL"),
+                         index=True))
     symptom: str = Field(sa_column=Column("symptom", Text, nullable=False))
     # The dedup axis, kept separate from `symptom` so the reporter's own
     # wording survives verbatim while matching stays insensitive to case and
     # whitespace.
     symptom_key: str = Field(
         sa_column=Column("symptom_key", Text, nullable=False))
-    session_id: Optional[str] = Field(
-        default=None, sa_column=Column("session_id", Text))
+    # Who reported it, and never who caused it. The name carries the
+    # invariant: the old `session_id` was one rename away from being read as
+    # blame, and neither direction is ever derived from the other.
+    reported_by_trace: Optional[str] = Field(
+        default=None, sa_column=Column("reported_by_trace", Text))
     suspect_paths_json: Optional[str] = Field(
         default=None, sa_column=Column("suspect_paths_json", Text))
     round: int = Field(
@@ -76,23 +89,21 @@ class Defect(Base, table=True):
                          server_default=text("(datetime('now'))")))
     closed_at: Optional[str] = Field(
         default=None, sa_column=Column("closed_at", Text))
-    # The tracker item that will close this defect. Two plain columns, not a
-    # join table and not a cached snapshot: `regin defects list` is an
-    # on-demand read over a handful of rows, so a cache would buy nothing and
-    # carry the staleness. At most one per defect; one item may serve many.
+    # The task that will close this defect. A foreign key rather than the
+    # `(fix_provider, fix_external_key)` pair it replaces: every tracker item
+    # regin can point at is now a row in `agent_tasks`, so the loop closes in
+    # the schema instead of in a string comparison nobody could join on.
     # regin never writes the defect's status from it or its state from the
-    # defect — `defects.status` asks *is this bug still real*, a tracker item
-    # asks *is this work still scheduled*.
-    fix_provider: Optional[str] = Field(
-        default=None, sa_column=Column("fix_provider", Text))
-    fix_external_key: Optional[str] = Field(
-        default=None, sa_column=Column("fix_external_key", Text))
-    # The tracker's raw `state_category` for `feature_key` at the instant that
-    # key was FIRST set — write-once. An escape is `== 'completed'`. The raw
-    # category rather than the derived stage name, so a later change to how
-    # regin reads a category cannot silently reinterpret history. NULL means we
-    # never looked; the string `'unknown'` means we looked and got a word we do
-    # not carry. Neither is folded into the count.
-    blamed_against_state: Optional[str] = Field(
-        default=None, sa_column=Column("blamed_against_state", Text))
-
+    # defect — `defects.status` asks *is this bug still real*, a task asks
+    # *is this work still scheduled*.
+    fix_task_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column("fix_task_id", Integer, index=True))
+    # The feature's last event at the instant blame was assigned. An escape is
+    # `blamed_event.kind == 'shipped'`. Re-attributing to another feature
+    # re-points it; the feature shipping afterwards does not, because the
+    # event this names cannot change.
+    blamed_event_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column("blamed_event_id", Integer,
+                         ForeignKey("feature_events.id", ondelete="SET NULL")))

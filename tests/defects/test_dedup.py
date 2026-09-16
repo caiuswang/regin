@@ -18,7 +18,7 @@ from cli.commands.defects import defects_app
 from lib.defects import store
 
 runner = CliRunner()
-KEY = "CAI-242"
+
 
 
 def test_an_unattributed_defect_dedups_within_its_session():
@@ -46,16 +46,17 @@ def test_a_row_with_neither_feature_nor_session_is_always_distinct():
     assert "already open" not in result.output
 
 
-def test_attribute_refuses_on_a_unique_collision_and_names_merge(no_tracker):
+def test_attribute_refuses_on_a_unique_collision_and_names_merge(feature_row):
     """Two *different* sessions report the same symptom, and both are later
     attributed to the same feature. Letting it through inflates
     defects-per-feature, the metric this ledger exists for."""
+    feature = feature_row()
     first = store.record("the gutter folds", session_id="t-1")
     second = store.record("the gutter folds", session_id="t-2")
-    store.attribute(first.id, KEY)
+    store.attribute(first.id, feature.id)
 
     with pytest.raises(store.DefectError) as exc:
-        store.attribute(second.id, KEY)
+        store.attribute(second.id, feature.id)
 
     assert f"#{first.id}" in str(exc.value)
     assert "merge" in str(exc.value)
@@ -79,13 +80,14 @@ def test_merge_refuses_a_self_merge(no_tracker):
         store.merge(row.id, into=row.id)
 
 
-def test_merge_refuses_two_different_fix_items(no_tracker):
+def test_merge_refuses_two_different_fix_items(native_task):
     """Two scheduled work items means somebody thought these were two bugs,
-    and silently dropping a board pointer is not a merge's business."""
+    and silently dropping a pointer is not a merge's business."""
+    first, second = native_task(title="fix A"), native_task(title="fix B")
     keeper = store.record("a", session_id="t-1")
     dup = store.record("b", session_id="t-2")
-    store.set_fix_item(keeper.id, "linear", "CAI-1")
-    store.set_fix_item(dup.id, "linear", "CAI-2")
+    store.set_fix_item(keeper.id, first)
+    store.set_fix_item(dup.id, second)
 
     with pytest.raises(store.DefectError):
         store.merge(dup.id, into=keeper.id)
@@ -93,7 +95,7 @@ def test_merge_refuses_two_different_fix_items(no_tracker):
     # But if only the duplicate has one, the keeper adopts it.
     store.clear_fix_item(keeper.id)
     store.merge(dup.id, into=keeper.id)
-    assert store.get(keeper.id).fix_external_key == "CAI-2"
+    assert store.get(keeper.id).fix_task_id == second
 
 
 def test_a_dedup_hit_says_so_and_never_touches_round():

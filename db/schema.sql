@@ -919,6 +919,61 @@ CREATE TABLE IF NOT EXISTS api_keys (
     revoked_at   TEXT
 );
 
+-- A feature: its own row and its own primary key. The population IS this
+-- table. It used to be a five-arm union of strings over session_features,
+-- defects, agent_task_links and agent_tasks, so four surfaces answered "what
+-- counts as a feature" four different ways — and none of the arms was the
+-- done-claim, which is how a feature could be shipped without being listed.
+--
+-- external_ref carries NO referential integrity requirement: a remote issue
+-- somebody deleted leaves this row perfectly valid. It is a record of what was
+-- built here, not a mirror of somebody else's database. It also absorbs the
+-- whole of the old issue_cache table — title, url, sync_error and synced_at
+-- each get a column, and the state history lives in feature_events.
+CREATE TABLE IF NOT EXISTS features (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    title        TEXT NOT NULL,
+    body         TEXT,
+    origin       TEXT NOT NULL DEFAULT 'native',
+    external_ref TEXT,
+    external_url TEXT,
+    sync_error   TEXT,
+    synced_at    TEXT,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    -- The registered repo this feature belongs to (repos.id). Declared, never
+    -- inferred: NULL is the first-class "in no project" scope, not a gap
+    -- waiting to be filled from a cwd, a branch name or a task's project.
+    -- Last because `0029` appends it: a fresh install and a migrated one must
+    -- agree column-for-column, order included.
+    project_id   INTEGER,
+    CONSTRAINT uq_features_origin_ref UNIQUE (origin, external_ref)
+);
+CREATE INDEX IF NOT EXISTS idx_features_project ON features(project_id);
+
+-- One declared step of a feature's life. APPEND-ONLY: never UPDATEd, never
+-- DELETEd. stage, rounds, claimed_at and the escape verdict are all queries
+-- over this table rather than stored columns, so a counter and the fact it
+-- counts cannot drift; undoing a ship is a `restarted` row, not a column reset.
+--
+-- The total order is `id`, NOT `at`. Two events written in one transaction
+-- share a timestamp, so a clock-ordered read would make a ship-then-restart
+-- depend on timestamp precision. `at` is for display.
+--
+-- declared_by is NOT NULL, so there is no unowned state change: `operator`,
+-- `run:<id>` or `sync:<provider>`.
+CREATE TABLE IF NOT EXISTS feature_events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    feature_id  INTEGER NOT NULL REFERENCES features(id) ON DELETE CASCADE,
+    kind        TEXT NOT NULL,
+    declared_by TEXT NOT NULL,
+    trace_id    TEXT,
+    at          TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_feature_events_feature
+    ON feature_events(feature_id, id);
+
+
 -- Captured task ideas — the intent layer in front of the SDK launcher. No
 -- execution parameter lives here by construction (no cwd, no model, no
 -- permission mode): capture is reachable with a third-party key, so the worst
@@ -938,11 +993,6 @@ CREATE TABLE IF NOT EXISTS agent_tasks (
     created_by  INTEGER,
     created_at  TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
-    -- Execution parameters, written by the arm route alone (user-authenticated).
-    -- NULL params_json is an inert task: captured, never armed.
-    params_json TEXT,
-    verify_cmd  TEXT,
-    autorun     INTEGER NOT NULL DEFAULT 0,
     -- The registered repo this task belongs to (repos.id) — what `project_id`
     -- already means in pattern_deployments. Nullable and with no FK, exactly
     -- like that column: a repo dropped from the registry leaves its tasks in
@@ -955,32 +1005,19 @@ CREATE TABLE IF NOT EXISTS agent_tasks (
     -- lib.orm.models.tasks.PRIORITY_ORDER is the mapping.
     priority      TEXT NOT NULL DEFAULT 'none',
     priority_rank INTEGER NOT NULL DEFAULT 4,
-    -- The feature grain. A task with parent_id IS NULL that something names as
-    -- parent IS a feature; its children are the runs. Depth is exactly two,
-    -- enforced at write time, which makes acyclicity free — a cycle needs a
-    -- child that is also a parent, and the rule forbids one. No FK, the same
-    -- provenance-label discipline created_by and project_id state.
-    parent_id     INTEGER,
+    -- The one feature this task is a step of, or NULL. ONE column, which is
+    -- what makes "a task holding two feature keys" unwritable — the shape
+    -- three refusals in lib/tasks/links.py and an `ambiguous` CTE in every
+    -- reader used to defend against.
+    feature_id    INTEGER REFERENCES features(id) ON DELETE SET NULL,
     -- users.id, claimed by an authenticated human about themselves. No FK: the
     -- serializer resolves an unknown id to null rather than cascading.
     assignee      INTEGER,
-    -- rounds = 1 + this. Incremented by exactly one edge — a child run
-    -- starting over a parent whose status is a claimed `done`, i.e. work
-    -- restarting after a ship claim. Never decremented, never reset, and
-    -- never inferred from timestamps: it is an event, and an event is not
-    -- recoverable from current state the way a status is.
-    completions_walked_back INTEGER NOT NULL DEFAULT 0,
-    -- The done-claim, as a recorded act. NULL until an operator declares the
-    -- feature shipped. It is NOT read off `status`: that column is the task
-    -- lifecycle, which `complete_run` writes when a run settles, and letting
-    -- one column carry both axes let a run settling ship a feature nobody
-    -- claimed. Only the claim and the un-claim write this.
-    claimed_at    TEXT,
     CONSTRAINT uq_agent_tasks_source_external UNIQUE (source, external_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_agent_tasks_status ON agent_tasks(status);
-CREATE INDEX IF NOT EXISTS idx_agent_tasks_parent ON agent_tasks(parent_id);
+CREATE INDEX IF NOT EXISTS idx_agent_tasks_feature ON agent_tasks(feature_id);
 CREATE INDEX IF NOT EXISTS idx_agent_tasks_project ON agent_tasks(project_id);
 -- The task feed keyset-paginates on (created_at DESC, id DESC), filtered by
 -- status. Without these two the page is a full scan plus a sort at any size.
@@ -1007,6 +1044,14 @@ CREATE TABLE IF NOT EXISTS agent_task_runs (
     ended_at         TEXT,
     exit_reason      TEXT,
     verify_exit_code INTEGER,
+    -- The parameters THIS attempt spends, written by the arm route alone
+    -- (user-authenticated). They sat on the task, so trying the same work with
+    -- different ones meant creating a second task — which is how "a sub-task
+    -- is a rerun" became a shape the model had to carry. An `armed` run row is
+    -- the pending attempt: parameterised, not yet launched.
+    params_json      TEXT,
+    verify_cmd       TEXT,
+    autorun          INTEGER NOT NULL DEFAULT 0,
     CONSTRAINT uq_agent_task_runs_attempt UNIQUE (task_id, attempt)
 );
 
@@ -1047,65 +1092,24 @@ CREATE TABLE IF NOT EXISTS agent_task_images (
 CREATE INDEX IF NOT EXISTS idx_agent_task_images_task
     ON agent_task_images(task_id);
 
--- A task's link to an issue in ANOTHER tracker (Linear today, one row
--- per platform tomorrow). A row rather than a `links_json` entry because it is
--- queried by provider and by key; `snapshot_json` caches the normalized issue
--- the provider last returned. The cache has no expiry — refresh is an event
--- (the attach, or an operator asking), never a clock — and `sync_error`
--- coexists with a stale snapshot so a failed fetch degrades the card instead
--- of erasing the operator's assertion. UNIQUE(task_id, provider, external_key)
--- makes re-attaching the same issue idempotent.
-CREATE TABLE IF NOT EXISTS agent_task_links (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    task_id       INTEGER NOT NULL,
-    provider      TEXT NOT NULL,
-    external_key  TEXT NOT NULL,
-    url           TEXT NOT NULL,
-    sync_error    TEXT,
-    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
-    CONSTRAINT uq_agent_task_links_ref UNIQUE (task_id, provider, external_key)
-);
-
-CREATE INDEX IF NOT EXISTS idx_agent_task_links_task
-    ON agent_task_links(task_id);
-
--- The issue itself, cached once per (provider, key) rather than once per link
--- row. Keyed by the feature, because a feature key need not have a task link
--- at all and may have two; keying the cache by the link made a snapshot
--- reachable only through whichever task happened to hold it.
+-- One defect: something a feature got wrong, addressed by the feature's
+-- integer id. Its own table rather than a memory because a defect carries
+-- lifecycle axes a memory has none of — open/closed, a round, attributed or
+-- not — and folding those into tags would put two axes on one column.
 --
--- A cache with no expiry: refresh is an event, never a clock, so a stale
--- snapshot stays readable and its age is stated (`synced_at`) rather than
--- hidden. A failed fetch writes nothing here — freshness is two states, and
--- `sync_error` belongs to the operator's link, not to the issue.
---
--- It feeds display only. `blame_state` deciding an escape from a stale
--- snapshot would rewrite the ledger's own numbers, so the CLI never reads it.
-CREATE TABLE IF NOT EXISTS issue_cache (
-    provider      TEXT NOT NULL,
-    external_key  TEXT NOT NULL,
-    snapshot_json TEXT NOT NULL,
-    synced_at     TEXT NOT NULL,
-    PRIMARY KEY (provider, external_key)
-);
-
--- One defect: something a feature got wrong, addressed by the feature key
--- (the tracker issue identifier, which also roots the branch name). Its own
--- table rather than a memory because a defect carries lifecycle axes a memory
--- has none of — open/closed, a round, attributed or not — and folding those
--- into tags would put two axes on one column.
---
--- `feature_key` NULL is *unattributed*, a first-class state: a wrong parent
+-- `feature_id` NULL is *unattributed*, a first-class state: a wrong parent
 -- inflates one feature's round count and exonerates another, so a defect waits
 -- unattributed until blame names its origin. NULLs do not collide in a SQLite
 -- unique index, so unattributed reports never dedup against each other — only
 -- an attributed (feature, symptom) pair is idempotent.
 CREATE TABLE IF NOT EXISTS defects (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
-    feature_key        TEXT,
+    feature_id         INTEGER REFERENCES features(id) ON DELETE SET NULL,
     symptom            TEXT NOT NULL,
     symptom_key        TEXT NOT NULL,
-    session_id         TEXT,
+    -- Who REPORTED it. Never who caused it; the name carries the invariant,
+    -- and neither direction is derived from the other.
+    reported_by_trace  TEXT,
     suspect_paths_json TEXT,
     round              INTEGER NOT NULL DEFAULT 1,
     status             TEXT NOT NULL DEFAULT 'open',
@@ -1113,39 +1117,37 @@ CREATE TABLE IF NOT EXISTS defects (
     opened_at          TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at         TEXT NOT NULL DEFAULT (datetime('now')),
     closed_at          TEXT,
-    -- The tracker item that will close this defect. At most one per defect;
-    -- one item may serve many. regin never writes either side from the other.
-    fix_provider       TEXT,
-    fix_external_key   TEXT,
-    -- The tracker's raw state_category for feature_key at the instant that key
-    -- was first set. Write-once. An escape is `= 'completed'`; NULL is "we
-    -- never looked" and 'unknown' is "we looked and got a word we don't hold".
-    blamed_against_state TEXT,
-    CONSTRAINT uq_defects_feature_symptom UNIQUE (feature_key, symptom_key)
+    -- The task that will close this defect. At most one per defect; one task
+    -- may serve many. regin never writes either side from the other.
+    fix_task_id        INTEGER,
+    -- The feature's last event at the instant blame was assigned. An escape is
+    -- `blamed_event.kind = 'shipped'` — a pointer at an immutable row, so it
+    -- cannot go stale and has no "we never looked" reading to count as a gap.
+    blamed_event_id    INTEGER REFERENCES feature_events(id) ON DELETE SET NULL,
+    CONSTRAINT uq_defects_feature_symptom UNIQUE (feature_id, symptom_key)
 );
 
-CREATE INDEX IF NOT EXISTS idx_defects_feature ON defects(feature_key);
+CREATE INDEX IF NOT EXISTS idx_defects_feature ON defects(feature_id);
 -- An unattributed defect dedups within its session: `regin defects open` is
 -- run by an agent, and a retried command after a transient failure would
 -- otherwise become a second row nobody notices.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_defects_session_symptom
-    ON defects(session_id, symptom_key) WHERE feature_key IS NULL;
-CREATE INDEX IF NOT EXISTS idx_defects_fix_item
-    ON defects(fix_provider, fix_external_key);
+    ON defects(reported_by_trace, symptom_key) WHERE feature_id IS NULL;
+CREATE INDEX IF NOT EXISTS idx_defects_fix_item ON defects(fix_task_id);
 
 -- Which feature a session was building. Mirrors session_repos; an
 -- unattributed session is the ABSENCE of a row, never a sentinel.
 CREATE TABLE IF NOT EXISTS session_features (
     trace_id    TEXT NOT NULL,
-    feature_key TEXT NOT NULL,
+    feature_id  INTEGER NOT NULL REFERENCES features(id) ON DELETE CASCADE,
     is_primary  INTEGER NOT NULL DEFAULT 0,
     provenance  TEXT NOT NULL DEFAULT 'declared',
     round       INTEGER,
     created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-    PRIMARY KEY (trace_id, feature_key)
+    PRIMARY KEY (trace_id, feature_id)
 );
 CREATE INDEX IF NOT EXISTS idx_session_features_feature
-    ON session_features(feature_key);
+    ON session_features(feature_id);
 
 -- Tag seeds are user-curated via $TAGS_CONFIG_PATH
 -- (default `~/.local/share/regin/config/tags.yaml`) and applied by

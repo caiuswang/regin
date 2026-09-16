@@ -1,7 +1,10 @@
 <script setup>
-import { computed } from 'vue'
-import { fmtDuration, fmtBytes, fullLabel } from '../../../utils/traceFormatters.js'
+import { computed, ref } from 'vue'
+import {
+  fmtDuration, fmtBytes, fullLabel, bashEditSummary, hasBashEdits,
+} from '../../../utils/traceFormatters.js'
 import CopyButton from './CopyButton.vue'
+import BashEditDiffs from './BashEditDiffs.vue'
 
 // Bash row: flat one-liner like other inline tool rows when collapsed, led by
 // a `Shell` verb. Output expands into a dark terminal-themed panel; the
@@ -16,8 +19,21 @@ defineEmits(['activate'])
 
 const hasBody = computed(() => {
   const a = props.span?.attributes || {}
-  return Boolean(a.command || a.stdout || a.stderr)
+  return Boolean(a.command || a.stdout || a.stderr || hasBashEdits(a))
 })
+
+const edits = computed(() => bashEditSummary(props.span?.attributes))
+
+// When the call changed files, the change is what the card is for and the
+// output is its trace — so the terminal panel opens on the diffs and keeps the
+// result one click away. Nullable override rather than a ref seeded at setup:
+// a live span acquires its edits after the card is already mounted, and a seed
+// read once would fold on whatever the span happened to carry first.
+const outputOverride = ref(null)
+const outputOpen = computed(() => (
+  outputOverride.value === null ? !edits.value.count : outputOverride.value
+))
+function toggleOutput() { outputOverride.value = !outputOpen.value }
 </script>
 
 <template>
@@ -61,6 +77,13 @@ const hasBody = computed(() => {
         v-if="span.attributes?.return_code_interpretation"
         class="text-[11px] text-slate-400 italic truncate shrink-0 max-w-[35%]"
       >{{ span.attributes.return_code_interpretation }}</span>
+      <span
+        v-if="edits.count"
+        class="font-mono text-[10.5px] text-orange-600 shrink-0"
+        data-bash-edit-count
+      >{{ edits.label }}</span>
+      <span v-if="edits.added" class="font-mono text-[10.5px] text-emerald-600 shrink-0">+{{ edits.added }}</span>
+      <span v-if="edits.removed" class="font-mono text-[10.5px] text-red-600 shrink-0">−{{ edits.removed }}</span>
       <span v-if="span.duration_ms" class="font-mono text-[10.5px] text-slate-400 shrink-0">{{ fmtDuration(span.duration_ms) }}</span>
       <!-- Only when there is a body to reveal: an `interrupted`-only Bash span
            carries no command or output, and its caret opened an empty box. -->
@@ -90,14 +113,24 @@ const hasBody = computed(() => {
         :class="span.attributes?.command ? 'border-t border-slate-800' : ''"
       >
         <div class="flex items-center gap-2 mb-1">
-          <span class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">stdout</span>
+          <button
+            type="button"
+            class="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400 hover:text-slate-200 focus-visible:outline-2 focus-visible:outline-blue-500"
+            data-bash-output-toggle
+            :aria-expanded="outputOpen"
+            @click.stop="toggleOutput"
+          ><span class="w-2 text-center select-none">{{ outputOpen ? '▾' : '▸' }}</span>stdout</button>
           <span
             v-if="span.attributes.stdout_truncated_bytes"
             class="text-[10px] text-amber-300 bg-amber-900/40 border border-amber-700/60 px-1 rounded"
           >truncated {{ fmtBytes(span.attributes.stdout_truncated_bytes) }}</span>
           <CopyButton :text="span.attributes.stdout" />
         </div>
-        <pre class="text-[12px] text-slate-100 whitespace-pre-wrap break-words font-mono leading-snug max-h-96 overflow-auto">{{ span.attributes.stdout }}</pre>
+        <pre
+          v-if="outputOpen"
+          data-bash-output
+          class="text-[12px] text-slate-100 whitespace-pre-wrap break-words font-mono leading-snug max-h-96 overflow-auto"
+        >{{ span.attributes.stdout }}</pre>
       </div>
       <div
         v-if="span.attributes?.stderr"
@@ -105,15 +138,30 @@ const hasBody = computed(() => {
         :class="(span.attributes?.stdout || span.attributes?.command) ? 'border-t border-slate-800' : ''"
       >
         <div class="flex items-center gap-2 mb-1">
-          <span class="text-[10px] font-semibold uppercase tracking-wider text-red-400">stderr</span>
+          <button
+            type="button"
+            class="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-red-400 hover:text-red-200 focus-visible:outline-2 focus-visible:outline-blue-500"
+            data-bash-output-toggle
+            :aria-expanded="outputOpen"
+            @click.stop="toggleOutput"
+          ><span class="w-2 text-center select-none">{{ outputOpen ? '▾' : '▸' }}</span>stderr</button>
           <span
             v-if="span.attributes.stderr_truncated_bytes"
             class="text-[10px] text-amber-300 bg-amber-900/40 border border-amber-700/60 px-1 rounded"
           >truncated {{ fmtBytes(span.attributes.stderr_truncated_bytes) }}</span>
           <CopyButton :text="span.attributes.stderr" tint="text-red-400 hover:bg-red-900/40" />
         </div>
-        <pre class="text-[12px] text-red-300 whitespace-pre-wrap break-words font-mono leading-snug max-h-64 overflow-auto">{{ span.attributes.stderr }}</pre>
+        <pre
+          v-if="outputOpen"
+          data-bash-output
+          class="text-[12px] text-red-300 whitespace-pre-wrap break-words font-mono leading-snug max-h-64 overflow-auto"
+        >{{ span.attributes.stderr }}</pre>
       </div>
+      <BashEditDiffs
+        v-if="edits.count"
+        :attrs="span.attributes"
+        :divided="Boolean(span.attributes?.command || span.attributes?.stdout || span.attributes?.stderr)"
+      />
     </div>
   </div>
 </template>

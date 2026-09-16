@@ -9,6 +9,7 @@ import api from '../../api'
 import Badge from '../Badge.vue'
 import Button from '../ui/Button.vue'
 import Card from '../Card.vue'
+import MarkdownContent from '../MarkdownContent.vue'
 import Textarea from '../ui/Textarea.vue'
 
 const props = defineProps({
@@ -98,7 +99,7 @@ onMounted(load)
           class="tc-comment"
         >
           <span class="tc-author">{{ comment.author_kind }}</span>
-          <span class="tc-body">{{ comment.body }}</span>
+          <MarkdownContent class="tc-body" :markdown="comment.body || ''" />
           <span class="tc-when">{{ comment.created_at }}</span>
         </div>
 
@@ -144,7 +145,11 @@ onMounted(load)
     font-size: 0.8125rem; padding: 0.15rem 0;
 }
 .tc-author { font-weight: 600; color: var(--color-fg-muted); font-size: 11.5px; }
-.tc-body { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.tc-body { flex: 1 1 12rem; min-width: 0; overflow-wrap: anywhere; }
+/* A comment is a row, so its rendered blocks may not add outer space; the
+   gap between comments belongs to the row, not to the markdown. */
+.tc-body :deep(> :first-child) { margin-top: 0; }
+.tc-body :deep(> :last-child) { margin-bottom: 0; }
 .tc-when {
     font-size: 11px; color: var(--color-fg-faint);
     font-variant-numeric: tabular-nums;

@@ -22,7 +22,7 @@ from lib.orm.models.tasks import (
 # It refuses rather than truncating, exactly as it always did.
 CAPTURE_BODY_MAX = 8000
 
-# `project_id`, `priority` and `parent_id` are labels and structure, not
+# `project_id`, `priority` and `feature_id` are labels and structure, not
 # execution parameters: setting any of them still leaves the task inert, so
 # they are safe on the capture surface a machine key reaches.
 #
@@ -31,14 +31,14 @@ CAPTURE_BODY_MAX = 8000
 # a machine key that is nobody — so it is edit-only.
 ALLOWED_FIELDS = frozenset({
     "title", "body", "source", "external_id", "tags", "links",
-    "project_id", "priority", "parent_id",
+    "project_id", "priority", "feature_id",
 })
 
 # An edit cannot change provenance: `source` and `external_id` are the replay
 # identity of the row, and rewriting them would let one task impersonate
 # another's redelivery.
 UPDATE_FIELDS = frozenset({"title", "body", "tags", "status",
-                           "project_id", "priority", "parent_id", "assignee"})
+                           "project_id", "priority", "feature_id", "assignee"})
 
 STATUS_MAX = 40
 
@@ -174,7 +174,7 @@ def parse_capture(payload) -> dict:
         "tags": _tags(payload),
         "links": _links(payload),
         "project_id": _project_id(payload),
-        "parent_id": _optional_id(payload, "parent_id"),
+        "feature_id": _optional_id(payload, "feature_id"),
         "priority": _priority(payload),
     }
 
@@ -211,7 +211,7 @@ def parse_update(payload) -> dict:
         "tags": _tags,
         "status": lambda p: _string(p, "status", STATUS_MAX, required=True),
         "project_id": _project_id,
-        "parent_id": lambda p: _optional_id(p, "parent_id"),
+        "feature_id": lambda p: _optional_id(p, "feature_id"),
         "assignee": lambda p: _optional_id(p, "assignee"),
         "priority": _priority,
     }

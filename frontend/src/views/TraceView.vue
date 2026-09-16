@@ -170,19 +170,4 @@ function tabCount(tab) {
 @media (prefers-reduced-motion: reduce) {
   .quiet-btn__spin { animation: none; }
 }
-
-.segmented-item__count {
-  background: var(--color-surface-3);
-  border-radius: 9999px;
-  color: var(--color-fg-subtle);
-  font-size: 0.6875rem;
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  margin-left: 0.4375rem;
-  padding: 0.0625rem 0.375rem;
-}
-.segmented-item.is-active .segmented-item__count {
-  background: var(--color-blue-100);
-  color: var(--color-blue-800);
-}
 </style>

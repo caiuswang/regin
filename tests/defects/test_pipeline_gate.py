@@ -1,4 +1,4 @@
-"""Acceptance items for CAI-215 — the spans the pipeline leaves, and its gate.
+"""The spans the pipeline leaves, and its gate.
 
 A skill step nobody can verify is a step that quietly stops happening. These
 spans are what make a skip visible in the trace rather than silently absent.
@@ -29,28 +29,26 @@ def _spans_posted(monkeypatch) -> list:
     return posted
 
 
-def test_defects_open_emits_the_gate_span(monkeypatch):
+def test_defects_open_emits_the_gate_span(monkeypatch, feature_row):
+    feature = feature_row()
     posted = _spans_posted(monkeypatch)
 
-    runner.invoke(defects_app, ["open", "it broke", "--feature", "CAI-215",
+    runner.invoke(defects_app, ["open", "it broke",
+                                "--feature", str(feature.id),
                                 "--session", TRACE])
 
     assert [p["name"] for p in posted] == ["defect.declared"]
     assert posted[0]["trace_id"] == TRACE
 
 
-def test_feature_stage_emits_the_gate_span(monkeypatch):
+def test_feature_stage_emits_the_gate_span(monkeypatch, feature_row):
+    feature = feature_row()
     posted = _spans_posted(monkeypatch)
-    import lib.defects.tracker as tracker
-    monkeypatch.setattr(tracker, "rounds_for", lambda key: 1)
-    import lib.defects.stage as stage_mod
-    monkeypatch.setattr(stage_mod, "stage_for_key",
-                        lambda key: stage_mod.Stage("building", 1, 0, key))
 
     # Through the root app, which is the path a user takes: Typer collapses a
     # single-command sub-app when it is invoked standalone, so testing the
     # sub-app directly would exercise a parse that never happens in practice.
-    result = runner.invoke(app, ["feature", "stage", "CAI-215",
+    result = runner.invoke(app, ["feature", "stage", str(feature.id),
                                  "--session", TRACE])
 
     assert result.exit_code == 0, result.output

@@ -1,33 +1,147 @@
-"""Which feature a session was building.
+"""A feature, its lifecycle, and which session built it (regin:82).
 
-A join table rather than a column on `sessions`, and the shape mirrors
-`session_repos` deliberately: a column cannot hold two features, and sessions
-that name two already exist. `is_primary` carries the same meaning it does
-there — the one this session mostly *was* — and it is what stops a shared
-session's cost being counted twice (`lib/features/cost.py`).
+A feature is a **row with a primary key**, not a string that five tables
+happened to agree on. Before this, membership of the population was a union of
+`session_features.feature_key`, `defects.feature_key`,
+`agent_task_links.external_key`, the tasks something named as parent, and a
+top-level task somebody pressed Run on — so four surfaces answered "what counts
+as a feature" four different ways, and a feature could be shipped without
+appearing in the list at all.
 
-**An unattributed session is the absence of a row**, never a sentinel value.
-Most sessions are in that state and most always will be: nothing infers an
-attribution from a cwd, a branch name or a clock, so a row exists only because
-a human or a task link asserted it.
+**The lifecycle is an append-only event log.** `rounds`, `claimed_at`, `stage`
+and the escape verdict are all queries over `feature_events`, so a counter and
+the fact it counts have no way to drift: undoing a ship is a `restarted` row,
+never a column reset, and the history that produced a number survives the
+number changing.
+
+`SessionFeature` keeps the shape it had — a join table rather than a column on
+`sessions`, because a column cannot hold two features and sessions that name
+two already exist. **An unattributed session is the absence of a row**, never a
+sentinel: nothing infers an attribution from a cwd, a branch name or a clock.
 """
 
 from __future__ import annotations
 
 from typing import Optional
 
-from sqlmodel import Column, Field, Integer, String, Text, text
+from sqlmodel import (
+    Column, Field, ForeignKey, Integer, String, Text, UniqueConstraint, text,
+)
 
 from lib.orm.base import Base
 
 DECLARED = "declared"
-TASK_LINK = "task-link"
+RUN = "run"
 RECALLED = "recalled"
-#: `task-link` is derived at read time from `agent_task_links` rather than
-#: written here — the link is the tracker's own live assertion, and copying it
-#: into a row would make the ledger a stale second opinion. The value is part
-#: of the column's domain because a ledger row carries one of the three.
-PROVENANCES = (DECLARED, TASK_LINK, RECALLED)
+#: `run` is derived at read time from `run → task → feature` rather than
+#: written here — the run is the live assertion, and copying it into a row
+#: would make the ledger a stale second opinion. The value is part of the
+#: column's domain because a ledger row carries one of the three.
+PROVENANCES = (DECLARED, RUN, RECALLED)
+
+ORIGIN_NATIVE = "native"
+
+TITLE_MAX = 200
+
+# ── the lifecycle vocabulary ──────────────────────────────────
+#
+# Defined on the model rather than in `lib/features/events.py` so that
+# `lib/defects/escapes.py` can compare against `SHIPPED` without importing the
+# module that imports it.
+
+SPECCED = "specced"
+BUILD_STARTED = "build_started"
+SHIPPED = "shipped"
+RESTARTED = "restarted"
+ABANDONED = "abandoned"
+KINDS: tuple[str, ...] = (SPECCED, BUILD_STARTED, SHIPPED, RESTARTED,
+                          ABANDONED)
+
+#: Who declared an event. `operator` is a human act; a run and a remote sync
+#: sign themselves `run:<id>` and `sync:<provider>` so every state change is
+#: attributable to something that happened.
+OPERATOR = "operator"
+
+
+class Feature(Base, table=True):
+    """One feature: what is being delivered, and where it is tracked.
+
+    `external_ref` carries **no referential integrity requirement**. A remote
+    issue somebody deleted leaves this row perfectly valid — it is a record of
+    what was built here, not a mirror of somebody else's database.
+
+    It absorbs the whole of the old `issue_cache` table, which held
+    `(provider, external_key, snapshot_json, synced_at)`: title, url,
+    `sync_error` and `synced_at` each get a column, and the state history that
+    was the only other thing read out of the snapshot now lives in
+    `feature_events`.
+    """
+
+    __tablename__ = "features"
+    __table_args__ = (
+        UniqueConstraint("origin", "external_ref",
+                         name="uq_features_origin_ref"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    title: str = Field(sa_column=Column("title", Text, nullable=False))
+    body: Optional[str] = Field(default=None, sa_column=Column("body", Text))
+    #: Extensible rather than a boolean: the provider registry decides the
+    #: legal values, and a third tracker must not need a column added.
+    origin: str = Field(
+        default=ORIGIN_NATIVE,
+        sa_column=Column("origin", String, nullable=False,
+                         server_default=text("'native'")))
+    external_ref: Optional[str] = Field(
+        default=None, sa_column=Column("external_ref", String))
+    external_url: Optional[str] = Field(
+        default=None, sa_column=Column("external_url", Text))
+    #: The last reason a fetch failed. It never clears `external_ref`: a
+    #: network blip does not undo an operator's assertion about where this
+    #: feature is tracked.
+    sync_error: Optional[str] = Field(
+        default=None, sa_column=Column("sync_error", Text))
+    #: NULL forever on a native feature — there is no remote to be as-of.
+    synced_at: Optional[str] = Field(
+        default=None, sa_column=Column("synced_at", String))
+    created_at: Optional[str] = Field(
+        default=None,
+        sa_column=Column("created_at", String, nullable=False,
+                         server_default=text("(datetime('now'))")))
+    #: The registered repo this feature belongs to. Declared, never inferred:
+    #: nothing derives it from `session_repos`, a task's project, a suspect
+    #: path or a cwd, so `None` reads as "in no project" — a scope you can ask
+    #: for — rather than "we have not worked it out yet".
+    project_id: Optional[int] = Field(
+        default=None, sa_column=Column("project_id", Integer, index=True))
+
+
+class FeatureEvent(Base, table=True):
+    """One declared step of a feature's life. Append-only.
+
+    Never UPDATEd and never DELETEd, which is what makes `rounds` recomputable
+    and the escape verdict auditable. `at` is for display only: the total order
+    is `id`, because two events written in one transaction can share a
+    timestamp and a clock-ordered read would make a ship-then-restart depend on
+    timestamp precision.
+    """
+
+    __tablename__ = "feature_events"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    feature_id: int = Field(
+        sa_column=Column("feature_id", Integer,
+                         ForeignKey("features.id", ondelete="CASCADE"),
+                         nullable=False, index=True))
+    kind: str = Field(sa_column=Column("kind", String, nullable=False))
+    #: NOT NULL, so there is no unowned state change.
+    declared_by: str = Field(
+        sa_column=Column("declared_by", String, nullable=False))
+    trace_id: Optional[str] = Field(
+        default=None, sa_column=Column("trace_id", String))
+    at: Optional[str] = Field(
+        default=None,
+        sa_column=Column("at", String, nullable=False,
+                         server_default=text("(datetime('now'))")))
 
 
 class SessionFeature(Base, table=True):
@@ -37,8 +151,10 @@ class SessionFeature(Base, table=True):
 
     trace_id: str = Field(
         sa_column=Column("trace_id", String, primary_key=True))
-    feature_key: str = Field(
-        sa_column=Column("feature_key", String, primary_key=True))
+    feature_id: int = Field(
+        sa_column=Column("feature_id", Integer,
+                         ForeignKey("features.id", ondelete="CASCADE"),
+                         primary_key=True))
     is_primary: int = Field(
         sa_column=Column("is_primary", Integer, nullable=False,
                          server_default=text("0")))
@@ -46,11 +162,10 @@ class SessionFeature(Base, table=True):
         default=DECLARED,
         sa_column=Column("provenance", Text, nullable=False,
                          server_default=text("'declared'")))
-    # The round the tracker reported at the instant the claim was made —
-    # cached the way `agent_task_links.snapshot_json` caches its issue. NULL on
-    # a `recalled` row, which has no such instant: writing today's round there
-    # would look like a measurement nothing downstream could tell from a real
-    # one.
+    # The round the feature stood at the instant the claim was made. Unlike
+    # the tracker-fetched value it replaces, this is always answerable — it is
+    # a count of local events — so it is NULL only on a `recalled` row, which
+    # has no such instant to snapshot.
     round: Optional[int] = Field(
         default=None, sa_column=Column("round", Integer))
     created_at: Optional[str] = Field(

@@ -17,13 +17,39 @@ from lib.defects import store
 runner = CliRunner()
 
 
-def test_open_records_a_defect_against_a_feature():
+def test_open_records_a_defect_against_a_feature(feature_row):
+    feature = feature_row()
+
     result = runner.invoke(defects_app, [
-        "open", "the gutter folds the newest span", "--feature", "CAI-206"])
+        "open", "the gutter folds the newest span",
+        "--feature", str(feature.id)])
 
     assert result.exit_code == 0
-    rows = store.for_feature("CAI-206")
+    rows = store.for_feature(feature.id)
     assert [r.symptom for r in rows] == ["the gutter folds the newest span"]
+
+
+def test_open_by_ref_names_the_feature_carrying_that_reference(feature_row):
+    """`--ref` is the id spelled as a tracker identifier, for the case where
+    that is what the operator has in front of them. It resolves to the one
+    feature row holding it and refuses rather than minting a second."""
+    feature = feature_row(origin="linear", external_ref="CAI-274")
+
+    result = runner.invoke(defects_app, [
+        "open", "it leaks", "--ref", "CAI-274"])
+
+    assert result.exit_code == 0, result.output
+    assert [r.symptom for r in store.for_feature(feature.id)] == ["it leaks"]
+
+
+def test_open_by_ref_refuses_a_reference_no_feature_carries(no_tracker):
+    """A typo would otherwise mint a second feature that looks like the first
+    — corrupted data that looks fine."""
+    result = runner.invoke(defects_app, ["open", "it leaks",
+                                         "--ref", "CAI-999"])
+
+    assert result.exit_code != 0
+    assert store.every() == []
 
 
 def test_open_without_a_feature_records_it_unattributed():
@@ -33,29 +59,37 @@ def test_open_without_a_feature_records_it_unattributed():
     assert len(store.unattributed()) == 1
 
 
-def test_open_carries_the_session_and_suspect_paths():
+def test_open_carries_the_session_and_suspect_paths(feature_row):
+    feature = feature_row()
+
     runner.invoke(defects_app, [
-        "open", "the composer drops its draft", "--feature", "CAI-206",
+        "open", "the composer drops its draft", "--feature", str(feature.id),
         "--session", "trace-xyz", "--path", "a.py", "--path", "b.vue"])
 
-    row = store.for_feature("CAI-206")[0]
-    assert row.session_id == "trace-xyz"
+    row = store.for_feature(feature.id)[0]
+    assert row.reported_by_trace == "trace-xyz"
     assert json.loads(row.suspect_paths_json) == ["a.py", "b.vue"]
 
 
-def test_opening_the_same_symptom_twice_reports_the_same_record():
-    first = runner.invoke(defects_app, ["open", "same thing", "--feature", "CAI-206"])
-    again = runner.invoke(defects_app, ["open", "same thing", "--feature", "CAI-206"])
+def test_opening_the_same_symptom_twice_reports_the_same_record(feature_row):
+    feature = feature_row()
+
+    first = runner.invoke(defects_app, ["open", "same thing",
+                                        "--feature", str(feature.id)])
+    again = runner.invoke(defects_app, ["open", "same thing",
+                                        "--feature", str(feature.id)])
 
     assert first.exit_code == again.exit_code == 0
-    assert len(store.for_feature("CAI-206")) == 1
+    assert len(store.for_feature(feature.id)) == 1
 
 
-def test_list_all_shows_attributed_and_unattributed_with_their_keys():
+def test_list_all_shows_attributed_and_unattributed_with_their_features(
+        feature_row):
     """`--all` mirrors the web's default scope. Without it the terminal had
     the same blind spot the page did: a defect blamed at report time appeared
     in no list either surface offered."""
-    store.record("blamed on a feature", feature_key="CAI-206")
+    feature = feature_row("the ledger")
+    store.record("blamed on a feature", feature_id=feature.id)
     store.record("blamed on nobody", session_id="t-1")
 
     every = runner.invoke(defects_app, ["list", "--all"])
@@ -64,7 +98,7 @@ def test_list_all_shows_attributed_and_unattributed_with_their_keys():
     assert every.exit_code == 0
     assert "blamed on a feature" in every.stdout
     assert "blamed on nobody" in every.stdout
-    assert "CAI-206" in every.stdout and "unattributed" in every.stdout
+    assert "the ledger" in every.stdout and "unattributed" in every.stdout
     assert "blamed on a feature" not in loose.stdout
 
 
@@ -75,31 +109,37 @@ def test_list_all_on_an_empty_ledger_says_so_without_claiming_attribution():
     assert result.stdout.strip() == "no defects"
 
 
-def test_list_fix_item_finds_a_row_by_any_spelling_the_write_accepted():
-    """`--fix-item` queried the raw text while the write stored the tracker's
-    canonical key, so a pasted URL read back as "nothing points at this"."""
+def test_list_fix_item_finds_every_defect_one_task_will_close(native_task):
+    """A task id rather than the `(provider, key)` pair it replaces: the loop
+    closes in the schema, so a query joins instead of re-parsing a string —
+    and every spelling the write accepted read back the same way."""
+    task_id = native_task(title="fix it")
     row = store.record("one", session_id="t-1")
-    runner.invoke(defects_app, [
-        "fix-item", str(row.id), "--issue",
-        "https://linear.app/acme/issue/CAI-241/some-slug"])
+    runner.invoke(defects_app, ["fix-item", str(row.id), "--task",
+                                str(task_id)])
 
-    for spelling in ("CAI-241",
-                     "https://linear.app/acme/issue/CAI-241/some-slug"):
-        result = runner.invoke(defects_app, ["list", "--fix-item", spelling])
-        assert f"#{row.id}" in result.stdout, spelling
+    result = runner.invoke(defects_app, ["list", "--fix-item", str(task_id)])
+
+    assert f"#{row.id}" in result.stdout
 
 
 def test_an_empty_fix_item_scope_does_not_describe_a_different_one():
     """It used to say "awaiting attribution" — a sentence about the
     unattributed scope, which is not the scope that was asked for."""
-    result = runner.invoke(defects_app, ["list", "--fix-item", "CAI-999"])
+    result = runner.invoke(defects_app, ["list", "--fix-item", "999"])
 
     assert result.exit_code == 0
     assert "awaiting attribution" not in result.stdout
-    assert "CAI-999" in result.stdout
+    assert "999" in result.stdout
 
 
-def test_open_strips_a_padded_feature_key():
-    runner.invoke(defects_app, ["open", "padded", "--feature", " CAI-206 "])
+def test_a_feature_argument_that_is_not_an_id_is_refused_by_name():
+    """The padded-key normalisation this replaced existed because the key was
+    identity and `' CAI-206'` was a second feature. An integer has no padding
+    to strip — and a tracker reference typed into `--feature` is told which
+    flag it belongs to."""
+    result = runner.invoke(defects_app, ["open", "padded",
+                                         "--feature", " CAI-206 "])
 
-    assert [r.symptom for r in store.for_feature("CAI-206")] == ["padded"]
+    assert result.exit_code != 0
+    assert "--ref" in result.output

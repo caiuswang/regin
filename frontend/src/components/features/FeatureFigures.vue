@@ -14,9 +14,10 @@
 // The amber escalation is conditional. With every tile alarmed at once the
 // alarm stops meaning anything, so it fires only where a gap count exceeds
 // the count it qualifies — the point at which the absence is the larger fact.
-import { computed } from 'vue'
+import { computed, nextTick } from 'vue'
 import Icon from '../ui/Icon.vue'
 import { duration, gapList, gapTotal, money, num, percent } from '../../utils/ledgerFormat'
+import { SESSIONS_ANCHOR, defectsLink, revealSessions } from '../../utils/featureLinks'
 
 const props = defineProps({
   ledger: { type: Object, required: true },
@@ -56,6 +57,15 @@ const tiles = computed(() => {
       glyph: '', value: sessions || 'none', empty: !sessions,
       sub: 'declared, never inferred',
       gaps: l.sessions.gaps, qualifies: sessions,
+      // The evidence list below, which is where the traces are — the sessions
+      // LIST takes no feature parameter, so a `/trace/sessions?feature=` would
+      // be a second dead link rather than a repair of the first.
+      //
+      // The hash is what makes the position linkable; the handler is what
+      // makes the click move the page, since a push to the route you are
+      // already on is a navigation the router drops.
+      to: sessions ? { hash: `#${SESSIONS_ANCHOR}` } : null,
+      onClick: sessions ? () => nextTick(revealSessions) : null,
     }),
     tile({
       key: 'defects', label: 'defects', qualifier: 'local',
@@ -63,11 +73,12 @@ const tiles = computed(() => {
       empty: !l.defects.total,
       sub: `open / total · ${l.defects.escapes} escaped`,
       gaps: l.defects.gaps, qualifies: l.defects.total,
-      // The one figure whose rows are readable, so it is the one that links.
       // A count with no way through to what it counts is how a defect stays
-      // reported and unread.
-      to: l.defects.total
-        ? { path: '/defects', query: { feature: l.key } } : null,
+      // reported and unread. The key is `feature_id`, spelled as
+      // `lib/defects/query.py` spells it, carrying the id the payload actually
+      // emits: a `feature=` under a key the ledger never had landed every
+      // reader on the unscoped list, silently.
+      to: l.defects.total ? defectsLink(l.id) : null,
     }),
   ]
 })
@@ -104,7 +115,7 @@ const tokenLine = computed(() => {
             class="fig-glyph"
             aria-label="at most"
           >{{ t.glyph }}</span>{{ t.glyph ? ' ' : '' }}<router-link
-            v-if="t.to" class="fig-link" :to="t.to"
+            v-if="t.to" class="fig-link" :to="t.to" @click="t.onClick?.()"
           >{{ t.value }}</router-link><template v-else>{{ t.value }}</template>
         </div>
         <div class="fig-sub">{{ t.sub }}</div>

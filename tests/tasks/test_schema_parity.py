@@ -1,4 +1,4 @@
-"""`db/schema.sql` and the `0017`–`0026` revisions must describe the same tables.
+"""`db/schema.sql` and the `0017`–`0028` revisions must describe the same tables.
 
 A schema change is two edits that can silently disagree, which is how a fresh
 `regin init` install and a migrated one diverge. This rebuilds the task tables
@@ -18,15 +18,17 @@ from alembic import command
 from lib import db_migrate
 
 _TABLES = ("api_keys", "agent_tasks", "agent_task_runs", "agent_task_deps",
-           "agent_task_images", "agent_task_links")
+           "agent_task_images")
 _SCHEMA_SQL = Path(__file__).resolve().parents[2] / "db" / "schema.sql"
-_LAST_TASK_REVISION = "0026"
+_LAST_TASK_REVISION = "0028"
 #: Tables the revisions between 0021 and the last one create from scratch. They
 #: are dropped with the task tables so the replay does not collide with what
-#: `schema.sql` already built — `0024` alters `agent_task_links`, so the walk
-#: cannot stop before it without comparing a shape neither install has.
+#: `schema.sql` already built. `agent_task_links` and `issue_cache` are in the
+#: list despite being absent from `schema.sql`: the replay creates them at 0021
+#: and 0024 and drops them at 0028, so the walk passes through both.
 _REPLAYED = ("defects", "session_features", "issue_cache", "comments",
-             "comment_threads")
+             "comment_threads", "agent_task_links", "features",
+             "feature_events")
 
 
 def _columns(conn, table: str) -> list[tuple]:
@@ -77,7 +79,8 @@ def alembic_built(tmp_db, tmp_path):
                       "idx_agent_tasks_project", "idx_agent_tasks_created",
                       "idx_agent_tasks_status_created",
                       "idx_agent_tasks_priority",
-                      "idx_agent_tasks_parent"):
+                      "idx_agent_tasks_feature",
+                      "idx_feature_events_feature"):
             conn.execute(f"DROP INDEX IF EXISTS {index}")
         for table in _TABLES + _REPLAYED:
             conn.execute(f"DROP TABLE IF EXISTS {table}")

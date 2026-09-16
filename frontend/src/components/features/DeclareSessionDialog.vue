@@ -21,7 +21,7 @@ import Input from '../ui/Input.vue'
 import { money, shortDate } from '../../utils/ledgerFormat'
 
 const props = defineProps({
-  featureKey: { type: String, required: true },
+  featureId: { type: Number, required: true },
   declared: { type: Array, default: () => [] },
 })
 const emit = defineEmits(['close', 'declared'])
@@ -59,7 +59,7 @@ async function search() {
     rows.value = []
   }
 }
-watch(() => props.featureKey, search, { immediate: true })
+watch(() => props.featureId, search, { immediate: true })
 
 async function declare() {
   const traceId = (chosen.value || query.value).trim()
@@ -67,7 +67,7 @@ async function declare() {
   saving.value = true
   error.value = ''
   const result = await api.post(
-    `/features/${encodeURIComponent(props.featureKey)}/attribute`,
+    `/features/${props.featureId}/attribute`,
     { trace_id: traceId, is_primary: primary.value })
   saving.value = false
   if (result?.ok === false) {
@@ -82,7 +82,7 @@ async function declare() {
   <Dialog
     :open="true"
     wide
-    :title="`Declare a session built ${featureKey}`"
+    :title="`Declare a session built ${featureId}`"
     description="Canonical conversations only — a run id is collapsed onto the conversation it drove, so what you pick is what gets stored."
     @update:open="emit('close')"
   >
@@ -133,7 +133,7 @@ async function declare() {
       <span class="text-xs text-slate-600">
         <strong class="font-semibold text-slate-800">Make this the session's primary feature.</strong>
         Off by default. Turning it on moves the whole session's cost onto
-        {{ featureKey }} and demotes whichever feature holds it now.
+        {{ featureId }} and demotes whichever feature holds it now.
       </span>
     </Checkbox>
 

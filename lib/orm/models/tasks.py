@@ -19,7 +19,9 @@ from __future__ import annotations
 
 from typing import Optional
 
-from sqlmodel import Column, Field, Integer, LargeBinary, String, Text
+from sqlmodel import (
+    Column, Field, ForeignKey, Integer, LargeBinary, String, Text,
+)
 from sqlalchemy import UniqueConstraint, text
 
 from lib.orm.base import Base
@@ -37,6 +39,10 @@ TASK_STATUSES: tuple[str, ...] = (
     TASK_STATUS_ARCHIVED,
 )
 
+# An attempt that has been parameterised but not launched. The `armed` state
+# used to live on the task as a status word plus three hidden columns; here it
+# is the pending attempt itself, so "what will Run spend" is a row you can read.
+RUN_STATUS_ARMED = "armed"
 RUN_STATUS_STARTING = "starting"
 RUN_STATUS_RUNNING = "running"
 RUN_STATUS_DONE = "done"
@@ -103,18 +109,6 @@ class AgentTask(Base, table=True):
     updated_at: str = Field(
         sa_column=Column("updated_at", String, nullable=False,
                          server_default=text("(datetime('now'))")))
-    # Execution parameters, written by the arm route alone. NULL is an inert
-    # task: captured, never armed.
-    params_json: Optional[str] = Field(
-        default=None, sa_column=Column("params_json", Text))
-    verify_cmd: Optional[str] = Field(
-        default=None, sa_column=Column("verify_cmd", Text))
-    # A per-task grant, not a global mode: 1 means a task whose dependencies
-    # just resolved launches itself instead of waiting for a human.
-    autorun: int = Field(
-        default=0,
-        sa_column=Column("autorun", Integer, nullable=False,
-                         server_default=text("0")))
     # A label, not a parent: NULL is backlog. No FK, for the same reason
     # `created_by` carries none — a deleted project must not cascade away the
     # tasks that outlive it; the serializer resolves an unknown id to null.
@@ -134,30 +128,20 @@ class AgentTask(Base, table=True):
         sa_column=Column("priority_rank", Integer, nullable=False,
                          server_default=text(
                              str(len(TASK_PRIORITIES) - 1))))
-    # The feature grain: NULL is a top-level task, which is what a feature is.
-    # Depth is exactly two — a task may take a parent only if that parent has
-    # none — so a cycle needs a child that is also a parent and cannot exist.
-    # No FK, for the reason `project_id` carries none.
-    parent_id: Optional[int] = Field(
-        default=None, sa_column=Column("parent_id", Integer, index=True))
+    # The feature this task is a step of. ONE nullable column, which is what
+    # makes "a task holding two feature keys" unwritable — the shape three
+    # refusals in `lib/tasks/links.py` and an `ambiguous` CTE in every reader
+    # used to defend against. NULL is a task nobody has placed under a
+    # feature, which is a real state and not a gap.
+    feature_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column("feature_id", Integer,
+                         ForeignKey("features.id", ondelete="SET NULL"),
+                         index=True))
     # `users.id`. Edit-only: claiming is an act an authenticated human performs
     # about themselves, and capture is reachable by a machine key.
     assignee: Optional[int] = Field(
         default=None, sa_column=Column("assignee", Integer))
-    # `rounds` is `1 + this` and is never itself stored, so the count and the
-    # reported number cannot drift. One edge increments it: a child run
-    # starting over a parent whose `done` was an operator's ship claim.
-    completions_walked_back: int = Field(
-        default=0,
-        sa_column=Column("completions_walked_back", Integer, nullable=False,
-                         server_default=text("0")))
-    # The done-claim, recorded rather than read off `status`. `status` is the
-    # task lifecycle and `complete_run` writes it when a run settles; a column
-    # carrying both axes let a run settling ship a feature nobody claimed.
-    # NULL means never claimed, which is a different fact from `status` being
-    # anything in particular.
-    claimed_at: Optional[str] = Field(
-        default=None, sa_column=Column("claimed_at", String))
 
 
 class AgentTaskRun(Base, table=True):
@@ -206,6 +190,20 @@ class AgentTaskRun(Base, table=True):
         default=None, sa_column=Column("exit_reason", Text))
     verify_exit_code: Optional[int] = Field(
         default=None, sa_column=Column("verify_exit_code", Integer))
+    # The parameters this attempt actually spent. They sat on the task, so
+    # trying the same work with different ones meant creating a second task —
+    # which is how "a sub-task is a run" became a shape the model carried.
+    # Here a rerun is a row, and the two attempts' parameters stay separate.
+    params_json: Optional[str] = Field(
+        default=None, sa_column=Column("params_json", Text))
+    verify_cmd: Optional[str] = Field(
+        default=None, sa_column=Column("verify_cmd", Text))
+    # A per-task grant, not a global mode: 1 means a task whose dependencies
+    # just resolved launches itself instead of waiting for a human.
+    autorun: int = Field(
+        default=0,
+        sa_column=Column("autorun", Integer, nullable=False,
+                         server_default=text("0")))
 
 
 class AgentTaskDep(Base, table=True):
@@ -259,78 +257,3 @@ class AgentTaskImage(Base, table=True):
     created_at: str = Field(
         sa_column=Column("created_at", String, nullable=False,
                          server_default=text("(datetime('now'))")))
-
-
-class AgentTaskLink(Base, table=True):
-    """A task's link to an issue in ANOTHER tracker.
-
-    Only another tracker: a native feature needs no row here, because a regin
-    task IS the issue, and a link from one to another would be the migration
-    `feature_key`-as-identity forbids.
-
-    A row, not a `links_json` entry, because this link is *queried* — by
-    provider, to answer "what is configured", and by key, to resolve a
-    redelivery — while `links_json` is a free-text bookmark list the task
-    carries for display only.
-
-    The issue itself lives in `IssueCache`, keyed by the feature rather than
-    by this row: a feature key may have no link and may have two, so a cache
-    hanging off the link was reachable only through whichever task happened to
-    hold it.
-
-    `sync_error` stays here, because it is a property of one operator's
-    assertion rather than of the issue — a link whose last fetch failed still
-    renders the cached issue plus the reason.
-
-    `UNIQUE(task_id, provider, external_key)` makes re-attaching the same
-    issue idempotent, the same way `UNIQUE(source, external_id)` resolves a
-    capture replay.
-    """
-
-    __tablename__ = "agent_task_links"
-    __table_args__ = (
-        UniqueConstraint("task_id", "provider", "external_key",
-                         name="uq_agent_task_links_ref"),)
-
-    id: Optional[int] = Field(default=None, primary_key=True)
-    task_id: int = Field(
-        sa_column=Column("task_id", Integer, nullable=False, index=True))
-    provider: str = Field(
-        sa_column=Column("provider", String, nullable=False))
-    external_key: str = Field(
-        sa_column=Column("external_key", String, nullable=False))
-    url: str = Field(sa_column=Column("url", Text, nullable=False))
-    sync_error: Optional[str] = Field(
-        default=None, sa_column=Column("sync_error", Text))
-    created_at: str = Field(
-        sa_column=Column("created_at", String, nullable=False,
-                         server_default=text("(datetime('now'))")))
-
-
-class IssueCache(Base, table=True):
-    """The normalized `ExternalIssue` regin last fetched for a feature key.
-
-    Keyed `(provider, external_key)` — the feature — and not by a link row, so
-    the task-link card and the feature ledger read one fact and cannot report
-    different stages for the same issue.
-
-    Every successful fetch writes it, from CLI or web, so a CLI run warms the
-    web. Only the web reads it: the cache feeds display, never a decision, and
-    a stage the CLI reported from a stale snapshot would change the escape
-    counts in its own ledger.
-
-    A failed fetch writes nothing. Freshness is therefore two states — never
-    fetched, or fetched at T — and there is no row that means "tried and
-    failed", which would be a third that no reader could act on.
-    """
-
-    __tablename__ = "issue_cache"
-
-    provider: str = Field(
-        sa_column=Column("provider", String, primary_key=True))
-    external_key: str = Field(
-        sa_column=Column("external_key", String, primary_key=True))
-    snapshot_json: str = Field(
-        sa_column=Column("snapshot_json", Text, nullable=False))
-    synced_at: str = Field(
-        sa_column=Column("synced_at", String, nullable=False))

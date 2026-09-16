@@ -22,13 +22,15 @@ from lib.tasks.integrations.base import (
     ExternalRef, IntegrationError, IssueTrackerProvider,
 )
 from lib.tasks.integrations.linear import LinearProvider
-from lib.tasks.integrations.regin import ReginProvider
 
 ProviderBuilder = Callable[[], IssueTrackerProvider]
 
+# regin itself is deliberately absent. A native feature is a `features` row, so
+# it has no remote to be asked about and its stage is derived locally; the
+# provider that used to answer for one existed only because a feature was a
+# task addressed as `regin:<id>`.
 _PROVIDER_BUILDERS: dict[str, ProviderBuilder] = {
     LinearProvider.provider_id: LinearProvider,
-    ReginProvider.provider_id: ReginProvider,
 }
 
 

@@ -22,11 +22,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import delete, select
 
 from lib.activity_log import get_activity_logger
-from lib.defects import rounds
 from lib.orm import SessionLocal
 from lib.orm.models.sync import Repo
 from lib.orm.models.tasks import (
-    AgentTask, AgentTaskDep, AgentTaskImage, AgentTaskLink, AgentTaskRun,
+    AgentTask, AgentTaskDep, AgentTaskImage, AgentTaskRun,
     PRIORITY_ORDER, TASK_PRIORITY_NONE, TASK_STATUS_ARCHIVED,
     TASK_STATUS_ARMED, TASK_STATUS_DONE, TASK_STATUS_FAILED, TASK_STATUS_IDEA,
     TASK_STATUS_RUNNING,
@@ -123,27 +122,20 @@ def serialize(task: AgentTask) -> dict:
         "created_by": task.created_by,
         "created_at": task.created_at,
         "updated_at": task.updated_at,
-        "params": _decode_params(task.params_json),
-        "verify_cmd": task.verify_cmd,
-        "autorun": bool(task.autorun),
         "project_id": task.project_id,
         "priority": task.priority or TASK_PRIORITY_NONE,
         # Derived from `priority`, but serialized rather than hidden: it is a
         # keyset sort column, and `keyset_page_stmt` builds the next cursor by
         # reading each order column's value back off this dict.
         "priority_rank": task.priority_rank,
-        "parent_id": task.parent_id,
+        # The one feature this task is a step of, or None. A single column,
+        # so "two features" is not a shape a reader has to defend against.
+        "feature_id": task.feature_id,
         "assignee": task.assignee,
         # Resolved beside the id, never in place of it: `assignee` carries no
         # foreign key, so an id pointing at a deleted user is a real state and
         # the client renders the gap rather than a name regin invented.
         "assignee_name": _assignee_name(task.assignee),
-        # `1 + completions_walked_back`, derived on every read so the count and
-        # the reported number cannot drift. The column itself is never served.
-        "rounds": rounds.from_task(task),
-        # The claim is its own axis: `status == 'done'` is what a run settling
-        # leaves behind, and only this says the operator called it shipped.
-        "claimed_at": task.claimed_at,
     }
 
 
@@ -233,7 +225,7 @@ def capture_task(*, title: str, source: str, body: Optional[str] = None,
                  external_id: Optional[str] = None, tags=None, links=None,
                  created_by: Optional[int] = None,
                  project_id: Optional[int] = None,
-                 parent_id: Optional[int] = None,
+                 feature_id: Optional[int] = None,
                  priority: str = TASK_PRIORITY_NONE) -> tuple[dict, bool]:
     """Insert an idea, or resolve a replay. Returns `(task, created)`.
 
@@ -247,18 +239,12 @@ def capture_task(*, title: str, source: str, body: Optional[str] = None,
                       source=source, external_id=external_id)
             return view, False
 
-        from lib.tasks import grain
-        # Guarded at capture exactly as at edit: the grain rules are about the
-        # pair of rows, not about which surface asked, and a capture that
-        # parked a run under a run would be a shape no later edit could
-        # explain.
-        grain.refuse_bad_parentage(session, 0, parent_id)
         row = AgentTask(
             title=title, body=body, status=TASK_STATUS_IDEA, source=source,
             external_id=external_id, tags_json=_encode(tags),
             links_json=_encode(links), created_by=created_by,
             project_id=_resolved_project(session, project_id),
-            parent_id=parent_id,
+            feature_id=feature_id,
             priority=priority, priority_rank=PRIORITY_ORDER[priority],
         )
         session.add(row)
@@ -274,11 +260,6 @@ def capture_task(*, title: str, source: str, body: Optional[str] = None,
             return _touch(session, existing), False
         session.refresh(row)
         view = serialize(row)
-    if parent_id is not None:
-        # The parent's status follows its children, so a capture that lands
-        # under one is a child event like any other.
-        from lib.tasks import grain
-        grain.recompute_parent(view["id"], event=grain.EVENT_CHILD_ATTACHED)
     log.write("task_captured", task_id=view["id"], source=source,
               external_id=external_id, status=view["status"])
     return view, True
@@ -303,44 +284,16 @@ def _archive_refusal(row: AgentTask) -> Optional[TransitionRejected]:
         "the task has a live run — stop it before archiving")
 
 
-def _claim_refusal(session, row: AgentTask) -> Optional[TransitionRejected]:
-    """Why this task cannot be shipped, or None.
+def _refusal_for(row: AgentTask, target: str):
+    """Why this move is refused, or None.
 
-    The claim is a statement about a *feature*, and every top-level task is
-    one: a task with a parent is a run of something and is refused; a task
-    holding runs of its own is the feature those runs built. A childless,
-    never-run task IS claimable — that is how a spec-only feature ships.
+    The done-claim used to be refused here too, because `done` on a top-level
+    task doubled as *this feature shipped*. It is a feature act now
+    (`lib/features/store.py`), so this table governs one axis again — what the
+    task's own lifecycle may reach.
     """
-    if row.parent_id is not None:
-        return TransitionRejected(
-            row.status, TASK_STATUS_DONE,
-            f"task {row.id} is a run of {row.parent_id} — ship the feature it "
-            "is a run of, not the run")
-    return None
-
-
-def _moves_anything(row: AgentTask, target: str) -> bool:
-    """Whether this target changes the status, the claim, or both.
-
-    `done` on a row already reading `done` is NOT a no-op when the claim is
-    absent: that is precisely a task whose own run settled and stamped the
-    word, which an operator may now want to actually claim. Returning early on
-    the word alone is what made the claim unreachable for such a task.
-    """
-    if target != row.status:
-        return True
-    return target == TASK_STATUS_DONE and not row.claimed_at
-
-
-def _refusal_for(session, row: AgentTask, target: str):
-    """Why this move is refused, or None."""
     if target == TASK_STATUS_ARCHIVED:
         return _archive_refusal(row)
-    if target == TASK_STATUS_DONE:
-        if target != row.status and target not in TASK_TRANSITIONS.get(
-                row.status, ()):
-            return TransitionRejected(row.status, target)
-        return _claim_refusal(session, row)
     if target not in TASK_TRANSITIONS.get(row.status, ()):
         return TransitionRejected(row.status, target)
     return None
@@ -348,12 +301,11 @@ def _refusal_for(session, row: AgentTask, target: str):
 
 def _apply_status(session, row: AgentTask, fields: dict) -> None:
     target = fields.get("status")
-    if target is None or not _moves_anything(row, target):
+    if target is None or target == row.status:
         return
-    refusal = _refusal_for(session, row, target)
+    refusal = _refusal_for(row, target)
     if refusal is not None:
         raise refusal
-    _apply_claim(row, target)
     row.status = target
 
 
@@ -369,110 +321,82 @@ def update_task(task_id: int, fields: dict) -> Optional[dict]:
         if row is None:
             return None
         _apply_status(session, row, fields)
-        if "title" in fields:
-            row.title = fields["title"]
-        if "body" in fields:
-            row.body = fields["body"]
-        if "tags" in fields:
-            row.tags_json = _encode(fields["tags"])
-        if "priority" in fields:
-            _set_priority(row, fields["priority"])
-        if "project_id" in fields:
-            row.project_id = _resolved_project(session, fields["project_id"])
-        if "assignee" in fields:
-            row.assignee = fields["assignee"]
+        _apply_fields(session, row, fields)
         view = _touch(session, row)
-    # Parentage is a structural claim with its own guards and its own status
-    # recompute, so it is written by `grain.set_parent` rather than inline —
-    # one writer, whichever surface asked.
-    if "parent_id" in fields:
-        from lib.tasks import grain
-        view = grain.set_parent(task_id, fields["parent_id"]) or view
-    _remember_if_a_feature(view)
+    if "feature_id" in fields:
+        view = _apply_feature(task_id, fields["feature_id"]) or view
     log.write("task_updated", task_id=task_id, status=view["status"],
               changed=sorted(fields))
     return view
 
 
-def _remember_if_a_feature(view: dict) -> None:
-    """Warm `issue_cache` after an edit to a top-level task.
+def _apply_fields(session, row: AgentTask, fields: dict) -> None:
+    """The plain columns an edit may set, each written only when it was sent.
 
-    The fifth cache trigger, and the one a child event cannot cover: renaming
-    a feature changes what its header says with no run involved. It lives on
-    the *write* rather than on a route because the other eight `remember` call
-    sites are fetch paths and `regin task ship` bypasses HTTP entirely — a
-    route-side trigger would simply not fire for it.
-
-    Best-effort, inside `grain.remember_task`: the edit is the fact.
+    Split from `update_task` so that function reads as what it is — a status
+    move, the plain fields, then the one field with a writer of its own.
     """
-    if view.get("parent_id") is not None:
-        return
-    from lib.tasks import grain
+    if "title" in fields:
+        row.title = fields["title"]
+    if "body" in fields:
+        row.body = fields["body"]
+    if "tags" in fields:
+        row.tags_json = _encode(fields["tags"])
+    if "priority" in fields:
+        _set_priority(row, fields["priority"])
+    if "project_id" in fields:
+        row.project_id = _resolved_project(session, fields["project_id"])
+    if "assignee" in fields:
+        row.assignee = fields["assignee"]
 
-    grain.remember_task(view["id"])
+
+def _apply_feature(task_id: int, feature_id) -> Optional[dict]:
+    """Move a task between features, through the one writer of that column.
+
+    It is an UPDATE of a single column rather than a structural claim with
+    guards of its own: there is no second row for a second feature to go into,
+    which is what makes the old `ambiguous` reader unnecessary.
+    """
+    from lib.features import store as feature_store  # noqa: PLC0415
+
+    if feature_id is None:
+        feature_store.release_task(task_id)
+    else:
+        feature_store.adopt_task(feature_id, task_id)
+    return get_task(task_id)
 
 
 def arm_task(task_id: int, *, params: dict, verify_cmd: Optional[str],
              autorun: int) -> Optional[dict]:
-    """Write a task's execution parameters and mark it `armed`.
+    """Parameterise the task's next attempt and mark it `armed`.
 
-    The only path by which `params_json`, `verify_cmd` or `autorun` are ever
-    set — capture and the edit surface carry none of them, which is what keeps
-    a captured task inert until an authenticated human arms it.
+    The parameters land on a **run row**, not on the task: an attempt is what
+    spends them, and two attempts may legitimately spend different ones. That
+    removes the last reason for "a sub-task is a rerun" — a rerun under new
+    parameters is a second row in `agent_task_runs`.
+
+    Still the only path by which an execution parameter enters the database at
+    all, which is what keeps a captured task inert until an authenticated
+    human arms it.
     """
+    from lib.tasks import runs  # noqa: PLC0415  (runs imports this module)
+
     with SessionLocal() as session:
         row = session.get(AgentTask, task_id)
         if row is None:
             return None
-        from lib.tasks import grain
-        refusal = grain.refuse_arming_a_parent(session, task_id)
-        if refusal is not None:
-            raise TransitionRejected(row.status, TASK_STATUS_ARMED, refusal)
         if row.status not in ARMABLE_FROM:
             raise TransitionRejected(
                 row.status, TASK_STATUS_ARMED,
                 "a task is armed from 'idea', 'armed', 'done' or 'failed'")
-        row.params_json = json.dumps(params)
-        row.verify_cmd = verify_cmd
-        row.autorun = autorun
+    runs.arm(task_id, params=params, verify_cmd=verify_cmd, autorun=autorun)
+    with SessionLocal() as session:
+        row = session.get(AgentTask, task_id)
         row.status = TASK_STATUS_ARMED
         view = _touch(session, row)
     log.write("task_armed", task_id=task_id, autorun=autorun,
               has_verify=bool(verify_cmd))
     return view
-
-
-def ship_task(task_id: int) -> Optional[dict]:
-    """The done-claim: an operator saying this feature shipped.
-
-    Its own verb rather than a `status` in a PATCH body, because the reach
-    matters: `regin task ship` writes the database directly, like `add` and
-    `delete` and unlike `finish`. A done-claim releases no dependents, so it
-    launches nothing and must keep working with the server stopped — which is
-    exactly when someone finishing a feature wants to record it.
-
-    The cache write follows the status write and cannot fail it. The status is
-    the fact; the snapshot is a rendering of it, and a rendering that did not
-    land is a stale surface rather than an unrecorded ship.
-    """
-    return update_task(task_id, {"status": TASK_STATUS_DONE})
-
-
-def _apply_claim(row: AgentTask, target: str) -> None:
-    """Record or withdraw the done-claim alongside the status move.
-
-    Written here and nowhere else. `status` is the task lifecycle and the run
-    lifecycle writes it freely; the claim is an operator's statement that the
-    feature shipped, and the two stopped sharing a column because a run
-    settling `done` was reading as a ship nobody made.
-    """
-    if target == TASK_STATUS_DONE:
-        row.claimed_at = _now()
-    elif row.claimed_at:
-        # Any declared exit from `done` withdraws the claim. It costs no round
-        # — nothing was built between claiming and withdrawing — which is what
-        # keeps `completions_walked_back` counting restarts and not edits.
-        row.claimed_at = None
 
 
 def set_status(task_id: int, status: str) -> Optional[dict]:
@@ -513,7 +437,6 @@ def _delete_children(session, task_id: int) -> None:
     session.exec(delete(AgentTaskRun).where(AgentTaskRun.task_id == task_id))
     session.exec(
         delete(AgentTaskImage).where(AgentTaskImage.task_id == task_id))
-    session.exec(delete(AgentTaskLink).where(AgentTaskLink.task_id == task_id))
     session.exec(delete(AgentTaskDep).where(
         (AgentTaskDep.task_id == task_id)
         | (AgentTaskDep.depends_on_id == task_id)))

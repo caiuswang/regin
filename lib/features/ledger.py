@@ -11,11 +11,10 @@ check which sessions. Identity reuses `regin stats sessions`' convention
 verbatim (`date · trace_id[:8] · title`) so an id carries by eye between the
 two surfaces.
 
-Unlike `regin feature stage`, this exits 0 when the tracker cannot answer and
-prints `unknown` where the stage would be. Its substance is local and correct;
-withholding it because one field could not be fetched would trade a right
-answer for no answer. And `unknown` is a render-only string — never a fifth
-stage name, because it is a statement about us, not about the feature.
+Every figure is local, including the stage: it is the last `feature_events`
+row plus a count of escapes, so there is no field this report can fail to
+fetch and no `unknown` to render. That word used to be here precisely because
+the stage came from a tracker the CLI might not reach.
 """
 
 from __future__ import annotations
@@ -24,13 +23,11 @@ from dataclasses import dataclass
 from typing import Optional
 
 from lib.defects import escapes as escapes_module
-from lib.defects import stage as stage_module
-from lib.defects import store, tracker
+from lib.defects import store
 from lib.features import attribution, cost as cost_module
-from lib.tasks.integrations import IntegrationError
+from lib.features import events as events_module
+from lib.features import store as feature_store
 
-#: What a figure reads when regin could not look. Never a stage name.
-UNKNOWN = "unknown"
 TRACE_PREFIX = 8
 
 
@@ -45,8 +42,8 @@ class SessionRow:
     provenance: str
     round: Optional[int]
     is_primary: int
-    #: The task whose link put this session here, carried through from
-    #: `AttributedSession`. Only a `task-link` row has one — it is what the
+    #: The task whose run put this session here, carried through from
+    #: `AttributedSession`. Only a `run` row has one — it is what the
     #: provenance tag links to, and a tag naming no task is a provenance
     #: nobody can audit.
     task_id: Optional[int] = None
@@ -67,8 +64,24 @@ class SessionRow:
 class Ledger:
     """Everything `regin feature ledger` knows about one feature."""
 
-    key: str
-    stage: Optional[stage_module.Stage]
+    id: int
+    title: str
+    #: The spec the feature was declared with. Served beside the title rather
+    #: than folded into the stage: it is what the acceptance list is checked
+    #: against, and an edit to it appends no event.
+    body: Optional[str]
+    origin: str
+    external_ref: Optional[str]
+    external_url: Optional[str]
+    sync_error: Optional[str]
+    #: The registered repo the feature is filed under, plus the name to draw.
+    #: The name rides along because a client that had to resolve it would hold
+    #: a second copy of the repo list to render one chip.
+    project_id: Optional[int]
+    project_name: Optional[str]
+    stage: str
+    rounds: int
+    claimed_at: Optional[str]
     cost: cost_module.FeatureCost
     work_time: cost_module.WorkTime
     tokens: dict
@@ -78,15 +91,27 @@ class Ledger:
     total_defects: int
     escapes: escapes_module.EscapeCounts
     coverage: cost_module.Coverage
-    ambiguous: Optional[str] = None
 
     def to_dict(self) -> dict:
         """Nested, unlike `Stage.to_dict()`: each figure carries its own gap
         counter, and flattened those read as noise — a reader cannot tell which
         number `no_usage_captured` qualifies."""
         return {
-            "key": self.key,
-            "stage": self.stage.to_dict() if self.stage else None,
+            "id": self.id,
+            "title": self.title,
+            "body": self.body,
+            "origin": self.origin,
+            "external_ref": self.external_ref,
+            "external_url": self.external_url,
+            "sync_error": self.sync_error,
+            "project_id": self.project_id,
+            "project_name": self.project_name,
+            "stage": {"stage": self.stage,
+                      "blurb": events_module.blurb(self.stage),
+                      "rounds": self.rounds,
+                      "claimed_at": self.claimed_at,
+                      "open_defects": self.open_defects,
+                      "escapes": self.escapes.escapes},
             "cost": self.cost.to_dict(),
             "work_time": self.work_time.to_dict(),
             "tokens": dict(self.tokens),
@@ -97,38 +122,22 @@ class Ledger:
             "defects": {
                 "open": self.open_defects, "total": self.total_defects,
                 "escapes": self.escapes.escapes,
-                "gaps": {
-                    "state_unknown": self.escapes.state_unknown,
-                    "unknown_vocabulary": self.escapes.unknown_vocabulary,
-                },
             },
             "coverage": self.coverage.to_dict(),
         }
 
 
-def _stage_or_none(key: str) -> Optional[stage_module.Stage]:
-    try:
-        return stage_module.stage_for_key(key)
-    except (tracker.TrackerUnavailable, IntegrationError):
-        return None
+def build(feature_id: int) -> Ledger:
+    """Assemble the ledger. Every figure is a local read.
 
-
-def build(feature_key: str, *, stage_resolver=_stage_or_none) -> Ledger:
-    """Assemble the ledger. Never raises when the tracker cannot answer.
-
-    `stage_resolver` is how a *web* read stays local: the default goes to the
-    tracker, because a CLI report deciding an escape from a stale snapshot
-    would rewrite its own numbers, and the web passes
-    `lib.features.stage_source.from_cache` instead. A parameter rather than a
-    convention, so "the ledger endpoint never calls `fetch_issue`" is
-    something a test can name.
+    The `stage_resolver` parameter this function used to take is gone with the
+    reason for it: the CLI passed a live tracker fetch and the web passed a
+    cache reader, because deciding an escape from a stale snapshot would have
+    rewritten the numbers in the CLI's own report. A stage derived from rows in
+    this database has no stale reading to choose between.
     """
-    key = (feature_key or "").strip()
-    ambiguous = None
-    try:
-        attributed = attribution.sessions_for_feature(key)
-    except attribution.AmbiguousTaskLink as exc:
-        attributed, ambiguous = [], str(exc)
+    feature = feature_store.require(feature_id)
+    attributed = attribution.sessions_for_feature(feature_id)
 
     facts = cost_module.facts_for(row.trace_id for row in attributed)
     cost, work_time, tokens = cost_module.roll_up(attributed, facts)
@@ -143,20 +152,30 @@ def build(feature_key: str, *, stage_resolver=_stage_or_none) -> Ledger:
          for row in attributed),
         key=lambda r: (r.date, r.trace_id))
 
-    defects = store.for_feature(key)
+    defects = store.for_feature(feature_id)
+    escapes = escapes_module.counts_for(feature_id)
     return Ledger(
-        key=key,
-        stage=stage_resolver(key),
+        id=feature.id,
+        title=feature.title,
+        body=feature.body,
+        origin=feature.origin,
+        external_ref=feature.external_ref,
+        external_url=feature.external_url,
+        sync_error=feature.sync_error,
+        project_id=feature.project_id,
+        project_name=feature_store.project_name(feature.project_id),
+        stage=events_module.stage(feature_id, escapes=escapes.escapes),
+        rounds=events_module.rounds(feature_id),
+        claimed_at=events_module.claimed_at(feature_id),
         cost=cost,
         work_time=work_time,
         tokens=tokens,
         rows=rows,
-        traceless_runs=attribution.traceless_runs(key),
+        traceless_runs=attribution.traceless_runs(feature_id),
         open_defects=sum(1 for d in defects if d.status == "open"),
         total_defects=len(defects),
-        escapes=escapes_module.counts_for(key),
+        escapes=escapes,
         coverage=cost_module.coverage(),
-        ambiguous=ambiguous,
     )
 
 
@@ -190,19 +209,14 @@ def _gap_line(gaps: dict) -> str:
 
 def render(report: Ledger) -> list[str]:
     """The human report, stage line first."""
-    lines = []
-    if report.stage:
-        lines.append(f"{report.key}  {report.stage.name}  "
-                     f"rounds={report.stage.rounds}  "
-                     f"open_defects={report.stage.open_defects}  "
-                     f"escapes={report.stage.escapes}")
-        lines.append(f"  {report.stage.blurb}")
-    else:
-        lines.append(f"{report.key}  stage {UNKNOWN}  escapes {UNKNOWN} — "
-                     "no tracker answered — it is unreachable, or holds "
-                     "no such issue")
-    if report.ambiguous:
-        lines.append(f"  refused: {report.ambiguous}")
+    lines = [f"#{report.id}  {report.title}"]
+    ref = f"  {report.external_ref}" if report.external_ref else ""
+    lines.append(f"{report.stage}  rounds={report.rounds}  "
+                 f"open_defects={report.open_defects}  "
+                 f"escapes={report.escapes.escapes}{ref}")
+    lines.append(f"  {events_module.blurb(report.stage)}")
+    if report.sync_error:
+        lines.append(f"  sync: {report.sync_error}")
 
     lines.append("")
     suffix = (f" ({report.cost.recalled} recalled)"
@@ -239,9 +253,6 @@ def render(report: Ledger) -> list[str]:
     lines.append(f"defects  {report.open_defects} open / "
                  f"{report.total_defects} total      "
                  f"escapes {report.escapes.escapes}")
-    lines.extend(filter(None, [_gap_line({
-        "state_unknown": report.escapes.state_unknown,
-        "unknown_vocabulary": report.escapes.unknown_vocabulary})]))
 
     cov = report.coverage
     lines.append("")

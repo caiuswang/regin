@@ -16,14 +16,12 @@ import Dialog from '../ui/Dialog.vue'
 import Input from '../ui/Input.vue'
 import NavIcon from '../NavIcon.vue'
 import TaskImageStrip from './TaskImageStrip.vue'
-import TaskLinkField from './TaskLinkField.vue'
 import Textarea from '../ui/Textarea.vue'
 import { imageFilesFrom } from '../../utils/imageFiles'
-import { TITLE_MAX, fillFromIssue } from '../../composables/useTasks.js'
+import { TITLE_MAX } from '../../composables/useTasks.js'
 import { useFlash } from '../../composables/useFlash.js'
 import { useQuickCapture } from '../../composables/useQuickCapture.js'
 import { useTaskImages } from '../../composables/useTaskImages.js'
-import { useTaskLinks } from '../../composables/useTaskLinks.js'
 
 defineProps({
   // The phone blocker bar is `position: fixed` at the bottom of the viewport;
@@ -40,19 +38,13 @@ defineProps({
 })
 
 const { flash } = useFlash()
-const { open, draft, filled, error, create, captured } = useQuickCapture()
+const { open, draft, error, create, captured } = useQuickCapture()
 const {
   items: images, busy: imagesBusy, error: imagesError,
   add: addImages, remove: removeImage, flush: flushImages, reset: resetImages,
 } = useTaskImages()
 
-const { attach } = useTaskLinks()
 const titleInput = ref(null)
-const linkField = ref(null)
-
-function onResolved({ issue }) {
-  filled.value = fillFromIssue(draft.value, issue, filled.value)
-}
 
 // Spans the POST *and* the image flush, and is the single condition behind
 // both the Save button and the Enter key — a keyboard path guarded less
@@ -86,22 +78,12 @@ async function submit() {
   if (submitting.value) return
   submitting.value = true
   try {
-    // A reference still unread is read here, so a capture fired before the
-    // tracker answered lands with the issue's own title rather than failing
-    // on an empty one.
-    await linkField.value?.resolve()
     const task = await create()
     if (!task) return
     await flushImages(task.id)
     resetImages()
-    const issueRef = linkField.value?.ref() || ''
-    // The idea is captured either way. This surface exists to not interrupt
-    // the thought it caught, so a link that would not attach is reported and
-    // left to be attached from the task itself.
-    const linkFailed = issueRef ? await attach(task.id, issueRef) : ''
     captured(task)
-    flash(linkFailed ? `Idea captured — the issue could not be linked: ${linkFailed}`
-                     : 'Idea captured')
+    flash('Idea captured')
   } finally {
     submitting.value = false
   }
@@ -136,7 +118,6 @@ async function submit() {
       @dragover.prevent
       @drop="onDrop"
     >
-      <TaskLinkField ref="linkField" v-model="draft.link_ref" @resolved="onResolved" />
       <div>
         <label class="field-label" for="quick-capture-title">Title</label>
         <Input
@@ -184,7 +165,7 @@ async function submit() {
       <Button variant="ghost" @click="open = false">Cancel</Button>
       <Button
         variant="primary"
-        :disabled="submitting || (!draft.title.trim() && !draft.link_ref.trim())"
+        :disabled="submitting || !draft.title.trim()"
         data-testid="quick-capture-save"
         @click="submit"
       >

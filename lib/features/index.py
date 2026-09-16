@@ -1,48 +1,42 @@
-"""Every feature key regin knows, in one page (CAI-248, CAI-255).
+"""Every feature regin knows, in one page (regin:82).
 
-No distinct-feature-key query existed anywhere before this: every read was
-keyed by a key the caller already held. Enumerating them is a **four-arm union**
-— `session_features` ∪ `defects.feature_key` ∪ `agent_task_links.external_key` ∪
-the tasks something names as parent — and the union rather than any one table is
-a measured decision: a quarter of the population exists *only* because a defect
-was blamed on it, and exactly one key reaches the list through a declaration.
+**The population is `features`.** `FROM features`, no union and no filter —
+which is the whole of what this module used to spend a four-arm union deciding.
+Any filter would be an *inference* about which rows are really features, and
+hiding one whose sessions `coverage()` counts as declared would make the index
+disagree with the coverage line rendered beneath it. Search is the one
+narrowing, and it narrows the view without changing what the counters describe.
 
-Every arm is a row that exists because somebody declared something. The fourth
-reads `agent_tasks.parent_id` rather than sweeping in every root task, for the
-same reason: admitting a task because it has merely *run* would be a filter
-deciding which keys are really features.
+**A row adds no query.** `ledger.build()` measured 726-1679 ms per feature, so
+a loop over the page would be 15-35 s; instead the whole page — figures, defect
+counts, stage and title, the population total, the unattributed-defect counter
+— comes back from one statement, and `coverage()` is computed once for the page
+rather than once for a row.
 
-It lives here and not in a blueprint because `cost.coverage()`, its precedent,
-lives in lib: the union is ledger reasoning, not transport.
-
-**A row adds no query.** `ledger.build()` measured 726-1679 ms per key, so a
-loop over the page would be 15-35 s; instead the whole page — figures, defect
-counts, cached stage and title, the population total, the unattributed-defect
-counter — comes back from one statement, and `coverage()` is computed once for
-the page rather than once for a row.
-
-The list is unfiltered. Any filter is an *inference* about which keys are
-really features (constraint 1), and hiding a key whose sessions `coverage()`
-counts as declared would make the index disagree with the coverage line
-rendered beneath it. Search is the one narrowing, and it narrows the view
-without changing what the counters describe.
+The stage arrives with it. It used to require a cached tracker snapshot, so a
+native feature had no stage at all until something fetched it and 31 keys read
+`null`; now it is the last event's kind plus a count of escapes, both of them
+rows in this database.
 """
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from typing import Optional
 
 from sqlmodel import text
 
 from lib.activity_log import get_activity_logger
-from lib.defects import stage as stage_module
 from lib.defects import store as defect_store
+from lib.features import attribution as attribution_module
 from lib.features import cost as cost_module
-from lib.features import lane as lane_module
+from lib.features import events as events_module
 from lib.orm import SessionLocal
-from lib.tasks.query import Q_MAX, like_pattern
+from lib.orm.models import tasks as task_model
+from lib.tasks.query import (
+    FilterRejected, Q_MAX, like_pattern, parse_int,
+)
+from lib.utils import pagination as offset
 
 log = get_activity_logger("defects")
 
@@ -56,11 +50,14 @@ class FeatureRow:
     a question nobody can ask of this row.
     """
 
-    key: str
-    title: Optional[str]
-    stage: Optional[str]
-    stage_synced_at: Optional[str]
+    id: int
+    title: str
+    origin: str
+    external_ref: Optional[str]
+    stage: str
+    rounds: int
     sessions: int
+    tasks: int
     cost_usd: Optional[float]
     no_usage_captured: int
     total_defects: int
@@ -69,9 +66,11 @@ class FeatureRow:
     last_activity: Optional[str]
 
     def to_dict(self) -> dict:
-        return {"key": self.key, "title": self.title, "stage": self.stage,
-                "stage_synced_at": self.stage_synced_at,
-                "sessions": self.sessions, "cost_usd": self.cost_usd,
+        return {"id": self.id, "title": self.title, "origin": self.origin,
+                "external_ref": self.external_ref, "stage": self.stage,
+                "blurb": events_module.blurb(self.stage), "rounds": self.rounds,
+                "sessions": self.sessions, "tasks": self.tasks,
+                "cost_usd": self.cost_usd,
                 "gaps": {"no_usage_captured": self.no_usage_captured},
                 "defects": {"total": self.total_defects,
                             "open": self.open_defects,
@@ -93,169 +92,341 @@ class Page:
     total: int
     coverage: cost_module.Coverage
     unattributed_defects: int
+    #: How many rows the current filters match. Distinct from `total`, which
+    #: stays the population: "3 of 25 features" and "page 1 of 4 matches" are
+    #: two questions, and a single number answering both answers neither.
+    matched: int = 0
+    page: int = 0
+    size: int = offset.DEFAULT_PAGE_SIZE
 
     def to_dict(self) -> dict:
-        return {"items": [row.to_dict() for row in self.items],
-                "total": self.total,
-                "coverage": self.coverage.to_dict(),
-                "unattributed_defects": self.unattributed_defects}
+        body = offset.Page(
+            items=[row.to_dict() for row in self.items], total=self.matched,
+            page=self.page, size=self.size,
+            has_next=(self.page + 1) * self.size < self.matched,
+            has_prev=self.page > 0).to_envelope()
+        body.update({"total": self.total,
+                     "coverage": self.coverage.to_dict(),
+                     "unattributed_defects": self.unattributed_defects})
+        return body
 
 
-# Both read from `lib/features/lane.py`. The union and the lane used to be
-# spelled here as well as in three other modules, and the copies had already
-# drifted — the lane fanned a run out into two sessions where `attribution`
-# collapsed it, so this page counted 51 where the ledger counted 50.
-_KEYS = lane_module.KEYS
-_LANE = lane_module.LANE
+#: The table the page's rows come from. Named because "the population is the
+#: table" is a claim about the statement rather than about today's result: a
+#: union that returned the same rows now would reintroduce the disagreement
+#: the moment one of its arms drifted.
+ROW_SOURCE = "features"
 
-# `is_primary` decides whether a shared session's money lands on this key or
-# another, exactly as `sessions_for_feature` decides it: a declaration marking
-# the session primary elsewhere wins, and everything else is this key's.
+_LANE = attribution_module.LANE
+
+# `is_primary` decides whether a shared session's money lands on this feature
+# or another, exactly as `sessions_for_feature` decides it: a declaration
+# marking the session primary elsewhere wins, and everything else is this
+# feature's.
 _ATTRIBUTED = """
 attributed AS (
-    SELECT u.key, u.trace_id,
+    SELECT u.feature_id, u.trace_id,
            CASE WHEN EXISTS (
                SELECT 1 FROM session_features sf
                WHERE sf.trace_id = u.trace_id AND sf.is_primary = 1
-                 AND sf.feature_key <> u.key) THEN 0 ELSE 1 END AS is_primary
-    FROM (SELECT feature_key AS key, trace_id FROM session_features
-          UNION SELECT key, trace_id FROM lane) u
+                 AND sf.feature_id <> u.feature_id) THEN 0 ELSE 1 END
+               AS is_primary
+    FROM (SELECT feature_id, trace_id FROM session_features
+          UNION SELECT feature_id, trace_id FROM lane) u
 )"""
 
 _SESSION_FACTS = """
 session_facts AS (
-    SELECT a.key,
+    SELECT a.feature_id,
            COUNT(DISTINCT a.trace_id) AS sessions,
            SUM(CASE WHEN a.is_primary = 1 THEN s.cost_usd END) AS cost_usd,
            SUM(CASE WHEN s.cost_usd IS NULL THEN 1 ELSE 0 END) AS no_usage,
            MAX(s.started_at) AS last_session
     FROM attributed a
     LEFT JOIN sessions s ON s.trace_id = a.trace_id
-    GROUP BY a.key
+    GROUP BY a.feature_id
 )"""
 
+# An escape is a join against an immutable row, not a string comparison: the
+# defect points at the event blame was assigned against, and `shipped` is the
+# only kind that makes it one.
 _DEFECT_FACTS = """
 defect_facts AS (
-    SELECT feature_key AS key,
+    SELECT d.feature_id,
            COUNT(*) AS total,
-           SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) AS open_count,
-           SUM(CASE WHEN blamed_against_state = 'completed' THEN 1 ELSE 0 END)
-               AS escapes,
-           MAX(opened_at) AS last_defect
-    FROM defects WHERE feature_key IS NOT NULL GROUP BY feature_key
+           SUM(CASE WHEN d.status = 'open' THEN 1 ELSE 0 END) AS open_count,
+           SUM(CASE WHEN e.kind = 'shipped' THEN 1 ELSE 0 END) AS escapes,
+           MAX(d.opened_at) AS last_defect
+    FROM defects d
+    LEFT JOIN feature_events e ON e.id = d.blamed_event_id
+    WHERE d.feature_id IS NOT NULL GROUP BY d.feature_id
 )"""
 
-_SELECT = """
-SELECT k.key,
-       c.snapshot_json,
-       c.synced_at,
-       COALESCE(sf.sessions, 0),
-       sf.cost_usd,
-       COALESCE(sf.no_usage, 0),
-       COALESCE(df.total, 0),
-       COALESCE(df.open_count, 0),
-       COALESCE(df.escapes, 0),
-       NULLIF(MAX(REPLACE(COALESCE(sf.last_session, ''), 'T', ' '),
-                  REPLACE(COALESCE(df.last_defect, ''), 'T', ' ')), '')
-           AS activity,
-       (SELECT COUNT(*) FROM keys) AS population
-FROM keys k
-LEFT JOIN issue_cache c ON c.external_key = k.key
-LEFT JOIN session_facts sf ON sf.key = k.key
-LEFT JOIN defect_facts df ON df.key = k.key
-"""
+# The tasks a feature declares as its steps. `agent_tasks.feature_id` is the
+# edge the Tasks tab already filters on, so this counts exactly the population
+# `/tasks?feature_id=` lists — a count naming a different set than the link
+# beside it opens is the dead link this slice exists to close. Archived rows
+# are out for the same reason: the feed hides them unless asked, so counting
+# them here would promise rows the link does not show. Runs stay in, because
+# `feature_id` wins over `root_only` in `lib/tasks/query.py::_by_grain`.
+_TASK_FACTS = f"""
+task_facts AS (
+    SELECT t.feature_id, COUNT(*) AS tasks
+    FROM agent_tasks t
+    WHERE t.feature_id IS NOT NULL
+      AND t.status <> '{task_model.TASK_STATUS_ARCHIVED}'
+    GROUP BY t.feature_id
+)"""
 
-# The two operands are written in two formats — `sessions.started_at` is ISO
-# with a `T`, `defects.opened_at` separates with a space — and `MAX` over
+# The last event decides the stage, and the order is `id` — never `at`: two
+# events written in one transaction share a timestamp, so a ship-then-restart
+# read by clock depends on the timestamp's precision.
+_LAST_EVENT = """
+last_event AS (
+    SELECT e.feature_id, e.kind
+    FROM feature_events e
+    WHERE e.id = (SELECT MAX(x.id) FROM feature_events x
+                  WHERE x.feature_id = e.feature_id)
+)"""
+
+# The activity operands are written in two formats — `sessions.started_at` is
+# ISO with a `T`, `defects.opened_at` separates with a space — and `MAX` over
 # strings compares them byte for byte, where `T` (0x54) beats ` ` (0x20). A
 # defect opened at 23:00 therefore lost to a session started at 08:00 the same
 # day. Normalized rather than parsed: both are already UTC and lexically
-# ordered once the separator agrees, so no clock is read and no zone is
-# assumed.
+# ordered once the separator agrees, so no clock is read and no zone assumed.
 #
-# Recency is the only total order that ranks nothing: every alternative sorts
-# a gap against a figure. `NULL` cost on a key with no session would sort as
-# the cheapest — `none declared` rendered as `$0.00` by an ORDER BY — and
-# open-defects-first sorts a column measured empty across the whole
-# population. The surface is a way in, not a leaderboard.
-#
-# `synced_at` is deliberately NOT one of the activity terms any more. A native
-# key's cache row is rewritten on every child event while a Linear key's moves
-# only when a human presses Refresh, so leaving it in would quietly reorder
-# the page into "native features, then everything else". Stated cost: 5 keys
-# today have a cached title but no sessions and no defects, and lose their
-# only ordering signal to the `activity IS NULL` tail.
-_ORDER = " ORDER BY activity IS NULL, activity DESC, k.key"
+# `created_at` is the FALLBACK, not a third operand. A feature is a row with a
+# birthday now, so a freshly specced one sorts by when it was written instead
+# of falling into the `activity IS NULL` tail with no signal at all — but it
+# must not outrank real work, and as a `MAX` operand it would outrank every
+# session and defect a migrated feature has, because the row is younger than
+# its own history.
+_ROWS = f"""
+rows AS (
+    SELECT f.id AS id,
+           f.title AS title,
+           f.body AS body,
+           f.origin AS origin,
+           f.external_ref AS external_ref,
+           f.project_id AS project_id,
+           f.created_at AS created_at,
+           1 + (SELECT COUNT(*) FROM feature_events e
+                WHERE e.feature_id = f.id AND e.kind = 'restarted') AS rounds,
+           COALESCE(sf.sessions, 0) AS sessions,
+           COALESCE(tf.tasks, 0) AS tasks,
+           sf.cost_usd AS cost_usd,
+           COALESCE(sf.no_usage, 0) AS no_usage,
+           COALESCE(df.total, 0) AS total_defects,
+           COALESCE(df.open_count, 0) AS open_defects,
+           COALESCE(df.escapes, 0) AS escapes,
+           {events_module.stage_sql('le.kind', 'df.escapes')} AS stage,
+           COALESCE(
+               NULLIF(MAX(REPLACE(COALESCE(sf.last_session, ''), 'T', ' '),
+                          REPLACE(COALESCE(df.last_defect, ''), 'T', ' ')), ''),
+               f.created_at) AS activity
+    FROM {ROW_SOURCE} f
+    LEFT JOIN session_facts sf ON sf.feature_id = f.id
+    LEFT JOIN defect_facts df ON df.feature_id = f.id
+    LEFT JOIN task_facts tf ON tf.feature_id = f.id
+    LEFT JOIN last_event le ON le.feature_id = f.id
+)"""
+
+# `matched` rides the page's own statement as a window function — evaluated
+# over the filtered set before LIMIT — so the filtered total costs no second
+# read while there are rows to carry it. `population` is the counter beside
+# the controls, and describes the table whatever the filters say.
+_OUTER = f"""
+SELECT id, title, origin, external_ref, stage, rounds, sessions, tasks,
+       cost_usd, no_usage, total_defects, open_defects, escapes, activity,
+       COUNT(*) OVER () AS matched,
+       (SELECT COUNT(*) FROM {ROW_SOURCE}) AS population
+FROM rows"""
+
+_CTES = (f"WITH {_LANE},{_ATTRIBUTED},{_SESSION_FACTS},{_DEFECT_FACTS},"
+         f"{_TASK_FACTS},{_LAST_EVENT},{_ROWS}")
+
+#: Sort key → (the expression it orders by, the direction it means by default).
+#: Every key is offered with both directions; none of them is the total order
+#: on its own, which is what `_TIEBREAK` is for.
+SORT_KEYS: dict[str, tuple[str, str]] = {
+    "activity": ("activity", "DESC"),
+    "rounds": ("rounds", "DESC"),
+    "open_defects": ("open_defects", "DESC"),
+    "escapes": ("escapes", "DESC"),
+    "cost": ("cost_usd", "DESC"),
+    "stage": (events_module.stage_rank_sql("stage"), "ASC"),
+    "created": ("created_at", "DESC"),
+}
+
+DEFAULT_SORT_KEY = "activity"
+
+#: Keys whose column has a gap reading, sorted last in BOTH directions rather
+#: than as a value. A NULL cost is `none declared`, not the cheapest — an
+#: `ORDER BY` that ranks it as $0.00 sorts a question nobody asked — and a
+#: feature nothing has touched is not the least recently touched.
+_GAPPED = ("activity", "cost")
+
+#: Appended to every order, so the ordering is total: without it two rows
+#: sharing a key can land on two pages or on neither as the offset moves.
+_TIEBREAK = "id"
 
 
-def _title_of(snapshot: Optional[dict]) -> Optional[str]:
-    return (snapshot or {}).get("title") or None
+def parse_sort(raw: str) -> tuple[str, str]:
+    """`key:dir` → the key and direction this page will use.
 
-
-def _stage_of(snapshot: Optional[dict], escapes: int) -> Optional[str]:
-    """The stage name a cached snapshot implies, without a per-row query.
-
-    `stage_module.stage_from_snapshot` would re-read the defect ledger for
-    every key; the counts are already in the union, so only the naming rule is
-    borrowed. None stays None: `spec` is a real stage and must not stand in
-    for "nobody has looked".
+    An unknown key falls back to the default and an unknown direction to that
+    key's own, where an unknown facet *value* is refused: a sort is a view of
+    the same rows, so a link naming a column this tab dropped should still
+    show the list, while a dropped filter shows a list that disagrees with the
+    controls above it.
     """
-    if not snapshot:
-        return None
-    return stage_module.name_for(snapshot.get("state_category") or "",
-                                 escapes)
+    key, _, direction = (raw or "").strip().partition(":")
+    key = key.strip().lower()
+    if key not in SORT_KEYS:
+        key = DEFAULT_SORT_KEY
+    chosen = direction.strip().upper()
+    return key, chosen if chosen in ("ASC", "DESC") else SORT_KEYS[key][1]
+
+
+def _order_by(key: str, direction: str) -> str:
+    column = SORT_KEYS[key][0]
+    gaps_last = f"{column} IS NULL, " if key in _GAPPED else ""
+    return f" ORDER BY {gaps_last}{column} {direction}, {_TIEBREAK}"
+
+
+#: What `page()` reads when a caller names no filters.
+NO_FILTERS: dict = {"q": "", "stage": "", "project_id": None,
+                    "unassigned": False, "sort": ""}
+
+
+def parse_filters(args) -> dict:
+    """The index's query parameters off a request `args` mapping.
+
+    A bad *value* is refused rather than dropped, exactly as the task feed
+    refuses one: a silently ignored filter shows a list that does not match
+    the controls above it. An absent one is simply "no constraint".
+    """
+    # `project_id=none` is a real scope, not an absent filter: a feature
+    # declares its project, so "declared in no project" is a population you
+    # have to be able to ask for.
+    raw_project = (args.get("project_id") or "").strip()
+    unassigned = raw_project == "none"
+    stage = (args.get("stage") or "").strip()
+    if stage and stage not in events_module.STAGES:
+        raise FilterRejected(f"unknown stage: {stage}", "stage")
+    return {
+        "q": (args.get("q") or "").strip()[:Q_MAX],
+        "stage": stage,
+        "project_id": None if unassigned else parse_int(raw_project or None,
+                                                        "project_id"),
+        "unassigned": unassigned,
+        "sort": (args.get("sort") or "").strip(),
+    }
+
+
+def _where(spec: dict) -> tuple[str, dict]:
+    """The narrowing, as a clause over the `rows` CTE and its binds."""
+    clauses: list[str] = []
+    binds: dict = {}
+    if spec["q"]:
+        clauses.append("(title LIKE :q ESCAPE '\\'"
+                       " OR COALESCE(external_ref, '') LIKE :q"
+                       " ESCAPE '\\'"
+                       " OR COALESCE(body, '') LIKE :q ESCAPE"
+                       " '\\')")
+        binds["q"] = like_pattern(spec["q"])
+    if spec["stage"]:
+        clauses.append("stage = :stage")
+        binds["stage"] = spec["stage"]
+    if spec["unassigned"]:
+        clauses.append("project_id IS NULL")
+    elif spec["project_id"] is not None:
+        clauses.append("project_id = :project_id")
+        binds["project_id"] = spec["project_id"]
+    return (" WHERE " + " AND ".join(clauses)) if clauses else "", binds
+
+
+def query_sql(spec: dict) -> str:
+    """The one statement this page runs."""
+    where, _ = _where(spec)
+    order = _order_by(*parse_sort(spec.get("sort", "")))
+    return f"{_CTES}{_OUTER}{where}{order} LIMIT :limit OFFSET :offset"
 
 
 def _row_from(record) -> FeatureRow:
     """One database record as the index renders it."""
-    (key, snapshot_json, synced_at, sessions, cost_usd, no_usage,
-     total, open_count, escapes, activity, _population) = record
-    try:
-        snapshot = json.loads(snapshot_json) if snapshot_json else None
-    except json.JSONDecodeError:
-        snapshot = None
+    (feature_id, title, origin, external_ref, stage, rounds, sessions, tasks,
+     cost_usd, no_usage, total, open_count, escapes, activity,
+     _matched, _population) = record
     return FeatureRow(
-        key=key, title=_title_of(snapshot),
-        stage=_stage_of(snapshot, escapes),
-        stage_synced_at=synced_at if snapshot else None,
+        id=feature_id, title=title, origin=origin, external_ref=external_ref,
+        stage=stage,
+        rounds=int(rounds or 1),
         sessions=int(sessions or 0),
+        tasks=int(tasks or 0),
         cost_usd=None if cost_usd is None else float(cost_usd),
         no_usage_captured=int(no_usage or 0),
         total_defects=int(total or 0), open_defects=int(open_count or 0),
         escapes=int(escapes or 0), last_activity=activity)
 
 
-def _query(needle: str) -> tuple:
-    """The one statement, and its binds."""
-    sql = (f"WITH {_KEYS},{_LANE},{_ATTRIBUTED},{_SESSION_FACTS},"
-           f"{_DEFECT_FACTS}{_SELECT}")
-    binds = {}
-    if needle:
-        sql += (" WHERE (k.key LIKE :q ESCAPE '\\'"
-                " OR COALESCE(json_extract(c.snapshot_json, '$.title'), '')"
-                " LIKE :q ESCAPE '\\')")
-        binds["q"] = f"%{like_pattern(needle)}%"
-    return sql + _ORDER, binds
+def _spec_from(q: str, filters) -> dict:
+    """One narrowing, whatever the caller named it with."""
+    spec = dict(NO_FILTERS)
+    spec.update(filters or {})
+    if q:
+        spec["q"] = (q or "").strip()[:Q_MAX]
+    return spec
 
 
-def page(q: str = "") -> Page:
-    """The index, narrowed by `q` over key and cached title."""
-    needle = (q or "").strip()[:Q_MAX]
-    sql, binds = _query(needle)
+def page(q: str = "", *, filters: Optional[dict] = None,
+         page_index: int = 0, size: int = offset.DEFAULT_PAGE_SIZE) -> Page:
+    """One offset page of the index, under `filters` and its sort.
+
+    Offset rather than keyset, which is the split `lib/utils/pagination.py`
+    already argues: this population grows by an operator act — link, declare,
+    blame — not by ingest, so a page number stays meaningful between two
+    reads, and "page 7" and a sortable column are both things a cursor cannot
+    express.
+    """
+    spec = _spec_from(q, filters)
+    page_index, size = offset.clamp_page(page_index), offset.clamp_size(size)
+    _, binds = _where(spec)
+    binds.update({"limit": size, "offset": page_index * size})
     with SessionLocal() as session:
-        rows = session.exec(text(sql).bindparams(**binds)).all()
+        rows = session.exec(text(query_sql(spec)).bindparams(**binds)).all()
 
     items = [_row_from(record) for record in rows]
+    matched = int(rows[0][-2]) if rows else _matched_total(spec)
     population = rows[0][-1] if rows else _population_total()
 
-    log.read("feature_index_read", count=len(items), q=needle)
+    log.read("feature_index_read", count=len(items), q=spec["q"],
+             page=page_index, size=size)
     return Page(items=items, total=int(population or 0),
                 coverage=cost_module.coverage(),
                 # The same function `/defects` lists from, not a second
-                # `feature_key IS NULL` count in this module's SQL: two
-                # readers of one predicate is how a header and the page it
-                # links to come to report different numbers.
-                unattributed_defects=len(defect_store.unattributed()))
+                # `feature_id IS NULL` count in this module's SQL: two readers
+                # of one predicate is how a header and the page it links to
+                # come to report different numbers.
+                unattributed_defects=len(defect_store.unattributed()),
+                matched=matched, page=page_index, size=size)
+
+
+def _matched_total(spec: dict) -> int:
+    """The filtered count, when the page itself carried no row to hold it.
+
+    `COUNT(*) OVER ()` rides the page's own statement while there are rows.
+    An offset past the end has none, and still has to report the true total
+    rather than 0 — a pager that reads "page 9 of 1" is how a user gets
+    stranded with no way back.
+    """
+    where, binds = _where(spec)
+    with SessionLocal() as session:
+        matched = session.exec(text(
+            f"{_CTES} SELECT COUNT(*) FROM rows{where}"
+        ).bindparams(**binds)).first()
+    return int(matched[0]) if matched else 0
 
 
 def _population_total() -> int:
@@ -263,6 +434,6 @@ def _population_total() -> int:
     nothing — the counter describes the population, so it survives a query
     that returned no rows."""
     with SessionLocal() as session:
-        population = session.exec(text(
-            f"WITH {_KEYS} SELECT COUNT(*) FROM keys")).first()
+        population = session.exec(
+            text(f"SELECT COUNT(*) FROM {ROW_SOURCE}")).first()
     return population[0] if population else 0

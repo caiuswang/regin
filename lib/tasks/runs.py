@@ -33,6 +33,7 @@ through `complete_run`, which settles once, so neither can double-fire.
 
 from __future__ import annotations
 
+import json
 import shlex
 import sys
 from datetime import datetime, timezone
@@ -48,15 +49,14 @@ from lib.orm import SessionLocal
 from lib.orm.models.comments import RESOLUTION_OPEN, SUBJECT_TASK
 from lib.orm.models.agent_runs import AgentRun
 from lib.orm.models.tasks import (
-    AgentTask, AgentTaskRun, RUN_STATUS_DONE,
+    AgentTask, AgentTaskRun, RUN_STATUS_ARMED, RUN_STATUS_DONE,
     RUN_STATUS_FAILED, RUN_STATUS_RUNNING, RUN_STATUS_STARTING,
     TASK_STATUS_ARMED, TASK_STATUS_DONE, TASK_STATUS_FAILED,
     TASK_STATUS_RUNNING,
 )
 from lib.settings import settings
-from lib.tasks import deps, grain, images, links, store
+from lib.tasks import deps, images, store
 from lib.tasks.integrations import registry
-from lib.tasks.integrations.regin import key_for_task
 
 log = get_activity_logger("tasks")
 
@@ -107,6 +107,16 @@ def _already_live(task_id: int) -> RunRefused:
     return RunRefused(f"task {task_id} already has a live run")
 
 
+def serialize_attempt(row: AgentTaskRun) -> dict:
+    """One attempt as every surface renders it.
+
+    Public because the task feed carries the pending one per row: the arm
+    sheet seeds its draft from what the task was last armed with, and that
+    now lives here rather than on the task.
+    """
+    return _serialize(row)
+
+
 def _serialize(row: AgentTaskRun) -> dict:
     return {
         "id": row.id,
@@ -118,7 +128,104 @@ def _serialize(row: AgentTaskRun) -> dict:
         "ended_at": row.ended_at,
         "exit_reason": row.exit_reason,
         "verify_exit_code": row.verify_exit_code,
+        # The parameters THIS attempt spends. On the attempt rather than on
+        # the task, so a rerun under different ones is a second row here and
+        # not a second task — which is what retired "a sub-task is a rerun".
+        "params": store._decode_params(row.params_json),
+        "verify_cmd": row.verify_cmd,
+        "autorun": bool(row.autorun),
     }
+
+
+def arm(task_id: int, *, params: dict, verify_cmd: Optional[str],
+        autorun: int) -> dict:
+    """Write the parameters the task's next attempt will spend.
+
+    An `armed` run row IS the pending attempt: arming a task used to set three
+    columns on it and leave `status='armed'` standing for state nothing else
+    could see, and the row makes that state a thing you can read, list and
+    replace.
+
+    Re-arming replaces the pending row rather than adding a second — there is
+    one next attempt, and two would make "which parameters does Run spend"
+    a question with two answers.
+    """
+    with SessionLocal() as session:
+        row = session.exec(
+            select(AgentTaskRun)
+            .where(AgentTaskRun.task_id == task_id,
+                   AgentTaskRun.status == RUN_STATUS_ARMED)).first()
+        if row is None:
+            row = AgentTaskRun(task_id=task_id,
+                               attempt=_next_attempt(session, task_id),
+                               status=RUN_STATUS_ARMED)
+        row.params_json = json.dumps(params)
+        row.verify_cmd = verify_cmd
+        row.autorun = autorun
+        row.started_at = _now()
+        session.add(row)
+        session.commit()
+        session.refresh(row)
+        return _serialize(row)
+
+
+def armed_attempt(task_id: int) -> Optional[dict]:
+    """The pending attempt, or None for a task nobody has armed."""
+    with SessionLocal() as session:
+        row = session.exec(
+            select(AgentTaskRun)
+            .where(AgentTaskRun.task_id == task_id,
+                   AgentTaskRun.status == RUN_STATUS_ARMED)).first()
+        return _serialize(row) if row is not None else None
+
+
+def open_attempt(task_id: int, *, params: Optional[dict] = None,
+                 verify_cmd: Optional[str] = None,
+                 autorun: int = 0) -> dict:
+    """An attempt row, written *before* the launch: a crash between the two
+    leaves this visible `starting` row rather than an untracked child.
+
+    `UNIQUE(task_id, attempt)` closes the window between the liveness check and
+    this insert. Two requests that both read "not live" compute the same next
+    attempt, so the constraint picks the winner and the loser is refused with
+    the liveness check's own words — identity resolving a race, exactly as it
+    resolves a redelivered capture, and never a lock or a retry.
+    """
+    with SessionLocal() as session:
+        row = session.exec(
+            select(AgentTaskRun)
+            .where(AgentTaskRun.task_id == task_id,
+                   AgentTaskRun.status == RUN_STATUS_ARMED)).first()
+        if row is None:
+            # A rerun with no new parameters spends the previous attempt's:
+            # "Run again" is the same attempt made twice, and re-arming is how
+            # an operator asks for different ones.
+            previous = session.exec(
+                select(AgentTaskRun).where(AgentTaskRun.task_id == task_id)
+                .order_by(AgentTaskRun.attempt.desc())).first()
+            row = AgentTaskRun(
+                task_id=task_id, attempt=_next_attempt(session, task_id),
+                params_json=(json.dumps(params) if params is not None
+                             else getattr(previous, "params_json", None)),
+                verify_cmd=(verify_cmd if params is not None
+                            else getattr(previous, "verify_cmd", None)),
+                autorun=(autorun if params is not None
+                         else int(getattr(previous, "autorun", 0) or 0)))
+        elif params is not None:
+            row.params_json = json.dumps(params)
+            row.verify_cmd = verify_cmd
+            row.autorun = autorun
+        row.status = RUN_STATUS_STARTING
+        row.started_at = _now()
+        session.add(row)
+        try:
+            session.commit()
+        except IntegrityError:
+            session.rollback()
+            log.warn("task_run_race_lost", task_id=task_id)
+            raise _already_live(task_id) from None
+        session.refresh(row)
+        return _serialize(row)
 
 
 # ── liveness ─────────────────────────────────────────────────
@@ -157,10 +264,18 @@ def is_live(view: dict) -> bool:
 # ── reads ────────────────────────────────────────────────────
 
 def latest_attempt(task_id: int) -> Optional[dict]:
+    """The newest attempt that has actually been launched.
+
+    The pending `armed` row is excluded, and that exclusion is load-bearing:
+    `live_run` reads this, so an armed row answering here would report "not
+    live" for a task whose previous run is still going and let a second launch
+    into the same worktree. `armed_attempt` is how the pending one is read.
+    """
     with SessionLocal() as session:
         row = session.exec(
             select(AgentTaskRun)
-            .where(AgentTaskRun.task_id == task_id)
+            .where(AgentTaskRun.task_id == task_id,
+                   AgentTaskRun.status != RUN_STATUS_ARMED)
             .order_by(AgentTaskRun.attempt.desc())).first()
         return _serialize(row) if row is not None else None
 
@@ -200,11 +315,15 @@ def list_runs(task_id: int) -> list[dict]:
 
     The join is what makes `live` answerable: the attempt row records intent,
     and the `agent_runs` row plus its pid records reachability.
+
+    History, so the pending `armed` row is not in it: nothing has happened to
+    that attempt yet. The detail envelope carries it separately.
     """
     with SessionLocal() as session:
         rows = session.exec(
             select(AgentTaskRun)
-            .where(AgentTaskRun.task_id == task_id)
+            .where(AgentTaskRun.task_id == task_id,
+                   AgentTaskRun.status != RUN_STATUS_ARMED)
             .order_by(AgentTaskRun.attempt.desc())).all()
         views = [_serialize(row) for row in rows]
         agents = _agent_runs(session, [v["trace_id"] for v in views
@@ -262,48 +381,36 @@ def _finish_block(run_id: int, linked: bool = False) -> str:
     )
 
 
-def _tracker_line(link: dict) -> str:
-    """One linked issue, named the way an operator would name it.
-
-    The provider is named by asking the registry, never by knowing what Linear
-    is called here — the same rule that keeps a second tracker additive.
-    """
-    issue = link.get("issue") or {}
-    name = registry.display_name(link.get("provider", ""))
-    head = f"  - {name} {link.get('external_key', '')}"
-    if issue.get("state"):
-        head += f" [{issue['state']}]"
-    title = issue.get("title") or "(not fetched — regin holds no snapshot)"
-    return f"{head} — {title}\n    {link.get('url') or ''}".rstrip()
-
-
-def _tracker_block(rows: list[dict]) -> str:
-    """The `<tracker>` instruction for a task that links to another tracker.
+def _tracker_block(feature) -> str:
+    """The `<tracker>` instruction for a run of a remotely-tracked feature.
 
     Identity, not content: the issue's description is deliberately not
-    repeated, because the composer already offered it as the task's body at
-    capture time and a second copy is either duplication or a stale
-    contradiction of one. The agent that needs the body reads it where it is
-    current.
+    repeated, because the feature already carries it as its spec and a second
+    copy is either duplication or a stale contradiction of one. The agent that
+    needs the body reads it where it is current.
 
-    Empty — not an empty block — for a task with no link, so an unlinked run's
-    prompt is exactly what it was.
+    It hangs off the FEATURE rather than off the task, which is what the
+    redesign moved: a link used to live on a task, so which issue a run
+    belonged to depended on which of a feature's tasks launched it.
+
+    Empty — not an empty block — for a native feature, so its run's prompt is
+    exactly what it was.
     """
-    if not rows:
+    if feature is None or not feature.external_ref:
         return ""
+    name = registry.display_name(feature.origin)
     return (
         "\n\n<tracker>\n"
-        "This task is linked to the issue(s) below. The issue — and its "
-        "comments, which can revise or reverse the description — is the "
-        "source of truth for what is being asked; regin's copy of the title "
-        "and details is a snapshot taken when the task was captured and may "
-        "already be stale.\n"
-        + "\n".join(_tracker_line(row) for row in rows)
-        + "\nRead the issue and its comments before you start. When the work "
+        f"This work is tracked as {name} {feature.external_ref}. The issue — "
+        "and its comments, which can revise or reverse the description — is "
+        "the source of truth for what is being asked; regin's copy of the "
+        "title and details is a snapshot and may already be stale.\n"
+        f"  {feature.external_url or ''}\n"
+        "Read the issue and its comments before you start. When the work "
         "lands, record it there: say what changed, and move the issue's state "
         "to match. Do that before you run the finish command below — regin "
         "re-reads the issue at that moment, so a state you change afterwards "
-        "is not the one the task will show.\n"
+        "is not the one the feature will show.\n"
         "</tracker>"
     )
 
@@ -388,36 +495,33 @@ def _followup_block(task_id: int) -> str:
     )
 
 
-def _feature_key(task: dict, linked: bool) -> Optional[str]:
-    """The native feature this run builds, or None for a run of an issue in
-    another tracker — the `<tracker>` block already names that one."""
-    if linked:
-        return None
-    return key_for_task(task["parent_id"] or task["id"])
-
-
-def _feature_block(task: dict, linked: bool) -> str:
-    """The `<feature>` instruction: which key this run's session counts under.
+def _feature_block(task: dict) -> str:
+    """The `<feature>` instruction: which feature this run's session counts
+    under.
 
     The attribution itself needs no act from the agent — the lane reads it off
-    the run row. What only the agent can do is blame a defect, so the block is
-    mostly the command for that, with the key filled in.
+    the run row through the task. What only the agent can do is blame a defect,
+    so the block is mostly the command for that, with the id filled in.
     """
-    key = _feature_key(task, linked)
-    if key is None:
+    feature_id = task.get("feature_id")
+    if feature_id is None:
         return ""
+    from lib.features import store as feature_store  # noqa: PLC0415
+
+    feature = feature_store.get(feature_id)
+    named = f"#{feature_id}" + (f" ({feature.title})" if feature else "")
     return (
         "\n\n<feature>\n"
-        f"This run is a session of feature {key}; regin attributes it "
+        f"This run is a session of feature {named}; regin attributes it "
         "automatically. If you find something the feature got wrong, declare "
-        f"it against that key: `regin defects open \"<what>\" --feature {key} "
-        "--session <session id>`. Shipping is the operator's act on the "
-        "feature's task page, not yours.\n"
+        f"it against that id: `regin defects open \"<what>\" --feature "
+        f"{feature_id} --session <session id>`. Shipping is the operator's "
+        "act on the feature, not yours.\n"
         "</feature>"
     )
 
 
-def _prompt(task: dict, run_id: int) -> str:
+def _prompt(task: dict, run_id: int, params: Optional[dict] = None) -> str:
     """The sentence a run is launched with, plus how to report it finished.
 
     A task's images are NOT named here. They travel beside this text as content
@@ -444,14 +548,17 @@ def _prompt(task: dict, run_id: int) -> str:
     """
     body = (task.get("body") or "").strip()
     text = body or task["title"]
-    rows = links.list_links(task["id"])
-    return (_invocation(task) + text[:PROMPT_MAX]
-            + _tracker_block(rows) + _followup_block(task["id"])
-            + _feature_block(task, bool(rows))
-            + _finish_block(run_id, linked=bool(rows)))
+    from lib.features import store as feature_store  # noqa: PLC0415
+    feature = (feature_store.get(task["feature_id"])
+               if task.get("feature_id") is not None else None)
+    remote = bool(feature is not None and feature.external_ref)
+    return (_invocation(params or {}) + text[:PROMPT_MAX]
+            + _tracker_block(feature) + _followup_block(task["id"])
+            + _feature_block(task)
+            + _finish_block(run_id, linked=remote))
 
 
-def _invocation(task: dict) -> str:
+def _invocation(params: dict) -> str:
     """The `/<skill> <args>` line an armed skill puts in front of the idea.
 
     A slash command is what the CLI resolves from the *start* of a prompt, so
@@ -459,7 +566,7 @@ def _invocation(task: dict) -> str:
     skill's arguments — a skill whose procedure takes the task as its subject
     reads it from there, and one with its own arguments gets them on the line.
     """
-    skill = (task.get("params") or {}).get("skill") or {}
+    skill = (params or {}).get("skill") or {}
     name = skill.get("name")
     if not name:
         return ""
@@ -511,8 +618,9 @@ def _refuse_unrunnable(task: dict) -> None:
         return
     # A settled task keeps the parameters it was armed with, and Run spends
     # them again: a feature that failed once, or shipped and needs another
-    # round, is not "not armed". A task never armed still is.
-    if task["status"] in _SETTLED and task["params"]:
+    # round, is not "not armed". A task never armed still is. The parameters
+    # live on the attempts now, so "was it armed" is "is there one to reuse".
+    if task["status"] in _SETTLED and latest_attempt(task_id) is not None:
         return
     raise RunRefused(
         f"task {task_id} is {task['status']!r}, not 'armed' — arm it first")
@@ -524,31 +632,6 @@ def _next_attempt(session, task_id: int) -> int:
         .where(AgentTaskRun.task_id == task_id)
         .order_by(AgentTaskRun.attempt.desc())).first() or 0
     return last + 1
-
-
-def _open_run_row(task_id: int) -> dict:
-    """The attempt row, written *before* the launch: a crash between the two
-    leaves this visible `starting` row rather than an untracked child.
-
-    `UNIQUE(task_id, attempt)` closes the window between the liveness check and
-    this insert. Two requests that both read "not live" compute the same next
-    attempt, so the constraint picks the winner and the loser is refused with
-    the liveness check's own words — identity resolving a race, exactly as it
-    resolves a redelivered capture, and never a lock or a retry.
-    """
-    with SessionLocal() as session:
-        row = AgentTaskRun(task_id=task_id,
-                           attempt=_next_attempt(session, task_id),
-                           status=RUN_STATUS_STARTING)
-        session.add(row)
-        try:
-            session.commit()
-        except IntegrityError:
-            session.rollback()
-            log.warn("task_run_race_lost", task_id=task_id)
-            raise _already_live(task_id) from None
-        session.refresh(row)
-        return _serialize(row)
 
 
 def _attach_trace(run_id: int, trace_id: str) -> dict:
@@ -584,10 +667,11 @@ def start_run(task_id: int) -> Optional[dict]:
     if task is None:
         return None
     _refuse_unrunnable(task)
-    kwargs = _launch_kwargs(task["params"])
-    row = _open_run_row(task_id)
+    row = open_attempt(task_id)
+    kwargs = _launch_kwargs(row["params"])
     try:
-        handle = supervisor.launch_run(_prompt(task, row["id"]),
+        handle = supervisor.launch_run(_prompt(task, row["id"],
+                                               row["params"]),
                                        images=images.payload_for(task_id),
                                        **kwargs)
     except (supervisor.LaunchRefused, ImportError) as exc:
@@ -597,11 +681,14 @@ def start_run(task_id: int) -> Optional[dict]:
         raise RunRefused(f"launch refused: {exc}") from exc
     view = _attach_trace(row["id"], handle.trace_id)
     store.set_status(task_id, TASK_STATUS_RUNNING)
-    # The one event that may walk a ship claim back: work restarting after a
-    # feature was claimed done is exactly what a round is — on the parent when
-    # this task is a run of one, on the task itself when its runs are its own.
-    grain.recompute_parent(task_id, event=grain.EVENT_RUN_STARTED)
-    grain.walk_back_own_claim(task_id)
+    # Work beginning again over a claimed-done feature is exactly what a round
+    # is. The decision reads the feature's last event alone, so a second
+    # attempt inside one round appends nothing and the same run reported twice
+    # costs nothing either.
+    if task.get("feature_id") is not None:
+        from lib.features import events as feature_events  # noqa: PLC0415
+        feature_events.on_run_start(task["feature_id"], row["id"],
+                                    trace_id=handle.trace_id)
     _resolve_stuck(task_id)
     # Registered last: a run that ends before this point fires the callback the
     # moment it is added, and it must not race the writes above.
@@ -645,9 +732,8 @@ def complete_run(run_id: int, *, status: str, exit_reason: str = "",
             session.add(task)
         session.commit()
     # A run settling says *this session finished*, never *this feature
-    # shipped* — so the parent is recomputed from its children and the
-    # done-claim guard leaves a claimed `done` alone.
-    grain.recompute_parent(task_id_of, event=grain.EVENT_RUN_SETTLED)
+    # shipped*, so it writes no feature event at all. The two used to share a
+    # column, and a settling run therefore shipped features nobody claimed.
     log.write("task_run_settled", run_id=run_id, status=status,
               task_status=task_status)
     return True
@@ -791,12 +877,37 @@ def finish_run(run_id: int, *, status: str = RUN_STATUS_DONE,
                            exit_reason=reason or "agent signalled finish",
                            task_status=_TASK_STATUS_FOR[status])
     if settled:
-        # Only this path refreshes the links: it is the one that runs on a
+        # Only this path refreshes the remote: it is the one that runs on a
         # request thread. `handle_completion` runs on the SDK loop's thread
         # and cannot spend a round trip against a tracker.
-        links.resync_task(task_id)
+        _resync_feature(task_id)
     fired = fire_ready_dependents(task_id) if settled else []
     log.write("task_run_finish_signalled", run_id=run_id, task_id=task_id,
               status=status, settled=settled, fired=fired)
     return {"run_id": run_id, "task_id": task_id, "settled": settled,
             "fired": fired}
+
+
+def _resync_feature(task_id: int) -> None:
+    """Re-read the remote issue a finished run was told to move. Never raises.
+
+    The event is an agent reporting its own work finished — a linked run is
+    launched told to move the issue's state to match what it did, so that
+    report is the moment regin's copy is known stale.
+
+    A failure is swallowed rather than propagated: the report settles the
+    attempt and releases whatever waited on it, and a tracker being unreachable
+    cannot be allowed to walk that back. The reason lands on the feature
+    (`sync_error`), which is what its page states.
+    """
+    from lib.features import store as feature_store  # noqa: PLC0415
+    from lib.features import sync  # noqa: PLC0415
+
+    feature = feature_store.feature_of_task(task_id)
+    if feature is None or not sync.is_remote(feature):
+        return
+    try:
+        sync.refresh(feature.id)
+    except Exception:  # noqa: BLE001 — a remote cannot sink the finish
+        log.error("feature_resync_failed", task_id=task_id,
+                  feature_id=feature.id, exc_info=True)

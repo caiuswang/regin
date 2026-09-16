@@ -1,0 +1,79 @@
+"""All three Pipeline tab counts, from one read.
+
+A count rendered only on the tab you are looking at is the one count that
+carries no information. The shell therefore asks once, for all three, under
+the scope it owns — and the scope is the only axis the three share.
+
+The project axis is declared on two tables and derived on the third:
+`agent_tasks.project_id` and `features.project_id` are columns, while a
+defect's project is its feature's. An unattributed defect has no feature and
+so has no project — the same first-class gap the ledger already carries for
+blame, never a third state.
+"""
+
+from __future__ import annotations
+
+from sqlmodel import func, select
+
+from lib.orm import SessionLocal
+from lib.orm.models.defects import Defect
+from lib.orm.models.features import Feature
+from lib.orm.models.tasks import AgentTask
+
+SCOPE_ALL = "all"
+SCOPE_NONE = "none"
+
+
+class ScopeError(ValueError):
+    """The `project` parameter named something that is not a scope."""
+
+
+def parse_scope(raw: str | None) -> int | str:
+    """`all` (default), `none`, or a repo id.
+
+    Refused rather than silently widened: a dropped scope shows a list that
+    does not match the selector above it.
+    """
+    value = (raw or "").strip()
+    if not value or value == SCOPE_ALL:
+        return SCOPE_ALL
+    if value == SCOPE_NONE:
+        return SCOPE_NONE
+    try:
+        return int(value)
+    except ValueError:
+        raise ScopeError(f"project must be 'all', 'none' or a repo id, "
+                         f"got {value!r}") from None
+
+
+def _scoped(stmt, column, scope):
+    if scope == SCOPE_ALL:
+        return stmt
+    if scope == SCOPE_NONE:
+        return stmt.where(column.is_(None))
+    return stmt.where(column == scope)
+
+
+def _defects_stmt(scope):
+    stmt = select(func.count(Defect.id)).select_from(Defect)
+    if scope == SCOPE_ALL:
+        return stmt
+    stmt = stmt.outerjoin(Feature, Defect.feature_id == Feature.id)
+    if scope == SCOPE_NONE:
+        # An unattributed defect belongs to no project, so it belongs here —
+        # dropping it would make it invisible under every scope.
+        return stmt.where(Feature.project_id.is_(None))
+    return stmt.where(Feature.project_id == scope)
+
+
+def counts(scope: int | str = SCOPE_ALL) -> dict[str, int]:
+    with SessionLocal() as session:
+        return {
+            "tasks": session.exec(_scoped(
+                select(func.count(AgentTask.id)), AgentTask.project_id,
+                scope)).one(),
+            "features": session.exec(_scoped(
+                select(func.count(Feature.id)), Feature.project_id,
+                scope)).one(),
+            "defects": session.exec(_defects_stmt(scope)).one(),
+        }

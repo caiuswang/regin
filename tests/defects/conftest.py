@@ -2,6 +2,6 @@
 
 from tests.tasks.conftest import native_task  # noqa: F401
 from tests.feature_ledger_fixtures import (  # noqa: F401
-    attributing_trace, no_tracker, posted_spans, run_alias, session_row,
-    task_lane, tracker_down, tracker_issue,
+    attributing_trace, defect_row, feature_row, no_tracker, posted_spans,
+    run_alias, session_row, task_lane, tracker_down, tracker_issue,
 )

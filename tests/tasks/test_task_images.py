@@ -223,7 +223,7 @@ def test_a_run_carries_the_task_images_beside_its_prompt(flask_client,
     assert resp.status_code == 201, resp.get_json()
     call = launcher.calls[0]
     # The prompt stays the idea as captured — nothing names the images.
-    assert call["prompt"].split("<feature>")[0].strip() == "look at this"
+    assert call["prompt"].split("<finish>")[0].strip() == "look at this"
     assert call["images"] == [
         {"media_type": "image/png", "data_b64": _b64(PNG)},
         {"media_type": "image/gif", "data_b64": _b64(GIF)},

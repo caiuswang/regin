@@ -13,9 +13,11 @@ const RuleDetailView = () => import('./views/RuleDetailView.vue')
 const TriggersView = () => import('./views/TriggersView.vue')
 const TriggersRawView = () => import('./views/TriggersRawView.vue')
 const SkillsView = () => import('./views/SkillsView.vue')
+const PipelineView = () => import('./views/PipelineView.vue')
 const FeaturesView = () => import('./views/FeaturesView.vue')
 const FeatureLedgerView = () => import('./views/FeatureLedgerView.vue')
 const DefectsView = () => import('./views/DefectsView.vue')
+const DefectDetailView = () => import('./views/DefectDetailView.vue')
 const SkillDetailView = () => import('./views/SkillDetailView.vue')
 const PromptTemplatesView = () => import('./views/PromptTemplatesView.vue')
 const ExperimentsView = () => import('./views/ExperimentsView.vue')
@@ -45,7 +47,6 @@ const PayloadLogView = () => import('./views/PayloadLogView.vue')
 const DesignSystemView = () => import('./views/DesignSystemView.vue')
 const NotFoundView = () => import('./views/NotFoundView.vue')
 // PROTOTYPE — throwaway (CAI-269). Delete with the branch; never ships.
-const NativeStageView = () => import('./views/prototype/NativeStageView.vue')
 
 const routes = [
   { path: '/login', name: 'login', component: LoginView, meta: { public: true } },
@@ -60,9 +61,29 @@ const routes = [
   { path: '/rules/triggers', redirect: '/trace/triggers' },
   { path: '/rules/:id', name: 'rule-detail', component: RuleDetailView },
   { path: '/skills', name: 'skills', component: SkillsView },
-  { path: '/features', name: 'features', component: FeaturesView },
-  { path: '/features/:key', name: 'feature-ledger', component: FeatureLedgerView },
-  { path: '/defects', name: 'defects', component: DefectsView },
+  // Tasks, features and defects are three readings of one loop, so they share
+  // one shell and one sidebar entry. The children are ABSOLUTE paths: the
+  // grouping is new, the URLs are not, and every existing link — in a view, a
+  // test, or printed by the CLI — still resolves.
+  //
+  // A feature's detail is a CHILD, not a sibling: as a sibling it rendered
+  // outside the shell, so opening one took the whole tab strip off screen.
+  {
+    path: '/pipeline',
+    name: 'pipeline',
+    component: PipelineView,
+    redirect: '/tasks',
+    children: [
+      { path: '/tasks', name: 'tasks', component: TasksView },
+      { path: '/features', name: 'features', component: FeaturesView },
+      { path: '/features/:id', name: 'feature-ledger', component: FeatureLedgerView },
+      { path: '/defects', name: 'defects', component: DefectsView },
+      // A defect's permalink is a child of the shell, not a sibling of it:
+      // following a row's id must not make the tab strip that framed it
+      // disappear.
+      { path: '/defects/:id', name: 'defect-detail', component: DefectDetailView },
+    ],
+  },
   { path: '/skills/:id', name: 'skill-detail', component: SkillDetailView },
   { path: '/tags', redirect: '/patterns' },
   { path: '/tags/:name', redirect: (to) => ({ path: '/patterns', query: { tag: to.params.name } }) },
@@ -111,9 +132,7 @@ const routes = [
   { path: '/schema-drift', name: 'schema-drift', component: SchemaDriftView },
   { path: '/payload-log', name: 'payload-log', component: PayloadLogView },
   { path: '/ds', name: 'design-system', component: DesignSystemView },
-  { path: '/prototype/native-stage', name: 'proto-native-stage', component: NativeStageView },
   { path: '/account', name: 'account', component: UsersView },
-  { path: '/tasks', name: 'tasks', component: TasksView },
   { path: '/tasks/:id', name: 'task-detail', component: TaskDetailView },
   { path: '/api-keys', name: 'api-keys', component: ApiKeysView },
   // Catch-all: App.vue only mounts the shell for matched routes, so an

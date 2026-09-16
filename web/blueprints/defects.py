@@ -28,30 +28,70 @@ import json
 from flask import Blueprint, jsonify, request
 
 from lib.auth import require_auth, require_editor
+from lib.defects import query as defect_query
 from lib.defects import store
+from lib.utils.pagination import clamp_page, clamp_size
 
 defects_bp = Blueprint("defects", __name__)
 
-_FIELDS = {"symptom", "feature_key", "suspect_paths"}
+_FIELDS = {"symptom", "feature_id", "suspect_paths"}
 
-SCOPE_ALL = "all"
-SCOPE_UNATTRIBUTED = "unattributed"
-SCOPE_FEATURE = "feature"
-SCOPE_FIX_ITEM = "fix-item"
+SCOPE_ALL = defect_query.SCOPE_ALL
+SCOPE_UNATTRIBUTED = defect_query.SCOPE_UNATTRIBUTED
+SCOPE_FEATURE = defect_query.SCOPE_FEATURE
+SCOPE_FIX_ITEM = defect_query.SCOPE_FIX_ITEM
 
 
-def _serialize(row) -> dict:
+def _view(row, feature_title, blamed_event_kind) -> dict:
     return {
-        "id": row.id, "feature_key": row.feature_key, "symptom": row.symptom,
+        "id": row.id, "feature_id": row.feature_id, "symptom": row.symptom,
+        # The feature's own title, never a task's: the two answer different
+        # questions and diverge, and no surface falls back from one to the
+        # other.
+        "feature_title": feature_title,
         "status": row.status, "round": row.round,
-        "blamed_against_state": row.blamed_against_state,
+        # What blame was assigned against, read off the event it points at. An
+        # escape is `blamed_event_kind == 'shipped'` — one comparison, and no
+        # "we never looked" reading to render as a gap.
+        "blamed_event_kind": blamed_event_kind,
         "missing_check": row.missing_check,
         "suspect_paths": json.loads(row.suspect_paths_json)
         if row.suspect_paths_json else [],
-        "fix_provider": row.fix_provider,
-        "fix_external_key": row.fix_external_key,
-        "opened_at": row.opened_at, "closed_at": row.closed_at,
+        "fix_task_id": row.fix_task_id,
+        "opened_at": row.opened_at, "updated_at": row.updated_at,
+        "closed_at": row.closed_at,
     }
+
+
+def _serialize(row) -> dict:
+    """One defect, for the response to a write.
+
+    Two reads for one row, and deliberately not the shape the list uses: this
+    is a single row the caller just changed, so there is no loop for the cost
+    to multiply through. The list reads its two extra facts off the row.
+    """
+    return _view(row, _feature_title(row), _blamed_kind(row))
+
+
+def _feature_title(row):
+    if row.feature_id is None:
+        return None
+    from lib.features import store as feature_store  # noqa: PLC0415
+
+    feature = feature_store.get(row.feature_id)
+    return feature.title if feature else None
+
+
+def _blamed_kind(row):
+    """The kind of the event this defect is blamed against, or None."""
+    if row.blamed_event_id is None:
+        return None
+    from lib.orm import SessionLocal  # noqa: PLC0415
+    from lib.orm.models.features import FeatureEvent  # noqa: PLC0415
+
+    with SessionLocal() as session:
+        event = session.get(FeatureEvent, row.blamed_event_id)
+    return event.kind if event else None
 
 
 def _bad_request(payload: dict):
@@ -67,59 +107,55 @@ def _bad_request(payload: dict):
     return None
 
 
-def _fix_item_ref(text: str):
-    """The `(provider, key)` a fix-item query names, or None.
-
-    Whatever the tracker recognizes is tried first — a bare `CAI-241`, a
-    pasted issue URL, `regin:42` — so this route accepts the same spellings
-    the *write* does. `<provider>:<key>` stays as the fallback it documented.
-
-    The order matters and is the bug: a native key contains a colon of its
-    own, so partitioning first read `regin:42` as provider `regin`, key `42`
-    and answered "nothing points at this item" for rows that do.
-    """
-    from lib.defects import tracker  # noqa: PLC0415  (circular at import time)
-    try:
-        ref = tracker.name_ref(text)
-    except tracker.TrackerUnavailable:
-        provider, _, external_key = text.partition(":")
-        return (provider, external_key) if provider and external_key else None
-    return ref.provider, ref.key
-
-
-def _listing(rows, scope: str):
-    return jsonify({"items": [_serialize(row) for row in rows],
-                    "scope": scope})
-
-
 @defects_bp.route("/api/defects", methods=["GET"])
 @require_auth
 def api_list_defects():
-    """The ledger, in one of four scopes.
+    """One bounded page of the ledger, under one narrowing and one order.
 
-    `all` is the default, and that is the whole repair: unattributed used to
-    be, so a defect reported against a feature — the shape every report from a
-    task page has — belonged to no scope any surface opened. It was written,
-    it was returned, and it was then unreadable. Unattributed keeps its own
-    name because it is what the `/features` counter links to, but it is one
-    predicate over the ledger now, not the way in.
+    The four scopes are four predicates over the same read now, not four
+    readers — which is what retires the reported bug. `all` came back
+    `id DESC` and every other scope `id ASC`, so pressing a scope pill
+    silently reversed the list; direction is a property of the sort, the sort
+    is a parameter, and no scope holds a private opinion about it.
+
+    `all` stays the default. Unattributed used to be, so a defect reported
+    against a feature — the shape every report from a task page has —
+    belonged to no scope any surface opened. It keeps its own name because it
+    is what the `/features` counter links to.
     """
-    feature = (request.args.get("feature") or "").strip()
-    fix_item = (request.args.get("fix_item") or "").strip()
-    if fix_item:
-        named = _fix_item_ref(fix_item)
-        if named is None:
-            return jsonify({"error": "fix_item must name a tracker item, or "
-                                     "be spelled <provider>:<key>"}), 400
-        return _listing(store.by_fix_item(*named), SCOPE_FIX_ITEM)
-    if feature:
-        return _listing(store.for_feature(feature), SCOPE_FEATURE)
-    scope = (request.args.get("scope") or SCOPE_ALL).strip()
-    if scope == SCOPE_UNATTRIBUTED:
-        return _listing(store.unattributed(), SCOPE_UNATTRIBUTED)
-    if scope != SCOPE_ALL:
-        return jsonify({"error": f"unknown scope: {scope}"}), 400
-    return _listing(store.every(), SCOPE_ALL)
+    try:
+        query = defect_query.from_args(request.args)
+    except defect_query.QueryError as exc:
+        return jsonify({"error": str(exc)}), 400
+    result = store.listing(query,
+                           page=clamp_page(request.args.get("page")),
+                           size=clamp_size(request.args.get("size")))
+    body = result.to_envelope()
+    body["items"] = [_view(row.defect, row.feature_title,
+                           row.blamed_event_kind) for row in result.items]
+    # The scope and the sort are echoed because the controls above the list
+    # have to be able to render what the server actually applied — a sort key
+    # the server fell back on, shown as the one that was asked for, is a
+    # control that lies about its own list.
+    body["scope"] = query.scope
+    body["sort"] = str(query.sort)
+    return jsonify(body)
+
+
+@defects_bp.route("/api/defects/<int:defect_id>", methods=["GET"])
+@require_auth
+def api_read_defect(defect_id: int):
+    """One defect by id — what a permalink resolves to.
+
+    The list is a predicate and a page position; neither survives being sent
+    to someone else. A row needs an address of its own, and an address needs
+    a read that does not depend on which page the row happened to be on.
+    """
+    try:
+        row = store.get(defect_id)
+    except store.DefectError:
+        return jsonify({"error": f"no defect {defect_id}"}), 404
+    return jsonify({"defect": _serialize(row)})
 
 
 @defects_bp.route("/api/defects", methods=["POST"])
@@ -129,10 +165,10 @@ def api_open_defect():
     problem = _bad_request(payload)
     if problem:
         return jsonify({"error": problem}), 400
-    feature_key = (payload.get("feature_key") or "").strip() or None
+    feature_id = payload.get("feature_id")
     try:
         recorded = store.record_reporting(
-            payload["symptom"], feature_key=feature_key,
+            payload["symptom"], feature_id=feature_id,
             suspect_paths=payload.get("suspect_paths", []))
     except store.DefectError as exc:
         return jsonify({"error": str(exc)}), 409
@@ -176,10 +212,10 @@ def api_attribute_defect(defect_id: int):
     another, which is corrupted data that looks fine.
     """
     payload = request.get_json(silent=True) or {}
-    feature_key = (payload.get("feature_key") or "").strip()
-    if not feature_key:
-        return jsonify({"error": "attribution needs a feature key"}), 400
-    return _write(defect_id, lambda: store.attribute(defect_id, feature_key))
+    feature_id = payload.get("feature_id")
+    if not feature_id:
+        return jsonify({"error": "attribution needs a feature id"}), 400
+    return _write(defect_id, lambda: store.attribute(defect_id, feature_id))
 
 
 @defects_bp.route("/api/defects/<int:defect_id>/close", methods=["POST"])

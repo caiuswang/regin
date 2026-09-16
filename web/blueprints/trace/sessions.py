@@ -3759,10 +3759,16 @@ def api_session_features(trace_id):
     the trace surface's admin gate is what governs it.
     """
     from lib.features import attribution  # noqa: PLC0415  (heavy import)
+    from lib.features import store as feature_store  # noqa: PLC0415
     rows = attribution.attributions_for_session(trace_id)
+    # The title rides along resolved, and it is `features.title` — the
+    # authority for what a feature is called. No surface falls back to the
+    # title of whichever task happens to sit under it.
+    titles = {f.id: f.title for f in feature_store.population()}
     return jsonify({
         "trace_id": trace_id,
-        "features": [{"feature_key": row.feature_key,
+        "features": [{"feature_id": row.feature_id,
+                      "title": titles.get(row.feature_id),
                       "provenance": row.provenance,
                       "is_primary": bool(row.is_primary),
                       "round": row.round,

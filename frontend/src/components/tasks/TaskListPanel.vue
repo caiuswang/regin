@@ -3,10 +3,10 @@
 //
 // Every refresh here is caused by something — a mount, a filter change, a
 // mutation that resolved, a capture announced on the window — never by a
-// timer. And every filter is a query parameter, so what the counts say and
-// what the list pages through are the same set.
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+// timer. And every filter is a query parameter in `location.search`, so what
+// the counts say, what the list pages through, and what a link someone pastes
+// into chat will show are the same set.
+import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import Button from '../ui/Button.vue'
 import Checkbox from '../ui/Checkbox.vue'
 import TaskArmSheet from './TaskArmSheet.vue'
@@ -18,35 +18,44 @@ import TaskFilterBar from './TaskFilterBar.vue'
 import TaskGroup from './TaskGroup.vue'
 import TaskRows from './TaskRows.vue'
 import TaskRunHistory from './TaskRunHistory.vue'
+import TasksScopeBanner from './TasksScopeBanner.vue'
 import { groupsFor } from '../../utils/taskMeta.js'
-import {
-  useTaskCounts, useTaskFeed, useTaskFilters, useTaskMutations,
-} from '../../composables/useTasks.js'
+import { useTaskCounts, useTaskFeed, useTaskMutations } from '../../composables/useTasks.js'
 import { TASK_CAPTURED_EVENT } from '../../composables/useQuickCapture.js'
 import { useConfirm } from '../../composables/useConfirm.js'
+import { useGroupCollapse } from '../../composables/useGroupCollapse.js'
+import { usePipelineHeaderPublisher } from '../../composables/usePipelineHeader.js'
 import { useProjects } from '../../composables/useProjects.js'
 import { useTaskExec } from '../../composables/useTaskExec.js'
+import { useTaskQuery } from '../../composables/useTaskQuery.js'
 import { useTaskSelection } from '../../composables/useTaskSelection.js'
 import { useTaskShortcuts } from '../../composables/useTaskShortcuts.js'
+import { useUsers } from '../../composables/useUsers.js'
 
-const route = useRoute()
-const filters = useTaskFilters({
-  projectId: route.query.project,
-  status: route.query.status,
-})
-const { counts, load: loadCounts } = useTaskCounts(filters.params)
+const FLAT = 'flat'
+
+const query = useTaskQuery()
+const { counts, error: countsError, load: loadCounts } = useTaskCounts(query.params)
 const { patch, bulk, remove, bulkRemove } = useTaskMutations()
 const { confirm } = useConfirm()
 const { items: projects, ensure: ensureProjects, byId } = useProjects()
+const { items: users, ensure: ensureUsers } = useUsers()
+const { isOpen, setOpen } = useGroupCollapse()
 const selection = useTaskSelection()
+const publish = usePipelineHeaderPublisher()
 
-const flat = useTaskFeed(filters.params)
-const grouped = computed(() => filters.groupBy.value !== 'none')
+const flat = useTaskFeed(query.params)
+// Grouping is built OUT of the counts, so counts the server could not give
+// cannot produce headers. The list then falls back to the ungrouped feed and
+// says why, rather than rendering an empty page that looks like an empty
+// backlog.
+const grouped = computed(() =>
+  query.state.value.group !== 'none' && counts.value != null)
 // Empty groups are hidden: a backlog of ideas should not render six headers
 // reading 0 to say so. The filter bar's total is where "nothing here" is said.
 const groups = computed(() =>
-  groupsFor(filters.groupBy.value, counts.value, projects.value,
-            filters.params.value)
+  groupsFor(query.state.value.group, counts.value, projects.value,
+            query.params.value)
     .filter(g => g.count > 0))
 // Counted by the server, so it is true under the current filters even when
 // every group is collapsed and no row has been fetched.
@@ -59,9 +68,10 @@ const groupRefs = ref([])
 
 async function reload() {
   selection.resetVisible()
-  await Promise.all([loadCounts(), grouped.value ? null : flat.load()])
+  await loadCounts()
   if (!grouped.value) {
-    selection.reportVisible(flat.items.value)
+    await flat.load()
+    selection.reportVisible(FLAT, flat.items.value)
     await syncLiveness(flat.items.value)
   }
   groupRefs.value.forEach(g => g?.reload?.())
@@ -69,14 +79,37 @@ async function reload() {
 
 const { refusals, liveness, busyId, control, syncLiveness } = useTaskExec(reload)
 
-async function onGroupLoaded(rows) {
-  selection.reportVisible(rows)
+async function loadMoreFlat() {
+  await flat.loadMore()
+  selection.reportVisible(FLAT, flat.items.value)
+  await syncLiveness(flat.items.value)
+}
+
+async function onGroupLoaded(key, rows) {
+  selection.reportVisible(key, rows)
   await syncLiveness(rows)
 }
 
 // A filter change invalidates the counts AND every group's page, so the whole
 // surface reloads rather than showing new headers over old rows.
-watch(filters.params, reload, { deep: true })
+//
+// Keyed by the query itself rather than by the computed's identity: `params`
+// is rebuilt on every route change, so a rewrite that leaves the server query
+// alone — restoring `group`, which is rendered client-side — would otherwise
+// read as a filter change and cost the page a second round of requests.
+const paramsKey = computed(() => JSON.stringify(query.params.value))
+watch(paramsKey, reload)
+
+// The shell renders the tab's *population*; what this list publishes is how
+// much of it the controls are letting through, which only the list knows.
+watch([counts, query.active], ([c, narrowed]) => {
+  const total = c?.total
+  if (total == null) return publish({ subtitle: '' })
+  const noun = total === 1 ? 'task' : 'tasks'
+  publish({ subtitle: narrowed
+    ? `${total} ${noun} match ${narrowed === 1 ? 'this filter' : `these ${narrowed} filters`}.`
+    : `${total} ${noun} queued. Nothing runs until someone arms it.` })
+}, { immediate: true })
 
 async function toggleArchive(task) {
   const ok = await patch(task,
@@ -131,7 +164,10 @@ async function sheetDone() {
 // the link clears the filters rather than scrolling to a row that is not
 // rendered.
 async function focusTask(id) {
-  if (filters.active.value) filters.reset()
+  // The scope is deliberately left alone: it is the shell's, shared with the
+  // other two tabs, and widening it from here would move a page nobody is
+  // looking at.
+  if (query.active.value) query.reset()
   await nextTick()
   document.getElementById(`task-${id}`)?.scrollIntoView({ block: 'center' })
 }
@@ -148,9 +184,22 @@ useTaskShortcuts({
 // capture event and never by a timer.
 onMounted(() => {
   ensureProjects()
-  reload()
+  ensureUsers()
+  // A restore rewrites the URL, and the params watch above is what loads the
+  // result — so the first request is issued once, under the query that is
+  // actually on screen, rather than once bare and again restored.
+  if (!query.restoreStored()) reload()
   window.addEventListener(TASK_CAPTURED_EVENT, reload)
 })
+
+// The tab is kept alive, so `onMounted` runs once for the life of the page and
+// cannot answer for the second arrival. Coming back to a bare `/tasks` — from
+// the sidebar, a deep link, any route that is not the tab strip's own link —
+// has to restore the same stored filters a cold load would, or the same URL
+// means two different things. No reload here: the params watch answers if the
+// restore moved the query, and a re-entry that did not is already loaded.
+onActivated(() => { query.restoreStored() })
+
 onBeforeUnmount(() => window.removeEventListener(TASK_CAPTURED_EVENT, reload))
 
 defineExpose({ openComposer: () => { composerOpen.value = true } })
@@ -160,11 +209,17 @@ defineExpose({ openComposer: () => { composerOpen.value = true } })
   <div class="space-y-3">
     <TaskFilterBar
       ref="filterBar"
-      :filters="filters"
+      :state="query.state.value"
+      :active="query.active.value"
+      :project="query.project.value"
       :projects="projects"
+      :users="users"
       :total="counts?.total ?? null"
-      @submit-search="filters.submitSearch()"
+      @patch="query.patch"
+      @reset="query.reset"
     />
+
+    <TasksScopeBanner :feature-id="query.state.value.feature_id" />
 
     <TaskBulkBar
       v-if="selection.count.value"
@@ -188,6 +243,10 @@ defineExpose({ openComposer: () => { composerOpen.value = true } })
       />
     </div>
 
+    <p v-if="countsError" class="tl-counts-error" role="status" data-testid="task-counts-error">
+      Task counts unavailable — {{ countsError }}
+    </p>
+
     <div v-if="empty" class="empty-state" data-testid="tasks-empty">
       No tasks match this view. Press <kbd>c</kbd> to capture one, or send one
       in with <code>regin task add</code>.
@@ -196,16 +255,19 @@ defineExpose({ openComposer: () => { composerOpen.value = true } })
     <template v-else-if="grouped">
       <TaskGroup
         v-for="group in groups"
-        :key="`${filters.groupBy.value}-${group.key}`"
+        :key="`${query.state.value.group}-${group.key}`"
         ref="groupRefs"
+        :open="isOpen(query.state.value.group, group.key)"
         :group="group"
-        :params="filters.params"
+        :params="query.params"
         :liveness="liveness"
         :refusals="refusals"
         :selection="selection.ids.value"
         :busy-id="busyId"
         :project-for="t => byId(t.project_id)"
+        @update:open="v => setOpen(query.state.value.group, group.key, v)"
         @loaded="onGroupLoaded"
+        @hidden="selection.withdrawVisible"
         @toggle="toggleArchive"
         @open="openSheet"
         @control="control"
@@ -241,7 +303,7 @@ defineExpose({ openComposer: () => { composerOpen.value = true } })
           <Button
             variant="secondary"
             :disabled="flat.loadingMore.value"
-            @click="flat.loadMore()"
+            @click="loadMoreFlat()"
           >
             {{ flat.loadingMore.value ? 'Loading…' : 'Load more' }}
           </Button>
@@ -281,6 +343,11 @@ defineExpose({ openComposer: () => { composerOpen.value = true } })
 </template>
 
 <style scoped>
+.tl-counts-error {
+    font-size: 0.8125rem;
+    color: var(--color-text-muted, #6b7280);
+}
+
 .tl-list {
     border: 1px solid var(--color-border);
     border-radius: var(--radius-lg);

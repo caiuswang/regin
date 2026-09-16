@@ -6,7 +6,7 @@
 // without the other groups paying for it. The header count is the server's —
 // counting the loaded rows would report the size of the page, and a collapsed
 // group would report zero.
-import { computed, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
 import TaskRows from './TaskRows.vue'
@@ -20,37 +20,51 @@ const props = defineProps({
   selection: { type: Set, default: () => new Set() },
   busyId: { type: Number, default: null },
   projectFor: { type: Function, default: () => null },
-  startOpen: { type: Boolean, default: true },
 })
 const emit = defineEmits(['toggle', 'open', 'control', 'focus', 'select',
-                          'loaded', 'delete'])
+                          'loaded', 'hidden', 'delete'])
+
+// Whether the group is open is the LIST's state, not this component's: it has
+// to outlive the group's unmount to survive a filter change or a tab switch,
+// and a header that re-opens on every mount is what made a collapsed group
+// cost a request anyway.
+const open = defineModel('open', { type: Boolean, default: true })
 
 const scoped = computed(() => ({ ...props.params.value,
                                  [props.group.param]: props.group.key }))
 const feed = useTaskFeed(computed(() => scoped.value), () => ({}))
 
-const open = ref(props.startOpen && props.group.count > 0)
 const fetched = ref(false)
 
 async function load() {
   await feed.load()
   fetched.value = true
-  emit('loaded', feed.items.value)
+  emit('loaded', props.group.key, feed.items.value)
 }
 
 // The fetch is caused by the group becoming visible, never by a timer — and a
-// re-open does not refetch what is already held.
-watch(open, (isOpen) => { if (isOpen && !fetched.value) load() },
-      { immediate: true })
+// re-open does not refetch what is already held. Closing withdraws the rows it
+// was rendering: they are no longer on screen, so nothing that counts or acts
+// on what is on screen may still see them.
+watch(open, (isOpen) => {
+  if (!isOpen) { emit('hidden', props.group.key); return }
+  if (!fetched.value) load()
+  else emit('loaded', props.group.key, feed.items.value)
+}, { immediate: true })
 
-// A filter change invalidates what was fetched under the old one, so an open
-// group reloads and a closed one forgets rather than showing stale rows on its
-// next open.
-watch(scoped, () => {
-  fetched.value = false
-  if (open.value) load()
-}, { deep: true })
+onUnmounted(() => emit('hidden', props.group.key))
 
+// A second page is more rows on screen, so what is on screen has to be
+// restated — otherwise select-all keeps describing only the first page.
+async function more() {
+  await feed.loadMore()
+  emit('loaded', props.group.key, feed.items.value)
+}
+
+// A filter change invalidates what was fetched under the old one. The LIST
+// drives that, not a watcher here: `scoped` changes on exactly the params
+// change the list already reloads on, so watching it too issued every open
+// group's page twice and let two in-flight loads race over one `items`.
 defineExpose({ reload: () => { fetched.value = false; if (open.value) load() } })
 </script>
 
@@ -100,7 +114,7 @@ defineExpose({ reload: () => { fetched.value = false; if (open.value) load() } }
             size="sm"
             :disabled="feed.loadingMore.value"
             :data-testid="`task-group-more-${group.key}`"
-            @click="feed.loadMore()"
+            @click="more()"
           >
             {{ feed.loadingMore.value ? 'Loading…'
               : `Load more (${group.count - feed.items.value.length} left)` }}

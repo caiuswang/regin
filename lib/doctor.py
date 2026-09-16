@@ -432,6 +432,55 @@ def _stale_skeleton_items() -> list[dict]:
              "present": True, "version": f"{seeded} match built-in defaults"}]
 
 
+def _db_revision() -> str | None:
+    """The revision the primary DB is stamped at, or None when unenrolled."""
+    import sqlite3
+
+    from lib.orm.engine import DB_PATH
+
+    if not os.path.isfile(DB_PATH):
+        return None
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        row = conn.execute(
+            "SELECT version_num FROM alembic_version LIMIT 1").fetchone()
+    except sqlite3.OperationalError:
+        return None
+    finally:
+        conn.close()
+    return row[0] if row else None
+
+
+def _schema_revision_items() -> list[dict]:
+    """FAIL when the DB is stamped behind the alembic head.
+
+    Booting the server does not touch the schema, so a checkout that ships a
+    new revision runs its new SQL against the old columns and every read of
+    the changed table raises `no such column` — a 500 with nothing naming the
+    cause. Nothing else reports this: the test suite builds each DB from
+    `db/schema.sql` at head, so the stale-install path is invisible to it.
+    """
+    from alembic.script import ScriptDirectory
+
+    from lib.db_migrate import _config
+
+    try:
+        head = ScriptDirectory.from_config(_config()).get_current_head()
+    except Exception:
+        # One check must never take doctor down — see `_worktree_store_items`.
+        return []
+    current = _db_revision()
+    if current == head:
+        return [{"id": "schema_revision", "label": "database schema",
+                 "present": True, "version": f"at head ({head})"}]
+    behind = current or "unstamped"
+    return [{"id": "schema_revision", "label": "database schema",
+             "present": False, "version": f"{behind} (head is {head})",
+             "install_hint": "run `regin migrate` — the DB predates this "
+                             "checkout's schema, so reads of a changed table "
+                             "fail with `no such column`"}]
+
+
 def _worktree_store_items() -> list[dict]:
     """WARN per stray data store sitting in a linked worktree.
 
@@ -625,6 +674,9 @@ def run_checks() -> dict:
     if experimental:
         groups.append({'name': 'Pattern router (experimental)',
                        'items': _router_group_items()})
+
+    groups.append({'name': 'Database schema (alembic)',
+                   'items': _schema_revision_items()})
 
     groups.append({'name': 'Pattern search (SQLite)', 'items': [
         {'id': 'fts5', 'label': 'SQLite FTS5 (lexical leg)',

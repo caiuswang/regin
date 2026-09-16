@@ -425,3 +425,26 @@ def test_permission_denied_reason_and_tool_use_id_clean():
     })
     findings = validate_event('PermissionDenied', payload)
     assert findings == [], findings
+
+
+def test_bash_edit_diff_not_flagged_as_drift():
+    """Claude Code 2.1.270+ stamps a per-file diff on every file-mutating Bash
+    call. Before it was whitelisted it logged 193 `unknown_field` drift rows.
+    Mirrors `test_bash_git_operation_not_flagged_as_drift` — the real camelCase
+    wire shape, driven through normalization so both spellings resolve clean."""
+    payload = _normalize_payload({
+        'hook_event_name': 'PostToolUse',
+        'tool_name': 'Bash',
+        'tool_input': {'command': 'sed -i s/a/b/ f.py'},
+        'tool_response': {'bashEditDiff': {
+            'files': [{'filePath': '/repo/f.py', 'hunks': [{
+                'oldStart': 1, 'oldLines': 2, 'newStart': 1, 'newLines': 2,
+                'lines': ['-a', '+b'],
+            }]}],
+            'moreFiles': 0,
+            'changedFiles': ['/repo/f.py'],
+        }},
+        'prompt_id': 'pr-1',
+    })
+    findings = validate('Bash', payload)
+    assert findings == [], findings

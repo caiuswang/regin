@@ -176,6 +176,10 @@ test('search filters on the server and the total follows', async ({ page }) => {
   })
 
   await page.getByTestId('task-search').fill(`${SFX}-alpha`)
+  // Enter commits the search. There is no debounce to wait out: a clock
+  // deciding when a search happened is exactly what `q` living in the URL
+  // rules out — it would be one history write per keystroke.
+  await page.getByTestId('task-search').press('Enter')
   await expect(page.locator('[data-testid="task-row"]')).toHaveCount(1)
   await expect(page.getByTestId('task-total')).toHaveText('1 task')
   // The narrowing was a query, not an Array.filter over the loaded page.

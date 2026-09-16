@@ -8,6 +8,9 @@
 // that wears a chip reads as a stage somebody declared.
 export const STAGE_COLOR = {
   spec: 'gray', building: 'blue', shipped: 'green', escaped: 'amber',
+  // Taken down or dropped. Slate rather than red: it is a decision, not a
+  // failure, and it costs no round.
+  abandoned: 'slate',
 }
 
 export const GAP_BLURB = {
@@ -15,8 +18,6 @@ export const GAP_BLURB = {
   model_unpriced: 'sessions on a model with no entry in the price table',
   zero_duration: 'sessions with no measurable active work',
   traceless_runs: 'pipeline runs with no trace to attribute',
-  state_unknown: 'defects whose tracker state could not be read',
-  unknown_vocabulary: 'defects whose state is not in the known vocabulary',
 }
 
 export function money(value) {

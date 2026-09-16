@@ -1,26 +1,23 @@
-"""Defect records and rounds-to-done (CAI-206).
+"""Defect records and what escaped (regin:82).
 
-A defect is something a feature got wrong, addressed by a **feature key** — the
-tracker issue identifier, which also roots the branch name, so it is stable
-from the first day of the spec and survives rebases, branch deletion and the
-session boundary.
+A defect is something a feature got wrong, addressed by the feature's **id** —
+an integer primary key, so every reader joins on it rather than on a string
+five tables had to agree about.
 
-**Rounds-to-done** for a feature is `1 + every completion the tracker recorded
-and later walked back` — one build, plus each time the work was called done and
-reopened. It is read from the tracker alone (`lib.defects.tracker`), because
-only a declared state transition witnesses a completion. `Defect.round` is a
-different number entirely: fix attempts on one defect, never aggregated to a
-feature.
+An **escape** is a defect blamed on a feature that had already shipped. It is
+read as `blamed_event.kind == 'shipped'` — a pointer at an immutable row, which
+is what lets the reading compare no two clocks and carry no gap counters
+(`lib.defects.escapes`). It is reported beside rounds-to-done and never folded
+into it.
 
-An **escape** is a defect blamed on a feature that had already shipped, read
-from `blamed_against_state` without comparing any two clocks
-(`lib.defects.escapes`). It is reported beside rounds and never folded into it.
+`Defect.round` counts fix attempts on one defect and is never aggregated to a
+feature; the feature's own rounds live in `lib/features/events.py`.
 
 Writes go through `lib.defects.store`; nothing else should touch the table.
 """
 
 from lib.defects.store import DefectError
 
-__all__ = ["DefectError", "escapes", "rounds", "store", "tracker"]
+__all__ = ["DefectError", "escapes", "store", "tracker"]
 
-from lib.defects import escapes, rounds, store, tracker  # noqa: E402  (after DefectError)
+from lib.defects import escapes, store, tracker  # noqa: E402  (after DefectError)

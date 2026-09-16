@@ -47,7 +47,7 @@ async function load() {
 watch(() => props.traceId, load, { immediate: true })
 
 async function undeclare(row) {
-  await api.del(`/features/${encodeURIComponent(row.feature_key)}`
+  await api.del(`/features/${row.feature_id}`
                 + `/attribute/${encodeURIComponent(props.traceId)}`)
   await load()
 }
@@ -66,13 +66,14 @@ function onDeclared() {
       none declared
     </span>
 
-    <span v-for="row in rows" :key="row.feature_key" class="attr-item">
-      <router-link class="attr-key" :to="`/features/${row.feature_key}`">{{ row.feature_key }}</router-link>
+    <span v-for="row in rows" :key="row.feature_id" class="attr-item">
+      <router-link class="attr-key" :to="`/features/${row.feature_id}`"
+      >{{ row.title || `#${row.feature_id}` }}</router-link>
       <!-- The tag is the reason this session is counted, so the task-lane one
            names the task it came from — a provenance nobody can open is a
            provenance nobody can audit. -->
       <router-link
-        v-if="row.provenance === 'task-link' && row.task_id"
+        v-if="row.provenance === 'run' && row.task_id"
         class="attr-via attr-via-link"
         :to="`/tasks/${row.task_id}`"
       >via task #{{ row.task_id }} ↗</router-link>
@@ -82,12 +83,12 @@ function onDeclared() {
       <!-- Absent, never disabled, on a task-lane row: there is no row to
            delete. The link beside it goes where the assertion actually is. -->
       <Button
-        v-if="row.provenance !== 'task-link'"
+        v-if="row.provenance !== 'run'"
         class="attr-undo"
         variant="ghost"
         size="sm"
-        :aria-label="`Un-declare ${row.feature_key} from this session`"
-        :title="`Un-declare ${row.feature_key}`"
+        :aria-label="`Un-declare ${row.title} from this session`"
+        :title="`Un-declare ${row.title}`"
         @click="undeclare(row)"
       ><Icon name="x" :size="11" /></Button>
     </span>
@@ -105,7 +106,7 @@ function onDeclared() {
     <DeclareFeatureDialog
       v-if="declaring"
       :trace-id="traceId"
-      :declared="rows.map(r => r.feature_key)"
+      :declared="rows.map(r => r.feature_id)"
       @close="declaring = false"
       @declared="onDeclared"
     />

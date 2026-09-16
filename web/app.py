@@ -192,6 +192,9 @@ def create_app():
     from web.blueprints.defects import defects_bp
     app.register_blueprint(defects_bp)
 
+    from web.blueprints.pipeline import pipeline_bp
+    app.register_blueprint(pipeline_bp)
+
     from web.blueprints.api_keys import api_keys_bp
     app.register_blueprint(api_keys_bp)
 

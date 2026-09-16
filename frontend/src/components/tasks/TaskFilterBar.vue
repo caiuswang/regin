@@ -1,24 +1,37 @@
 <script setup>
 // Every control here narrows the *query*, not the loaded rows — which is why
-// the count beside it is the server's and not `items.length`.
-import { computed, ref } from 'vue'
+// the count beside it is the server's and not `items.length`, and why every
+// one of them writes into the URL rather than into a ref this component owns.
+import { computed, ref, watch } from 'vue'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
 import Input from '../ui/Input.vue'
 import Select from '../ui/Select.vue'
+import TaskMoreFilters from './TaskMoreFilters.vue'
 import { GROUPS, PRIORITIES, SORTS, STATUS_FILTERS } from '../../utils/taskMeta.js'
 
 const props = defineProps({
-  filters: { type: Object, required: true },
+  state: { type: Object, required: true },
+  active: { type: Number, default: 0 },
   projects: { type: Array, default: () => [] },
+  users: { type: Array, default: () => [] },
+  // The shell's `?project=` as this list sees it: '' for every project, the
+  // literal 'none', or a repo id.
+  project: { type: String, default: '' },
   total: { type: Number, default: null },
 })
-defineEmits(['submit-search'])
+const emit = defineEmits(['patch', 'reset'])
 
 const searchInput = ref(null)
 // The `/` shortcut lives on the page, not here, so the page needs a handle on
 // the field it is meant to focus.
 defineExpose({ focusSearch: () => searchInput.value?.focus() })
+
+// The typed text, which is not yet the query: `q` is committed on Enter. A
+// debounce here would be a clock deciding when a search happened, and — now
+// that `q` is a URL axis — one history write per keystroke.
+const typed = ref(props.state.q)
+watch(() => props.state.q, (q) => { typed.value = q })
 
 const statusOptions = computed(() => STATUS_FILTERS.map(
   s => ({ value: s.key, label: s.key ? s.label : 'Any status' })))
@@ -31,19 +44,11 @@ const priorityOptions = computed(() => [
 const projectOptions = computed(() => [
   { value: '', label: 'Any project' },
   { value: 'none', label: 'No project' },
-  ...props.projects.map(p => ({ value: String(p.id),
-                                label: p.name })),
+  ...props.projects.map(p => ({ value: String(p.id), label: p.name })),
 ])
 
-const archived = computed({
-  get: () => props.filters.includeArchived.value === '1',
-  set: (on) => { props.filters.includeArchived.value = on ? '1' : '' },
-})
-
-const runs = computed({
-  get: () => props.filters.showRuns.value === '1',
-  set: (on) => { props.filters.showRuns.value = on ? '1' : '' },
-})
+const archived = computed(() => props.state.archived === '1')
+const runs = computed(() => props.state.runs === '1')
 </script>
 
 <template>
@@ -52,45 +57,55 @@ const runs = computed({
       <Icon name="search" :size="14" class="tf-search-icon" aria-hidden="true" />
       <Input
         ref="searchInput"
-        v-model="filters.search.value"
+        v-model="typed"
         type="search"
         placeholder="Search titles and details…"
         aria-label="Search tasks"
         data-testid="task-search"
-        @keyup.enter="$emit('submit-search')"
+        @keyup.enter="emit('patch', { q: typed.trim() })"
       />
     </div>
 
     <Select
-      v-model="filters.status.value"
+      :model-value="state.status"
       :options="statusOptions"
       aria-label="Filter by status"
       data-testid="task-filter-status"
+      @update:model-value="v => emit('patch', { status: v })"
     />
     <Select
-      v-model="filters.priority.value"
+      :model-value="state.priority"
       :options="priorityOptions"
       aria-label="Filter by priority"
       data-testid="task-filter-priority"
+      @update:model-value="v => emit('patch', { priority: v })"
     />
+    <!-- The project is the Pipeline shell's axis. This control writes the same
+         `?project=` the tab strip reads, so the two can never describe
+         different populations. -->
     <Select
-      v-model="filters.projectId.value"
+      :model-value="project"
       :options="projectOptions"
       aria-label="Filter by project"
       data-testid="task-filter-project"
+      @update:model-value="v => emit('patch', { project: v })"
     />
     <Select
-      v-model="filters.sort.value"
+      :model-value="state.sort"
       :options="SORTS"
       aria-label="Sort"
       data-testid="task-sort"
+      @update:model-value="v => emit('patch', { sort: v })"
     />
     <Select
-      v-model="filters.groupBy.value"
+      :model-value="state.group"
       :options="GROUPS"
       aria-label="Group by"
       data-testid="task-group"
+      @update:model-value="v => emit('patch', { group: v })"
     />
+
+    <TaskMoreFilters :state="state" :users="users" @patch="p => emit('patch', p)" />
 
     <Button
       variant="ghost"
@@ -98,7 +113,7 @@ const runs = computed({
       :aria-pressed="archived"
       :aria-label="archived ? 'Hide archived tasks' : 'Show archived tasks'"
       data-testid="task-archived-toggle"
-      @click="archived = !archived"
+      @click="emit('patch', { archived: archived ? '' : '1' })"
     >
       <Icon name="archive" :size="13" />
       <span>{{ archived ? 'Hide archived' : 'Show archived' }}</span>
@@ -110,23 +125,25 @@ const runs = computed({
       :aria-pressed="runs"
       :aria-label="runs ? 'List features only' : 'List runs beside features'"
       data-testid="task-runs-toggle"
-      @click="runs = !runs"
+      @click="emit('patch', { runs: runs ? '' : '1' })"
     >
       <Icon name="list" :size="13" />
       <span>{{ runs ? 'Hide runs' : 'Show runs' }}</span>
     </Button>
 
     <Button
-      v-if="filters.active.value"
+      v-if="active"
       variant="ghost"
       size="sm"
       data-testid="task-filters-reset"
-      @click="filters.reset()"
+      @click="emit('reset')"
     >
       <Icon name="x" :size="13" />
-      Clear {{ filters.active.value }}
+      Clear {{ active }}
     </Button>
 
+    <!-- The filtered population, not the loaded page: every control above is a
+         query parameter, so this is what they describe. -->
     <span v-if="total != null" class="tf-total" data-testid="task-total">
       {{ total }} {{ total === 1 ? 'task' : 'tasks' }}
     </span>

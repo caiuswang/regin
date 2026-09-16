@@ -17,7 +17,7 @@ from sqlmodel import select
 from lib.auth import create_token
 from lib.orm import SessionLocal
 from lib.orm.models.tasks import (
-    AgentTask, AgentTaskDep, AgentTaskImage, AgentTaskLink, AgentTaskRun,
+    AgentTask, AgentTaskDep, AgentTaskImage, AgentTaskRun,
 )
 from lib.tasks import deps, runs, store
 
@@ -37,9 +37,6 @@ def _populate(task_id: int) -> None:
         session.add(AgentTaskRun(task_id=task_id, attempt=1, status="done"))
         session.add(AgentTaskImage(task_id=task_id, idx=0, media_type="image/png",
                                    bytes_=b"x", byte_size=1, sha256="abc"))
-        session.add(AgentTaskLink(task_id=task_id, provider="linear",
-                                  external_key="CAI-1",
-                                  url="https://example.test/CAI-1"))
         session.commit()
 
 
@@ -50,8 +47,6 @@ def _counts(task_id: int) -> dict[str, int]:
                 AgentTaskRun.task_id == task_id)).all()),
             "images": len(session.exec(select(AgentTaskImage).where(
                 AgentTaskImage.task_id == task_id)).all()),
-            "links": len(session.exec(select(AgentTaskLink).where(
-                AgentTaskLink.task_id == task_id)).all()),
             "deps": len(session.exec(select(AgentTaskDep).where(
                 (AgentTaskDep.task_id == task_id)
                 | (AgentTaskDep.depends_on_id == task_id))).all()),
@@ -75,14 +70,14 @@ def test_delete_of_an_unknown_task_is_none_not_an_error(tmp_db, no_live_runs):
     assert store.delete_task(4321) is None
 
 
-def test_delete_cascades_runs_images_and_links(tmp_db, no_live_runs):
+def test_delete_cascades_runs_images_and_deps(tmp_db, no_live_runs):
     task, _ = store.capture_task(title="has children", source="cli")
     _populate(task["id"])
-    assert _counts(task["id"]) == {"runs": 1, "images": 1, "links": 1, "deps": 0}
+    assert _counts(task["id"]) == {"runs": 1, "images": 1, "deps": 0}
 
     store.delete_task(task["id"])
 
-    assert _counts(task["id"]) == {"runs": 0, "images": 0, "links": 0, "deps": 0}
+    assert _counts(task["id"]) == {"runs": 0, "images": 0, "deps": 0}
 
 
 def test_delete_removes_edges_in_both_directions(tmp_db, no_live_runs):
@@ -109,7 +104,7 @@ def test_delete_leaves_every_other_task_untouched(tmp_db, no_live_runs):
     store.delete_task(drop["id"])
 
     assert store.get_task(keep["id"])["title"] == "keep"
-    assert _counts(keep["id"]) == {"runs": 1, "images": 1, "links": 1, "deps": 0}
+    assert _counts(keep["id"]) == {"runs": 1, "images": 1, "deps": 0}
 
 
 def test_delete_is_refused_while_a_run_is_live(tmp_db, monkeypatch):

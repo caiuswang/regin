@@ -31,7 +31,7 @@ test('an unattributed session says none declared', async ({ page }) => {
 test('a task-lane attribution never renders the word task bare',
   async ({ page }) => {
     await stubAttribution(page, [{
-      feature_key: 'CAI-242', provenance: 'task-link',
+      feature_id: 242, title: 'Feature ledger', provenance: 'run',
       is_primary: true, round: null, task_id: 44,
     }])
     await openTrace(page)
@@ -49,7 +49,7 @@ test('a task-lane attribution never renders the word task bare',
 test('a task-lane row offers no un-declare and no disabled control',
   async ({ page }) => {
     await stubAttribution(page, [{
-      feature_key: 'CAI-242', provenance: 'task-link',
+      feature_id: 242, title: 'Feature ledger', provenance: 'run',
       is_primary: true, round: null, task_id: 44,
     }])
     await openTrace(page)
@@ -59,7 +59,7 @@ test('a task-lane row offers no un-declare and no disabled control',
 
 test('a declared row offers un-declare inline', async ({ page }) => {
   await stubAttribution(page, [{
-    feature_key: 'CAI-242', provenance: 'declared',
+    feature_id: 242, title: 'Feature ledger', provenance: 'declared',
     is_primary: true, round: 1, task_id: null,
   }])
   await openTrace(page)
@@ -69,13 +69,13 @@ test('a declared row offers un-declare inline', async ({ page }) => {
 
 test('the feature key links into its ledger', async ({ page }) => {
   await stubAttribution(page, [{
-    feature_key: 'CAI-242', provenance: 'declared',
+    feature_id: 242, title: 'Feature ledger', provenance: 'declared',
     is_primary: true, round: 1, task_id: null,
   }])
   await openTrace(page)
 
   await expect(page.locator('.attr-key'))
-    .toHaveAttribute('href', '/features/CAI-242')
+    .toHaveAttribute('href', '/features/242')
 })
 
 test('the picker reads the feature index, and is_primary starts unchecked',

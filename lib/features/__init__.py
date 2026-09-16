@@ -1,15 +1,25 @@
-"""Cost-per-feature and defects-per-feature, from declared attributions.
+"""A feature: its own row, its lifecycle log, and what it cost (regin:82).
 
-`attribution` answers *which sessions built this*, `cost` answers *what did
-they cost and what could we not measure*, and `ledger` assembles both into the
-one report `regin feature ledger` prints. The stage a feature is in stays in
-`lib/defects/stage.py`, which `regin feature stage` keeps to itself.
+  * `store.py`       — the `features` table. **The population is this table**,
+                       not a union over five others
+  * `events.py`      — the append-only lifecycle. `stage`, `rounds`,
+                       `claimed_at` and the escape verdict are all queries
+                       over it, so no counter can drift from the fact
+  * `attribution.py` — which sessions built it: declared rows, plus the
+                       two-join lane `run → task → feature`
+  * `cost.py`        — what they cost, and what could not be measured
+  * `ledger.py`      — the one report `regin feature ledger` prints
+  * `index.py`       — the whole population in one statement
+  * `sync.py`        — pulling a remote tracker's state, on an operator's
+                       ask and on nothing else
 
-The two statistics above are the whole point; nothing else may shape the
-schema. Every figure states its own gaps, and a gap is always a count of
-sessions — never a substituted zero.
+The two statistics are the whole point; nothing else may shape the schema.
+Every figure states its own gaps, and a gap is always a count of sessions —
+never a substituted zero.
 """
 
-from lib.features import attribution, cost, ledger  # noqa: F401
+from lib.features import (  # noqa: F401
+    attribution, cost, events, index, ledger, store, sync,
+)
 
-__all__ = ["attribution", "cost", "ledger"]
+__all__ = ["attribution", "cost", "events", "index", "ledger", "store", "sync"]

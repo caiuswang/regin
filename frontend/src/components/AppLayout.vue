@@ -94,8 +94,13 @@ function handleLogout() {
   api.logout()
 }
 
+// `match` is for an entry that fronts several routes: the highlight has to
+// survive a tab switch inside the shell AND a drill-down to a detail page, so
+// it is a prefix test over the whole set rather than over `to` alone.
 function isActiveLink(link) {
-  return link.exact ? route.path === link.to : route.path.startsWith(link.to)
+  const paths = link.match || [link.to]
+  if (link.exact) return paths.includes(route.path)
+  return paths.some(p => route.path === p || route.path.startsWith(`${p}/`))
 }
 
 function goTo(link) {
@@ -137,11 +142,13 @@ const navGroups = computed(() => [
         ? [{ to: '/experiments', label: 'Experiments', icon: 'experiments' }]
         : []),
       { to: '/plans', label: 'Plans', icon: 'plans' },
-      { to: '/tasks', label: 'Tasks', exact: true, icon: 'tasks' },
-      // No role conditional: the ledger read is authenticated-any-role, and
-      // nothing in its payload varies by who is asking.
-      { to: '/features', label: 'Features', exact: true, icon: 'features' },
-      { to: '/defects', label: 'Defects', exact: true, icon: 'defects' },
+      // Tasks, features and defects are one workbench behind one entry — the
+      // switcher is the tab strip in PipelineView, not three rail items that
+      // hid the loop they belong to. No role conditional: the ledger reads are
+      // authenticated-any-role, and nothing in their payloads varies by who is
+      // asking.
+      { to: '/tasks', label: 'Pipeline', icon: 'pipeline',
+        match: ['/tasks', '/features', '/defects'] },
     ],
   },
   ...(diagEnabled.value ? [{

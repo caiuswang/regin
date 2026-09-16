@@ -3,10 +3,10 @@
 //
 // There is no bulk control anywhere on this page. Attribution is a human
 // asserting which feature CAUSED a bug, and a checkbox column is how eight
-// rows get one guessed parent — the exact corruption the NULL `feature_key`
+// rows get one guessed parent — the exact corruption the NULL `feature_id`
 // state exists to prevent.
 //
-// Neither field is ever pre-filled. The feature key is not proposed from the
+// Neither field is ever pre-filled. The feature is not proposed from the
 // suspect paths, the session or anything else, and the missing check is not
 // proposed at all: both are the assertion this control exists to collect, and
 // a default is an inference wearing a human's signature.
@@ -14,8 +14,9 @@
 // Every refusal rendered here is the server's own sentence. The store's
 // message names its remedy (`merge`, `reopen`), so paraphrasing it would
 // leave the operator holding a dead end.
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import api from '../../api'
+import { useConfirm } from '../../composables/useConfirm'
 import Button from '../ui/Button.vue'
 import Input from '../ui/Input.vue'
 
@@ -25,6 +26,8 @@ const props = defineProps({
 })
 const emit = defineEmits(['changed'])
 
+const { confirm } = useConfirm()
+
 const form = ref('')
 const value = ref('')
 const busy = ref(false)
@@ -32,16 +35,31 @@ const refusal = ref('')
 
 const FORMS = {
   attribute: {
-    label: 'Attribute', placeholder: 'feature key, e.g. regin:81',
-    field: 'feature_key',
-    hint: 'The feature that CAUSED this, which is not necessarily the one the reporting session was working on. Naming a different one re-reads that feature\u2019s state, so the escape verdict follows the blame.',
+    label: 'Attribute', placeholder: 'feature id, e.g. 81',
+    field: 'feature_id', numeric: true,
+    // `Number('eight')` is `NaN`, and a NaN posted as a foreign key is a
+    // request the server can only answer with a 400 the operator reads as
+    // the ledger refusing their assertion rather than as their own typo.
+    invalid: (raw) => (/^\d+$/.test(raw.trim()) && Number(raw) > 0
+      ? '' : 'A feature id is a positive whole number.'),
+    hint: 'The feature that CAUSED this, which is not necessarily the one the reporting session was working on. Naming a different one re-points the blame at that feature\u2019s current last event, so the escape verdict follows the blame.',
   },
   close: {
     label: 'Close', placeholder: 'the test that would have caught this',
     field: 'missing_check',
+    // The store refuses a blank check with a 400. Refusing it here as well is
+    // not a second rulebook — it is the same rule stated where the operator
+    // can still act on it, before the round trip that loses their place.
+    invalid: (raw) => (raw.trim()
+      ? '' : 'Name the check that would have caught this. It is the only field here that changes future behaviour.'),
     hint: 'Name a test, then write it. This is the only field here that changes future behaviour.',
   },
 }
+
+// Live, so the submit is disabled as soon as the field cannot be sent —
+// rather than after a post that was never going to be accepted.
+const problem = computed(
+  () => (form.value ? FORMS[form.value].invalid(value.value) : ''))
 
 function reveal(which) {
   form.value = form.value === which ? '' : which
@@ -52,20 +70,39 @@ function reveal(which) {
 async function submit() {
   const spec = FORMS[form.value]
   if (!spec) return
+  if (problem.value) {
+    refusal.value = problem.value
+    return
+  }
   busy.value = true
   refusal.value = ''
   const body = await api.post(
-    `/defects/${props.defect.id}/${form.value}`, { [spec.field]: value.value })
+    `/defects/${props.defect.id}/${form.value}`,
+    // An id goes as a number: the route reads `feature_id` straight off the
+    // body, and a string there would reach the foreign key as one.
+    // Trimmed: the store stores what it is sent, and a check named
+    // "  test_x  " is a different string from the one the author typed.
+    { [spec.field]: spec.numeric ? Number(value.value.trim()) : value.value.trim() })
   busy.value = false
   if (body?.ok === false) {
     refusal.value = body.msg || 'the ledger refused, without saying why'
     return
   }
   form.value = ''
-  emit('changed', body.defect)
+  emit('changed', `#${props.defect.id} ${spec.label.toLowerCase()}d.`)
 }
 
+// Reopening is not undo. It records that we claimed this fixed and were
+// wrong, and the round it bumps is a permanent figure on the feature that
+// caused it — so it is asked for once, out loud, before it is written.
 async function reopen() {
+  const ok = await confirm(
+    'Reopen',
+    `Reopen defect #${props.defect.id}? This records that the fix did not hold `
+    + `and takes it to round ${props.defect.round + 1} — a figure its feature `
+    + 'keeps for good.',
+    true)
+  if (!ok) return
   busy.value = true
   refusal.value = ''
   const body = await api.post(`/defects/${props.defect.id}/reopen`)
@@ -74,7 +111,7 @@ async function reopen() {
     refusal.value = body.msg || 'the ledger refused, without saying why'
     return
   }
-  emit('changed', body.defect)
+  emit('changed', `#${props.defect.id} reopened at round ${body.defect.round}.`)
 }
 </script>
 
@@ -90,7 +127,7 @@ async function reopen() {
         variant="secondary" size="sm"
         :aria-expanded="form === 'attribute'"
         @click="reveal('attribute')"
-      >{{ defect.feature_key ? 'Re-attribute' : 'Attribute' }}</Button>
+      >{{ defect.feature_id ? 'Re-attribute' : 'Attribute' }}</Button>
       <Button
         v-if="defect.status === 'open'"
         variant="secondary" size="sm"
@@ -102,8 +139,8 @@ async function reopen() {
         variant="secondary" size="sm" :disabled="busy"
         @click="reopen"
       >Reopen</Button>
-      <span v-if="defect.feature_key" class="note">
-        blamed on <b>{{ defect.feature_key }}</b>
+      <span v-if="defect.feature_id" class="note">
+        blamed on <b>{{ defect.feature_title || `#${defect.feature_id}` }}</b>
       </span>
     </div>
 
@@ -117,13 +154,20 @@ async function reopen() {
         class="grow"
         :placeholder="FORMS[form].placeholder"
         :disabled="busy"
+        :error="!!problem && !!value"
       />
       <!-- Carries the defect id so the submit and the disclosure that
            revealed it do not share one accessible name. -->
-      <Button type="submit" size="sm" :disabled="busy">
+      <Button type="submit" size="sm" :disabled="busy || !!problem"
+              :data-testid="`defect-${form}-submit-${defect.id}`">
         {{ FORMS[form].label }} #{{ defect.id }}
       </Button>
       <p class="hint">{{ FORMS[form].hint }}</p>
+      <!-- Said before the post, not after it: the server would answer a blank
+           check or a NaN id with a 400, and a round trip to learn what the
+           field already knew costs the operator their place in the list. -->
+      <p v-if="problem && value" class="refusal" role="alert"
+         :data-testid="`defect-${form}-problem-${defect.id}`">{{ problem }}</p>
     </form>
 
     <p v-if="refusal" class="refusal" role="alert">{{ refusal }}</p>

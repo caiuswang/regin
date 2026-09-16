@@ -135,6 +135,33 @@ function termFor(span) {
   }
 }
 
+// What a shell command did to the files it touched — the same four attributes
+// the feed's Bash card reads. Without a block of its own the reader had no
+// choice but the attributes table, which printed the diff strings with their
+// newlines escaped: strictly less readable than the 340px rail beside it.
+function bashEditsFor(span) {
+  const a = span.attributes || {}
+  const edits = Array.isArray(a.bash_edits) ? a.bash_edits : []
+  const files = Array.isArray(a.bash_edit_files) ? a.bash_edit_files : []
+  if (!edits.length && !files.length) return null
+  const shown = new Set(edits.map(e => e.file_path))
+  return {
+    files: edits.map((e, i) => ({
+      key: `${e.file_path}-${i}`,
+      filePath: e.file_path || '',
+      op: diffOpLabel(e.edit_op || ''),
+      added: e.added_lines || 0,
+      removed: e.removed_lines || 0,
+      diff: e.diff || '',
+      droppedBytes: e.diff_truncated_bytes || 0,
+    })),
+    // Paths Claude Code named but shipped no hunks for — the capped overflow.
+    extraPaths: files.filter(p => !shown.has(p)),
+    more: a.bash_edit_more || 0,
+    unavailable: !!a.bash_edit_unavailable,
+  }
+}
+
 function rulesFor(span) {
   if (span.name !== 'rule.check') return null
   const a = span.attributes || {}
@@ -208,6 +235,7 @@ export function spanHasBody(span, hasChildren = false) {
   if (proseFor(span).text) return true
   if (isAskSpan(span) && (a.questions || []).length) return true
   if (a.diff) return true
+  if (bashEditsFor(span)) return true
   // `termFor`, not a private key list: the two disagreed on a command-only
   // Bash, so the walk skipped spans the reader renders a `$ cmd` line for —
   // which is exactly the promise "content only" makes.
@@ -249,6 +277,7 @@ export function presentFor(span, ctx = {}) {
   const a = span.attributes || {}
   const prose = proseFor(span)
   const term = termFor(span)
+  const bashEdits = bashEditsFor(span)
   const rules = rulesFor(span)
   const ask = askFor(span)
   const deny = denyFor(span)
@@ -278,7 +307,8 @@ export function presentFor(span, ctx = {}) {
   const title = truncate(collapseWhitespace(rawTitle), TITLE_MAX)
 
   // Keys a dedicated block above the table already rendered.
-  const extraHidden = [prose.key, 'diff', 'stdout', 'stderr', 'command', 'command_preview']
+  const extraHidden = [prose.key, 'diff', 'stdout', 'stderr', 'command', 'command_preview',
+    'bash_edits', 'bash_edit_files', 'bash_edit_more', 'bash_edit_unavailable']
     .filter(Boolean)
   const attrKeys = visibleAttributeKeys(span, extraHidden)
 
@@ -315,6 +345,7 @@ export function presentFor(span, ctx = {}) {
       ask ? askCopyText(ask) : '',
       deny ? `Denied (${deny.label}): ${deny.reason}` : '',
       a.diff,
+      bashEdits ? bashEdits.files.map(f => `${f.op} (${f.filePath})\n${f.diff}`).join('\n\n') : '',
       term.cmd ? `$ ${term.cmd}` : '',
       [a.stdout, a.stderr].filter(Boolean).join('\n'),
       mcp ? [mcp.input && `→ ${mcp.input}`, mcp.result && `← ${mcp.result}`].filter(Boolean).join('\n\n') : '',
@@ -338,6 +369,9 @@ export function presentFor(span, ctx = {}) {
     diffOp: diffOpLabel(a.edit_op || ''),
     diffAdd: a.added_lines ?? null,
     diffDel: a.removed_lines ?? null,
+
+    hasBashEdits: Boolean(bashEdits),
+    bashEdits,
 
     hasTerm: term.has,
     termCmd: term.cmd,
@@ -365,7 +399,7 @@ export function presentFor(span, ctx = {}) {
     attrs: attrKeys.map(k => ({ k, v: a[k] })),
 
     empty: !hasProse && !ask && !deny && !mcp && !hasDiff && !term.has
-      && !rules && !children.length,
+      && !bashEdits && !rules && !children.length,
     // An empty body is not always an empty span. When the attributes
     // themselves account for content that exists but was not captured, saying
     // "metadata only" contradicts the very panel beside it.

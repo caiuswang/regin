@@ -6,6 +6,6 @@ two copies drift apart.
 """
 
 from tests.feature_ledger_fixtures import (  # noqa: F401
-    cached_issue, no_tracker, session_row, task_lane, tracker_down,
+    feature_row, no_tracker, session_row, task_lane, tracker_down,
     tracker_issue,
 )

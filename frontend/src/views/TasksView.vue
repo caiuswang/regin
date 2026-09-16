@@ -9,6 +9,7 @@ import Icon from '../components/ui/Icon.vue'
 import TaskGraphPanel from '../components/tasks/TaskGraphPanel.vue'
 import TaskListPanel from '../components/tasks/TaskListPanel.vue'
 import Tabs from '../components/ui/Tabs.vue'
+import { usePipelineTabActive } from '../composables/usePipelineHeader'
 
 const VIEWS = [
   { value: 'list', label: 'List' },
@@ -17,19 +18,14 @@ const VIEWS = [
 
 const view = ref('list')
 const list = ref(null)
+const isCurrentTab = usePipelineTabActive()
 </script>
 
 <template>
   <div class="space-y-4">
-    <header class="page-header">
-      <div class="page-header-text">
-        <div class="page-eyebrow">Engineering</div>
-        <h1 class="page-title">Tasks</h1>
-        <p class="page-subtitle">
-          Nothing runs until someone arms it — and an armed task waits for
-          every dependency it names.
-        </p>
-      </div>
+    <!-- Title, eyebrow and lead are the Pipeline shell's now; this view keeps
+         only what is its own, and sends its one action up into that header. -->
+    <Teleport v-if="isCurrentTab" defer to="#pipeline-actions">
       <Button
         v-if="view === 'list'"
         variant="primary"
@@ -40,9 +36,9 @@ const list = ref(null)
         <span>New task</span>
         <kbd class="tv-kbd">c</kbd>
       </Button>
-    </header>
+    </Teleport>
 
-    <Tabs v-model="view" :tabs="VIEWS" data-testid="tasks-view-tabs" />
+    <Tabs v-model="view" :tabs="VIEWS" variant="underline" data-testid="tasks-view-tabs" />
 
     <TaskListPanel v-if="view === 'list'" ref="list" />
     <TaskGraphPanel v-else />

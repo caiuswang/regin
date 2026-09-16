@@ -1,15 +1,22 @@
-"""Escapes — defects blamed on a feature that had already shipped (CAI-233).
+"""Escapes — defects blamed on a feature that had already shipped (regin:82).
 
-The reading is deliberately built so that **no two clocks are ever compared**.
-The obvious design — subtract a defect's report moment from the feature's first
-completion — has operands minted by two different machines, and a defect near
-the ship boundary would fall on either side of it according to host drift. The
-metric would be measuring NTP quality as much as rework.
+**No two clocks are ever compared.** The obvious design — subtract a defect's
+report moment from the feature's completion — has operands minted by two
+different machines, so a defect near the ship boundary would fall on either
+side of it according to host drift, and the metric would measure NTP quality as
+much as rework.
 
 So the question is answered where it is answerable without subtraction: at the
-instant a human declares which feature is to blame, the tracker is asked what
-state that feature occupies, and the raw answer is frozen onto the defect row.
-Both operands are declared at one instant, by one act.
+instant a human declares which feature is to blame, the feature's **current
+last event** is pointed at, and the pointer is frozen onto the defect row. An
+escape is `blamed_event.kind == 'shipped'` — one comparison against an
+immutable row.
+
+That pointer replaced a nullable `blamed_against_state` string, and with it the
+two gap counters that string needed. A cached word could be absent (nobody
+looked), stale (the tracker moved), or a vocabulary regin did not carry; an
+event is none of those, because the row it names cannot change and the feature
+always has one. So `counts_for` reports a count and no gaps.
 
 The distortion this admits, stated so nobody rediscovers it as a bug: a defect
 found while a feature was still building but blamed after it shipped counts as
@@ -22,62 +29,83 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
+from sqlmodel import select
+
 from lib.activity_log import get_activity_logger
-from lib.tasks.integrations.base import STATE_COMPLETED, STATE_UNKNOWN
+from lib.orm import SessionLocal
+from lib.orm.models.defects import Defect
+from lib.orm.models.features import SHIPPED, FeatureEvent
 
 log = get_activity_logger("defects")
 
 
-def is_escape(state: Optional[str]) -> bool:
-    """Whether a blame snapshot says the feature had already shipped.
+def blame_pointer(feature_id: int) -> Optional[int]:
+    """The event a blame assigned right now would name.
 
-    NULL is False and so is `'unknown'` — but neither is *counted* as a
-    non-escape; both are gaps, and `counts_for` keeps them separate.
+    None only for a feature with no events, which the creation transaction
+    makes unreachable — every feature carries at least its `specced`.
     """
-    return state == STATE_COMPLETED
+    with SessionLocal() as session:
+        row = session.exec(
+            select(FeatureEvent.id)
+            .where(FeatureEvent.feature_id == feature_id)
+            .order_by(FeatureEvent.id.desc())).first()
+    return row
 
 
-def blame_state(feature_key: str) -> Optional[str]:
-    """The tracker's raw `state_category` for a feature, or None.
-
-    Exactly one fetch, and a refusal returns None rather than a plausible
-    category: losing one field beats losing the defect report to a network
-    blip, and a guessed category would silently decide an escape.
-    """
-    from lib.defects import tracker  # noqa: PLC0415  (circular at import time)
-    from lib.tasks.integrations import IntegrationError  # noqa: PLC0415
-    from lib.tasks import issue_cache  # noqa: PLC0415
-    try:
-        provider, ref = tracker.resolve(feature_key)
-        issue = provider.fetch_issue(ref)
-    except (tracker.TrackerUnavailable, IntegrationError) as exc:
-        log.read("blame_state_unavailable", feature_key=feature_key,
-                 reason=str(exc))
-        return None
-    issue_cache.remember(ref.provider, ref.key, issue)
-    state = getattr(issue, "state_category", None)
-    log.read("blame_state_read", feature_key=feature_key, state=state)
-    return state
+def is_escape(blamed_event_id: Optional[int]) -> bool:
+    """Whether the event a defect was blamed against was a ship claim."""
+    if blamed_event_id is None:
+        return False
+    with SessionLocal() as session:
+        row = session.get(FeatureEvent, blamed_event_id)
+    return row is not None and row.kind == SHIPPED
 
 
 @dataclass(frozen=True)
 class EscapeCounts:
-    """Escapes for one feature, each gap counted rather than absorbed."""
+    """Escapes for one feature.
+
+    One field, where its predecessor had three. The two gap counters existed
+    to hold the readings a cached string could have — never looked, and a word
+    we do not carry — and a pointer at an append-only row has neither.
+    """
 
     escapes: int = 0
-    #: Blame was assigned with no tracker reachable — we never looked.
-    state_unknown: int = 0
-    #: We looked, and the tracker answered with a word regin does not carry.
-    unknown_vocabulary: int = 0
 
 
-def counts_for(feature_key: str) -> EscapeCounts:
-    """Escapes and their two gaps, read from the local ledger alone."""
-    from lib.defects import store  # noqa: PLC0415  (circular at import time)
-    rows = store.for_feature(feature_key)
-    return EscapeCounts(
-        escapes=sum(1 for r in rows if is_escape(r.blamed_against_state)),
-        state_unknown=sum(1 for r in rows if r.blamed_against_state is None),
-        unknown_vocabulary=sum(1 for r in rows
-                               if r.blamed_against_state == STATE_UNKNOWN),
-    )
+def counts_for(feature_id: int) -> EscapeCounts:
+    """Escapes for one feature — a join, not a string comparison.
+
+    All-time and historical: closing an escape does not un-escape it, which is
+    why this is a different figure from `open_defects` and both stay.
+    """
+    if feature_id is None:
+        return EscapeCounts()
+    with SessionLocal() as session:
+        row = session.exec(
+            select(Defect.id)
+            .join(FeatureEvent, FeatureEvent.id == Defect.blamed_event_id)
+            .where(Defect.feature_id == feature_id,
+                   FeatureEvent.kind == SHIPPED)).all()
+    log.read("defect_escapes_counted", feature_id=feature_id, count=len(row))
+    return EscapeCounts(escapes=len(row))
+
+
+def counts_by_feature() -> dict[int, int]:
+    """`{feature_id: escapes}` for the whole population, in one statement.
+
+    The index renders a row per feature, so a per-row `counts_for` would be
+    one query per line — the shape `ledger.build()` measured at 726-1679 ms
+    and the index exists to avoid.
+    """
+    with SessionLocal() as session:
+        rows = session.exec(
+            select(Defect.feature_id)
+            .join(FeatureEvent, FeatureEvent.id == Defect.blamed_event_id)
+            .where(Defect.feature_id.is_not(None),
+                   FeatureEvent.kind == SHIPPED)).all()
+    out: dict[int, int] = {}
+    for feature_id in rows:
+        out[feature_id] = out.get(feature_id, 0) + 1
+    return out

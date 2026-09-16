@@ -20,6 +20,7 @@ import TaskPriorityIcon from './TaskPriorityIcon.vue'
 import TaskRefusal from './TaskRefusal.vue'
 import TaskRunControls from './TaskRunControls.vue'
 import TaskStatusIcon from './TaskStatusIcon.vue'
+import { shortDate } from '../../utils/ledgerFormat'
 import { taskRef } from '../../utils/taskMeta.js'
 
 const props = defineProps({
@@ -32,13 +33,8 @@ const props = defineProps({
   busy: { type: Boolean, default: false },
   selected: { type: Boolean, default: false },
   selectable: { type: Boolean, default: true },
-  // A run listed under its feature: indented, and without the acts that
-  // belong to a feature (select, arm, archive, deps).
-  nested: { type: Boolean, default: false },
-  expanded: { type: Boolean, default: false },
 })
-defineEmits(['toggle', 'open', 'control', 'focus', 'select', 'delete',
-             'expand'])
+defineEmits(['toggle', 'open', 'control', 'focus', 'select', 'delete'])
 
 const archived = computed(() => props.task.status === 'archived')
 const imageCount = computed(() => (props.task.images || []).length)
@@ -46,12 +42,11 @@ const answered = computed(() => props.task.status === 'running' && !!props.liven
 const live = computed(() => !!props.liveness?.live)
 const ref_ = computed(() => taskRef(props.task))
 // Date only: the row has one line, and a task captured six weeks ago is not
-// better understood by knowing it was 14:07.
-const day = computed(() => String(props.task.created_at || '').slice(0, 10))
-// Which grain the row is, from the two counts the page carries: a feature
-// with runs of its own unfolds them; a task whose attempts are its runs
-// opens its history. Neither is inferred from the title or the status.
-const childCount = computed(() => props.task.child_count || 0)
+// better understood by knowing it was 14:07. Through the shared formatter,
+// because the same column on Features and Defects has to read the same (R5).
+const day = computed(() => shortDate(props.task.created_at))
+// How many attempts the row has, from the count the page carries. Never
+// inferred from the title or the status.
 const runCount = computed(() => props.task.run_count || 0)
 </script>
 
@@ -59,28 +54,18 @@ const runCount = computed(() => props.task.run_count || 0)
   <div
     :id="`task-${task.id}`"
     class="task-row"
-    :class="{ 'task-row-selected': selected, 'task-row-archived': archived,
-              'task-row-nested': nested }"
+    :class="{ 'task-row-selected': selected, 'task-row-archived': archived }"
     :data-status="task.status"
-    :data-parent="task.parent_id ?? undefined"
+    :data-feature="task.feature_id ?? undefined"
     data-testid="task-row"
   >
-    <Button
-      v-if="childCount"
-      variant="ghost"
-      size="sm"
-      class="task-expand"
-      :aria-expanded="expanded"
-      :aria-label="`${expanded ? 'Collapse' : 'Expand'} the runs of ${ref_}`"
-      data-testid="task-expand"
-      @click="$emit('expand', task)"
-    >
-      <Icon :name="expanded ? 'chevron-down' : 'chevron-right'" :size="13" />
-    </Button>
-    <span v-else-if="!nested" class="task-expand-gap" aria-hidden="true" />
+    <!-- No expand control: a task has attempts, not child tasks, and the
+         attempts open from the row's own page. The gap keeps every row's
+         checkbox on the column the group header's chevron sits in. -->
+    <span class="task-expand-gap" aria-hidden="true" />
 
     <Checkbox
-      v-if="selectable && !nested"
+      v-if="selectable"
       class="task-select"
       :model-value="selected"
       :aria-label="`Select ${ref_}`"
@@ -101,14 +86,8 @@ const runCount = computed(() => props.task.run_count || 0)
     </router-link>
 
     <div class="task-facts">
-      <Badge
-        v-if="childCount"
-        color="blue"
-        :label="childCount === 1 ? '1 run' : `${childCount} runs`"
-        data-testid="task-child-count"
-      />
       <Button
-        v-else-if="runCount"
+        v-if="runCount"
         variant="ghost"
         size="sm"
         class="task-attempts"
@@ -162,7 +141,7 @@ const runCount = computed(() => props.task.run_count || 0)
         <Icon name="pencil" :size="13" />
       </Button>
       <Button
-        v-if="!archived && !nested"
+        v-if="!archived"
         variant="ghost"
         size="sm"
         :aria-label="`Arm ${ref_}`"
@@ -172,7 +151,6 @@ const runCount = computed(() => props.task.run_count || 0)
         <Icon name="power" :size="13" />
       </Button>
       <Button
-        v-if="!nested"
         variant="ghost"
         size="sm"
         :aria-label="`Dependencies of ${ref_}`"
@@ -191,7 +169,6 @@ const runCount = computed(() => props.task.run_count || 0)
         <Icon name="list" :size="13" />
       </Button>
       <Button
-        v-if="!nested"
         variant="ghost"
         size="sm"
         :aria-label="`${archived ? 'Restore' : 'Archive'} ${ref_}`"
@@ -238,10 +215,7 @@ const runCount = computed(() => props.task.run_count || 0)
 
 .task-select { flex-shrink: 0; }
 .task-priority { flex-shrink: 0; }
-.task-expand { flex-shrink: 0; width: 1.5rem; height: 1.5rem; padding: 0; }
 .task-expand-gap { flex: 0 0 1.5rem; }
-.task-row-nested { padding-left: 2.75rem; background: var(--color-surface-2); }
-.task-row-nested .task-title { font-weight: 400; }
 
 .task-attempts {
     height: auto;

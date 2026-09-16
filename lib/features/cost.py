@@ -8,9 +8,9 @@ would be manufactured precision.
 
 Read-through, never snapshotted: `sessions.cost_usd` rises while a session is
 alive, so freezing it would need a refresh trigger. Contrast the round on a
-`session_features` row, which *is* snapshotted — the tracker's answer changes
-underneath us and is unrecoverable, while cost is regin's own data and locally
-recomputable.
+`session_features` row, which *is* snapshotted — it names the round the feature
+stood at when the claim was made, and a later restart must not retroactively
+move it, while cost is regin's own data and locally recomputable.
 
 Dollars are the headline, singular. The four token columns are a breakdown
 beneath it and are **never added together**: a live session reads `input=118`,
@@ -187,13 +187,14 @@ def coverage() -> Coverage:
         totals = session.exec(text(
             "SELECT COUNT(*), COALESCE(SUM(cost_usd), 0) FROM sessions"
         )).first()
-        from lib.features import lane as lane_module  # noqa: PLC0415
-        declared = session.exec(text(lane_module.with_lane(
+        from lib.features import attribution  # noqa: PLC0415
+        declared = session.exec(text(
+            f"WITH {attribution.LANE}"
             " SELECT COUNT(*), COALESCE(SUM(s.cost_usd), 0) FROM sessions s"
             " WHERE s.trace_id IN ("
             "   SELECT trace_id FROM session_features"
             "   UNION SELECT trace_id FROM lane)"
-        ))).first()
+        )).first()
     return Coverage(declared_sessions=int(declared[0] or 0),
                     all_sessions=int(totals[0] or 0),
                     declared_usd=float(declared[1] or 0.0),

@@ -746,11 +746,13 @@ test.describe('/tasks — the DAG panel', () => {
     await page.goto('/tasks')
     await expect(page.getByTestId('task-list')).toBeVisible()
     await page.getByRole('tab', { name: 'Graph' }).click()
-    await expect(page).toHaveURL(/\/tasks$/)
+    // The path, not the whole URL: the list's filters live in the query now,
+    // and a stored one is restored into it on arrival.
+    await expect(page).toHaveURL(/\/tasks(\?|$)/)
     await expect(page.getByTestId('task-list')).toHaveCount(0)
     await page.getByRole('tab', { name: 'List' }).click()
     await expect(page.getByTestId('task-list')).toBeVisible()
-    await expect(page.locator('nav.sb-nav .sb-item', { hasText: 'Tasks' }))
+    await expect(page.locator('nav.sb-nav .sb-item', { hasText: 'Pipeline' }))
       .toHaveClass(/is-active/)
   })
 })
@@ -865,15 +867,18 @@ test.describe('/api-keys', () => {
 })
 
 test.describe('sidebar + rendering', () => {
-  for (const [path, label] of [['/tasks', 'Tasks'], ['/api-keys', 'API keys']]) {
+  for (const [path, label] of [['/tasks', 'Pipeline'], ['/api-keys', 'API keys']]) {
     test(`${path} highlights its sidebar entry`, async ({ page }) => {
       await page.goto('/')
       const item = page.locator('nav.sb-nav .sb-item', { hasText: label })
       await item.click()
 
-      // Exact URL, no query string — AppLayout compares `route.path` only, so
-      // a `?query` in the link would never highlight and never re-navigate.
-      await expect(page).toHaveURL(new RegExp(`${path}$`))
+      // The LINK carries no query — AppLayout compares `route.path` only, so a
+      // `?query` in the href would never highlight and never re-navigate. What
+      // the page writes into the URL *after* arriving (a restored filter) is
+      // the list's business and must not break the highlight, which is the
+      // claim the two assertions below make.
+      await expect(page).toHaveURL(new RegExp(`${path}(\\?|$)`))
       await expect(item).toHaveClass(/is-active/)
       await expect(item).toHaveAttribute('aria-current', 'page')
     })

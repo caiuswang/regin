@@ -5,12 +5,14 @@ rather than living in either: the ledger and the defect ledger read the same
 tables, and duplicating a `sessions`-row builder in two conftests is how the
 two copies drift apart.
 
-The two things every test here needs: rows in the tables the ledger reads
-(`sessions`, `agent_run_sessions`, `agent_task_runs`, `agent_task_links`), and
-a tracker that can be made unreachable on demand. The latter is the fixture
-`lib/defects/tracker.py`'s deliberate refusal forces on us — and `escapes` now
-puts a tracker fetch on the *attribution write* too, so both the read path and
-the write path need it.
+What every test here needs: rows in the tables the ledger reads (`features`,
+`feature_events`, `sessions`, `agent_run_sessions`, `agent_task_runs`), and —
+for the remote half only — a tracker that can be pinned or made unreachable.
+
+The tracker fixtures shrank with their reach. A feature's stage, rounds and
+escape verdict are derived from rows in this database now, so no read path
+touches a tracker at all; only an explicit `refresh` of a remotely-tracked
+feature does.
 """
 
 from __future__ import annotations
@@ -56,20 +58,33 @@ def run_alias():
 
 
 @pytest.fixture
+def feature_row():
+    """A `features` row plus its `specced` event, at a named stage."""
+    def _make(title="a feature", *, stage=None, origin="native",
+              external_ref=None):
+        from lib.features import events, store as feature_store
+
+        row = feature_store.create(title, origin=origin,
+                                   external_ref=external_ref)
+        if stage is not None:
+            events.append(row.id, stage, declared_by=events.OPERATOR)
+        return row
+    return _make
+
+
+@pytest.fixture
 def task_lane():
-    """A task, its tracker link(s), and its runs — the SDK attribution lane."""
-    def _make(task_id: int, keys, runs):
+    """A task under a feature, and its runs — the SDK attribution lane.
+
+    Two joins where there used to be four CTEs: the run names a task, the task
+    names one feature, and that is the whole path.
+    """
+    def _make(task_id: int, feature_id, runs):
         with SessionLocal() as session:
             session.exec(text(
-                "INSERT INTO agent_tasks (id, title, status, source)"
-                " VALUES (:i, :t, 'doing', 'test')"
-            ).bindparams(i=task_id, t=f"task {task_id}"))
-            for key in keys:
-                session.exec(text(
-                    "INSERT INTO agent_task_links"
-                    " (task_id, provider, external_key, url)"
-                    " VALUES (:i, 'linear', :k, :u)"
-                ).bindparams(i=task_id, k=key, u=f"https://x/{key}"))
+                "INSERT INTO agent_tasks (id, title, status, source,"
+                " feature_id) VALUES (:i, :t, 'doing', 'test', :f)"
+            ).bindparams(i=task_id, t=f"task {task_id}", f=feature_id))
             for attempt, (trace, status) in enumerate(runs, start=1):
                 session.exec(text(
                     "INSERT INTO agent_task_runs"
@@ -87,17 +102,12 @@ def no_tracker(monkeypatch):
     Same lever as `tests/defects/test_tracker_rounds.py:84-91` — pinned off
     rather than skipped, so the assertion runs everywhere.
 
-    The native provider is dropped from the registry as well, because it holds
-    no credential to pin off: leaving it registered would make this fixture's
-    38 call sites mean "Linear is off" where every one of them means "nothing
-    answers". A test that wants the native tracker *on* with Linear off asks
-    for that directly rather than through this.
+    Its reach is much smaller than it was: no read path consults a tracker
+    any more, so this only affects an explicit `refresh` or an adoption.
     """
     from lib.settings import settings
-    from lib.tasks.integrations import registry
     monkeypatch.setattr(settings.task_integrations, "linear_enabled", False)
     monkeypatch.setattr(settings.task_integrations, "linear_api_key", None)
-    monkeypatch.delitem(registry._PROVIDER_BUILDERS, "regin", raising=False)
 
 
 @pytest.fixture
@@ -121,12 +131,14 @@ def tracker_issue(monkeypatch):
                 raise IntegrationError(f"no issue {ref.key}")
             return issues[ref.key]
 
-    def _resolve(key: str):
-        return _Provider(), ExternalRef(provider="linear", key=key,
-                                        url=f"https://x/{key}")
+    def _resolve(text_ref: str, provider_id: str = ""):
+        return _Provider(), ExternalRef(provider="linear", key=text_ref,
+                                        url=f"https://x/{text_ref}")
 
-    import lib.defects.tracker as tracker_mod
-    monkeypatch.setattr(tracker_mod, "resolve", _resolve)
+    from lib.tasks.integrations import registry
+    monkeypatch.setattr(registry, "resolve_ref", _resolve)
+    import lib.features.sync as sync_mod
+    monkeypatch.setattr(sync_mod.registry, "resolve_ref", _resolve)
 
     def _set(key: str, *, state_category="started", rounds=1, title="t"):
         issues[key] = ExternalIssue(
@@ -169,64 +181,47 @@ def tracker_down(monkeypatch):
     """Make every tracker resolution refuse, after other fixtures pinned it.
 
     Distinct from `no_tracker`: this one wins even when `tracker_issue` has
-    already replaced `resolve`, which is the order a ledger test needs when it
-    declares attributions first and then pulls the tracker away.
+    already replaced the resolver, which is the order a sync test needs when
+    it adopts a feature first and then pulls the tracker away.
     """
     def _refuse():
-        import lib.defects.tracker as tracker_mod
-        from lib.defects.tracker import TrackerUnavailable
+        from lib.tasks.integrations import IntegrationError, registry
 
-        def _raise(key):
-            raise TrackerUnavailable("no tracker is configured")
-        monkeypatch.setattr(tracker_mod, "resolve", _raise)
+        def _raise(text_ref, provider_id=""):
+            raise IntegrationError("no tracker is configured")
+        monkeypatch.setattr(registry, "resolve_ref", _raise)
+        import lib.features.sync as sync_mod
+        monkeypatch.setattr(sync_mod.registry, "resolve_ref", _raise)
     return _refuse
 
 
 @pytest.fixture
 def defect_row():
-    """Insert a `defects` row directly, attributed or not.
+    """Insert a `defects` row, attributed or not, blamed at the feature's
+    current last event.
 
-    Straight SQL rather than `store.record`: the index tests need a key that
-    exists *only* because a defect named it, and the recording path fetches
-    the tracker to snapshot `blamed_against_state`.
+    Through `store.record` for the blame pointer, because the pointer is the
+    thing most of these tests are about: a hand-written row with a NULL
+    `blamed_event_id` reads as a defect nobody has blamed, which is a
+    different state from one blamed against a shipped feature.
     """
     counter = {"n": 0}
 
-    def _make(feature_key, *, status="open", symptom=None,
-              opened_at="2026-09-01 10:00:00"):
+    def _make(feature_id=None, *, status="open", symptom=None,
+              opened_at="2026-09-01 10:00:00", session_id=None):
+        from lib.defects import store as defect_store
+
         counter["n"] += 1
-        text_ = symptom or f"symptom {counter['n']}"
+        body = symptom or f"symptom {counter['n']}"
+        row = defect_store.record(body, feature_id=feature_id,
+                                  session_id=session_id)
         with SessionLocal() as session:
             session.exec(text(
-                "INSERT INTO defects (feature_key, symptom, symptom_key,"
-                " status, opened_at) VALUES (:f, :s, :k, :st, :o)"
-            ).bindparams(f=feature_key, s=text_, o=opened_at,
-                         k=f"sym-{counter['n']}", st=status))
+                "UPDATE defects SET status = :st, opened_at = :o"
+                " WHERE id = :i"
+            ).bindparams(st=status, o=opened_at, i=row.id))
             session.commit()
-        return text_
-    return _make
-
-
-@pytest.fixture
-def cached_issue():
-    """Put a normalized issue in the feature-keyed cache without a fetch."""
-    import json
-
-    def _make(key, *, provider="linear", title="t", state_category="started",
-              rounds=1, synced_at="2026-09-01 12:00:00"):
-        snapshot = {"provider": provider, "key": key,
-                    "url": f"https://x/{key}", "title": title,
-                    "state": state_category.title(),
-                    "state_category": state_category, "rounds": rounds}
-        with SessionLocal() as session:
-            session.exec(text(
-                "INSERT OR REPLACE INTO issue_cache"
-                " (provider, external_key, snapshot_json, synced_at)"
-                " VALUES (:p, :k, :s, :t)"
-            ).bindparams(p=provider, k=key, s=json.dumps(snapshot),
-                         t=synced_at))
-            session.commit()
-        return snapshot
+        return body
     return _make
 
 

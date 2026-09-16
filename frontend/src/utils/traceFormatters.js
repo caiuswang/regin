@@ -1003,8 +1003,37 @@ export function taskRowIconClass(status) {
 // ── Diff op labels ──────────────────────────────────────────
 
 export function diffOpLabel(op) {
-  if (op === 'write') return 'Create'
+  if (op === 'write' || op === 'create') return 'Create'
+  if (op === 'delete') return 'Delete'
   return 'Update'
+}
+
+// A file-mutating Bash call's headline: how many files the command changed
+// and the line totals across the diffs Claude Code supplied for them.
+//
+// The count reads BOTH accounts of "how many files" and takes the larger:
+// `bash_edits` + `bash_edit_more` (what the capture built) and
+// `bash_edit_files` (what Claude Code listed). They agree by invariant, but a
+// span that carries only one of them must still say a number.
+export function bashEditSummary(attributes) {
+  const a = attributes || {}
+  const edits = a.bash_edits || []
+  const count = Math.max(edits.length + (a.bash_edit_more || 0), (a.bash_edit_files || []).length)
+  return {
+    count,
+    label: `${count} ${count === 1 ? 'file' : 'files'}`,
+    added: edits.reduce((n, e) => n + (e.added_lines || 0), 0),
+    removed: edits.reduce((n, e) => n + (e.removed_lines || 0), 0),
+  }
+}
+
+// Does this Bash span carry evidence of a file change? The predicate is shared
+// by the card chain's branch guard, BashCard's disclosure, and dispatch's tier
+// and fold buckets — a silent `sed -i` has no stdout, no stderr and a command
+// under the preview cap, so without this it fell through to a bodyless row.
+export function hasBashEdits(attributes) {
+  const a = attributes || {}
+  return Boolean((a.bash_edits || []).length || (a.bash_edit_files || []).length)
 }
 
 export function diffFileName(span) {

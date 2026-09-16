@@ -1,5 +1,5 @@
 <script setup>
-// The stage, its freshness, and the one control on this page that reaches the
+// The stage, the done-claim, and the one control on this page that reaches a
 // tracker.
 //
 // It leads the page — the ordering `regin feature ledger` asserts, because
@@ -8,18 +8,21 @@
 // empty ledger most features will be for a long time, which inverts the
 // framing job: the stage frames by being read first, not by being bigger.
 //
-// Three rules hold at every placement:
-//   · `stage: null` renders NO chip. A missing stage that wears one reads as a
-//     stage somebody declared.
-//   · freshness rides BESIDE the chip, never inside it — `Stage.to_dict()` is
-//     flat, and `null` can carry no field.
+// **There is no "stage not fetched" any more.** Every feature carries its own
+// `specced` event, so the stage is always a real answer and the chip is always
+// a stage somebody's act produced. The branch that rendered a missing one is
+// gone with the fetch that could fail to fill it.
+//
+// Two rules hold at every placement:
+//   · freshness rides BESIDE the chip, never inside it — it is a fact about a
+//     fetch, not about where the feature stands.
 //   · a failed refresh leaves the stage and its timestamp untouched and says
 //     so next to them. Nothing was persisted, so it must not look like state.
 //
-// A LIVE tracker takes the freshness slot rather than sharing it. Its issues
-// live in regin's own database, so the cache cannot lag the fact: there is
-// nothing to be as-of and nothing to refresh, and rendering `as of T` beside
-// a figure that is always current would be a qualifier with no referent. The
+// A NATIVE feature takes the freshness slot rather than sharing it. Its stage
+// is derived from rows in this database, so it cannot lag the fact: there is
+// nothing to be as-of and nothing to refresh, and rendering `as of T` beside a
+// figure that is always current would be a qualifier with no referent. The
 // Refresh control goes with it — `canRefresh` is `canWrite && !live`, which
 // hides the control without the endpoint behind it changing at all.
 import { computed } from 'vue'
@@ -29,44 +32,60 @@ import Icon from '../ui/Icon.vue'
 import { STAGE_COLOR, asOf } from '../../utils/ledgerFormat'
 
 const props = defineProps({
-  featureKey: { type: String, required: true },
-  stage: { type: Object, default: null },
+  featureId: { type: Number, required: true },
+  title: { type: String, default: '' },
+  // The tracker reference, when this feature has one. Rendered beside the
+  // title rather than in place of it: `features.title` is the authority for
+  // what is being delivered, and the reference says where it is tracked.
+  externalRef: { type: String, default: null },
+  externalUrl: { type: String, default: null },
+  stage: { type: Object, required: true },
   syncedAt: { type: String, default: null },
   refreshing: { type: Boolean, default: false },
   failed: { type: String, default: '' },
   canRefresh: { type: Boolean, default: true },
-  // Declared by the provider, resolved server-side through a registry lookup.
-  // Never inferred from the key's shape here: the shape is a provider's own
-  // business, and reading it would be the vendor branch the seam forbids.
+  canShip: { type: Boolean, default: false },
+  // Taking a feature down. Distinct from `canShip` because the two are not
+  // opposites: an abandoned feature can be neither shipped nor abandoned
+  // again, while a shipped one can still be taken down.
+  canAbandon: { type: Boolean, default: false },
+  // Which write is in flight, so the whole row disables together: a second
+  // click during a ship appends a second event to an append-only log.
+  busy: { type: String, default: '' },
+  // Resolved server-side from the feature's origin. Never inferred from a
+  // reference's shape here: the shape is a provider's own business, and
+  // reading it would be the vendor branch the seam forbids.
   live: { type: Boolean, default: false },
 })
-defineEmits(['refresh'])
+defineEmits(['refresh', 'ship', 'abandon'])
 
 const color = computed(() => STAGE_COLOR[props.stage?.stage] || 'gray')
-// A timestamp only means anything next to a stage: `stage_synced_at` is
-// written by a SUCCESSFUL fetch, so a null stage implies a null timestamp.
-// The two are beside each other but not orthogonal.
-const synced = computed(() => (props.stage ? asOf(props.syncedAt) : null))
+// Only a successful fetch writes it, so a feature nobody has synced has no
+// "as of T" — and a native one never will.
+const synced = computed(() => asOf(props.syncedAt))
 </script>
 
 <template>
   <section class="stage-line">
     <div class="stage-line-main">
-      <span class="stage-key">{{ featureKey }}</span>
+      <span class="stage-key">{{ title }}</span>
 
-      <Badge v-if="stage" :color="color" :label="stage.stage" />
+      <!-- The reference, where there is one. A link, because an operator who
+           reads it wants to open it. -->
+      <a
+        v-if="externalRef"
+        class="stage-ref"
+        :href="externalUrl || undefined"
+        target="_blank"
+        rel="noopener"
+        data-testid="stage-ref"
+      >{{ externalRef }}</a>
 
-      <!-- No tracker answered. Deliberately not a chip: plain text, in the
-           voice of the reader's own tooling, because it is a statement about
-           us and not about the feature. -->
-      <span v-else class="stage-none" data-testid="stage-not-fetched">
-        <Icon name="alert-triangle" :size="12" />
-        stage not fetched
-      </span>
+      <Badge :color="color" :label="stage.stage" />
 
-      <span v-if="stage" class="stage-blurb">{{ stage.blurb }}</span>
+      <span class="stage-blurb">{{ stage.blurb }}</span>
 
-      <span v-if="stage" class="stage-counts">
+      <span class="stage-counts">
         <span><b>{{ stage.rounds }}</b> rounds</span>
         <span><b>{{ stage.open_defects }}</b> open</span>
         <span :class="stage.escapes ? 'text-amber-700' : ''">
@@ -74,9 +93,10 @@ const synced = computed(() => (props.stage ? asOf(props.syncedAt) : null))
         </span>
       </span>
 
-      <!-- A live tracker states that it is live, and says nothing about when
-           it was last read — the question does not arise. -->
-      <span v-if="live && stage" class="stage-live" data-testid="stage-live">
+      <!-- A feature whose stage is derived here states that it is live, and
+           says nothing about when it was last read — the question does not
+           arise. -->
+      <span v-if="live" class="stage-live" data-testid="stage-live">
         <span class="stage-dot" aria-hidden="true"></span>live
       </span>
 
@@ -96,11 +116,43 @@ const synced = computed(() => (props.stage ? asOf(props.syncedAt) : null))
         class="stage-refresh"
         variant="secondary" size="sm"
         :disabled="refreshing"
-        :aria-label="`Refresh the stage for ${featureKey} from the tracker`"
+        :aria-label="`Refresh ${externalRef} from the tracker`"
         @click="$emit('refresh')"
       >
         <Icon name="refresh-cw" :size="12" />
         {{ refreshing ? 'Refreshing' : 'Refresh stage' }}
+      </Button>
+
+      <!-- The done-claim, and the only control that writes it. A run settling
+           says *this session finished*, never *this shipped*. -->
+      <Button
+        v-if="canShip"
+        class="stage-ship"
+        variant="secondary" size="sm"
+        data-testid="ship-feature"
+        :disabled="Boolean(busy)"
+        :aria-label="`Claim ${title} shipped`"
+        @click="$emit('ship')"
+      >
+        <Icon name="check" :size="12" />
+        {{ busy === 'ship' ? 'Shipping…' : 'Ship' }}
+      </Button>
+
+      <!-- Taking it down. `abandoned` is a stage, not a delete: the events are
+           the only source of this feature's rounds and its escapes, so removing
+           one would not be a cleanup but a rewrite of history. The confirm is
+           the caller's — one confirm path for every destructive act (R5). -->
+      <Button
+        v-if="canAbandon"
+        class="stage-abandon"
+        variant="danger" size="sm"
+        data-testid="abandon-feature"
+        :disabled="Boolean(busy)"
+        :aria-label="`Abandon ${title}`"
+        @click="$emit('abandon')"
+      >
+        <Icon name="trash" :size="12" />
+        {{ busy === 'abandon' ? 'Abandoning…' : 'Abandon' }}
       </Button>
     </div>
 
@@ -110,12 +162,8 @@ const synced = computed(() => (props.stage ? asOf(props.syncedAt) : null))
       <Icon name="alert-triangle" :size="12" />
       <span>
         The tracker could not answer — {{ failed }}.
-        <template v-if="stage">
-          The stage beside it is unchanged, still as of {{ synced }}.
-        </template>
-        <template v-else>
-          Nothing has ever been fetched for {{ featureKey }}.
-        </template>
+        The stage beside it is unchanged<template v-if="synced">, still as of
+        {{ synced }}</template>.
         Every other figure on this page is local and unaffected.
       </span>
     </p>
@@ -130,11 +178,6 @@ const synced = computed(() => (props.stage ? asOf(props.syncedAt) : null))
 .stage-key {
     font-family: var(--font-mono, monospace); font-weight: 700;
     font-size: 0.95rem; color: var(--color-fg);
-}
-.stage-none {
-    display: inline-flex; align-items: center; gap: 0.25rem;
-    font-size: 12px; font-style: italic; color: var(--color-fg-subtle);
-    border-bottom: 1px dashed var(--color-border-strong); padding-bottom: 1px;
 }
 .stage-blurb { font-size: 12px; color: var(--color-fg-muted); }
 .stage-counts {
@@ -157,7 +200,17 @@ const synced = computed(() => (props.stage ? asOf(props.syncedAt) : null))
     width: 6px; height: 6px; border-radius: 999px;
     background: var(--color-green-500, #22c55e);
 }
+.stage-ref {
+    font-family: var(--font-mono, monospace); font-size: 11.5px;
+    color: var(--color-fg-subtle); text-decoration: none;
+    border-bottom: 1px dotted var(--color-border-strong);
+}
+.stage-ref:hover { color: var(--color-fg); }
 .stage-refresh { flex: none; margin-left: auto; }
+.stage-ship { flex: none; }
+.stage-abandon { flex: none; }
+.stage-refresh + .stage-ship { margin-left: 0; }
+.stage-line-main > .stage-ship:first-of-type { margin-left: auto; }
 .stage-spin {
     width: 10px; height: 10px; border-radius: 999px;
     border: 2px solid var(--color-slate-300);

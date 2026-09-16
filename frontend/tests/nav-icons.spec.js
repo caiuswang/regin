@@ -30,9 +30,9 @@ test('every sidebar nav link renders a glyph with at least one path',
       blank.map((b) => b.label).join(', ')}`).toEqual([])
   })
 
-test('the Defects link is one of them', async ({ page }) => {
+test('the Pipeline link is one of them', async ({ page }) => {
   await page.goto('/tasks')
-  const icon = page.locator('.sb-item', { hasText: 'Defects' })
+  const icon = page.locator('.sb-item', { hasText: 'Pipeline' })
     .locator('.nav-icon path')
   await expect(icon.first()).toBeAttached()
 })

@@ -34,6 +34,12 @@ _BASH_COMMAND_MAX = 256 * 1024
 _BASH_STDOUT_MAX = 64 * 1024
 _BASH_STDERR_MAX = 32 * 1024
 _EDIT_DIFF_MAX = 256 * 1024
+# Bash edit diffs (Claude Code 2.1.270+). A per-SPAN ceiling, not a routine
+# cut: over 562 real occurrences the serialized object is 3 KB at p50 and
+# 11 KB at p90. It exists because the conversation view reads the *shallow*
+# map (`sessions.py::_shallow_map_response`), which ships span attributes
+# inline rather than lazily through `/spans/<id>/content`.
+_BASH_EDIT_DIFF_MAX = 128 * 1024
 # Read tool result: file content the model just saw. Cap matches Bash
 # stdout — the model's own context can't fit much more than this on a
 # typical turn, so storing the full payload past this point is waste.
@@ -136,6 +142,160 @@ def _parse_hunks(patch: object) -> list[dict]:
         if parsed is not None:
             hunks.append(parsed)
     return hunks
+
+
+def _hunk_text(h: object) -> str | None:
+    """One `bashEditDiff` hunk → `@@ … @@` header + its body lines.
+
+    `lines` arrive already in unified-diff body form ("+…"/"-…"/" …"), the
+    same form `_compute_unified_diff` emits, so nothing is re-diffed here.
+    Bounds go through `_hunk_int`, which accepts both spellings — required,
+    because `_normalize_payload` snake-aliases only one level into
+    `tool_response` and never reaches these nested keys.
+    """
+    if not isinstance(h, dict):
+        return None
+    try:
+        header = '@@ -{},{} +{},{} @@'.format(
+            _hunk_int(h, 'oldStart', 'old_start'),
+            _hunk_int(h, 'oldLines', 'old_lines'),
+            _hunk_int(h, 'newStart', 'new_start'),
+            _hunk_int(h, 'newLines', 'new_lines'),
+        )
+    except (TypeError, ValueError):
+        return None
+    lines = h.get('lines')
+    body = [l for l in lines if isinstance(l, str)] if isinstance(lines, list) else []
+    return '\n'.join([header, *body])
+
+
+def _bash_edit_path(entry: object) -> str | None:
+    if not isinstance(entry, dict):
+        return None
+    path = entry.get('filePath') or entry.get('file_path')
+    return path if isinstance(path, str) and path else None
+
+
+def _bash_edit_op(entry: dict) -> str:
+    if entry.get('created'):
+        return 'create'
+    if entry.get('deleted'):
+        return 'delete'
+    return 'update'
+
+
+def _bash_edit_diff_text(entry: dict) -> str:
+    hunks = entry.get('hunks')
+    texts = [_hunk_text(h) for h in hunks] if isinstance(hunks, list) else []
+    return '\n'.join([t for t in texts if t])
+
+
+def _diff_line_counts(diff: str) -> tuple[int, int]:
+    added = removed = 0
+    for line in diff.split('\n'):
+        if line.startswith('+'):
+            added += 1
+        elif line.startswith('-'):
+            removed += 1
+    return added, removed
+
+
+def _bash_file_edit(entry: object, budget: int) -> tuple[dict, int] | None:
+    """One `bashEditDiff.files` entry → a `bash_edits` record, or None when the
+    entry is unusable — dropped whole, never partial. Returns the record plus
+    the budget it consumed.
+
+    Line counts come off the FULL diff, not the truncated one: they describe
+    what the command did, which truncation must not restate.
+    """
+    path = _bash_edit_path(entry)
+    if path is None:
+        return None
+    diff_full = _bash_edit_diff_text(entry)
+    diff, dropped = _truncate_diff(diff_full, max(budget, 0))
+    added, removed = _diff_line_counts(diff_full)
+    record = {
+        'file_path': path,
+        'edit_op': _bash_edit_op(entry),
+        'diff': diff,
+        'added_lines': added,
+        'removed_lines': removed,
+    }
+    if dropped:
+        record['diff_truncated_bytes'] = dropped
+    # The budget is charged the FULL attempted length, so one truncated file
+    # exhausts it outright rather than leaving a sliver that admits a later,
+    # smaller diff — which would render file 3 in full while file 2 was cut.
+    return record, len(diff) + dropped
+
+
+def _bash_file_edits(files: list) -> tuple[list[dict], int]:
+    """Every usable `files` entry as a record, plus how many were unusable.
+    The diff budget is spent in file order, so the files a command touched
+    first are the ones that keep their text."""
+    budget = _BASH_EDIT_DIFF_MAX
+    edits: list[dict] = []
+    dropped = 0
+    for entry in files:
+        built = _bash_file_edit(entry, budget)
+        if built is None:
+            dropped += 1
+            continue
+        record, spent = built
+        budget -= spent
+        edits.append(record)
+    return edits, dropped
+
+
+def _bash_edit_totals(attrs: dict, edits: list[dict]) -> None:
+    attrs['bash_edits'] = edits
+    for key in ('added_lines', 'removed_lines'):
+        total = sum(e[key] for e in edits)
+        if total:
+            attrs[key] = total
+
+
+def _bash_changed_files(raw: dict) -> list[str]:
+    changed = raw.get('changedFiles') or raw.get('changed_files')
+    if not isinstance(changed, list):
+        return []
+    return [p for p in changed if isinstance(p, str)]
+
+
+def _attach_bash_edit_diff(attrs: dict, tool_response: dict) -> None:
+    """Capture the per-file diff Claude Code (2.1.270+) stamps on a Bash call
+    that mutated files. Without it a silent `sed -i` — no stdout, no stderr, a
+    command short enough to stay under the preview cap — carried no evidence at
+    all of what it changed.
+
+    Nothing is ever synthesised: no file is re-read, no diff recomputed. A diff
+    reconstructed after the fact would describe a later state of the file,
+    which is a different claim than "this call changed these lines".
+
+    `shared` is read by nobody on purpose — it is Claude Code's own display
+    bookkeeping, not a fact about what this call changed.
+    """
+    raw = tool_response.get('bash_edit_diff')
+    if not isinstance(raw, dict):
+        return
+    files = raw.get('files')
+    files = files if isinstance(files, list) else []
+    changed = _bash_changed_files(raw)
+    if not files and not changed:
+        return
+
+    edits, dropped = _bash_file_edits(files)
+    if edits:
+        _bash_edit_totals(attrs, edits)
+    if changed:
+        attrs['bash_edit_files'] = changed
+    # A dropped entry is counted in, not silently lost: `bash_edit_more` is
+    # what keeps `len(bash_edits) + more == len(bash_edit_files)` true.
+    more = _hunk_int(raw, 'moreFiles', 'more_files') + dropped
+    if more:
+        attrs['bash_edit_more'] = more
+    if raw.get('unavailable') is True:
+        attrs['bash_edit_unavailable'] = True
 
 
 def _attach_edit_metadata(attrs: dict, tool_response: dict) -> None:
@@ -246,6 +406,12 @@ def _build_bash_attrs(attrs: dict, tool_input: dict, tool_response: dict, payloa
             attrs['stderr_truncated_bytes'] = dropped_err
     if tool_response.get('interrupted'):
         attrs['interrupted'] = True
+    # Guarded separately from the handler's own catch-all, which would drop
+    # the whole span: a trace row must never be lost to a rendering nicety.
+    try:
+        _attach_bash_edit_diff(attrs, tool_response)
+    except Exception:
+        pass
     _attach_bash_response_meta(attrs, tool_response)
 
 

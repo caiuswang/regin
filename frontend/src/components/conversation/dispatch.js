@@ -16,6 +16,7 @@
 import { isAskSpan, runStateOf } from '../../utils/liveRows.js'
 import { searchText } from '../../utils/plainText.js'
 import { isSendToUserSpan } from '../../utils/spanAttributes.js'
+import { hasBashEdits } from '../../utils/traceFormatters.js'
 import { spanBody } from '../../utils/spanBody.js'
 
 const EXACT_NAMES = new Set([
@@ -176,6 +177,10 @@ export function tierOf(span) {
   // sprang an unrelated turn's fold open for a span that renders nothing.
   if (!rendersInConversation(span)) return TIER_CHROME
   if (TIER_FULL_NAMES.has(name)) return TIER_FULL
+  // A shell call that rewrote a file changed the world as surely as an Edit
+  // did, which is this tier's whole charter — so it belongs on the spine even
+  // though `tool.Bash` as a family does not.
+  if (name === 'tool.Bash' && hasBashEdits(span.attributes)) return TIER_FULL
   // The agent addressing the user is always the narrative spine, whichever
   // server id it came through: the literal `tool.mcp__send-to-user__…` this
   // list used to carry missed the plugin-namespaced and bare spellings, and
@@ -275,6 +280,9 @@ export function foldCategory(span) {
   if (n.startsWith('memory.')) return 'memory'
   if (n.startsWith('skill.')) return 'skills'
   if (EDIT_NAMES.has(n)) return 'edits'
+  // Bucketed by what it DID, not by the tool that did it: a `sed -i` counted
+  // under `tool calls` told the reader a strip of edits had nothing in it.
+  if (n === 'tool.Bash' && hasBashEdits(span?.attributes)) return 'edits'
   if (n === 'assistant_response') return 'replies'
   if (n === 'tool.failure' || n === 'permission.denied') return 'failures'
   if (n.startsWith('subagent.') || n === 'tool.Agent' || n.startsWith('workflow.')) return 'agents'
@@ -348,5 +356,5 @@ export function keepsOwnCard(span, hasTaskSnapshot = false) {
   if (hasTaskSnapshot) return true
   if (span?.name !== 'tool.Bash') return false
   const a = span.attributes || {}
-  return Boolean(a.stdout || a.stderr || a.interrupted || a.command)
+  return Boolean(a.stdout || a.stderr || a.interrupted || a.command || hasBashEdits(a))
 }

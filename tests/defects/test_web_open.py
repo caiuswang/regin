@@ -24,12 +24,13 @@ def _rows():
         return session.exec(select(Defect)).all()
 
 
-def test_post_opens_a_defect_against_the_feature(flask_client, native_task):
-    parent = native_task()
+def test_post_opens_a_defect_against_the_feature(flask_client,
+                                                feature_row):
+    feature = feature_row()
 
     resp = flask_client.post("/api/defects", json={
         "symptom": "the gutter folds the newest span",
-        "feature_key": f"regin:{parent}", "suspect_paths": ["a.py"],
+        "feature_id": feature.id, "suspect_paths": ["a.py"],
     }, headers=EDITOR)
 
     assert resp.status_code == 201, resp.get_json()
@@ -38,19 +39,19 @@ def test_post_opens_a_defect_against_the_feature(flask_client, native_task):
     rows = _rows()
     assert len(rows) == 1
     assert body["defect"]["id"] == rows[0].id
-    assert rows[0].feature_key == f"regin:{parent}"
-    assert rows[0].session_id is None
+    assert rows[0].feature_id == feature.id
+    assert rows[0].reported_by_trace is None
     assert rows[0].suspect_paths_json == '["a.py"]'
 
 
 def test_a_second_post_of_the_same_symptom_is_deduped_not_a_second_row(
-        flask_client, native_task):
-    parent = native_task()
-    payload = {"symptom": "It Broke", "feature_key": f"regin:{parent}"}
+        flask_client, feature_row):
+    feature = feature_row()
+    payload = {"symptom": "It Broke", "feature_id": feature.id}
     first = flask_client.post("/api/defects", json=payload, headers=EDITOR)
 
     again = flask_client.post("/api/defects", json={
-        "symptom": "  it   broke ", "feature_key": f"regin:{parent}"},
+        "symptom": "  it   broke ", "feature_id": feature.id},
         headers=EDITOR)
 
     assert again.status_code == 200, again.get_json()
@@ -59,11 +60,11 @@ def test_a_second_post_of_the_same_symptom_is_deduped_not_a_second_row(
     assert len(_rows()) == 1
 
 
-def test_the_body_cannot_name_a_session(flask_client, native_task):
-    parent = native_task()
+def test_the_body_cannot_name_a_session(flask_client, feature_row):
+    feature = feature_row()
 
     resp = flask_client.post("/api/defects", json={
-        "symptom": "x", "feature_key": f"regin:{parent}",
+        "symptom": "x", "feature_id": feature.id,
         "session_id": "t-forged"}, headers=EDITOR)
 
     assert resp.status_code == 400

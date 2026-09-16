@@ -120,16 +120,17 @@ def test_arm_writes_the_parameters_and_moves_idea_to_armed(flask_client):
                 env={"FOO": "1"}, verify_cmd="pytest -q", autorun=True)
 
     assert resp.status_code == 200, resp.get_json()
-    task = resp.get_json()["task"]
-    assert task["status"] == "armed"
-    assert task["params"]["cwd"] == "/tmp/repo"
-    assert task["params"]["env"] == {"FOO": "1"}
-    assert task["params"]["one_shot"] is True
-    assert (task["verify_cmd"], task["autorun"]) == ("pytest -q", True)
-
-    row = _task(task_id)
-    assert (row.status, row.verify_cmd, row.autorun) == ("armed", "pytest -q", 1)
-    assert "/tmp/repo" in row.params_json
+    body = resp.get_json()
+    assert body["task"]["status"] == "armed"
+    # The parameters live on the PENDING ATTEMPT, not on the task: an attempt
+    # is what spends them, and two attempts may spend different ones.
+    armed = body["armed"]
+    assert armed["params"]["cwd"] == "/tmp/repo"
+    assert armed["params"]["env"] == {"FOO": "1"}
+    assert armed["params"]["one_shot"] is True
+    assert (armed["verify_cmd"], armed["autorun"]) == ("pytest -q", True)
+    assert armed["status"] == "armed"
+    assert _task(task_id).status == "armed"
 
 
 def test_arm_rejects_a_field_outside_the_allowlist_by_name(flask_client):
@@ -141,7 +142,7 @@ def test_arm_rejects_a_field_outside_the_allowlist_by_name(flask_client):
     assert resp.get_json()["field"] == "resume"
     assert "resume" in resp.get_json()["error"]
     assert _task(task_id).status == "idea"
-    assert _task(task_id).params_json is None
+    assert runs.armed_attempt(task_id) is None
 
 
 def test_arm_checks_the_cli_vocabulary_and_bounds_env(flask_client):
@@ -177,7 +178,7 @@ def test_the_execution_routes_are_not_on_the_public_allowlist():
 def test_capture_still_cannot_carry_an_execution_parameter(flask_client,
                                                            capture_enabled,
                                                            mint_key):
-    for field in ("params_json", "autorun", "verify_cmd", "status"):
+    for field in ("autorun", "verify_cmd", "status"):
         resp = flask_client.post("/api/tasks", json={"title": "x", field: 1})
         assert resp.status_code == 400, field
         assert resp.get_json()["field"] == field
@@ -192,10 +193,12 @@ def test_capture_still_cannot_carry_an_execution_parameter(flask_client,
 
 
 def test_a_captured_task_lands_inert(flask_client):
-    task = flask_client.post("/api/tasks",
-                             json={"title": "x"}).get_json()["task"]
-    assert (task["status"], task["autorun"], task["params"]) == ("idea", False,
-                                                                 {})
+    body = flask_client.post("/api/tasks", json={"title": "x"}).get_json()
+
+    assert body["task"]["status"] == "idea"
+    # Inert is now structural rather than three NULL columns: an unarmed task
+    # has no pending attempt at all.
+    assert runs.armed_attempt(body["task"]["id"]) is None
 
 
 # ── 3-5. running ─────────────────────────────────────────────
@@ -214,7 +217,7 @@ def test_run_refuses_with_the_blocking_ids_and_launches_nothing(flask_client,
     assert sorted(resp.get_json()["blocking"]) == sorted([first, second])
     assert str(first) in resp.get_json()["error"]
     assert launcher.calls == []
-    assert _run_rows(blocked) == []
+    assert [r.status for r in _run_rows(blocked)] == ["armed"]
     assert _task(blocked).status == "armed"
 
 
@@ -836,7 +839,7 @@ def test_the_launch_prompt_leaves_the_title_behind_when_a_body_exists(
     run_id = _launched_run_id(flask_client, task_id)
 
     prompt = launcher.calls[0]["prompt"]
-    assert prompt.split("<feature>")[0].strip() == "wire the thing"
+    assert prompt.split("<finish>")[0].strip() == "wire the thing"
     assert "shelf label" not in prompt
 
 
@@ -1126,7 +1129,7 @@ def test_arm_stores_a_skill_and_strips_its_leading_slash(flask_client):
     resp = _arm(flask_client, task_id,
                 skill={"name": "/goal-verified", "args": "--strict"})
     assert resp.status_code == 200, resp.get_json()
-    assert resp.get_json()["task"]["params"]["skill"] == {
+    assert resp.get_json()["armed"]["params"]["skill"] == {
         "name": "goal-verified", "args": "--strict"}
 
 
@@ -1143,7 +1146,7 @@ def test_arm_with_an_empty_skill_name_means_no_skill(flask_client):
     task_id = _capture(flask_client, "review it")
     resp = _arm(flask_client, task_id, skill={"name": "  "})
     assert resp.status_code == 200
-    assert resp.get_json()["task"]["params"]["skill"] is None
+    assert resp.get_json()["armed"]["params"]["skill"] is None
 
 
 def test_the_launch_prompt_opens_with_the_skill_invocation(flask_client,

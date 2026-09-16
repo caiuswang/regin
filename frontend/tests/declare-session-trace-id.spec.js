@@ -1,5 +1,5 @@
 /**
- * Declaring a session by pasting its trace id (CAI-257, defect #125).
+ * Declaring a session by pasting its trace id.
  *
  * The sessions endpoint matches `q` against the title and trace ids against a
  * separate `trace_id=` prefix param, so a dialog that only ever sends `q`
@@ -11,14 +11,18 @@ const TRACE = '1df74b07-55e8-4a9a-8056-23585574ede3'
 
 function ledger() {
   return {
-    key: 'CAI-257',
-    stage: null,
-    stage_synced_at: null,
+    id: 257, title: 'the feature', origin: 'native',
+    external_ref: null, external_url: null, sync_error: null,
+    stage: {
+      stage: 'spec', blurb: 'specified, not started',
+      rounds: 1, claimed_at: null, open_defects: 0, escapes: 0,
+    },
+    synced_at: null, stage_live: true,
     cost: { usd: null, sessions: 0, recalled: 0, shared: 0, gaps: {} },
     work_time: { active_work_ms: null, gaps: {} },
     tokens: { input: 0, output: 0 },
     sessions: { rows: [], gaps: { traceless_runs: 0 } },
-    defects: { open: 0, total: 0, escapes: 0, gaps: {} },
+    defects: { open: 0, total: 0, escapes: 0 },
     coverage: {
       declared_sessions: 0, all_sessions: 10,
       declared_usd: 0, all_usd: 1,
@@ -50,7 +54,7 @@ async function stub(page, seen) {
 test('a pasted full trace id finds its session', async ({ page }) => {
   const seen = []
   await stub(page, seen)
-  await page.goto('/features/CAI-257')
+  await page.goto('/features/257')
 
   await page.getByRole('button', { name: /Declare a session/ }).click()
   const input = page.getByPlaceholder(/paste a trace id/)
@@ -67,7 +71,7 @@ test('a pasted full trace id finds its session', async ({ page }) => {
 test('a title search still goes out as q', async ({ page }) => {
   const seen = []
   await stub(page, seen)
-  await page.goto('/features/CAI-257')
+  await page.goto('/features/257')
 
   await page.getByRole('button', { name: /Declare a session/ }).click()
   const input = page.getByPlaceholder(/paste a trace id/)

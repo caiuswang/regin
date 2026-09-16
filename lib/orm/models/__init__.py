@@ -29,8 +29,9 @@ from lib.orm.models.proposals import (
     TopicRefDigest,
 )
 from lib.orm.models.rules import Experiment, RuleTrigger, RuleTriggerSuppression
+from lib.orm.models.features import Feature, FeatureEvent
 from lib.orm.models.sync import Branch, Repo
-from lib.orm.models.tasks import AgentTask, AgentTaskLink, IssueCache
+from lib.orm.models.tasks import AgentTask
 from lib.orm.models.trace import (
     BridgeAttachment, PlanSession, PromptImage, Session, SessionRepo,
     SessionSpan, SessionTag, SessionTraceMap, SkillRead, TurnUsage,
@@ -42,12 +43,12 @@ __all__ = [
     "AgentRun",
     "AgentRunSession",
     "AgentTask",
-    "AgentTaskLink",
-    "IssueCache",
     "ApiKey",
     "Comment",
     "CommentThread",
     "Defect",
+    "Feature",
+    "FeatureEvent",
     "SessionFeature",
     "SessionGrade",
     "User", "AuditLog",

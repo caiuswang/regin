@@ -27,9 +27,9 @@ VIEWER = {"Authorization": f"Bearer {create_token(3, 'vw', 'viewer')}"}
 #: Exactly the `DefectView` shape. Asserted as a set so a field nobody
 #: designed — a suggested feature key above all — cannot arrive unnoticed.
 VIEW_FIELDS = {
-    "id", "feature_key", "symptom", "status", "round", "blamed_against_state",
-    "missing_check", "suspect_paths", "fix_provider", "fix_external_key",
-    "opened_at", "closed_at",
+    "id", "feature_id", "feature_title", "symptom", "status", "round",
+    "blamed_event_kind", "missing_check", "suspect_paths", "fix_task_id",
+    "opened_at", "updated_at", "closed_at",
 }
 
 
@@ -58,12 +58,15 @@ def test_the_unattributed_list_is_readable_from_the_browser(flask_client):
     assert resp.status_code == 200, resp.get_json()
     body = resp.get_json()
     assert body["scope"] == "unattributed"
-    assert [item["id"] for item in body["items"]] == [r.id for r in opened]
-    first = body["items"][0]
+    # Newest first, the same direction every other scope reads in. This used
+    # to be `id ASC` while `all` was `id DESC`.
+    assert [item["id"] for item in body["items"]] == \
+        [r.id for r in reversed(opened)]
+    first = body["items"][-1]
     assert set(first) == VIEW_FIELDS
     assert first["symptom"] == opened[0].symptom  # verbatim, never truncated
     assert first["status"] == "open" and first["round"] == 1
-    assert [i["status"] for i in body["items"]][2] == "closed"
+    assert [i["status"] for i in reversed(body["items"])][2] == "closed"
 
 
 def test_the_counter_and_the_list_report_the_same_number(flask_client):
@@ -78,45 +81,46 @@ def test_the_counter_and_the_list_report_the_same_number(flask_client):
 
 
 def test_a_feature_scope_lists_that_features_defects(flask_client,
-                                                     native_task):
-    key = f"regin:{native_task()}"
-    mine = store.record("mine broke", feature_key=key)
+                                                     feature_row):
+    feature = feature_row()
+    mine = store.record("mine broke", feature_id=feature.id)
     store.record("something else broke", session_id="t-1")
 
-    body = flask_client.get(f"/api/defects?feature={key}").get_json()
+    body = flask_client.get(f"/api/defects?feature_id={feature.id}").get_json()
 
     assert body["scope"] == "feature"
     assert [i["id"] for i in body["items"]] == [mine.id]
 
 
-def test_a_fix_item_scope_lists_every_defect_one_item_should_close(
-        flask_client):
-    first = store.record("one", session_id="t-1")
-    second = store.record("two", session_id="t-2")
-    store.record("three", session_id="t-3")
+def test_a_fix_item_scope_lists_every_defect_one_task_should_close(
+        flask_client, native_task):
+    task_id = native_task(title="the fix")
+    first = store.record("a", session_id="t-1")
+    second = store.record("b", session_id="t-2")
     for row in (first, second):
-        store.set_fix_item(row.id, "linear", "CAI-9")
+        store.set_fix_item(row.id, task_id)
 
-    body = flask_client.get("/api/defects?fix_item=linear:CAI-9").get_json()
+    body = flask_client.get(f"/api/defects?fix_item={task_id}").get_json()
 
     assert body["scope"] == "fix-item"
-    assert [i["id"] for i in body["items"]] == [first.id, second.id]
-    assert body["items"][0]["fix_external_key"] == "CAI-9"
+    assert [i["id"] for i in body["items"]] == [second.id, first.id]
+    assert body["items"][0]["fix_task_id"] == task_id
 
 
-def test_an_unparseable_fix_item_is_a_bad_request(flask_client):
-    """A string no tracker recognizes and that carries no `<provider>:<key>`
-    shape names nothing. `CAI-9` is no longer one of these: the route now
-    accepts every spelling the WRITE accepts."""
-    assert flask_client.get("/api/defects?fix_item=nonsense").status_code == 400
+def test_a_fix_item_that_is_not_an_id_names_no_scope(flask_client):
+    """A malformed id is the same answer as an absent one — both mean "no such
+    scope was asked for". A 400 would make a typo louder than a wrong id."""
+    body = flask_client.get("/api/defects?fix_item=nonsense").get_json()
+
+    assert body["scope"] == "all"
 
 
-def test_the_default_scope_is_the_whole_ledger(flask_client, native_task):
+def test_the_default_scope_is_the_whole_ledger(flask_client, feature_row):
     """The repair: a defect attributed at the moment it was reported used to
     belong to no scope any surface opened, so the page that filed it said
     saved and then could not show it."""
-    key = f"regin:{native_task()}"
-    blamed = store.record("filed from the task page", feature_key=key)
+    feature = feature_row()
+    blamed = store.record("filed from the task page", feature_id=feature.id)
     loose = store.record("filed by nobody", session_id="t-1")
 
     body = flask_client.get("/api/defects").get_json()
@@ -127,15 +131,16 @@ def test_the_default_scope_is_the_whole_ledger(flask_client, native_task):
 
 
 def test_the_two_ledger_wide_scopes_partition_the_table(flask_client,
-                                                        native_task):
-    key = f"regin:{native_task()}"
-    store.record("blamed", feature_key=key)
+                                                        feature_row):
+    feature = feature_row()
+    store.record("blamed", feature_id=feature.id)
     store.record("unblamed", session_id="t-1")
 
     every = flask_client.get("/api/defects").get_json()["items"]
     loose = flask_client.get(
         "/api/defects?scope=unattributed").get_json()["items"]
-    blamed = flask_client.get(f"/api/defects?feature={key}").get_json()["items"]
+    blamed = flask_client.get(
+        f"/api/defects?feature_id={feature.id}").get_json()["items"]
 
     assert len(every) == len(loose) + len(blamed)
     assert {i["id"] for i in every} == {i["id"] for i in loose + blamed}
@@ -159,54 +164,54 @@ def test_the_list_never_suggests_a_feature_key(flask_client):
 
     item = flask_client.get("/api/defects").get_json()["items"][0]
 
-    assert item["feature_key"] is None
+    assert item["feature_id"] is None
     assert item["suspect_paths"] == ["lib/features/cost.py"]
     assert set(item) == VIEW_FIELDS
 
 
-def test_attributing_binds_the_feature_and_freezes_the_blame_state(
-        flask_client, native_task):
-    key = f"regin:{native_task()}"
+def test_attributing_binds_the_feature_and_points_at_its_last_event(
+        flask_client, feature_row):
+    feature = feature_row()
     row = store.record("it broke", session_id="t-1")
 
     resp = flask_client.post(f"/api/defects/{row.id}/attribute",
-                             json={"feature_key": f"  {key} "},
-                             headers=EDITOR)
+                             json={"feature_id": feature.id}, headers=EDITOR)
 
     assert resp.status_code == 200, resp.get_json()
-    assert resp.get_json()["defect"]["feature_key"] == key
-    assert _row(row.id).feature_key == key
+    assert resp.get_json()["defect"]["feature_id"] == feature.id
+    assert resp.get_json()["defect"]["blamed_event_kind"] == "specced"
+    assert _row(row.id).feature_id == feature.id
 
 
-def test_attribution_with_a_blank_key_is_refused(flask_client):
+def test_attribution_with_no_feature_is_refused(flask_client):
     row = store.record("it broke", session_id="t-1")
 
     resp = flask_client.post(f"/api/defects/{row.id}/attribute",
-                             json={"feature_key": "   "}, headers=EDITOR)
+                             json={}, headers=EDITOR)
 
     assert resp.status_code == 400
-    assert "feature key" in resp.get_json()["error"]
-    assert _row(row.id).feature_key is None
+    assert "feature id" in resp.get_json()["error"]
+    assert _row(row.id).feature_id is None
 
 
 def test_attributing_a_symptom_the_feature_already_reports_is_refused(
-        flask_client, native_task):
-    """2.2 — the collision names `merge` and absorbs nothing."""
-    key = f"regin:{native_task()}"
-    store.record("it broke", feature_key=key)
+        flask_client, feature_row):
+    """The collision names `merge` and absorbs nothing."""
+    feature = feature_row()
+    store.record("it broke", feature_id=feature.id)
     mine = store.record("It   Broke ", session_id="t-1")
 
     resp = flask_client.post(f"/api/defects/{mine.id}/attribute",
-                             json={"feature_key": key}, headers=EDITOR)
+                             json={"feature_id": feature.id}, headers=EDITOR)
 
     assert resp.status_code == 409
     assert "merge" in resp.get_json()["error"]
-    assert _row(mine.id).feature_key is None
+    assert _row(mine.id).feature_id is None
 
 
-def test_attributing_an_unknown_defect_is_a_404(flask_client, native_task):
+def test_attributing_an_unknown_defect_is_a_404(flask_client, feature_row):
     resp = flask_client.post("/api/defects/9999/attribute",
-                             json={"feature_key": f"regin:{native_task()}"},
+                             json={"feature_id": feature_row().id},
                              headers=EDITOR)
     assert resp.status_code == 404
 
@@ -274,55 +279,49 @@ def test_closing_or_reopening_an_unknown_defect_is_a_404(flask_client):
 # ── 4.1 — the guard ───────────────────────────────────────────
 
 
-def _write_acts(defect_id: int, key: str):
-    return ((f"/api/defects/{defect_id}/attribute", {"feature_key": key}),
+def _write_acts(defect_id: int, feature_id):
+    return ((f"/api/defects/{defect_id}/attribute",
+             {"feature_id": feature_id}),
             (f"/api/defects/{defect_id}/close", {"missing_check": "x"}),
             (f"/api/defects/{defect_id}/reopen", {}))
 
 
-def test_a_viewer_cannot_attribute_close_or_reopen(flask_client, native_task):
-    """4.1 — every write takes `require_editor`, and none of them lands."""
-    key = f"regin:{native_task()}"
+def test_a_viewer_cannot_attribute_close_or_reopen(flask_client, feature_row):
+    """Every write takes `require_editor`, and none of them lands."""
+    feature = feature_row()
     row = store.record("it broke", session_id="t-1")
     store.close(row.id, missing_check="a route test")
     before = len(_all_rows())
 
-    for path, payload in _write_acts(row.id, key):
+    for path, payload in _write_acts(row.id, feature.id):
         assert flask_client.post(path, json=payload,
                                  headers=VIEWER).status_code == 403
 
     after = _row(row.id)
     assert len(_all_rows()) == before
-    assert after.feature_key is None
+    assert after.feature_id is None
     assert after.status == "closed" and after.round == 1
 
 
 def test_anonymous_cannot_attribute_close_or_reopen(anon_client):
-    for path, payload in _write_acts(1, "regin:1"):
+    for path, payload in _write_acts(1, 1):
         assert anon_client.post(path, json=payload).status_code == 401
 
 
-# ── the key is identity, so it is normalized at the one writer ─────
+# ── identity is an integer, so there is nothing to normalize ───
 
 
-def test_a_padded_feature_key_is_stored_stripped(flask_client, native_task):
-    """`' CAI-206'` is a key `for_feature('CAI-206')` cannot find and a
-    SECOND feature in the index's population — the same row counted on a key
-    nobody can spell."""
-    key = f"regin:{native_task()}"
-    opened = store.record("padded", feature_key=f"  {key} ")
+def test_a_feature_that_does_not_exist_cannot_be_blamed(flask_client):
+    """The padding and blank-string rules this replaced existed because the
+    key was a free string: `' CAI-206'` was a SECOND feature in the population
+    and `''` belonged to no scope at all. A foreign key admits neither."""
+    row = store.record("it broke", session_id="t-1")
 
-    assert _row(opened.id).feature_key == key
-    assert [r.id for r in store.for_feature(key)] == [opened.id]
+    resp = flask_client.post(f"/api/defects/{row.id}/attribute",
+                             json={"feature_id": 9999}, headers=EDITOR)
 
-
-def test_a_blank_feature_key_is_unattributed_not_an_empty_string(flask_client):
-    """An empty string belongs to no scope: `unattributed()` filters on NULL,
-    so the row was in neither list while `/features` grew a nameless key."""
-    opened = store.record("blank", feature_key="   ", session_id="t-1")
-
-    assert _row(opened.id).feature_key is None
-    assert opened.id in {r.id for r in store.unattributed()}
+    assert resp.status_code == 409
+    assert _row(row.id).feature_id is None
 
 
 def test_the_symptom_cap_the_model_declares_is_enforced(flask_client):
@@ -334,35 +333,18 @@ def test_the_symptom_cap_the_model_declares_is_enforced(flask_client):
     assert store.record("x" * 4000, session_id="t-1").id  # the cap itself fits
 
 
-def test_the_feature_key_cap_the_model_declares_is_enforced(flask_client):
-    with pytest.raises(store.DefectError, match="feature key"):
-        store.record("fine", feature_key="k" * 201)
+# ── the fix-item scope ─────
 
 
-# ── the fix-item scope accepts what the write accepted ─────
-
-
-def test_a_fix_item_is_found_by_any_spelling_the_write_accepts(flask_client):
-    """The writer stores the tracker's canonical key, so a query that reads
-    the raw text answers "nothing points at this item" for rows that do."""
+def test_a_fix_item_scope_is_found_by_the_task_it_names(flask_client,
+                                                        native_task):
+    """The pair this replaced stored the tracker's canonical key while the
+    query read the raw text, so a pasted URL answered "nothing points at this
+    item" for rows that did. An integer has one spelling."""
+    task_id = native_task(title="the fix")
     row = store.record("one", session_id="t-1")
-    store.set_fix_item(row.id, "linear", "CAI-241")
+    store.set_fix_item(row.id, task_id)
 
-    for spelling in ("linear:CAI-241", "CAI-241",
-                     "https://linear.app/acme/issue/CAI-241/some-slug"):
-        body = flask_client.get(f"/api/defects?fix_item={spelling}").get_json()
-        assert [i["id"] for i in body["items"]] == [row.id], spelling
-
-
-def test_a_native_fix_item_is_found_by_its_natural_spelling(flask_client,
-                                                            native_task):
-    """A native key contains a colon of its own, so partitioning on the first
-    one read `regin:42` as provider `regin`, key `42`."""
-    task_id = native_task()
-    row = store.record("two", session_id="t-2")
-    store.set_fix_item(row.id, "regin", f"regin:{task_id}")
-
-    body = flask_client.get(
-        f"/api/defects?fix_item=regin:{task_id}").get_json()
+    body = flask_client.get(f"/api/defects?fix_item={task_id}").get_json()
 
     assert [i["id"] for i in body["items"]] == [row.id]

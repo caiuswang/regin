@@ -82,6 +82,11 @@
           "type": "object",
           "additionalProperties": true,
           "description": "Structured git result Claude Code (2.1.195+) stamps when a Bash command mutates git; commit.{sha,kind} is captured onto the span as git_commit_sha/git_op_kind (post_tool_trace._attach_bash_git_commit). Opaque object so its varying internals don't register as drift."
+        },
+        "bash_edit_diff": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "Per-file unified diff Claude Code (2.1.270+) stamps when a Bash command mutates files; captured onto the span as bash_edits/bash_edit_files/bash_edit_more/bash_edit_unavailable (post_tool_trace._attach_bash_edit_diff). Opaque object so its varying internals do not register as drift."
         }
       }
     },
@@ -96,6 +101,7 @@
     "2.1.150",
     "2.1.177",
     "2.1.195",
-    "2.1.215"
+    "2.1.215",
+    "2.1.270"
   ]
 }

@@ -1,10 +1,15 @@
 """`db/schema.sql` and the defect revisions must describe the same tables.
 
 A schema change is two edits that can silently disagree, which is how a fresh
-`regin init` install and a migrated one diverge. This rebuilds the table the
-*other* way — drop it, roll the stamp back to 0021, `alembic upgrade head` —
-and compares the result column-for-column and index-for-index against the shape
-`db/schema.sql` produced.
+`regin init` install and a migrated one diverge. This rebuilds the tables the
+*other* way — drop them, roll the stamp back, replay — and compares the result
+column-for-column and index-for-index against the shape `db/schema.sql`
+produced.
+
+The replay has to reach back to 0016 rather than 0021, because `0027` alters
+`agent_tasks` and `agent_task_runs`: replaying it over the tables `schema.sql`
+already built in their *final* shape would try to add a column that is there
+and drop one that is not.
 """
 
 from __future__ import annotations
@@ -17,8 +22,13 @@ from alembic import command
 
 from lib import db_migrate
 
-_TABLES = ("defects", "session_features")
-_REVISION = "0023"
+_TABLES = ("defects", "session_features", "features", "feature_events")
+_REVISION = "0029"
+#: Everything else the walk from 0017 creates or alters, dropped so the replay
+#: does not collide with what `schema.sql` already built.
+_REPLAYED = ("api_keys", "agent_tasks", "agent_task_runs", "agent_task_deps",
+             "agent_task_images", "agent_task_links", "issue_cache",
+             "comments", "comment_threads")
 _SCHEMA_SQL = Path(__file__).resolve().parents[2] / "db" / "schema.sql"
 
 
@@ -61,22 +71,23 @@ def _shape(path) -> dict:
 
 @pytest.fixture
 def alembic_built(tmp_db):
-    """`tmp_db` (built from schema.sql) with the tables rebuilt by 0023."""
+    """`tmp_db` (built from schema.sql) with the tables rebuilt by 0017-0028."""
     conn = sqlite3.connect(str(tmp_db))
     try:
         for index in ("idx_defects_feature", "uq_defects_session_symptom",
-                      "idx_defects_fix_item",
-                      "idx_session_features_feature"):
+                      "idx_defects_fix_item", "idx_session_features_feature",
+                      "idx_feature_events_feature", "idx_agent_tasks_status",
+                      "idx_agent_task_images_task", "idx_agent_tasks_project",
+                      "idx_agent_tasks_created",
+                      "idx_agent_tasks_status_created",
+                      "idx_agent_tasks_priority", "idx_agent_tasks_feature"):
             conn.execute(f"DROP INDEX IF EXISTS {index}")
-        for table in _TABLES:
+        for table in _TABLES + _REPLAYED:
             conn.execute(f"DROP TABLE IF EXISTS {table}")
         conn.commit()
     finally:
         conn.close()
-    command.stamp(db_migrate._config(), "0021")
-    # Pinned rather than `head` for the same reason as the task parity test:
-    # this fixture drops only the defect tables, so a later revision's CREATE
-    # TABLE would collide with one schema.sql already built.
+    command.stamp(db_migrate._config(), "0016")
     command.upgrade(db_migrate._config(), _REVISION)
     return tmp_db
 

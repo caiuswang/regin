@@ -34,7 +34,7 @@ kept deliberately thin, and the behaviours it must exhibit as falsifiable
 acceptance items. It mentions code only as orientation, never as a promise
 something will bind to.
 
-## The spec lives in the tracker, not in the project's git
+## The spec lives on the feature row, never in the project's git
 
 A spec is revised many times an hour while it is being argued out, is edited by
 whoever is in the conversation, and is largely inert once the feature lands.
@@ -42,9 +42,19 @@ Project git is the wrong home for all three properties: the churn pollutes
 review and blame, the document does not belong in the shipped artifact, and at
 spec time there is often no branch to commit against yet.
 
-The tracker already owns it — an issue description, or a tracker document for
-anything longer. That is also where the feature's state, priority and
-conversation already live, which keeps **one writer per field**.
+Its home is `features.body`, written at birth (`regin feature new --spec`),
+replaced from a session (`regin feature spec <ID> --file -`) or from the
+feature page, and read back wherever the feature is. A remotely tracked
+feature keeps its spec in the tracker instead — the issue description, or a
+tracker document for anything longer — because that is where its state,
+priority and conversation already live, which keeps **one writer per field**.
+
+**No spec file is written into `docs/` unless the user asks for one.** A file
+is a third copy that nothing re-reads: no run's prompt carries it, no surface
+serves it, and it states the design as it was the day someone typed it while
+the row beside it moves on. `docs/` also grows one such file per feature
+forever. A design document the user asks for is a different artifact and stays
+welcome.
 
 regin holds a **read-through cache**, not a copy: the same pattern
 `agent_task_links` already uses, where a snapshot is refreshed on an event (the
@@ -156,14 +166,20 @@ reopened", which nobody declared. The two are orthogonal, not two readings of
 the same quantity: the sum can be high on a feature that never shipped, and 1 on
 a feature shipped and walked back twice.
 
-### The four stages
+### The five stages
 
-`regin feature stage <KEY>` names one of `spec`, `building`, `shipped` or
-`escaped`. `escaped` is `shipped` plus at least one defect blamed on it since —
-it replaced `reworking`, which fired only on a completion walked back and so
-could never fire once a shipped issue stayed Done. `unknown` is what a reader
-sees when no tracker answered; it is never a stage name, because it is a
-statement about us rather than about the feature.
+`regin feature stage <ID>` names one of `spec`, `building`, `shipped`,
+`escaped` or `abandoned`. `escaped` is `shipped` plus at least one defect
+blamed on it since — it replaced `reworking`, which fired only on a completion
+walked back and so could never fire once a shipped issue stayed Done.
+`abandoned` is a capability taken down or a feature dropped; it costs no round,
+because nothing was walked back, and it is reachable from every other stage and
+is not terminal.
+
+Every stage is read from the feature's own `feature_events` log: the last
+event's kind, plus one question about escapes. `unknown` used to be a sixth
+answer — what a reader saw when no tracker answered — and it is gone with the
+fetch, because there is nothing left on this path that can fail to answer.
 
 ### Post-ship rework is `escapes`, not a reopened issue
 
@@ -174,13 +190,18 @@ feature that had already shipped. It is reported beside rounds and never folded
 into it.
 
 Blame is fixed at one declared instant rather than by comparing two clocks. When
-a defect's feature is *first* set — on open, or on a later attribution — the
-tracker's raw state category is snapshotted onto the row. Comparing the report's
-timestamp against a completion moment would compare two machines' clocks, so a
-defect near the boundary would land on either side of it by host drift. The
-snapshot is why the metric reads *blamed*, not *found*: a bug found pre-ship but
-attributed later counts as an escape, and that distortion is admitted rather
-than papered over.
+a defect's feature is *first* set — on open, or on a later attribution — the row
+is pointed at that feature's current last event, and an escape is
+`blamed_event.kind == 'shipped'`. Comparing the report's timestamp against a
+completion moment would compare two machines' clocks, so a defect near the
+boundary would land on either side of it by host drift. The pointer is why the
+metric reads *blamed*, not *found*: a bug found pre-ship but attributed later
+counts as an escape, and that distortion is admitted rather than papered over.
+
+A pointer at an immutable row also has no stale reading and no absent one. Its
+predecessor cached the tracker's state *word*, which could be missing (nobody
+looked), stale, or a vocabulary regin did not carry — three readings for one
+column, and two gap counters to hold them apart.
 
 ### Why not detect defects from what people typed
 
@@ -201,24 +222,25 @@ Each artifact lives where its natural editors and its natural cadence are:
 
 | Artifact | Home | Why |
 |---|---|---|
-| spec prose, its revisions, status, conversation | the tracker | churns hourly, edited by whoever is in the room, not part of the shipped code |
+| spec prose and its revisions | `features.body`, or the tracker when the feature is tracked remotely | churns hourly, edited by whoever is in the room, not part of the shipped code |
 | acceptance items, as tests | the repo | they are code, and they must run in CI |
 | defect records and their missing-check answers | regin's own `defects` table | lifecycle state the tracker has no field for, plus the link back to the session |
 | post-ship narrative | the subsystem's topic wiki | durable, reviewed with the code, drift-watched |
 
-The join is the feature key. A session is tied to a feature by one declaration,
-`regin feature attribute` — **not** by its branch. Nothing captures a branch
+The join is the feature's id. A session is tied to a feature by one
+declaration, `regin feature attribute` — **not** by its branch. Nothing captures a branch
 name: not `sessions`, not `lib/trace/`, not `hook_manager/`. The declaration
 lands in `session_features`, mirroring `session_repos`; an unattributed session
 is the *absence* of a row, which is most of them and always will be.
 
-`regin feature ledger <KEY>` reads it back. Cost is the live sum of the declared
+`regin feature ledger <ID>` reads it back. Cost is the live sum of the declared
 sessions' `sessions.cost_usd`, labelled an **upper bound** permanently, because
 attribution binds a whole session and the data holds no sub-session boundary. A
 session serving two features charges the primary in full and the secondary zero.
 Every figure carries its own gap counter — `no-usage-captured`,
-`model-unpriced`, `zero-duration`, `traceless-runs`, `state-unknown` — and a gap
-is always a count of sessions, never a substituted zero.
+`model-unpriced`, `zero-duration`, `traceless-runs` — and a gap is always a
+count of sessions, never a substituted zero. The two the escape verdict used to
+need are gone with the cached word they described.
 
 Do not mirror one into the other. One writer per field.
 

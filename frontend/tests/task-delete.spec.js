@@ -108,6 +108,8 @@ test.describe('/tasks — delete', () => {
     await confirmButton(page, 'Delete task').click()
 
     // The address can only 404 once the row is gone, so it is left behind.
-    await expect(page).toHaveURL(/\/tasks$/)
+    // `/tasks` carries the list's state now, so match the path, not the whole
+    // URL: a restored filter is written into the query on arrival.
+    await expect(page).toHaveURL(/\/tasks(\?|$)/)
   })
 })

@@ -440,3 +440,161 @@ def test_no_tool_name_does_not_emit(captured):
     result = ptt.handle(payload)
     assert result is None
     assert captured == []
+
+
+# ── Bash edit diffs (Claude Code 2.1.270+ tool_response.bashEditDiff) ──
+#
+# Every case drives the real camelCase wire shape through normalization:
+# `_normalize_payload` snake-aliases ONE level into `tool_response`, so the
+# container arrives as `bash_edit_diff` while every key below it stays
+# camelCase.
+
+def _bash_edit_payload(diff_obj, command='sed -i s/a/b/ f.py', tool_response=None):
+    response = dict(tool_response or {})
+    response['bashEditDiff'] = diff_obj
+    return _make_payload('Bash', {'command': command}, tool_response=response)
+
+
+def _one_file_diff():
+    return {
+        'files': [{
+            'filePath': '/repo/a.py',
+            'hunks': [{
+                'oldStart': 10, 'oldLines': 3, 'newStart': 10, 'newLines': 5,
+                'lines': [' ctx', '+one', '+two', '+three', '-gone', ' tail'],
+            }],
+        }],
+        'moreFiles': 0,
+        'changedFiles': ['/repo/a.py'],
+    }
+
+
+def test_bash_edit_diff_becomes_span_diff(captured):
+    ptt.handle(_bash_edit_payload(_one_file_diff()))
+    attrs = captured[0][2]
+    assert len(attrs['bash_edits']) == 1
+    e = attrs['bash_edits'][0]
+    assert e['file_path'] == '/repo/a.py'
+    assert e['edit_op'] == 'update'
+    assert e['added_lines'] == 3
+    assert e['removed_lines'] == 1
+    assert e['diff'].startswith('@@ -10,3 +10,5 @@')
+    assert '---' not in e['diff'] and '+++' not in e['diff']
+    assert attrs['added_lines'] == 3
+    assert attrs['removed_lines'] == 1
+    assert attrs['bash_edit_files'] == ['/repo/a.py']
+
+
+def test_bash_edit_diff_labels_create_and_delete(captured):
+    ptt.handle(_bash_edit_payload({
+        'files': [
+            {'filePath': '/repo/new.py', 'created': True,
+             'hunks': [{'oldStart': 0, 'oldLines': 0, 'newStart': 1, 'newLines': 1,
+                        'lines': ['+hello']}]},
+            {'filePath': '/repo/old.py', 'deleted': True, 'hunks': []},
+        ],
+        'moreFiles': 0,
+    }))
+    attrs = captured[0][2]
+    assert [e['edit_op'] for e in attrs['bash_edits']] == ['create', 'delete']
+    assert attrs['bash_edits'][1]['diff'] == ''
+    assert 'bash_edit_files' not in attrs
+
+
+def test_bash_without_edit_diff_is_byte_identical(captured):
+    ptt.handle(_make_payload('Bash', {'command': 'ls'},
+                             tool_response={'stdout': 'file.txt'}))
+    attrs = captured[0][2]
+    assert not [k for k in attrs if k.startswith('bash_edit')]
+    assert 'added_lines' not in attrs and 'removed_lines' not in attrs
+
+
+def test_bash_edit_diff_empty_writes_nothing(captured):
+    ptt.handle(_bash_edit_payload({'files': [], 'moreFiles': 0, 'changedFiles': []}))
+    attrs = captured[0][2]
+    assert not [k for k in attrs if k.startswith('bash_edit')]
+
+
+def test_bash_edit_diff_truncated_on_line_boundary(captured):
+    body = ['+' + 'x' * 99] * 4000     # ~400 KB, past the 128 KB budget
+    ptt.handle(_bash_edit_payload({
+        'files': [{'filePath': '/repo/big.py',
+                   'hunks': [{'oldStart': 1, 'oldLines': 1, 'newStart': 1,
+                              'newLines': 4000, 'lines': body}]}],
+        'moreFiles': 0,
+    }))
+    e = captured[0][2]['bash_edits'][0]
+    assert len(e['diff']) <= ptt._BASH_EDIT_DIFF_MAX
+    assert not e['diff'].endswith('\n')
+    assert e['diff'].split('\n')[-1] == '+' + 'x' * 99
+    full = '@@ -1,1 +1,4000 @@\n' + '\n'.join(body)
+    assert e['diff_truncated_bytes'] == len(full) - len(e['diff'])
+
+
+def test_bash_edit_diff_second_file_past_budget_keeps_path(captured):
+    body = ['+' + 'x' * 99] * 4000
+    ptt.handle(_bash_edit_payload({
+        'files': [
+            {'filePath': '/repo/big.py',
+             'hunks': [{'oldStart': 1, 'oldLines': 1, 'newStart': 1,
+                        'newLines': 4000, 'lines': body}]},
+            {'filePath': '/repo/small.py',
+             'hunks': [{'oldStart': 1, 'oldLines': 1, 'newStart': 1, 'newLines': 2,
+                        'lines': ['+kept']}]},
+        ],
+        'moreFiles': 0,
+    }))
+    edits = captured[0][2]['bash_edits']
+    assert len(edits) == 2
+    assert edits[1]['file_path'] == '/repo/small.py'
+    assert edits[1]['diff'] == ''
+    assert edits[1]['diff_truncated_bytes'] > 0
+
+
+def test_bash_edit_diff_malformed_entry_dropped_and_counted(captured):
+    ptt.handle(_bash_edit_payload({
+        'files': [
+            {'filePath': '/repo/a.py',
+             'hunks': [{'oldStart': 1, 'oldLines': 1, 'newStart': 1, 'newLines': 2,
+                        'lines': ['+one']}]},
+            {'hunks': []},                      # no filePath → dropped whole
+        ],
+        'moreFiles': 2,
+        'changedFiles': ['/repo/a.py', '/repo/b.py', '/repo/c.py', '/repo/d.py'],
+    }))
+    attrs = captured[0][2]
+    assert len(attrs['bash_edits']) == 1
+    assert attrs['bash_edit_more'] == 3
+    # I3: edits + more accounts for every changed file.
+    assert len(attrs['bash_edits']) + attrs['bash_edit_more'] == len(attrs['bash_edit_files'])
+
+
+def test_bash_edit_diff_unavailable_still_names_files(captured):
+    ptt.handle(_bash_edit_payload({
+        'unavailable': True, 'files': [], 'moreFiles': 0,
+        'changedFiles': ['/repo/db.sqlite', '/repo/img.png'],
+    }))
+    attrs = captured[0][2]
+    assert attrs['bash_edit_unavailable'] is True
+    assert attrs['bash_edit_files'] == ['/repo/db.sqlite', '/repo/img.png']
+    assert 'bash_edits' not in attrs
+
+
+def test_bash_edit_diff_shared_flag_ignored(captured):
+    diff = _one_file_diff()
+    diff['shared'] = True
+    ptt.handle(_bash_edit_payload(diff))
+    assert 'shared' not in captured[0][2]
+
+
+def test_bash_edit_diff_garbage_never_loses_the_span(captured):
+    ptt.handle(_bash_edit_payload('not-a-dict'))
+    attrs = captured[0][2]
+    assert attrs['command_preview']
+    assert not [k for k in attrs if k.startswith('bash_edit')]
+
+
+def test_bash_edit_diff_leaves_file_path_unset(captured):
+    # I4: `tool.Bash` must stay invisible to every consumer keyed on file_path.
+    ptt.handle(_bash_edit_payload(_one_file_diff()))
+    assert 'file_path' not in captured[0][2]

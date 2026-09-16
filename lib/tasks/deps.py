@@ -91,8 +91,11 @@ def _refuse_bad_edges(session, task_id: int, wanted: list[int]) -> None:
     The cycle test runs against the graph the request *would* produce, not the
     stored one: replacing a task's whole dependency set can both remove the
     edge that made a cycle and add the one that makes another.
+
+    The run-of refusal that used to sit here went with the two-level grain: a
+    feature is not a task any more, so there is no pair that could carry both
+    "waits for" and "is a run of".
     """
-    row = session.get(AgentTask, task_id)
     for dep in wanted:
         if dep == task_id:
             raise DepRejected(
@@ -102,29 +105,12 @@ def _refuse_bad_edges(session, task_id: int, wanted: list[int]) -> None:
         if other is None:
             raise DepRejected(f"unknown task {dep} ({task_id} → {dep})",
                               (task_id, dep))
-        # "waits for" and "is a run of" are two axes. One pair carrying both
-        # would make a feature wait for its own run, or a run wait for the
-        # feature it is a run of — neither of which is a thing anyone can act
-        # on, and both of which would deadlock the firing.
-        if _is_own_parentage(row, other):
-            raise DepRejected(
-                f"{task_id} → {dep} is already a run-of edge — a feature and "
-                "its own run cannot also depend on each other",
-                (task_id, dep))
     edges = _edges(session)
     edges[task_id] = set(wanted)
     for dep in wanted:
         if _reaches(edges, dep, task_id):
             raise DepRejected(f"{task_id} → {dep} closes a cycle",
                               (task_id, dep))
-
-
-def _is_own_parentage(row: Optional[AgentTask],
-                      other: Optional[AgentTask]) -> bool:
-    """Whether these two rows are already a parent and its own child."""
-    if row is None or other is None:
-        return False
-    return row.parent_id == other.id or other.parent_id == row.id
 
 
 def set_deps(task_id: int, wanted: list[int]) -> Optional[list[int]]:
@@ -188,7 +174,6 @@ def _node(task: AgentTask, blocked_by: list[int]) -> dict:
         "id": task.id,
         "title": task.title,
         "status": task.status,
-        "autorun": bool(task.autorun),
         "blocked": bool(blocked_by),
         "blocked_by": blocked_by,
         "runnable": task.status == TASK_STATUS_ARMED and not blocked_by,

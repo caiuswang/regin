@@ -1,8 +1,10 @@
 <script setup>
 // The reader's body: every block the span carries, in ONE fixed order —
-// prose → diff → shell → rules → children. Nothing is behind a tab or a
-// disclosure; a single keystroke showing everything is the whole point.
+// prose → diff → bash edits → shell → rules → children. Nothing is behind a
+// tab or a disclosure; a single keystroke showing everything is the whole
+// point.
 import PresentProse from './PresentProse.vue'
+import PresentBashEdits from './PresentBashEdits.vue'
 import DiffBlock from '../DiffBlock.vue'
 import Button from '../ui/Button.vue'
 import { vHighlightText } from '../../directives/highlightText.js'
@@ -151,6 +153,11 @@ defineEmits(['open-child'])
       </div>
       <DiffBlock numbered flush :diff="vm.diff" :file-path="vm.diffFile" />
     </div>
+
+    <!-- What the shell command did to the files it touched. Above the terminal
+         block for the same reason the fixed order puts `diff` there: the
+         change is the point of the call, the output is its trace. -->
+    <PresentBashEdits v-if="vm.hasBashEdits" :edits="vm.bashEdits" />
 
     <div v-if="vm.hasTerm" class="present-term">
       <div v-if="vm.termCmd" class="present-term-cmd">$ {{ vm.termCmd }}</div>

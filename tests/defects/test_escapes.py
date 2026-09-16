@@ -1,12 +1,17 @@
-"""Acceptance items for CAI-233 — post-ship rework, read without a clock.
+"""Post-ship rework, read without a clock.
 
 An **escape** is a defect blamed on a feature that had already shipped. The
 reading exists in this exact shape to avoid comparing `store._now()` on regin's
-host against `stateHistory.startedAt` as recorded by Linear's servers: a defect
-opened near the ship boundary would fall on either side of it according to host
-drift, and nothing in the data would say which. Both operands are therefore
-declared at a single instant instead — a human asserts *X caused this*, and the
-tracker asserts *X is completed*.
+host against a remote tracker's own timestamps: a defect opened near the ship
+boundary would fall on either side of it according to host drift, and nothing
+in the data would say which. Both operands are therefore fixed at a single
+instant instead — a human asserts *X caused this*, and the defect is pointed at
+whatever event X's log currently ends on.
+
+That pointer replaced a cached state *word*, and with it the two gap counters
+the word needed. A string could be absent (nobody looked), stale, or a
+vocabulary regin did not carry; an event is none of those, so `counts_for`
+reports a count and nothing else.
 """
 
 from __future__ import annotations
@@ -16,120 +21,107 @@ import inspect
 from typer.testing import CliRunner
 
 from cli.commands.defects import defects_app
-from lib.defects import escapes, stage, store
+from lib.defects import escapes, store
+from lib.features import events
 
 runner = CliRunner()
-KEY = "CAI-242"
 
 
-def test_blamed_against_state_is_written_once_when_feature_key_is_first_set(
-        tracker_issue):
-    tracker_issue(KEY, state_category="completed")
-    row = store.record("it leaks", feature_key=KEY)
-    assert row.blamed_against_state == "completed"
+def test_the_blame_pointer_is_written_once_per_blame(feature_row):
+    """Re-declaring the same feature is not a new blame, so the snapshot does
+    not move — and neither does the feature's later history."""
+    feature = feature_row(stage=events.SHIPPED)
+    row = store.record("it leaks", feature_id=feature.id)
+    pointed_at = row.blamed_event_id
 
-    tracker_issue(KEY, state_category="started")
-    store.attribute(row.id, KEY)
+    events.append(feature.id, events.RESTARTED, declared_by=events.OPERATOR)
+    store.attribute(row.id, feature.id)
 
-    assert store.for_feature(KEY)[0].blamed_against_state == "completed"
-
-
-def test_blamed_against_state_stores_the_raw_state_category(tracker_issue):
-    """Not the derived stage name: `stage.py`'s names are a *reading* of the
-    category, and freezing today's reading into the row would silently
-    reinterpret history if the reading ever changes."""
-    tracker_issue(KEY, state_category="completed")
-
-    row = store.record("it leaks", feature_key=KEY)
-
-    assert row.blamed_against_state == "completed"
-    assert row.blamed_against_state not in (stage.SHIPPED, stage.ESCAPED)
+    assert store.for_feature(feature.id)[0].blamed_event_id == pointed_at
 
 
-def test_late_attribution_binds_blamed_against_state(tracker_issue):
+def test_the_pointer_names_an_event_not_a_state_word(feature_row):
+    """A stage name is a *reading* of a state, and freezing today's reading
+    into the row would silently reinterpret history if the reading changed.
+    An event id names the thing itself."""
+    feature = feature_row(stage=events.SHIPPED)
+
+    row = store.record("it leaks", feature_id=feature.id)
+
+    assert row.blamed_event_id == events.last(feature.id).id
+    assert not hasattr(row, "blamed_against_state")
+
+
+def test_late_attribution_binds_the_pointer(feature_row):
     """Snapshotting only at `record()` would leave the column NULL for the
-    majority of defects, because CAI-238 made late attribution the sanctioned
-    path."""
-    tracker_issue(KEY, state_category="completed")
+    majority of defects, because late attribution is the sanctioned path."""
+    feature = feature_row(stage=events.SHIPPED)
     row = store.record("blamed later", session_id="t-x")
-    assert row.blamed_against_state is None
+    assert row.blamed_event_id is None
 
-    store.attribute(row.id, KEY)
+    store.attribute(row.id, feature.id)
 
-    assert store.for_feature(KEY)[0].blamed_against_state == "completed"
-
-
-def test_a_failed_tracker_fetch_writes_null_and_still_lands_the_defect(
-        no_tracker):
-    """Losing a defect report to a network blip corrupts the ledger the metric
-    reads — that is worse than losing one field."""
-    row = store.record("landed anyway", feature_key=KEY)
-
-    assert row.id is not None
-    assert row.blamed_against_state is None
-    assert [r.symptom for r in store.for_feature(KEY)] == ["landed anyway"]
+    assert escapes.counts_for(feature.id).escapes == 1
 
 
-def test_null_blamed_against_state_is_a_counted_gap_not_a_non_escape(
-        no_tracker):
-    store.record("we never looked", feature_key=KEY)
+def test_blaming_cannot_fail_the_way_a_fetch_could(feature_row, no_tracker):
+    """The pointer is a local row that already exists, so there is no network
+    blip that can lose the field — the failure the old NULL-and-land-anyway
+    behaviour existed to survive."""
+    feature = feature_row(stage=events.SHIPPED)
 
-    counts = escapes.counts_for(KEY)
+    row = store.record("landed anyway", feature_id=feature.id)
 
-    assert counts.escapes == 0
-    assert counts.state_unknown == 1
+    assert row.blamed_event_id is not None
+    assert [r.symptom for r in store.for_feature(feature.id)] == [
+        "landed anyway"]
 
 
-def test_unknown_vocabulary_is_distinct_from_never_looked(tracker_issue):
-    """`_category()` maps a tracker vocabulary regin does not carry to the
-    string `"unknown"` — *we looked, and the answer was a word we don't hold*.
-    NULL means *we never looked*. Neither is folded into the count."""
-    store.record("never looked", feature_key=KEY)
-    tracker_issue(KEY, state_category="unknown")
-    store.record("looked, got a word we do not carry", feature_key=KEY)
+def test_escape_counts_carry_no_gap_counters(feature_row):
+    """`state_unknown` and `unknown_vocabulary` described the readings a
+    cached string could have. There is one reading now, so there is one
+    field."""
+    feature = feature_row(stage=events.SHIPPED)
+    store.record("an escape", feature_id=feature.id)
 
-    counts = escapes.counts_for(KEY)
+    counts = escapes.counts_for(feature.id)
 
-    assert counts.state_unknown == 1
-    assert counts.unknown_vocabulary == 1
-    assert counts.escapes == 0
+    assert counts.escapes == 1
+    assert [f for f in vars(counts)] == ["escapes"]
 
 
 def test_escapes_are_reported_beside_rounds_and_never_folded_into_it(
-        tracker_issue):
-    tracker_issue(KEY, state_category="completed", rounds=1)
-    store.record("an escape", feature_key=KEY)
+        feature_row):
+    from lib.features import ledger as ledger_module
 
-    result = stage.stage_for_key(KEY)
+    feature = feature_row(stage=events.SHIPPED)
+    store.record("an escape", feature_id=feature.id)
 
-    assert result.escapes == 1
-    assert result.rounds == 1
-    assert "escapes" in result.to_dict() and "rounds" in result.to_dict()
+    report = ledger_module.build(feature.id)
+
+    assert report.escapes.escapes == 1
+    assert report.rounds == 1
+    assert report.stage == events.STAGE_ESCAPED
 
 
-def test_filing_a_defect_never_reopens_the_feature(tracker_issue, monkeypatch):
+def test_filing_a_defect_never_walks_the_ship_back(feature_row):
     """A board that flaps is a board nobody trusts. Post-ship rework is read
-    from the defects ledger, never written back to the tracker."""
-    tracker_issue(KEY, state_category="completed")
-    writes: list = []
-    import lib.tasks.integrations.linear as linear_mod
-    monkeypatch.setattr(linear_mod.LinearProvider, "_post",
-                        lambda self, body: writes.append(body) or {"data": {}})
+    from the defect ledger, never written back as a lifecycle event."""
+    feature = feature_row(stage=events.SHIPPED)
 
-    runner.invoke(defects_app, ["open", "it leaks", "--feature", KEY])
+    runner.invoke(defects_app, ["open", "it leaks",
+                                "--feature", str(feature.id)])
 
-    assert writes == []
-    assert stage.stage_for_key(KEY).name == stage.ESCAPED
+    assert events.last(feature.id).kind == events.SHIPPED
+    assert events.rounds(feature.id) == 1
+    assert events.stage(feature.id) == events.STAGE_ESCAPED
 
 
 def test_no_timestamp_comparison_decides_an_escape():
-    """The operands are two clocks on two machines. The whole module is read
-    for the absence of the subtraction."""
+    """The operands would be two clocks on two machines. The whole module is
+    read for the absence of the subtraction."""
     source = inspect.getsource(escapes)
 
     for forbidden in ("opened_at", "startedAt", "started_at", "completedAt",
                       "datetime", "timedelta", "_now("):
         assert forbidden not in source, forbidden
-    assert escapes.is_escape("completed") is True
-    assert escapes.is_escape("started") is False
-    assert escapes.is_escape(None) is False
