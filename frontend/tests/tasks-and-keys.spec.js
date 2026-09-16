@@ -424,6 +424,168 @@ test.describe('/tasks — arming', () => {
     await expect(page.getByTestId('task-arm-skill')).toContainText('custom…')
     await expect(page.getByTestId('task-arm-skill-custom')).toHaveValue('my-local-skill')
   })
+
+  // Arming many tasks the same way is the common case: the sheet remembers the
+  // last accepted pick and offers it to the NEXT never-armed task.
+  test('a never-armed task is filled from the last arm, visibly and undoably', async ({ page }) => {
+    await serveSkills(page)
+    await gotoTasks(page)
+    await capture(page, 'first quick arm')
+    await capture(page, 'second quick arm')
+
+    const served = await page.evaluate(async () => {
+      const res = await fetch('/api/agent-runs/launch-options', {
+        headers: { Authorization: `Bearer ${localStorage.getItem('regin_auth_token')}` },
+      })
+      return res.json()
+    })
+
+    const first = page.locator('.task-row', { hasText: 'first quick arm' }).first()
+    await first.getByTestId('task-arm').click()
+    await expect(page.getByTestId('task-arm-form')).toBeVisible()
+    // Nothing has been armed in this browser yet, so there is nothing to recall.
+    await expect(page.getByTestId('task-arm-recalled')).toHaveCount(0)
+
+    await page.getByTestId('task-arm-model').click()
+    await page.getByRole('option', { name: served.models[0], exact: true }).click()
+    await page.getByTestId('task-arm-skill').click()
+    await page.getByRole('option', { name: 'goal-verified', exact: true }).click()
+    await page.getByTestId('task-arm-skill-args').fill('--strict')
+    await page.getByTestId('task-arm-verify').fill('echo remembered')
+    await page.getByTestId('task-arm-submit').click()
+    await expect(first).toHaveAttribute('data-status', 'armed')
+
+    // What is remembered is exactly the how-to-run fields. A worktree branch is
+    // named for ONE task, so carrying it would aim two tasks at one checkout.
+    const stored = await page.evaluate(
+      () => JSON.parse(localStorage.getItem('regin.tasks.arm.last')))
+    expect(Object.keys(stored).sort()).toEqual([
+      'cwd', 'effort', 'model', 'one_shot', 'permission_mode',
+      'skill', 'skillArgs', 'verify_cmd',
+    ])
+
+    // Re-opening the task that WAS armed reads its own attempt, and must not
+    // claim to have been filled from somewhere else.
+    await first.getByTestId('task-arm').click()
+    await expect(page.getByTestId('task-arm-form')).toBeVisible()
+    await expect(page.getByTestId('task-arm-recalled')).toHaveCount(0)
+    await page.getByRole('button', { name: 'Cancel' }).click()
+
+    const second = page.locator('.task-row', { hasText: 'second quick arm' }).first()
+    await second.getByTestId('task-arm').click()
+    await expect(page.getByTestId('task-arm-recalled')).toBeVisible()
+    await expect(page.getByTestId('task-arm-verify')).toHaveValue('echo remembered')
+    await expect(page.getByTestId('task-arm-model')).toContainText(served.models[0])
+    await expect(page.getByTestId('task-arm-skill')).toContainText('goal-verified')
+    await expect(page.getByTestId('task-arm-skill-args')).toHaveValue('--strict')
+
+    // Reset is the escape hatch: it blanks the form AND forgets the pick, so
+    // the next sheet opens clean rather than re-offering it.
+    await page.getByTestId('task-arm-reset').click()
+    await expect(page.getByTestId('task-arm-recalled')).toHaveCount(0)
+    await expect(page.getByTestId('task-arm-verify')).toHaveValue('')
+    await expect(page.getByTestId('task-arm-skill-args')).toHaveCount(0)
+    expect(await page.evaluate(
+      () => localStorage.getItem('regin.tasks.arm.last'))).toBeNull()
+  })
+
+  // `custom…` names a slot in the form, not a model. Remembering the sentinel
+  // instead of what was typed under it would arm the next task with the literal
+  // string `__custom__` — which the arm route accepts as a free-form model and
+  // only the launch would reject.
+  test('a recalled custom model and skill carry the real ids, not the sentinel', async ({ page }) => {
+    await serveSkills(page)
+    await gotoTasks(page)
+    await capture(page, 'first custom arm')
+    await capture(page, 'second custom arm')
+
+    const first = page.locator('.task-row', { hasText: 'first custom arm' }).first()
+    await first.getByTestId('task-arm').click()
+    await expect(page.getByTestId('task-arm-form')).toBeVisible()
+    await page.getByTestId('task-arm-model').click()
+    await page.getByRole('option', { name: 'custom…', exact: true }).click()
+    await page.getByTestId('task-arm-model-custom').fill('claude-opus-4-8')
+    await page.getByTestId('task-arm-skill').click()
+    await page.getByRole('option', { name: 'custom…', exact: true }).click()
+    await page.getByTestId('task-arm-skill-custom').fill('my-local-skill')
+    await page.getByTestId('task-arm-submit').click()
+    await expect(first).toHaveAttribute('data-status', 'armed')
+
+    const stored = await page.evaluate(
+      () => JSON.parse(localStorage.getItem('regin.tasks.arm.last')))
+    expect(stored.model).toBe('claude-opus-4-8')
+    expect(stored.skill).toBe('my-local-skill')
+
+    const second = page.locator('.task-row', { hasText: 'second custom arm' }).first()
+    await second.getByTestId('task-arm').click()
+    await expect(page.getByTestId('task-arm-recalled')).toBeVisible()
+    await expect(page.getByTestId('task-arm-model')).toContainText('custom…')
+    await expect(page.getByTestId('task-arm-model-custom')).toHaveValue('claude-opus-4-8')
+    await expect(page.getByTestId('task-arm-skill')).toContainText('custom…')
+    await expect(page.getByTestId('task-arm-skill-custom')).toHaveValue('my-local-skill')
+
+    const [armRequest] = await Promise.all([
+      page.waitForRequest(r => /\/api\/tasks\/\d+\/arm$/.test(r.url())),
+      page.getByTestId('task-arm-submit').click(),
+    ])
+    const body = armRequest.postDataJSON()
+    expect(body.model).toBe('claude-opus-4-8')
+    expect(body.skill).toEqual({ name: 'my-local-skill', args: '' })
+  })
+
+  // Args are hidden the moment the skill picker goes back to "none", and a
+  // sentinel left in an older store names a slot rather than a model. Neither
+  // may become the sole reason the next sheet claims a carry-over.
+  test('an invisible field never carries, and a stored sentinel is refused', async ({ page }) => {
+    await gotoTasks(page)
+    await capture(page, 'sentinel preset target')
+    await page.evaluate(() => localStorage.setItem('regin.tasks.arm.last', JSON.stringify({
+      cwd: '', model: '__custom__', permission_mode: '', effort: '',
+      skill: '', skillArgs: '--strict', verify_cmd: '', one_shot: false,
+    })))
+    const row = page.locator('.task-row', { hasText: 'sentinel preset target' }).first()
+    await row.getByTestId('task-arm').click()
+    await expect(page.getByTestId('task-arm-form')).toBeVisible()
+    await expect(page.getByTestId('task-arm-model-custom')).toHaveCount(0)
+    await expect(page.getByTestId('task-arm-skill-args')).toHaveCount(0)
+    await expect(page.getByTestId('task-arm-recalled')).toHaveCount(0)
+    await page.getByRole('button', { name: 'Cancel' }).click()
+
+    // Nor may they be written: args typed under a skill that is then cleared
+    // are not part of the selection.
+    const again = page.locator('.task-row', { hasText: 'sentinel preset target' }).first()
+    await again.getByTestId('task-arm').click()
+    await page.getByTestId('task-arm-skill').click()
+    await page.getByRole('option', { name: 'custom…', exact: true }).click()
+    await page.getByTestId('task-arm-skill-custom').fill('throwaway')
+    await page.getByTestId('task-arm-skill-args').fill('--strict')
+    await page.getByTestId('task-arm-skill').click()
+    await page.getByRole('option', { name: /^none/ }).click()
+    await page.getByTestId('task-arm-submit').click()
+    await expect(again).toHaveAttribute('data-status', 'armed')
+    const stored = await page.evaluate(
+      () => JSON.parse(localStorage.getItem('regin.tasks.arm.last')))
+    expect(stored.skill).toBe('')
+    expect(stored.skillArgs).toBe('')
+  })
+
+  // A stored pick the install no longer offers is dropped — and with nothing
+  // left to carry, the banner must not claim a carry-over over a blank form.
+  test('a preset whose every value went stale drops the banner too', async ({ page }) => {
+    await gotoTasks(page)
+    await capture(page, 'stale preset target')
+    await page.evaluate(() => localStorage.setItem('regin.tasks.arm.last', JSON.stringify({
+      cwd: '/gone/from/this/install',
+      model: '', permission_mode: '', effort: '',
+      skill: '', skillArgs: '', verify_cmd: '', one_shot: false,
+    })))
+    const row = page.locator('.task-row', { hasText: 'stale preset target' }).first()
+    await row.getByTestId('task-arm').click()
+    await expect(page.getByTestId('task-arm-form')).toBeVisible()
+    await expect(page.getByTestId('task-arm-cwd')).toContainText('server working directory')
+    await expect(page.getByTestId('task-arm-recalled')).toHaveCount(0)
+  })
+
 })
 
 test.describe('/tasks — dependencies and refusals', () => {

@@ -99,6 +99,25 @@ export function useTaskArm() {
     }
   }
 
+  // A draft recalled from the LAST arm may name a repo, permission mode or
+  // effort this install no longer offers — the menus describe the server, and
+  // it can change under a remembered pick. Dropping those three back to the
+  // server default is the honest read of a stale preset: `permission_mode` and
+  // `effort` would be refused outright by `lib/tasks/arm.py`, and a stale `cwd`
+  // would aim the run at a directory nobody chose. Applied only to a recalled
+  // draft — a value the TASK itself carries is a deliberate pick that must keep
+  // showing, stale or not.
+  function pruneUnlisted(draft) {
+    const offered = {
+      cwd: options.value?.cwds || [],
+      permission_mode: options.value?.permission_modes || [],
+      effort: options.value?.efforts || [],
+    }
+    for (const [field, values] of Object.entries(offered)) {
+      if (draft[field] && !values.includes(draft[field])) draft[field] = ''
+    }
+  }
+
   // What the task was armed with may be a model id the alias menu does not
   // carry, or a skill regin does not deploy; adopting either into its custom
   // slot keeps it visible instead of silently resetting the picker to "none".
@@ -158,6 +177,6 @@ export function useTaskArm() {
   return {
     options, loading, error, saving, armError, skillOptions,
     cwdOptions, modeOptions, modelOptions, effortOptions,
-    loadOptions, adoptUnlisted, arm,
+    loadOptions, adoptUnlisted, pruneUnlisted, arm,
   }
 }

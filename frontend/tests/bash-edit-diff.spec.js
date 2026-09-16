@@ -184,10 +184,12 @@ test('a file-editing shell call folds its output and leads with the diff', async
   // The diff is what the card opens on; the result is one click away.
   await expect(row.locator('[data-bash-edit]')).toHaveCount(2)
   await expect(row.locator('[data-bash-output]')).toHaveCount(0)
-  const toggle = row.locator('[data-bash-output-toggle]')
-  await expect(toggle).toContainText('stdout')
+  // command_preview stands in for the missing `command` attribute, so the
+  // command panel is here too, sharing the stdout disclosure.
+  const toggle = row.locator('[data-bash-output-toggle]').filter({ hasText: 'stdout' })
+  await expect(toggle).toBeVisible()
   await toggle.click()
-  await expect(row.locator('[data-bash-output]')).toContainText('stdout line 39')
+  await expect(row.locator('[data-bash-output]').filter({ hasText: 'stdout line 39' })).toBeVisible()
 })
 
 test('a shell call that edited nothing still opens on its output', async ({ page }) => {
@@ -196,5 +198,35 @@ test('a shell call that edited nothing still opens on its output', async ({ page
 
   const row = editRow(page)
   await row.getByText('sed -i').click()
-  await expect(row.locator('[data-bash-output]')).toContainText('stdout line 39')
+  await expect(row.locator('[data-bash-output]').filter({ hasText: 'stdout line 39' })).toBeVisible()
+})
+
+test('a file-editing shell call folds its command too', async ({ page }) => {
+  test.setTimeout(60_000)
+  await seed(page, { ...EDIT_ATTRS, command: 'sed -i s/gone/one/ a.py' })
+
+  const row = editRow(page)
+  await row.getByText('sed -i').click()
+  // The diff leads; the command that produced it is one click away, same as stdout.
+  await expect(row.locator('[data-bash-edit]')).toHaveCount(2)
+  await expect(row.locator('[data-bash-output]')).toHaveCount(0)
+  const toggle = row.locator('[data-bash-output-toggle]').filter({ hasText: 'command' })
+  await toggle.click()
+  // command and stdout share one disclosure, so both open together.
+  await expect(row.locator('[data-bash-output]')).toHaveCount(2)
+  await expect(row.locator('[data-bash-output]').first()).toContainText('sed -i s/gone/one/ a.py')
+})
+
+test('a short command with no `command` attribute still shows its command panel', async ({ page }) => {
+  test.setTimeout(60_000)
+  // Below the preview cap, the hook stores only `command_preview` — the card
+  // must fall back to it rather than dropping the command panel.
+  await seed(page, { stdout: OUT })
+
+  const row = editRow(page)
+  await row.getByText('sed -i').click()
+  const toggle = row.locator('[data-bash-output-toggle]').filter({ hasText: 'command' })
+  await expect(toggle).toBeVisible()
+  // No edits on this call, so the panel opens by default — no click needed.
+  await expect(row.locator('[data-bash-output]').filter({ hasText: 'sed -i s/gone/one/ a.py' })).toBeVisible()
 })

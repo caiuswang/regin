@@ -24,6 +24,14 @@ const hasBody = computed(() => {
 
 const edits = computed(() => bashEditSummary(props.span?.attributes))
 
+// The server only stamps `command` when it exceeds the preview cap (to avoid
+// duplicating the text on the span); a command at or under that cap has no
+// `command` attribute at all, and `command_preview` is the whole thing.
+const commandText = computed(() => {
+  const a = props.span?.attributes || {}
+  return a.command || a.command_preview || ''
+})
+
 // When the call changed files, the change is what the card is for and the
 // output is its trace — so the terminal panel opens on the diffs and keeps the
 // result one click away. Nullable override rather than a ref seeded at setup:
@@ -96,21 +104,31 @@ function toggleOutput() { outputOverride.value = !outputOpen.value }
       v-if="folding.bashExpanded(span.span_id)"
       class="code-surface bg-slate-900"
     >
-      <div v-if="span.attributes?.command" class="px-3 py-2">
+      <div v-if="commandText" class="px-3 py-2">
         <div class="flex items-center gap-2 mb-1">
-          <span class="text-[10px] font-semibold uppercase tracking-wider text-emerald-400">command</span>
+          <button
+            type="button"
+            class="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-emerald-400 hover:text-emerald-200 focus-visible:outline-2 focus-visible:outline-blue-500"
+            data-bash-output-toggle
+            :aria-expanded="outputOpen"
+            @click.stop="toggleOutput"
+          ><span class="w-2 text-center select-none">{{ outputOpen ? '▾' : '▸' }}</span>command</button>
           <span
             v-if="span.attributes.command_truncated_bytes"
             class="text-[10px] text-amber-300 bg-amber-900/40 border border-amber-700/60 px-1 rounded"
           >truncated {{ fmtBytes(span.attributes.command_truncated_bytes) }}</span>
-          <CopyButton :text="span.attributes.command" />
+          <CopyButton :text="commandText" />
         </div>
-        <pre class="text-[12px] text-emerald-200 whitespace-pre-wrap break-words font-mono leading-snug max-h-96 overflow-auto">{{ span.attributes.command }}</pre>
+        <pre
+          v-if="outputOpen"
+          data-bash-output
+          class="text-[12px] text-emerald-200 whitespace-pre-wrap break-words font-mono leading-snug max-h-96 overflow-auto"
+        >{{ commandText }}</pre>
       </div>
       <div
         v-if="span.attributes?.stdout"
         class="px-3 py-2"
-        :class="span.attributes?.command ? 'border-t border-slate-800' : ''"
+        :class="commandText ? 'border-t border-slate-800' : ''"
       >
         <div class="flex items-center gap-2 mb-1">
           <button
@@ -135,7 +153,7 @@ function toggleOutput() { outputOverride.value = !outputOpen.value }
       <div
         v-if="span.attributes?.stderr"
         class="px-3 py-2"
-        :class="(span.attributes?.stdout || span.attributes?.command) ? 'border-t border-slate-800' : ''"
+        :class="(span.attributes?.stdout || commandText) ? 'border-t border-slate-800' : ''"
       >
         <div class="flex items-center gap-2 mb-1">
           <button
@@ -160,7 +178,7 @@ function toggleOutput() { outputOverride.value = !outputOpen.value }
       <BashEditDiffs
         v-if="edits.count"
         :attrs="span.attributes"
-        :divided="Boolean(span.attributes?.command || span.attributes?.stdout || span.attributes?.stderr)"
+        :divided="Boolean(commandText || span.attributes?.stdout || span.attributes?.stderr)"
       />
     </div>
   </div>

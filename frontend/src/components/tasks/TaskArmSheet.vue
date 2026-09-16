@@ -3,14 +3,17 @@
 // that may write a task's execution parameters, and its fields are exactly the
 // arm allowlist. The menus are served, not hardcoded — models, permission
 // modes, efforts and repos describe the install this page is driving.
-import { onMounted, reactive } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import Button from '../ui/Button.vue'
 import Checkbox from '../ui/Checkbox.vue'
 import Dialog from '../ui/Dialog.vue'
 import Input from '../ui/Input.vue'
 import LaunchWorktreeFields from '../live/LaunchWorktreeFields.vue'
 import Select from '../ui/Select.vue'
-import { CUSTOM_MODEL, CUSTOM_SKILL, armDraft, useTaskArm } from '../../composables/useTaskArm.js'
+import { CUSTOM_MODEL, CUSTOM_SKILL, useTaskArm } from '../../composables/useTaskArm.js'
+import {
+  blankArmDraft, forgetArm, hasRecalledValues, rememberArm, seededArmDraft,
+} from '../../composables/useArmPrefs.js'
 
 const props = defineProps({
   task: { type: Object, required: true },
@@ -20,18 +23,36 @@ const emit = defineEmits(['close', 'armed'])
 const {
   options, loading, error, saving, armError, skillOptions,
   cwdOptions, modeOptions, modelOptions, effortOptions,
-  loadOptions, adoptUnlisted, arm,
+  loadOptions, adoptUnlisted, pruneUnlisted, arm,
 } = useTaskArm()
 
-const draft = reactive(armDraft(props.task))
+const seeded = seededArmDraft(props.task)
+const draft = reactive(seeded.draft)
+// Surfaced, never silent. Arming is the one browser write that sets execution
+// parameters, so a form filled from another task's pick has to say so — an
+// operator who cannot see that `bypassPermissions` was carried over would arm
+// it by pressing the button they always press.
+const recalled = ref(seeded.recalled)
 
 onMounted(async () => {
   await loadOptions()
+  if (recalled.value) {
+    pruneUnlisted(draft)
+    recalled.value = hasRecalledValues(draft)
+  }
   adoptUnlisted(draft)
 })
 
+function resetDraft() {
+  Object.assign(draft, blankArmDraft(props.task))
+  forgetArm()
+  recalled.value = false
+}
+
 async function submit() {
-  if (await arm(props.task, draft)) emit('armed')
+  if (!await arm(props.task, draft)) return
+  rememberArm(draft)
+  emit('armed')
 }
 </script>
 
@@ -47,6 +68,13 @@ async function submit() {
       {{ error }}
     </div>
     <div v-else class="live-launch" data-testid="task-arm-form">
+      <p v-if="recalled" class="task-arm-recalled" data-testid="task-arm-recalled">
+        <span>Filled in from your last arm — check it before you arm this one.</span>
+        <Button variant="ghost" size="sm" data-testid="task-arm-reset" @click="resetDraft">
+          Reset
+        </Button>
+      </p>
+
       <label class="live-launch-lbl" for="task-arm-cwd">working directory</label>
       <Select
         id="task-arm-cwd"
@@ -174,5 +202,21 @@ async function submit() {
 .task-arm-note {
     font-size: 0.8125rem;
     color: var(--color-fg-muted);
+}
+
+.task-arm-recalled {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin: 0 0 4px;
+    padding: 8px 10px;
+    border: 1px solid var(--color-info-soft);
+    border-radius: var(--radius-md);
+    background: var(--color-info-soft);
+    font-size: 0.8125rem;
+    line-height: 1.45;
+    color: var(--color-info-strong);
 }
 </style>
