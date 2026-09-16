@@ -43,8 +43,8 @@ log = get_activity_logger("defects")
 
 __all__ = ["DECLARED", "RECALLED", "RUN", "AttributedSession", "Attribution",
            "attribute", "attributions_for_session", "canonical_trace",
-           "declared_feature", "features_for_session", "sessions_for_feature",
-           "traceless_runs", "unattribute"]
+           "declared_feature", "features_for_session", "run_traces",
+           "sessions_for_feature", "traceless_runs", "unattribute"]
 
 #: One `agent_run_sessions` row per trace, chosen by id. A correlated subquery
 #: rather than a `LEFT JOIN`, because the join is what fans a run out into two
@@ -143,6 +143,31 @@ def traceless_runs(feature_id: int) -> int:
             " WHERE t.feature_id = :f AND r.trace_id IS NULL"
         ).bindparams(f=feature_id)).first()
     return int(row[0] or 0)
+
+
+def run_traces(trace_ids) -> set:
+    """Of these traces, the ones an `agent_task_runs` row produced.
+
+    Deliberately **not** scoped to one feature: a session a task run drove is
+    an agent launch whoever owns the task, and invariant 7 asks whether a
+    person typed, not which feature they typed at. Matched on both sides of
+    the run/conversation alias, because a run records whichever of the pair it
+    saw and the human-prompt figure must not turn on that.
+    """
+    ids = [t for t in dict.fromkeys(trace_ids) if t]
+    if not ids:
+        return set()
+    from sqlalchemy import bindparam  # noqa: PLC0415
+    with SessionLocal() as session:
+        rows = session.exec(text(
+            "SELECT DISTINCT c.t FROM ("
+            "  SELECT r.trace_id AS t FROM agent_task_runs r"
+            "   WHERE r.trace_id IS NOT NULL"
+            "  UNION SELECT a.cli_session_id FROM agent_run_sessions a"
+            "   JOIN agent_task_runs r2 ON r2.trace_id = a.trace_id"
+            ") c WHERE c.t IN :ids"
+        ).bindparams(bindparam("ids", ids, expanding=True))).all()
+    return {row[0] for row in rows}
 
 
 def features_for_session(trace_id: str) -> list[SessionFeature]:

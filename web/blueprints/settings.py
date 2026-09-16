@@ -474,6 +474,16 @@ _TASKS_FIELDS = [
      "label": "Captures per minute",
      "description": "Per-key ceiling on accepted captures. Bounds the damage "
                     "a looping integration can do to the backlog."},
+    {"key": "verify_timeout_seconds", "group": "Run", "type": "int",
+     "min": 30, "max": 86400,
+     "label": "Verify command timeout (seconds)",
+     "description": "How long a task run's verify command may take before it "
+                    "is killed. The command runs when the run ends and its "
+                    "exit code is what the run settles on, so this is the "
+                    "ceiling that stops a verify which never returns from "
+                    "leaving the attempt claiming it is still running. Set it "
+                    "above your slowest suite — an expiry settles the run "
+                    "failed."},
 ]
 
 

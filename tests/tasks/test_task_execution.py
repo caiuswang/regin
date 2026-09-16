@@ -1181,3 +1181,92 @@ def test_re_arming_without_a_skill_drops_the_invocation(flask_client,
     _launched_run_id(flask_client, task_id)
 
     assert launcher.calls[0]["prompt"].startswith("wire the thing")
+
+
+# ── R5: the broken chain speaks ───────────────────────────────
+
+def _chain_card(blocker_id: int):
+    from lib.agent_messages import store as messages
+    return messages.live_keyed_message(runs.TASK_READY_TRACE,
+                                       f"chain-stopped:{blocker_id}")
+
+
+def test_a_failed_slice_announces_the_broken_chain(flask_client, launcher):
+    """A `failed` dependency parks its dependents looking like a normal wait —
+    the card is what tells the two apart, and it names the slice that broke."""
+    dep, task_id = _chain(flask_client)
+    flask_client.post(f"/api/tasks/{dep}/run")
+
+    launcher.handles[0].finish(status="failed", detail="DO-NOT-SHIP")
+
+    assert _task(dep).status == "failed"
+    assert _task(task_id).status == "armed"
+    card = _chain_card(dep)
+    assert card is not None
+    assert str(dep) in card["body"]
+    assert str(task_id) in card["body"]
+
+
+def test_a_merely_unfinished_dependency_announces_nothing(flask_client,
+                                                          launcher):
+    """Waiting on a slice that has not settled is the normal case, not a break:
+    one of the two dependencies landed, the other is still running."""
+    running = _armed(flask_client, "still running")
+    landing = _armed(flask_client, "lands now")
+    task_id = _armed(flask_client, "dependent")
+    flask_client.put(f"/api/tasks/{task_id}/deps",
+                     json={"depends_on": [running, landing]})
+    flask_client.post(f"/api/tasks/{running}/run")
+    flask_client.post(f"/api/tasks/{landing}/run")
+
+    launcher.handles[1].finish()
+
+    assert _task(running).status == "running"
+    assert _task(task_id).status == "armed"
+    assert _chain_card(running) is None
+    assert _chain_card(landing) is None
+
+
+def test_the_named_slice_is_the_failed_one_not_the_completing_one(flask_client,
+                                                                  launcher):
+    """Two dependencies, the older one failed: the card names *it*, because
+    that is the row a human has to re-arm."""
+    broke = _armed(flask_client, "broke earlier")
+    lands = _armed(flask_client, "lands now")
+    task_id = _armed(flask_client, "dependent")
+    flask_client.put(f"/api/tasks/{task_id}/deps",
+                     json={"depends_on": [broke, lands]})
+    flask_client.post(f"/api/tasks/{broke}/run")
+    launcher.handles[0].finish(status="failed")
+    flask_client.post(f"/api/tasks/{lands}/run")
+
+    launcher.handles[1].finish()
+
+    assert _chain_card(lands) is None
+    assert str(task_id) in _chain_card(broke)["body"]
+
+
+def test_running_the_failed_slice_again_retires_its_chain_card(flask_client,
+                                                               launcher):
+    """`once` gags the next card, so the slice starting again must clear it —
+    otherwise a second break of the same slice is announced to nobody."""
+    dep, task_id = _chain(flask_client)
+    flask_client.post(f"/api/tasks/{dep}/run")
+    launcher.handles[0].finish(status="failed")
+    assert _chain_card(dep) is not None
+
+    assert flask_client.post(f"/api/tasks/{dep}/run").status_code == 201
+
+    assert _chain_card(dep) is None
+
+
+def test_a_dependent_that_launched_is_not_announced(flask_client, launcher):
+    """The dependent fired, so nothing is holding it — a card here would be a
+    false alarm on the healthy path."""
+    dep, task_id = _chain(flask_client)
+    flask_client.post(f"/api/tasks/{dep}/run")
+
+    launcher.handles[0].finish()
+
+    assert _task(task_id).status == "running"
+    assert _chain_card(dep) is None

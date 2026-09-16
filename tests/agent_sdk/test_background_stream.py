@@ -219,6 +219,7 @@ def _clean():
                      "sdk-stop-nowait", "sdk-wake2", "sdk-wake4",
                      "sdk-wake-shell", "sdk-wake-upd", "sdk-wake-stale",
                      "sdk-settle-inflight", "sdk-wake-running",
+                     "sdk-wake-outlives",
                      "sdk-wake-yield", "sdk-wake-strand"):
         registry.unregister_run(trace_id)
 
@@ -893,6 +894,48 @@ def test_teardown_waits_out_a_task_that_is_still_running(captured,
     # The task reported terminal with the answer, so the next lull ended the
     # wait rather than running out the whole grace period.
     assert left_to_wait < 2
+
+
+def test_a_task_outliving_the_grace_still_holds_the_teardown(captured,
+                                                             scripted_client,
+                                                             monkeypatch):
+    """`stop_grace_sec` bounds the silence, not the delegated work.
+
+    A search subagent runs for minutes; capping the wait at the grace period
+    disconnected its parent mid-run. The one-shot was then filed
+    `exited`/"completed" — settling its task as done before any work was — and
+    the killed child never reached `SubagentStop`, so the agent kept a
+    `subagent.start` with no stop and the roster read it as running.
+    """
+    monkeypatch.setattr(settings.agent_sdk, "teardown_settle_sec", 0.05)
+    monkeypatch.setattr(settings.agent_sdk, "stop_grace_sec", 0.2)
+
+    async def scenario():
+        run, pump = await _live("sdk-wake-outlives")
+        await scripted_client.emit(TaskStarted(task_id="task_long"))
+        run.enqueue("search the repo")
+        assert await _settle(lambda: scripted_client.prompts)
+        run.close()
+        await scripted_client.emit(_result(9))
+        await asyncio.wait_for(pump, timeout=5)
+
+        stopping = asyncio.create_task(run.stop())
+        # Several times the grace, with the stream silent throughout: the old
+        # deadline expired here and tore the child down mid-subagent.
+        await asyncio.sleep(1.0)
+        assert not stopping.done()
+        await scripted_client.emit(
+            AssistantMessage(content=[TextBlock("the subagent's answer")]),
+            _result(22), TaskNotification(task_id="task_long"))
+        await asyncio.wait_for(stopping, timeout=10)
+
+    _run(scenario())
+
+    assert "the subagent's answer" in [s["attributes"]["text"]
+                                       for s in _spans(captured,
+                                                       "assistant_response")]
+    assert _names(captured)[-1] == "session.end"
+    assert scripted_client.rows[-1]["status"] == "exited"
 
 
 def test_a_queued_stop_waits_for_an_answer_still_in_flight(captured,

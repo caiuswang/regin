@@ -37,8 +37,10 @@ import json
 import shlex
 import sys
 from datetime import datetime, timezone
+from threading import Thread
 from typing import Optional
 
+from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
@@ -52,10 +54,11 @@ from lib.orm.models.tasks import (
     AgentTask, AgentTaskRun, RUN_STATUS_ARMED, RUN_STATUS_DONE,
     RUN_STATUS_FAILED, RUN_STATUS_RUNNING, RUN_STATUS_STARTING,
     TASK_STATUS_ARMED, TASK_STATUS_DONE, TASK_STATUS_FAILED,
+    TASK_STATUS_QUEUED,
     TASK_STATUS_RUNNING,
 )
 from lib.settings import settings
-from lib.tasks import deps, images, store
+from lib.tasks import deps, images, store, verify
 from lib.tasks.integrations import registry
 
 log = get_activity_logger("tasks")
@@ -350,7 +353,8 @@ def _finish_command(run_id: int) -> str:
     return " ".join(shlex.quote(part) for part in parts)
 
 
-def _finish_block(run_id: int, linked: bool = False) -> str:
+def _finish_block(run_id: int, linked: bool = False,
+                  base: str = "") -> str:
     """The `<finish>` instruction appended to a run's launch prompt.
 
     The command is written out literally, not left to an env var, so a session
@@ -361,12 +365,27 @@ def _finish_block(run_id: int, linked: bool = False) -> str:
     it records leaves regin holding the state from before its own work. An
     unlinked run is told nothing about a tracker: there is no issue to update,
     and the instruction would be noise it has to resolve.
+
+    A native run is told to merge its slice back first instead. Its work only
+    reaches the rest of the feature through that merge, so a run reporting
+    finished on an unmerged branch releases its dependents onto a base that
+    does not carry it. The base branch is named when the run was armed with
+    one; without it the instruction still stands, unnamed.
     """
-    order = (
-        "Before you run it: record the work on the linked issue and move its "
-        "state — regin re-reads the issue when this command lands, and a "
-        "state you change afterwards will not reach the task.\n"
-    ) if linked else ""
+    if linked:
+        order = (
+            "Before you run it: record the work on the linked issue and move "
+            "its state — regin re-reads the issue when this command lands, "
+            "and a state you change afterwards will not reach the task.\n"
+        )
+    else:
+        target = f"`{base}`" if base else "the branch this run was based on"
+        order = (
+            f"Before you run it: merge this run's work back into {target} — "
+            "that merge is a precondition of reporting finished, not an "
+            "optional step, because whatever depends on this task is released "
+            "onto that branch and sees only what has landed there.\n"
+        )
     return (
         "\n\n<finish>\n"
         "This work was launched from a regin task. Running the command below "
@@ -555,7 +574,22 @@ def _prompt(task: dict, run_id: int, params: Optional[dict] = None) -> str:
     return (_invocation(params or {}) + text[:PROMPT_MAX]
             + _tracker_block(feature) + _followup_block(task["id"])
             + _feature_block(task)
-            + _finish_block(run_id, linked=remote))
+            + _finish_block(run_id, linked=remote, base=_armed_base(params)))
+
+
+def _armed_base(params: Optional[dict]) -> str:
+    """The branch this run's worktree was cut from, as the prompt should name.
+
+    Read only when a branch was armed too: `_launch_kwargs` builds a worktree
+    only for an armed branch, so a lone `base` belongs to no tree this run is
+    in — naming it would tell the agent to merge into a branch it was never
+    based on.
+    """
+    spec = (params or {}).get("worktree")
+    if not isinstance(spec, dict) or not spec.get("branch"):
+        return ""
+    base = spec.get("base")
+    return base if isinstance(base, str) else ""
 
 
 def _invocation(params: dict) -> str:
@@ -655,6 +689,11 @@ def _resolve_stuck(task_id: int) -> None:
     from lib.agent_messages import events
 
     events.resolve(TASK_READY_TRACE, f"task-ready:{task_id}")
+    # The chain-stopped card is keyed on the slice that broke, and emitted
+    # `once` for the same reason: re-arming and running that slice is the act
+    # that unbreaks the chain, so its card must retire here or a second break
+    # of the same slice would never be announced.
+    events.resolve(TASK_READY_TRACE, f"chain-stopped:{task_id}")
 
 
 def start_run(task_id: int) -> Optional[dict]:
@@ -676,8 +715,13 @@ def start_run(task_id: int) -> Optional[dict]:
                                        **kwargs)
     except (supervisor.LaunchRefused, ImportError) as exc:
         # A refusal is not a crash: the attempt never started, so it is settled
-        # here and the task stays armed rather than stranded as `running`.
-        complete_run(row["id"], status=RUN_STATUS_FAILED, exit_reason=str(exc))
+        # here and the task stays armed rather than stranded as `running`. The
+        # attempt still carries the `verify_cmd` it was armed with, so it
+        # settles with the code for a verify that did not run — a NULL there
+        # would read as "this attempt had no gate".
+        complete_run(row["id"], status=RUN_STATUS_FAILED, exit_reason=str(exc),
+                     verify_exit_code=verify.NOT_RUN if row["verify_cmd"]
+                     else None)
         raise RunRefused(f"launch refused: {exc}") from exc
     view = _attach_trace(row["id"], handle.trace_id)
     store.set_status(task_id, TASK_STATUS_RUNNING)
@@ -752,23 +796,201 @@ def _settled(outcome) -> tuple[str, str]:
             detail)
 
 
-def handle_completion(task_id: int, run_id: int, outcome) -> None:
+#: The three ways a settle path can stand with respect to the verify command:
+#: there is none, this caller holds the right to run it, or another caller
+#: already does and this one must not settle at all.
+NO_VERIFY, VERIFY_MINE, VERIFY_THEIRS = "none", "mine", "theirs"
+
+
+def _claim_verify(run_id: int) -> tuple[str, str, dict]:
+    """`(claim, command, params)` — stake the right to run this attempt's
+    `verify_cmd` before spending it.
+
+    Both settle paths can reach one attempt while it is still open: the agent
+    reports `task finish`, its verify starts, and the session then ends — so
+    `handle_completion` arrives minutes before `ended_at` is written. Keying
+    off `ended_at` would let it start the operator's suite a *second* time, in
+    the same tree, and throw one of the two verdicts away.
+
+    So the claim is the row's own `verify_exit_code`, stamped `NOT_RUN` by one
+    conditional `UPDATE` before the subprocess starts. The loser reads a
+    non-NULL code and stands down rather than settling, because a settle
+    without the verdict would strip the attempt of the gate it was armed with.
+    A process killed mid-verify leaves that stamp behind, which is exactly what
+    is true of it: the verify produced no verdict.
+    """
+    try:
+        with SessionLocal() as session:
+            row = session.get(AgentTaskRun, run_id)
+            command = (row.verify_cmd or "").strip() if row is not None else ""
+            params = store._decode_params(row.params_json) if row else {}
+    except Exception:  # noqa: BLE001 — a gate we cannot read is one we must not skip
+        # Standing down, not settling. Invariant 4 is written over the row, not
+        # over what this reader managed to load: an attempt whose `verify_cmd`
+        # column we failed to read still has one, and settling on the agent's
+        # own word would report a pass for a verify nobody ran.
+        log.error("task_verify_unreadable", run_id=run_id, exc_info=True)
+        return VERIFY_THEIRS, "", {}
+    if not command:
+        return NO_VERIFY, "", {}
+    try:
+        with SessionLocal() as session:
+            claimed = session.execute(
+                update(AgentTaskRun)
+                .where(AgentTaskRun.id == run_id,
+                       AgentTaskRun.verify_exit_code.is_(None))
+                .values(verify_exit_code=verify.NOT_RUN)).rowcount
+            session.commit()
+    except Exception:  # noqa: BLE001 — a gate we cannot stake is one we must not skip
+        # Standing down is the only safe answer once a command has been read:
+        # settling here would report a pass for a verify nobody ran, and
+        # running it unclaimed could spend it twice.
+        log.error("task_verify_claim_failed", run_id=run_id, exc_info=True)
+        return VERIFY_THEIRS, "", {}
+    if not claimed:
+        log.write("task_verify_already_claimed", run_id=run_id)
+        return VERIFY_THEIRS, "", {}
+    return VERIFY_MINE, command, params
+
+
+def _is_open(run_id: int) -> bool:
+    """Whether this attempt is still unsettled — the difference between a
+    verify someone else is running and a run that settled minutes ago."""
+    try:
+        with SessionLocal() as session:
+            row = session.get(AgentTaskRun, run_id)
+            return row is not None and row.ended_at is None
+    except Exception:  # noqa: BLE001 — a report line, never a decision
+        log.error("task_run_openness_unreadable", run_id=run_id, exc_info=True)
+        return True
+
+
+def _verify_cwd(params: dict) -> Optional[str]:
+    """The tree the attempt ran in — looked up, never created.
+
+    Raises when the branch it was armed with no longer has a tree: verifying a
+    checkout materialised at settle time would grade the branch's committed
+    state, which is exactly the work the attempt may have failed to produce.
+
+    An attempt armed with no tree at all verifies in the project root, never in
+    whatever directory the server happens to have been started in.
+    """
+    spec = (params or {}).get("worktree") or {}
+    anchor = params.get("cwd") or str(settings.project_root)
+    if not spec.get("branch"):
+        return anchor
+    found = worktree.existing_worktree(anchor, spec["branch"])
+    if found is None:
+        raise RunRefused(f"no worktree for {spec['branch']!r}")
+    return found["path"]
+
+
+def _apply_verdict(command: str, params: dict, status: str,
+                   reason: str) -> tuple[str, str, Optional[int]]:
+    """`(status, reason, verify_exit_code)` once the verify has had its say.
+
+    With no command the run's own result stands and the code is NULL — that
+    NULL is what keeps "no gate" distinguishable from "the gate passed". With
+    one, the command is the arbiter and always leaves a code behind: the run
+    answering for itself is the thing a `verify_cmd` was armed to override.
+    """
+    if not command:
+        return status, reason, None
+    try:
+        cwd = _verify_cwd(params)
+    except Exception as exc:  # noqa: BLE001 — a tree we cannot reach is a failed verify
+        verdict = verify.Verdict(verify.NOT_RUN, f"verify did not run: {exc}")
+    else:
+        verdict = verify.run_verify(command, cwd=cwd)
+    return (RUN_STATUS_DONE if verdict.passed else RUN_STATUS_FAILED,
+            verdict.reason, verdict.exit_code)
+
+
+def _settle_and_fire(task_id: int, run_id: int, status: str, reason: str,
+                     command: str, params: dict,
+                     *, resync: bool = False) -> tuple[bool, list[int]]:
+    """Verify, settle, fire. The terminal write is in a `finally` because a
+    settle that does not happen outlives this process, and one that happens
+    wrong does not — and `code` starts at the did-not-run value so even a
+    settle written out of that `finally` leaves the gate accounted for."""
+    code = verify.NOT_RUN if command else None
+    try:
+        status, reason, code = _apply_verdict(command, params, status, reason)
+    finally:
+        ended = complete_run(run_id, status=status, exit_reason=reason,
+                             task_status=_TASK_STATUS_FOR[status],
+                             verify_exit_code=code)
+    if not ended:
+        return False, []
+    if resync:
+        _resync_feature(task_id)
+    return True, fire_ready_dependents(task_id)
+
+
+#: Verifies still in flight, by run id. A settle that happens on a worker
+#: thread is still a settle a caller may need to see, and a registry makes that
+#: wait a join on the exact run rather than a poll for its effect.
+_verifying: dict[int, Thread] = {}
+
+
+def _spawn_verify(args: tuple, *, resync: bool) -> Thread:
+    """Hand one claimed verify to a worker thread and register it.
+
+    Registered before it starts, so a caller that asks the instant after this
+    returns cannot be told there is nothing to wait for.
+    """
+    run_id = args[1]
+
+    def _work() -> None:
+        try:
+            _settle_and_fire(*args, resync=resync)
+        finally:
+            _verifying.pop(run_id, None)
+
+    worker = Thread(target=_work, daemon=True, name=f"verify-run-{run_id}")
+    _verifying[run_id] = worker
+    worker.start()
+    return worker
+
+
+def wait_for_verify(run_id: int, timeout: Optional[float] = None) -> None:
+    """Block until the verify settling `run_id` has finished, if one is running.
+
+    Absent from the registry means the settle already landed, so this is a join
+    on a named thread and never a poll for a condition.
+    """
+    worker = _verifying.get(run_id)
+    if worker is not None:
+        worker.join(timeout)
+
+
+def handle_completion(task_id: int, run_id: int, outcome) -> Optional[Thread]:
     """The run's own completion path: settle the attempt, then fire whatever it
     unblocked.
 
-    Runs on the SDK loop's thread (`RunHandle.add_done_callback`), so it must
-    not block. The terminal write is in a `finally` because reading the outcome
-    can fail and a row left claiming `running` outlives this process — settling
-    it wrong is recoverable, not settling it at all is not.
+    Runs on the SDK loop's thread (`RunHandle.add_done_callback`), which every
+    other live run shares, so it must not block — and a `verify_cmd` is a test
+    suite, measured in minutes. So an attempt with one hands the verify and the
+    settle to a worker thread and returns at once; an attempt without one still
+    settles inline, where the caller can see it happen. The thread comes back
+    so a caller that needs the verdict can wait for it.
+
+    Arriving second is the common case, not the exception: the agent's own
+    `task finish` settles the work, and the session it settled from ends here
+    afterwards. A verify already claimed elsewhere is therefore left alone.
     """
     status, reason = RUN_STATUS_FAILED, "run ended"
     try:
         status, reason = _settled(outcome)
     finally:
-        ended = complete_run(run_id, status=status, exit_reason=reason,
-                             task_status=_TASK_STATUS_FOR[status])
-    if ended:
-        fire_ready_dependents(task_id)
+        claim, command, params = _claim_verify(run_id)
+        args = (task_id, run_id, status, reason, command, params)
+        worker = None
+        if claim == VERIFY_MINE:
+            worker = _spawn_verify(args, resync=False)
+        elif claim == NO_VERIFY:
+            _settle_and_fire(*args)
+    return worker
 
 
 # ── firing ───────────────────────────────────────────────────
@@ -789,6 +1011,62 @@ def _announce_stuck(task: dict, why: str) -> None:
               f"is done, but it could not start: {why}. It is still armed."),
         key=f"task-ready:{task['id']}",
         links=[{"label": "Open Tasks", "href": "/tasks"}], once=True)
+
+
+#: The statuses a dependent can hold while a failed slice is what stands
+#: between it and running. Invariant 6 is about the cascade, not about `armed`.
+_PARKED = (TASK_STATUS_ARMED, TASK_STATUS_QUEUED)
+
+
+def _announce_chain_stopped(blocker: dict, parked: list[int]) -> None:
+    """Tell the operator which slice stopped a cascade.
+
+    `blocking` treats "not done" as one answer, so a failed dependency parks
+    its dependents in `armed` looking exactly like a normal wait. It is not
+    one: nothing is coming, and only a human re-arming that slice will start
+    the chain again. The card names the slice rather than the dependents
+    because that is the row to act on.
+    """
+    from lib.agent_messages import events
+
+    waiting = ", ".join(str(task_id) for task_id in parked)
+    events.emit(
+        "task.chain_stopped", trace_id=TASK_READY_TRACE,
+        title=f"Chain stopped at: {blocker['title'][:80]}",
+        body=(f"Task {blocker['id']} — **{blocker['title']}** — failed, and "
+              f"{len(parked)} task(s) still wait on it: {waiting}. They stay "
+              f"armed, but nothing will release them until "
+              f"{blocker['id']} runs again."),
+        key=f"chain-stopped:{blocker['id']}",
+        links=[{"label": "Open Tasks", "href": "/tasks"}], once=True)
+
+
+def _announce_broken_chains(task_id: int, fired: list[int]) -> None:
+    """Report every failed slice that is holding a dependent of `task_id`.
+
+    Read after the firing, not instead of it: a dependent that launched is not
+    blocked by anything, and a dependent still waiting on an *unfinished*
+    slice is waiting normally. Only a `failed` blocker is the broken chain.
+
+    The failed slice is not necessarily the one that just completed — a
+    dependent can wait on two slices, one landing now and one that failed
+    earlier — so the blocker is looked up per dependent.
+    """
+    by_blocker: dict[int, tuple[dict, list[int]]] = {}
+    for dependent in deps.dependents(task_id):
+        if dependent in fired:
+            continue
+        task = store.get_task(dependent)
+        # Parked, not merely unstarted: `idea` is a backlog row nobody asked
+        # to run, and anything settled or live is not waiting on this edge.
+        if task is None or task["status"] not in _PARKED:
+            continue
+        for blocker in deps.failed_blockers(dependent):
+            by_blocker.setdefault(blocker["id"], (blocker, []))[1].append(
+                dependent)
+    for blocker, parked in by_blocker.values():
+        _announce_chain_stopped(blocker, parked)
+        log.write("task_chain_stopped", task_id=blocker["id"], parked=parked)
 
 
 def _fire(task_id: int) -> bool:
@@ -844,6 +1122,10 @@ def fire_ready_dependents(task_id: int) -> list[int]:
             log.error("task_fire_failed", task_id=dependent, exc_info=True)
     if fired:
         log.write("task_dependents_fired", task_id=task_id, fired=fired)
+    try:
+        _announce_broken_chains(task_id, fired)
+    except Exception:  # noqa: BLE001 — a notice cannot sink a completion
+        log.error("task_chain_notice_failed", task_id=task_id, exc_info=True)
     return fired
 
 
@@ -863,7 +1145,10 @@ def finish_run(run_id: int, *, status: str = RUN_STATUS_DONE,
 
     Idempotent, and safe against the callback that may still arrive: both paths
     settle through `complete_run`, whose `ended_at` guard picks one winner and
-    whose return value is what gates the firing.
+    whose return value is what gates the firing. An attempt with a `verify_cmd`
+    is decided a step earlier, by `_claim_verify` — `ended_at` is not written
+    until the verify returns, so it cannot arbitrate the window the verify runs
+    in.
     """
     if status not in _TASK_STATUS_FOR:
         raise ValueError(f"unknown finish status {status!r}")
@@ -872,20 +1157,32 @@ def finish_run(run_id: int, *, status: str = RUN_STATUS_DONE,
         task_id = row.task_id if row is not None else None
     if task_id is None:
         return {"run_id": run_id, "task_id": None, "settled": False,
-                "fired": []}
-    settled = complete_run(run_id, status=status,
-                           exit_reason=reason or "agent signalled finish",
-                           task_status=_TASK_STATUS_FOR[status])
-    if settled:
-        # Only this path refreshes the remote: it is the one that runs on a
-        # request thread. `handle_completion` runs on the SDK loop's thread
-        # and cannot spend a round trip against a tracker.
-        _resync_feature(task_id)
-    fired = fire_ready_dependents(task_id) if settled else []
+                "verifying": False, "fired": []}
+    reason = reason or "agent signalled finish"
+    claim, command, params = _claim_verify(run_id)
+    args = (task_id, run_id, status, reason, command, params)
+    if claim != NO_VERIFY:
+        # The verify is what the settle must carry, and it is a test suite: the
+        # caller is the agent's own `regin task finish`, on a short HTTP
+        # timeout, so waiting for it here would report a failure to an agent
+        # whose work is fine. `VERIFY_THEIRS` stands down for the same reason
+        # in reverse — someone else's verify owns this settle, unless that
+        # verify already finished, in which case this is simply a second report.
+        if claim == VERIFY_MINE:
+            _spawn_verify(args, resync=True)
+        verifying = claim == VERIFY_MINE or _is_open(run_id)
+        log.write("task_run_finish_verifying", run_id=run_id, task_id=task_id,
+                  claim=claim, verifying=verifying)
+        return {"run_id": run_id, "task_id": task_id, "settled": False,
+                "verifying": verifying, "fired": []}
+    # Only this path refreshes the remote: it is the one that runs on a request
+    # thread. `handle_completion` runs on the SDK loop's thread and cannot
+    # spend a round trip against a tracker.
+    settled, fired = _settle_and_fire(*args, resync=True)
     log.write("task_run_finish_signalled", run_id=run_id, task_id=task_id,
               status=status, settled=settled, fired=fired)
     return {"run_id": run_id, "task_id": task_id, "settled": settled,
-            "fired": fired}
+            "verifying": False, "fired": fired}
 
 
 def _resync_feature(task_id: int) -> None:
@@ -903,11 +1200,12 @@ def _resync_feature(task_id: int) -> None:
     from lib.features import store as feature_store  # noqa: PLC0415
     from lib.features import sync  # noqa: PLC0415
 
-    feature = feature_store.feature_of_task(task_id)
-    if feature is None or not sync.is_remote(feature):
-        return
+    feature = None
     try:
+        feature = feature_store.feature_of_task(task_id)
+        if feature is None or not sync.is_remote(feature):
+            return
         sync.refresh(feature.id)
     except Exception:  # noqa: BLE001 — a remote cannot sink the finish
         log.error("feature_resync_failed", task_id=task_id,
-                  feature_id=feature.id, exc_info=True)
+                  feature_id=getattr(feature, "id", None), exc_info=True)

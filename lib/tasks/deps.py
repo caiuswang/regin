@@ -20,6 +20,7 @@ from lib.activity_log import get_activity_logger
 from lib.orm import SessionLocal
 from lib.orm.models.tasks import (
     AgentTask, AgentTaskDep, TASK_STATUS_ARMED, TASK_STATUS_DONE,
+    TASK_STATUS_FAILED,
 )
 from lib.tasks.capture import CaptureRejected
 
@@ -167,6 +168,27 @@ def blocking(task_id: int) -> list[int]:
             .where(AgentTask.id.in_(deps))
             .where(AgentTask.status == TASK_STATUS_DONE)).all())
     return sorted(set(deps) - done)
+
+
+def failed_blockers(task_id: int) -> list[dict]:
+    """The dependencies of `task_id` that settled `failed`, id and title.
+
+    The half of `blocking` that is not a wait. An unfinished dependency will
+    fire this task when it lands; a failed one never will, so the two have to
+    be told apart by anything that reports why a task is parked.
+    """
+    with SessionLocal() as session:
+        wanted = session.exec(
+            select(AgentTaskDep.depends_on_id)
+            .where(AgentTaskDep.task_id == task_id)).all()
+        if not wanted:
+            return []
+        rows = session.exec(
+            select(AgentTask)
+            .where(AgentTask.id.in_(set(wanted)))
+            .where(AgentTask.status == TASK_STATUS_FAILED)
+            .order_by(AgentTask.id)).all()
+    return [{"id": row.id, "title": row.title} for row in rows]
 
 
 def _node(task: AgentTask, blocked_by: list[int]) -> dict:

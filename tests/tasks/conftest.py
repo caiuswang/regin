@@ -6,7 +6,7 @@ import pytest
 
 from tests.feature_ledger_fixtures import (  # noqa: F401
     counted_queries, defect_row, feature_row, no_tracker, run_alias,
-    session_row,
+    session_row, task_lane,
 )
 
 

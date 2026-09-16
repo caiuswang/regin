@@ -24,6 +24,8 @@ CLAUDE.local.md
 # topic.local.json overlay (proposal approvals / scans) plus
 # candidates/ and proposals/ stay local.
 .regin/*
+# the project's command table is the project's, not the machine's
+!.regin/commands.json
 !.regin/topics/
 .regin/topics/*
 !.regin/topics/topics/

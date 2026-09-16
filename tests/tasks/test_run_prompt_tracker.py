@@ -93,3 +93,48 @@ def test_a_remote_features_run_is_told_to_move_the_issue_first(
 
     assert "record the work on the linked issue" in linked
     assert "linked issue" not in unlinked
+
+
+def test_native_finish_block_requires_merging_back_first():
+    """R6, native leg. A slice's work reaches the feature only through the
+    merge back, so a run that reports finished on an unmerged branch releases
+    its dependents onto a base that does not carry it."""
+    block = runs._finish_block(1, linked=False, base="f76/integration")
+
+    assert "merge this run's work back into `f76/integration`" in block
+    assert "precondition" in block
+    assert block.index("merge this run's work back") < block.index(
+        "task finish")
+
+
+def test_native_finish_block_without_a_base_still_requires_the_merge():
+    unnamed = runs._finish_block(1, linked=False)
+
+    assert "merge this run's work back into the branch this run was based on" \
+        in unnamed
+
+
+def test_remote_finish_block_is_unchanged():
+    """R6 changes the native leg only. A linked run still reads the issue
+    update as its precondition, and gains no merge instruction."""
+    linked = runs._finish_block(1, linked=True)
+
+    assert "record the work on the linked issue and move its state" in linked
+    assert "merge" not in linked.lower()
+
+
+@pytest.mark.parametrize("spec", [
+    None, {}, {"base": "master"}, {"branch": "f76/s3"},
+    {"branch": "f76/s3", "base": None}, "not-a-dict",
+])
+def test_a_run_with_no_armed_base_names_no_branch(spec):
+    """A `base` without a `branch` belongs to no worktree this run is in —
+    naming it would send the agent at a branch it was never based on."""
+    assert runs._armed_base({"worktree": spec}) == ""
+    assert runs._armed_base(None) == ""
+
+
+def test_an_armed_worktree_names_its_base():
+    assert runs._armed_base(
+        {"worktree": {"branch": "f76/s3", "base": "f76/integration"}}
+    ) == "f76/integration"

@@ -84,6 +84,8 @@ class Ledger:
     claimed_at: Optional[str]
     cost: cost_module.FeatureCost
     work_time: cost_module.WorkTime
+    #: Invariant 7 — the one figure the pipeline is judged on.
+    human_prompts: cost_module.HumanPrompts
     tokens: dict
     rows: list
     traceless_runs: int
@@ -114,6 +116,7 @@ class Ledger:
                       "escapes": self.escapes.escapes},
             "cost": self.cost.to_dict(),
             "work_time": self.work_time.to_dict(),
+            "human_prompts": self.human_prompts.to_dict(),
             "tokens": dict(self.tokens),
             "sessions": {
                 "rows": [row.to_dict() for row in self.rows],
@@ -169,6 +172,7 @@ def build(feature_id: int) -> Ledger:
         claimed_at=events_module.claimed_at(feature_id),
         cost=cost,
         work_time=work_time,
+        human_prompts=cost_module.human_prompts(attributed, facts),
         tokens=tokens,
         rows=rows,
         traceless_runs=attribution.traceless_runs(feature_id),
@@ -233,6 +237,14 @@ def render(report: Ledger) -> list[str]:
 
     lines.append(f"work time  {_duration(report.work_time.active_work_ms)}")
     lines.extend(filter(None, [_gap_line(report.work_time.gaps)]))
+    human = report.human_prompts
+    lines.append(
+        f"human prompts  {human.prompts} across "
+        f"{_plural(human.sessions, 'human session')}")
+    if human.run_sessions:
+        lines.append(f"    {_plural(human.run_sessions, 'session')} excluded, "
+                     "produced by a task run")
+    lines.extend(filter(None, [_gap_line(human.gaps)]))
     lines.append("tokens  " + " · ".join(
         f"{name.replace('_', '-')} {value:,}"
         for name, value in report.tokens.items()))

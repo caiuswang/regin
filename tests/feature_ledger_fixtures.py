@@ -27,16 +27,16 @@ from lib.orm import SessionLocal
 def session_row():
     """Insert a `sessions` row, returning its trace id."""
     def _make(trace_id: str, *, cost=None, title="a session",
-              started="2026-09-01 10:00:00", active_work_ms=1000,
+              started="2026-09-01 10:00:00", active_work_ms=1000, prompts=0,
               input_tokens=None, output_tokens=None, cache_read_tokens=None,
               cache_creation_tokens=None):
         with SessionLocal() as session:
             session.exec(text(
                 "INSERT INTO sessions (trace_id, title, started_at, last_seen,"
                 " cost_usd, active_work_ms, input_tokens, output_tokens,"
-                " cache_read_tokens, cache_creation_tokens)"
-                " VALUES (:t, :ti, :s, :s, :c, :a, :i, :o, :cr, :cc)"
-            ).bindparams(t=trace_id, ti=title, s=started, c=cost,
+                " cache_read_tokens, cache_creation_tokens, prompts)"
+                " VALUES (:t, :ti, :s, :s, :c, :a, :i, :o, :cr, :cc, :p)"
+            ).bindparams(t=trace_id, ti=title, s=started, c=cost, p=prompts,
                          a=active_work_ms, i=input_tokens, o=output_tokens,
                          cr=cache_read_tokens, cc=cache_creation_tokens))
             session.commit()

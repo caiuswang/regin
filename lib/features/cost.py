@@ -46,6 +46,7 @@ class SessionFacts:
     started_at: Optional[str] = None
     cost_usd: Optional[float] = None
     active_work_ms: Optional[int] = None
+    prompts: int = 0
     tokens: dict = field(default_factory=dict)
     known: bool = True
 
@@ -99,6 +100,47 @@ class WorkTime:
 
 
 @dataclass(frozen=True)
+class HumanPrompts:
+    """How many times a person had to type at this feature (invariant 7).
+
+    The population is decided by **identity, not prose and not the clock**: a
+    session counts as human exactly when no row in `agent_task_runs` produced
+    it. An agent run that turns ten times is one task launch, not ten human
+    interventions, so counting its prompts would make the very figure this
+    feature is judged on grow with agent chattiness.
+
+    `run_sessions` rides alongside rather than being silently dropped — a
+    feature whose whole session list was agent runs reads `0 prompts across 0
+    sessions`, and without the excluded count that is indistinguishable from a
+    feature nobody touched. `gaps` carries the same duty as every other figure
+    here: a declared trace regin never captured contributes nothing and must
+    not read as a session that was typed at zero times.
+    """
+
+    prompts: int
+    sessions: int
+    run_sessions: int
+    gaps: dict = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        return {"prompts": self.prompts, "sessions": self.sessions,
+                "run_sessions": self.run_sessions, "gaps": dict(self.gaps)}
+
+
+def human_prompts(attributed, facts: dict) -> HumanPrompts:
+    """Sum `sessions.prompts` over the attributed sessions no run produced."""
+    from lib.features import attribution  # noqa: PLC0415
+    traces = [row.trace_id for row in attributed]
+    produced_by_a_run = attribution.run_traces(traces)
+    human = [facts[t] for t in traces if t not in produced_by_a_run]
+    return HumanPrompts(
+        prompts=sum(f.prompts for f in human),
+        sessions=len(human),
+        run_sessions=len(traces) - len(human),
+        gaps={"session_not_captured": sum(1 for f in human if not f.known)})
+
+
+@dataclass(frozen=True)
 class Coverage:
     """Declared sessions and dollars over all of them.
 
@@ -136,13 +178,13 @@ def facts_for(trace_ids) -> dict:
     with SessionLocal() as session:
         rows = session.exec(text(
             f"SELECT trace_id, title, started_at, cost_usd, active_work_ms, "
-            f"{columns} FROM sessions WHERE trace_id IN :ids"
+            f"prompts, {columns} FROM sessions WHERE trace_id IN :ids"
         ).bindparams(bindparam("ids", ids, expanding=True))).all()
     for row in rows:
         out[row[0]] = SessionFacts(
             trace_id=row[0], title=row[1], started_at=row[2],
-            cost_usd=row[3], active_work_ms=row[4],
-            tokens=dict(zip(_TOKEN_COLUMNS, row[5:])))
+            cost_usd=row[3], active_work_ms=row[4], prompts=int(row[5] or 0),
+            tokens=dict(zip(_TOKEN_COLUMNS, row[6:])))
     return out
 
 

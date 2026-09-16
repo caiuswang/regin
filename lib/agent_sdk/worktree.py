@@ -218,6 +218,23 @@ def ensure_worktree(cwd: str | Path, branch: str, base: str = "") -> dict:
     return _result(root, path, branch, created=True)
 
 
+def existing_worktree(cwd: str | Path, branch: str) -> dict | None:
+    """The tree already holding `branch`, or None — never creating one.
+
+    `ensure_worktree`'s create-if-missing is right at launch and wrong
+    afterwards: a tree materialised later holds the branch's committed state,
+    not the work that ran in the tree that is now gone, and a caller asking
+    "where did this run happen" must be told nowhere rather than handed a
+    fresh checkout that looks like an answer.
+    """
+    root = repo_root(cwd)
+    branch = branch.strip()
+    path = worktrees_root(root) / slugify(branch)
+    if _registered(root).get(str(path)) != branch:
+        return None
+    return _result(root, path, branch, created=False)
+
+
 def _result(root: Path, path: Path, branch: str, *, created: bool) -> dict:
     return {"path": str(path), "branch": branch, "repo_root": str(root),
             "created": created}

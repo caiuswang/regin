@@ -1,0 +1,6 @@
+{
+  "test": ".venv/bin/python -m pytest -q -n auto --dist=loadfile",
+  "migrate": ".venv/bin/python cli/regin.py migrate",
+  "e2e": "cd frontend && ./node_modules/.bin/playwright test",
+  "reasons": {}
+}

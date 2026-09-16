@@ -28,6 +28,8 @@ task used to BE the feature, which is exactly the overload regin:82 removed.
 from __future__ import annotations
 
 import json as _json
+import os
+import sys
 import urllib.error
 import urllib.request
 from typing import List, Optional
@@ -39,7 +41,16 @@ from lib.orm import SessionLocal
 from lib.orm.models.sync import Repo
 from lib.orm.models.tasks import TASK_PRIORITIES
 from lib.tasks import store
+from lib.tasks.commands import (
+    DRAFT_EXIT, CommandsAbsent, CommandsRejected, load_project_commands,
+    print_draft,
+)
 
+
+# Its own exit code, like the command table's draft: a run that refused a
+# slice wrote the rest, and a caller has to tell that apart from both a clean
+# pass and a wholesale refusal without parsing prose.
+REFUSED_SLICE_EXIT = 3
 
 tasks_app = typer.Typer(
     name="task",
@@ -230,9 +241,176 @@ def cmd_finish(
 
 
 def _render_finish(result: dict) -> None:
+    if result.get("verifying"):
+        print(f"run #{result['run_id']} reported; its verify command decides "
+              f"how it settles and is still running")
+        return
     if not result.get("settled"):
         print(f"run #{result['run_id']} was already settled — nothing to do")
         return
     fired = result.get("fired") or []
     print(f"run #{result['run_id']} settled; task #{result['task_id']} closed")
     print(f"released: {', '.join(f'#{t}' for t in fired) if fired else '—'}")
+
+
+@tasks_app.command(
+    "commands",
+    help="Show this project's command table, or a draft when it has none.",
+)
+def cmd_commands(
+    repo_root: str = typer.Option(".", "--repo", help="Project root to read."),
+):
+    root = os.path.abspath(repo_root)
+    try:
+        commands = load_project_commands(root)
+    except CommandsAbsent as absent:
+        # Its own exit code: both paths print JSON, and a caller must be able
+        # to tell a contract the project made from a guess nobody has agreed to.
+        print_draft(absent.draft, absent.path, sys.stdout)
+        raise typer.Exit(code=DRAFT_EXIT)
+    except CommandsRejected as rejected:
+        typer.echo(f"task commands: {rejected}", err=True)
+        raise typer.Exit(code=1)
+    print(_json.dumps(commands.to_json_obj(), indent=2, ensure_ascii=False))
+
+
+@tasks_app.command(
+    "slice-check",
+    help="Refuse or accept a feature's spec as sliceable, before the table "
+         "is written back.",
+)
+def cmd_slice_check(
+    feature: int = typer.Option(..., "--feature", help="Feature id to read."),
+):
+    """The first pass's gate, runnable on its own.
+
+    Exit 1 is a refusal with its reasons on stderr — a slicing session that
+    cannot see *why* a spec was refused rewrites the table and is refused
+    again.
+    """
+    from lib.features import store as feature_store  # noqa: PLC0415
+    from lib.tasks.slice_table import SliceTableError  # noqa: PLC0415
+    from lib.tasks.slicing import SlicingRefusal, check_slicing  # noqa: PLC0415
+
+    try:
+        row = feature_store.require(feature)
+    except feature_store.FeatureError as exc:
+        typer.echo(f"task slice-check: {exc}", err=True)
+        raise typer.Exit(code=2)
+    try:
+        rows = check_slicing(row.body or "")
+    except SlicingRefusal as refusal:
+        typer.echo(f"task slice-check: {refusal}", err=True)
+        for reason in refusal.missing:
+            typer.echo(f"  - {reason}", err=True)
+        raise typer.Exit(code=1)
+    except SliceTableError as broken:
+        typer.echo(f"task slice-check: {broken}", err=True)
+        raise typer.Exit(code=1)
+    print(_json.dumps({"feature": feature,
+                       "slices": [r.n for r in rows]},
+                      indent=2, ensure_ascii=False))
+
+
+@tasks_app.command(
+    "transcribe",
+    help="Turn a feature spec's slice table into tasks and dependency edges.",
+)
+def cmd_transcribe(
+    feature_id: int = typer.Argument(..., help="The feature whose spec holds "
+                                     "the slice table."),
+    branch_prefix: str = typer.Option(None, "--branch-prefix",
+                                      help="Branch stem for the proposed arm "
+                                      "parameters; defaults to f<ID>/."),
+    as_json: bool = typer.Option(False, "--json", help="Emit the raw result."),
+):
+    from lib.features import store as feature_store
+    from lib.tasks.transcribe import TranscribeRefused, transcribe
+
+    feature = feature_store.get(feature_id)
+    if feature is None:
+        typer.echo(f"task transcribe: no feature #{feature_id}", err=True)
+        raise typer.Exit(code=1)
+    if not (feature.body or "").strip():
+        typer.echo(f"task transcribe: feature #{feature_id} has no spec — the "
+                   "slice table is the plan and there is nowhere else to read "
+                   "it from", err=True)
+        raise typer.Exit(code=1)
+    try:
+        result = transcribe(feature_id, feature.body,
+                            branch_prefix=branch_prefix or f"f{feature_id}/")
+    except TranscribeRefused as refused:
+        typer.echo(f"task transcribe: refused — {refused}", err=True)
+        raise typer.Exit(code=1)
+    _emit(result.to_json_obj(), as_json, _render_transcription)
+    if result.refused:
+        raise typer.Exit(code=REFUSED_SLICE_EXIT)
+
+
+def _render_transcription(payload: dict) -> None:
+    print(f"feature #{payload['feature_id']}: "
+          f"{len(payload['slices'])} slice(s)")
+    for entry in payload["slices"]:
+        task = f"#{entry['task_id']}" if entry["task_id"] else "—"
+        line = f"  {entry['n']:<4} {entry['action']:<9} {task}"
+        if entry["deps"]:
+            line += "  after " + ", ".join(f"#{d}" for d in entry["deps"])
+        print(line)
+        if entry["detail"]:
+            print(f"       {entry['detail']}")
+        if entry["arm"]:
+            worktree = entry["arm"]["worktree"]
+            print(f"       arm: {worktree['branch']} off {worktree['base']} "
+                  f"· {entry['arm']['skill']['name']}")
+
+
+@tasks_app.command(
+    "tail",
+    help="The three chain-tail slice rows (integrate → migrate → verify), "
+         "rendered from this project's command table for the first pass to "
+         "paste into the spec.",
+)
+def cmd_tail(
+    feature: int = typer.Option(..., "--feature", help="Feature id to read."),
+    repo_root: str = typer.Option(".", "--repo",
+                                  help="Project root holding the command table."),
+    base: Optional[str] = typer.Option(
+        None, "--base", help="Integration branch the tail runs on; "
+                             "defaults to f<ID>/integration."),
+):
+    """Print the rows; writing them back is the slicing session's act.
+
+    The tail is the first pass's output, so this prints markdown a human
+    reviews rather than editing `features.body` itself — the spec's
+    revision history is the approval record, and a command that edited the
+    spec would put rows into it nobody read.
+    """
+    from lib.features import store as feature_store  # noqa: PLC0415
+    from lib.tasks.slice_table import SliceTableError, parse_slice_table  # noqa: PLC0415
+    from lib.tasks.slicing import render_slice_table  # noqa: PLC0415
+    from lib.tasks.tail import tail_slice_rows  # noqa: PLC0415
+
+    root = os.path.abspath(repo_root)
+    try:
+        row = feature_store.require(feature)
+    except feature_store.FeatureError as exc:
+        typer.echo(f"task tail: {exc}", err=True)
+        raise typer.Exit(code=2)
+    try:
+        commands = load_project_commands(root)
+    except CommandsAbsent as absent:
+        typer.echo(f"task tail: no command table at {absent.path} — every "
+                   "command in the tail is read from it. Run `regin task "
+                   "commands` for a draft, agree it, then re-run.", err=True)
+        raise typer.Exit(code=1)
+    except CommandsRejected as rejected:
+        typer.echo(f"task tail: {rejected}", err=True)
+        raise typer.Exit(code=1)
+    try:
+        rows = parse_slice_table(row.body or "")
+    except SliceTableError as broken:
+        typer.echo(f"task tail: {broken}", err=True)
+        raise typer.Exit(code=1)
+    tail_base = base or f"f{feature}/integration"
+    tail = tail_slice_rows(rows, commands, tail_base)
+    print(render_slice_table(tail, tail_base))

@@ -179,3 +179,74 @@ def test_coverage_is_reported_wherever_the_ledger_is_read(
     assert report.coverage.declared_usd == 10.00
     assert report.coverage.all_usd == 100.00
     assert "coverage" in rendered.lower()
+
+
+def test_human_prompts_sum_only_sessions_no_run_produced(
+        session_row, attributing_trace, task_lane):
+    """Invariant 7 — the figure counts typing, not agent turns.
+
+    Two declared human sessions and five task runs: the runs are excluded by
+    *identity* (an `agent_task_runs` row produced them), so a chatty agent
+    cannot inflate the number the pipeline is judged on.
+    """
+    key = _feature()
+    for trace, prompts in (("h1", 3), ("h2", 5)):
+        session_row(trace, prompts=prompts)
+        _declare(key, trace, attributing_trace)
+    runs = [(f"r{n}", "done") for n in range(1, 6)]
+    for trace, _ in runs:
+        session_row(trace, prompts=40)
+    task_lane(9001, key, runs)
+
+    report = ledger.build(key)
+
+    assert len(report.rows) == 7
+    assert report.human_prompts.prompts == 8
+    assert report.human_prompts.sessions == 2
+    assert report.human_prompts.run_sessions == 5
+
+
+def test_a_run_trace_declared_by_hand_is_still_a_run(
+        session_row, attributing_trace, task_lane):
+    """A declaration does not make a session human. The exclusion reads
+    `agent_task_runs`, so re-declaring a run's trace cannot smuggle its turns
+    into the human figure."""
+    key = _feature()
+    session_row("h1", prompts=2)
+    _declare(key, "h1", attributing_trace)
+    session_row("r1", prompts=40)
+    task_lane(9002, key, [("r1", "done")])
+    _declare(key, "r1", attributing_trace)
+
+    assert ledger.build(key).human_prompts.prompts == 2
+
+
+def test_a_run_counted_through_its_conversation_alias_is_excluded(
+        session_row, attributing_trace, task_lane, run_alias):
+    """The run recorded its own trace; the ledger counts the conversation it
+    drove. Both sides of the alias must read as agent-produced."""
+    key = _feature()
+    session_row("h1", prompts=4)
+    _declare(key, "h1", attributing_trace)
+    session_row("conv1", prompts=30)
+    run_alias("run1", "conv1")
+    task_lane(9003, key, [("run1", "done")])
+
+    report = ledger.build(key)
+    assert report.human_prompts.prompts == 4
+    assert report.human_prompts.run_sessions == 1
+
+
+def test_an_uncaptured_human_session_is_a_gap_not_a_zero(
+        session_row, attributing_trace):
+    """A declared trace `sessions` never held contributes no prompts, and says
+    so — the same rule the dollar figure keeps."""
+    key = _feature()
+    session_row("h1", prompts=6)
+    _declare(key, "h1", attributing_trace)
+    _declare(key, "ghost", attributing_trace)
+
+    human = ledger.build(key).human_prompts
+    assert human.prompts == 6
+    assert human.sessions == 2
+    assert human.gaps["session_not_captured"] == 1

@@ -1356,9 +1356,17 @@ class AgentRunner:
         running: measured against a live child, the gap between a task settling
         and the wake turn's first frame was 6.4s, and 15% of that run's gaps
         exceeded a quarter-second. A lull is therefore only taken as the end of
-        the conversation once nothing is in flight — while a task is still
-        running the wait runs to the `stop_grace_sec` deadline, because the
-        child has work it can still speak about.
+        the conversation once nothing is in flight.
+
+        `stop_grace_sec` bounds the *silence*, never the work. A delegated
+        agent routinely runs for minutes — one measured search subagent was
+        18s into its run when a 10s grace expired, and the teardown that
+        followed disconnected its parent: the one-shot run was filed
+        `exited`/"completed" (settling its task as done), and the killed child
+        never reached `SubagentStop`, leaving a marker-less agent the roster
+        reads as running. So the deadline is restarted for as long as the
+        ledger holds something, which cannot wait forever: only the task types
+        that reliably reach a terminal status are tracked (`_TaskLedger`).
 
         A crashed run has nothing to wait for, a dead stream has nothing left
         to send, and an operator's Stop asked for the session to end rather
@@ -1375,12 +1383,14 @@ class AgentRunner:
 
     async def _await_quiet(self, window: float) -> None:
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + max(float(settings.agent_sdk.stop_grace_sec
-                                           or 0), window)
+        grace = max(float(settings.agent_sdk.stop_grace_sec or 0), window)
+        deadline = loop.time() + grace
         while loop.time() < deadline:
             seen = self._frames
             await asyncio.sleep(window)
-            if self._frames == seen and not self._tasks.in_flight:
+            if self._tasks.in_flight:
+                deadline = loop.time() + grace
+            elif self._frames == seen:
                 return
 
     async def _close_reader(self) -> None:
