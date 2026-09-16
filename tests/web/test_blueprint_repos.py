@@ -136,3 +136,27 @@ def test_remove_repo_drops_db_rows(flask_client, tmp_db, tmp_path, isolated_sett
 
     body = flask_client.get("/api/repos").get_json()
     assert body == {"repos": []}
+
+
+def test_a_repo_tracking_two_branches_is_listed_once(flask_client):
+    """The outer join yields a row per tracked branch.
+
+    Without a per-repo guard that repo appears twice — a duplicate card on
+    /repos and a duplicate option in every picker built from this list.
+    """
+    from lib.orm import SessionLocal
+    from lib.orm.models.sync import Branch, Repo
+
+    with SessionLocal() as session:
+        repo = Repo(name="two-branches", path="/tmp/two-branches",
+                    is_active=1, default_branch="main")
+        session.add(repo)
+        session.commit()
+        session.refresh(repo)
+        session.add(Branch(repo_id=repo.id, name="main", is_tracked=1))
+        session.add(Branch(repo_id=repo.id, name="dev", is_tracked=1))
+        session.commit()
+
+    names = [r["name"] for r in
+             flask_client.get("/api/repos").get_json()["repos"]]
+    assert names.count("two-branches") == 1

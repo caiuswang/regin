@@ -1435,6 +1435,7 @@ async def run_session(trace_id: str, prompt: str, *,
                       options: client.RunOptions | None = None,
                       one_shot: bool = False,
                       resume: str | None = None,
+                      images: list | None = None,
                       prompt_announced: bool = False) -> None:
     """Launch and run `prompt`.
 
@@ -1459,7 +1460,7 @@ async def run_session(trace_id: str, prompt: str, *,
     # an empty queue, which is the same state it reaches between any two turns,
     # so `idle_timeout_sec` still reclaims one nobody comes back to.
     if prompt.strip():
-        runner.enqueue(prompt, waiting=False)
+        runner.enqueue(prompt, waiting=False, images=images)
     if one_shot:
         # The terminator queues behind the prompt, so the pump stops at the
         # end of that turn rather than waiting out the idle timeout.

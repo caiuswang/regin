@@ -30,9 +30,16 @@ export default defineConfig({
     proxy: {
       // Overridden to the E2E server by playwright's webServer env, so the
       // suite's browser traffic cannot reach the dev stack's database.
-      '/api': {
+      // A regex key, not a bare prefix: vite matches a plain '/api' as a path
+      // PREFIX, so the document request for the /api-keys page was proxied to
+      // Flask and answered with the built index.html, whose asset URLs 404 on
+      // the dev origin — a blank page with no app JS.
+      '^/api/': {
         target: process.env.REGIN_API_TARGET || 'http://localhost:8321',
         changeOrigin: true,
+        // The pane terminal is a WebSocket under /api; without this the
+        // upgrade is answered by vite's own HMR server and never reaches Flask.
+        ws: true,
       },
     },
   },

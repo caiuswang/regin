@@ -63,6 +63,9 @@ _KINDS: tuple[EventKind, ...] = (
               "proposal is queued."),
     EventKind("grade.finished", "note", False,
               "A session grade finished."),
+    EventKind("task.ready", "result", True,
+              "A task's dependencies are all done — it is armed and ready to "
+              "run."),
 )
 
 REGISTRY: dict[str, EventKind] = {k.kind: k for k in _KINDS}
@@ -71,10 +74,11 @@ REGISTRY: dict[str, EventKind] = {k.kind: k for k in _KINDS}
 # sessions — a card under one must not render a `/trace/sessions/<id>` link
 # (it 404s / shows a blank pane). Producers that group cards under a synthetic
 # sentinel register it here so the inbox card + every push channel omit the
-# dead link. Kept in sync with the producers' constants — currently just
-# content-drift's `lib.topics.content_drift.DRIFT_CARD_TRACE` — by
+# dead link. Kept in sync with the producers' constants — content-drift's
+# `lib.topics.content_drift.DRIFT_CARD_TRACE` and `task.ready`'s
+# `lib.tasks.runs.TASK_READY_TRACE` — by
 # `tests/agent_messages/test_events.py::test_drift_trace_is_registered_non_session`.
-NON_SESSION_TRACE_IDS: frozenset[str] = frozenset({"wiki-debt"})
+NON_SESSION_TRACE_IDS: frozenset[str] = frozenset({"wiki-debt", "agent-tasks"})
 
 
 def is_enabled(kind: str) -> bool:

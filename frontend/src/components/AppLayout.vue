@@ -78,8 +78,16 @@ onMounted(async () => {
 })
 
 function openPalette() {
-  paletteOpen.value = true
   navOpen.value = false
+  openSearch()
+}
+
+// The drawer's copy of the bubble. A phone has no keyboard, and on /live the
+// bubble itself stands down — without this, capture would be reachable there
+// only by navigating away, which is the interruption it exists to remove.
+function openCapture() {
+  navOpen.value = false
+  captureOpen.value = true
 }
 
 function handleLogout() {
@@ -129,6 +137,11 @@ const navGroups = computed(() => [
         ? [{ to: '/experiments', label: 'Experiments', icon: 'experiments' }]
         : []),
       { to: '/plans', label: 'Plans', icon: 'plans' },
+      { to: '/tasks', label: 'Tasks', exact: true, icon: 'tasks' },
+      // No role conditional: the ledger read is authenticated-any-role, and
+      // nothing in its payload varies by who is asking.
+      { to: '/features', label: 'Features', exact: true, icon: 'features' },
+      { to: '/defects', label: 'Defects', exact: true, icon: 'defects' },
     ],
   },
   ...(diagEnabled.value ? [{
@@ -142,6 +155,9 @@ const navGroups = computed(() => [
     label: 'System',
     links: [
       { to: '/settings', label: 'Settings', icon: 'settings' },
+      // Minting a credential that authenticates without a login is an admin
+      // act (the /api/api-keys routes are require_role('admin')).
+      ...(isAdmin.value ? [{ to: '/api-keys', label: 'API keys', icon: 'keys' }] : []),
     ],
   },
 ])
@@ -215,6 +231,16 @@ const navGroups = computed(() => [
         <span class="drawer-tool-label">Quick search</span>
         <kbd class="drawer-kbd">⌘K</kbd>
       </Button>
+      <Button
+        variant="ghost"
+        size="md"
+        class="drawer-tool focus-visible:outline-2 focus-visible:outline-blue-500"
+        data-testid="drawer-capture-idea"
+        @click="openCapture"
+      >
+        <NavIcon name="idea" :size="16" />
+        <span class="drawer-tool-label">New idea</span>
+      </Button>
       <nav class="drawer-nav">
         <div v-for="group in navGroups" :key="group.label" role="group" :aria-label="group.label">
           <div class="drawer-section-label">{{ group.label }}</div>
@@ -245,7 +271,12 @@ const navGroups = computed(() => [
       </Button>
     </Drawer>
 
-    <CommandPalette v-model:open="paletteOpen" />
+    <FullTextSearch />
+
+    <QuickCaptureBubble
+      :inset="bannerVisible"
+      :crowded="route.meta.fixedViewport === true"
+    />
 
     <ConfirmDialog />
   </div>

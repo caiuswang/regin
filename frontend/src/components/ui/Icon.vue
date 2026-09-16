@@ -75,12 +75,42 @@ const ICONS = {
     'M12 9v4',
     'M12 17h.01',
   ],
+  square: ['M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z'],
+  power: ['M12 2v10', 'M18.36 6.64a9 9 0 1 1-12.73 0'],
+  play: ['M7 4.5 19 12 7 19.5Z'],
+  pause: ['M9 4v16', 'M15 4v16'],
+  'external-link': [
+    'M15 3h6v6',
+    'M10 14 21 3',
+    'M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6',
+  ],
+  'plus': [
+    'M5 12h14',
+    'M12 5v14',
+  ],
+  'trash': [
+    'M3 6h18',
+    'M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6',
+    'M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2',
+    'M10 11v6',
+    'M14 11v6',
+  ],
   'refresh-cw': [
     'M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8',
     'M3 3v5h5',
     'M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16',
     'M16 16h5v5',
   ],
+  // The three reading densities, drawn from one rule motif so the set reads as
+  // a scale: all rules → every span; a broken middle rule → spans folded away;
+  // a dot beside the last rule → the newest one only.
+  'detail-full': ['M4 7h16M4 12h16', 'M4 17h16'],
+  'detail-condensed': ['M4 7h16M4 17h16', 'M4 12h5M11.5 12h3M18 12h2'],
+  'detail-latest': ['M9 7h11M9 12h11M9 17h11', 'M4.8 17h0.01'],
+  // Two stacked chevrons pointing up — "fold this back up". Doubled so it
+  // cannot be read as the single caret that opens one row; not a download
+  // arrow, which promised an export.
+  'chevrons-up': ['m17 11-5-5-5 5', 'm17 18-5-5-5 5'],
 }
 
 defineProps({

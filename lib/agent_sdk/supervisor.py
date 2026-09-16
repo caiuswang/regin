@@ -234,6 +234,7 @@ def launch_run(prompt: str, *, cwd: str | None = None,
                permission_mode: str = "", model: str = "", effort: str = "",
                one_shot: bool = False,
                resume: str | None = None,
+               images: list | None = None,
                trace_id: str | None = None) -> RunHandle:
     """Schedule a run on the shared loop and return its completion handle.
 
@@ -242,6 +243,11 @@ def launch_run(prompt: str, *, cwd: str | None = None,
     override the global defaults for this run alone. `one_shot` ends the
     session with its first turn instead of leaving it open for follow-ups.
     `resume` continues an earlier session instead of starting a fresh one.
+
+    `images` are `{media_type, data_b64}` entries delivered WITH the launch
+    prompt, as content blocks beside its text. They stay off the announced
+    prompt span for the same reason a composer's staged image does: the span is
+    the trace's copy of what was *said*, and the bytes belong to the turn.
 
     `trace_id` reuses an earlier run's identity rather than minting one, which
     is what makes resuming a stopped run *the same session* to every reader:
@@ -287,7 +293,7 @@ def launch_run(prompt: str, *, cwd: str | None = None,
                                     model=model, effort=effort)
         future = asyncio.run_coroutine_threadsafe(
             run_session(trace_id, prompt, cwd=cwd, options=options,
-                        one_shot=one_shot, resume=resume,
+                        one_shot=one_shot, resume=resume, images=images,
                         prompt_announced=announced),
             loop)
     except BaseException:

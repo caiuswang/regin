@@ -890,6 +890,44 @@ class AgentSdkConfig(BaseModel):
         return ""
 
 
+class TasksConfig(BaseModel):
+    """Task capture: getting an idea into regin from anywhere (`lib/tasks`).
+
+    Off by default. `capture_enabled` arms `POST /api/tasks/capture`, the one
+    route authenticated by an API key rather than the web-UI JWT — while it is
+    off the route 404s no matter what key is presented, mirroring the bridge.
+
+    A capture key is a deliberately small credential: a captured task always
+    lands with `status='idea'` and can carry no execution parameter, so the
+    worst a leaked one can do is add backlog rows. `capture_rate_limit_per_minute`
+    bounds even that, per key.
+    """
+
+    capture_enabled: bool = False
+    capture_rate_limit_per_minute: int = 30
+
+
+class TaskIntegrationsConfig(BaseModel):
+    """Third-party issue trackers a task can link to (`lib/tasks/integrations`).
+
+    Every tracker is off until it holds a credential, and an unconfigured one
+    claims no reference — so the attach surface can only ever resolve a paste
+    to a platform the operator actually wired up.
+
+    Each platform reads its own flat `{platform}_*` fields here, the way
+    `AgentMessagesConfig` holds one block per push channel. Adding the second
+    tracker is a new `IssueTrackerProvider` subclass, a registry entry, and its
+    fields below — the dispatch path does not change.
+
+    The block is written to **local** settings: `linear_api_key` is a secret
+    that must not land in a git-tracked settings.json.
+    """
+
+    linear_enabled: bool = False
+    linear_api_key: str | None = None
+    linear_timeout_seconds: float = 10.0
+
+
 class TopicEvolutionConfig(BaseModel):
     """Code-driven topic/memory co-evolution (`lib/topics` drift loop).
 
@@ -1133,9 +1171,9 @@ class Settings(BaseSettings):
             "hooks", "patterns", "sync", "web", "cli", "rules",
             "trace_ingest", "topics", "auth", "rebuild",
             "agent_messages", "agent_bridge", "agent_sdk", "live_session",
-            "notifications",
+            "notifications", "tasks", "defects",
             "memory", "grader",
-            "goal", "gate", "prompts", "other",
+            "goal", "gate", "prompts", "fulltext", "other",
         ]
     )
 
@@ -1258,6 +1296,16 @@ class Settings(BaseSettings):
 
     # ── Agent SDK (regin-launched sessions with a typed control channel) ──
     agent_sdk: AgentSdkConfig = Field(default_factory=AgentSdkConfig)
+
+    # ── Task capture (API-key POST → agent_tasks idea rows) ──
+    tasks: TasksConfig = Field(default_factory=TasksConfig)
+
+    # ── Task ↔ other issue trackers (Linear, …) ──
+    # regin's own tracker holds no credential, so it has no field here and no
+    # switch: one able to turn it off would let an operator break the rule
+    # that a feature key always resolves.
+    task_integrations: TaskIntegrationsConfig = Field(
+        default_factory=TaskIntegrationsConfig)
 
     # ── Trace retention (opt-in prune of superseded pending spans) ──
     trace_retention: TraceRetentionConfig = Field(default_factory=TraceRetentionConfig)

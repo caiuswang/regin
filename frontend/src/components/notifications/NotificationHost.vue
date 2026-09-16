@@ -55,7 +55,8 @@ onOpen(open)
 .toast-host {
   position: fixed;
   right: 1.25rem;
-  bottom: 1.25rem;
+  /* Clears the capture bubble, which owns this corner. */
+  bottom: calc(1.25rem + var(--fab-corner-reserve));
   z-index: 55;
   width: min(24.5rem, calc(100vw - 2.5rem));
   max-height: calc(100vh - 2.5rem);
@@ -75,6 +76,7 @@ onOpen(open)
   right: 0.75rem;
   left: 0.75rem;
   top: 0.75rem;
+  /* Top-anchored: nothing to clear up here. */
   bottom: auto;
   width: auto;
 }

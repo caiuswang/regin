@@ -13,6 +13,9 @@ const RuleDetailView = () => import('./views/RuleDetailView.vue')
 const TriggersView = () => import('./views/TriggersView.vue')
 const TriggersRawView = () => import('./views/TriggersRawView.vue')
 const SkillsView = () => import('./views/SkillsView.vue')
+const FeaturesView = () => import('./views/FeaturesView.vue')
+const FeatureLedgerView = () => import('./views/FeatureLedgerView.vue')
+const DefectsView = () => import('./views/DefectsView.vue')
 const SkillDetailView = () => import('./views/SkillDetailView.vue')
 const PromptTemplatesView = () => import('./views/PromptTemplatesView.vue')
 const ExperimentsView = () => import('./views/ExperimentsView.vue')
@@ -29,14 +32,20 @@ const TraceView = () => import('./views/TraceView.vue')
 const SessionsView = () => import('./views/SessionsView.vue')
 const SessionTraceView = () => import('./views/SessionTraceView.vue')
 const LiveSessionView = () => import('./views/LiveSessionView.vue')
+const TerminalPageView = () => import('./views/TerminalPageView.vue')
 const SettingsView = () => import('./views/SettingsView.vue')
 const LoginView = () => import('./views/LoginView.vue')
 const AuditView = () => import('./views/AuditView.vue')
 const UsersView = () => import('./views/UsersView.vue')
+const TasksView = () => import('./views/TasksView.vue')
+const TaskDetailView = () => import('./views/TaskDetailView.vue')
+const ApiKeysView = () => import('./views/ApiKeysView.vue')
 const SchemaDriftView = () => import('./views/SchemaDriftView.vue')
 const PayloadLogView = () => import('./views/PayloadLogView.vue')
 const DesignSystemView = () => import('./views/DesignSystemView.vue')
 const NotFoundView = () => import('./views/NotFoundView.vue')
+// PROTOTYPE — throwaway (CAI-269). Delete with the branch; never ships.
+const NativeStageView = () => import('./views/prototype/NativeStageView.vue')
 
 const routes = [
   { path: '/login', name: 'login', component: LoginView, meta: { public: true } },
@@ -51,6 +60,9 @@ const routes = [
   { path: '/rules/triggers', redirect: '/trace/triggers' },
   { path: '/rules/:id', name: 'rule-detail', component: RuleDetailView },
   { path: '/skills', name: 'skills', component: SkillsView },
+  { path: '/features', name: 'features', component: FeaturesView },
+  { path: '/features/:key', name: 'feature-ledger', component: FeatureLedgerView },
+  { path: '/defects', name: 'defects', component: DefectsView },
   { path: '/skills/:id', name: 'skill-detail', component: SkillDetailView },
   { path: '/tags', redirect: '/patterns' },
   { path: '/tags/:name', redirect: (to) => ({ path: '/patterns', query: { tag: to.params.name } }) },

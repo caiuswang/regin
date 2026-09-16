@@ -40,7 +40,7 @@ const providerSupportedEvents = ref({})
 const selectedProvider = ref('claude')
 const handlerLoading = ref({})
 
-const SECTIONS = ['config', 'providers', 'hooks', 'install', 'triggers', 'agent-memory', 'agent-messages', 'agent-sdk', 'topic-evolution', 'debug']
+const SECTIONS = ['config', 'providers', 'hooks', 'install', 'triggers', 'agent-memory', 'agent-messages', 'agent-bridge', 'agent-sdk', 'tasks', 'task-integrations', 'topic-evolution', 'debug']
 const activeSection = useTabRoute({ param: 'section', default: 'config', valid: SECTIONS })
 
 // ── Nested settings blocks (Agent Memory, Agent Messages) ──────
@@ -58,9 +58,21 @@ const BLOCK_META = {
     title: 'Agent Messages',
     description: 'The send_to_user → human channel. The webhook pushes high-severity messages (ntfy / Slack / phone) and is off until a URL is set. Stored machine-local, since the URL can carry a secret token.',
   },
+  'agent-bridge': {
+    title: 'Agent Bridge',
+    description: 'The two channels INTO a live session regin only observes. Message steering is the guarded one behind the /live composer — sanitized text, one allowlisted key, rate-limited. The pane terminal is not guarded at all: it is a real shell on the trace page, off by default and admin-only on top of the switch. Stored machine-local, since the block holds the bridge token and a git-tracked terminal switch would hand everyone who pulls a shell.',
+  },
   'agent-sdk': {
     title: 'Agent SDK',
     description: 'Sessions regin launches and owns through the Claude Agent SDK — a strictly larger capability than the rest of regin, which only observes sessions you drive. Off until enabled; stored machine-local, since the CLI path is machine-specific and a shared enable would arm process-spawning for everyone who pulls.',
+  },
+  'tasks': {
+    title: 'Task Capture',
+    description: 'POST /api/tasks/capture — the one route authenticated by an API key instead of your login, so an idea can be filed from a phone or a third-party tool. A captured task always lands as an idea and can carry no execution parameter, so the worst a leaked capture key can do is add backlog rows. Off until enabled; stored machine-local, since a git-tracked switch would arm the route for everyone who pulls.',
+  },
+  'task-integrations': {
+    title: 'Task Integrations',
+    description: "Link a task to the issue tracker your team already runs, and read that issue's state, assignee and labels on the task. Each platform is an adapter in lib/tasks/integrations, so the second one is additive; Linear is the first. Reads only — regin never writes back — and a link's snapshot refreshes when you ask, never on a timer. Stored machine-local, since the block holds a third-party API key.",
   },
   'topic-evolution': {
     title: 'Topic Evolution',
@@ -430,6 +442,24 @@ watch([activeSection, selectedProvider], ([section]) => {
           @click="onSelectBlock('agent-sdk')"
         >
           Agent SDK
+        </button>
+
+        <button
+          type="button"
+          class="sv-nav-item focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1"
+          :class="{ active: activeSection === 'tasks' }"
+          @click="onSelectBlock('tasks')"
+        >
+          Task Capture
+        </button>
+
+        <button
+          type="button"
+          class="sv-nav-item focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1"
+          :class="{ active: activeSection === 'task-integrations' }"
+          @click="onSelectBlock('task-integrations')"
+        >
+          Task Integrations
         </button>
 
         <button

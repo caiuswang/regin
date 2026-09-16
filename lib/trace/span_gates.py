@@ -131,8 +131,20 @@ TASK_RECALL = SpanGate(
 # same measurement interactively. Prefer extending those over reviving a
 # tool-presence proxy.
 
+# The feature pipeline (`docs/feature-pipeline.md`) is a skill, so nothing
+# outside the agent enforces it. Both spans below come from regin CLI commands
+# — `regin feature stage` and `regin defects open|close` — so a count of 0 is a
+# genuine skip rather than a missing instrument.
+PIPELINE = SpanGate(
+    key="pipeline-ran",
+    exact=("feature.stage", "defect.declared"),
+    describe="feature pipeline consulted or a defect declared",
+    capability="the regin CLI (`regin feature stage`, `regin defects open`)",
+    capability_self_evident=True,
+)
+
 GATES: dict[str, SpanGate] = {
-    g.key: g for g in (RECALL_ARM, TASK_RECALL)
+    g.key: g for g in (RECALL_ARM, TASK_RECALL, PIPELINE)
 }
 
 

@@ -34,6 +34,7 @@ from lib.activity_log import get_activity_logger as _get_activity_logger
 def _auth_log():
     return _get_activity_logger("auth")
 
+from lib import api_keys
 from lib.orm import AuthSessionLocal
 from lib.orm.models import User
 
@@ -146,6 +147,35 @@ def require_editor(f):
             return jsonify({"error": "Editor role required"}), 403
         return f(*args, **kwargs)
     return wrapper
+
+
+def require_scope(scope: str):
+    """Decorator factory: admit a request carrying an API key with `scope`.
+
+    A key is a DIFFERENT principal from a user, not a weaker one, so this
+    deliberately does NOT set `g._current_user`. Every user-facing check —
+    `require_auth`, `require_editor`, `require_role` — goes through
+    `get_current_user()`, which re-reads the header and fails to decode an
+    `rgn_…` key as a JWT; a key therefore cannot pass any of them no matter
+    which route it reaches.
+
+    Fails closed: missing header, foreign scheme, unknown key and revoked key
+    are all 401; a real key without the scope is 403.
+    """
+    def decorator(f):
+        @wraps(f)
+        def wrapper(*args, **kwargs):
+            auth = request.headers.get("Authorization", "")
+            presented = auth[7:] if auth.startswith("Bearer ") else ""
+            key = api_keys.resolve_key(presented) if presented else None
+            if key is None:
+                return jsonify({"error": "unauthorized"}), 401
+            if scope not in key["scopes"]:
+                return jsonify({"error": f'Scope "{scope}" required'}), 403
+            g.api_key = key
+            return f(*args, **kwargs)
+        return wrapper
+    return decorator
 
 
 def require_role(role: str):

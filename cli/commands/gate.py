@@ -26,32 +26,30 @@ gate_app = typer.Typer(
 )
 
 
-@gate_app.command(
-    "recall-ran",
-    help="PASS iff this session emitted memory-tree-nav/recall spans "
-         "(goal-verified-treenav step 1b anti-skip).",
-)
-def cmd_recall_ran(
-    session: str = typer.Option(
-        ..., "--session", "-s",
-        help="Session/trace id to check (the goal-verified-treenav $SID)."),
-    json: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
-) -> None:
-    _run_gate("recall-ran", session, json)
+def _register(gate) -> None:
+    """One CLI command per registered gate.
+
+    Generated rather than hand-written so that `span_gates`\' own instruction —
+    "add a gate by appending a `SpanGate` to `GATES`" — is actually true. It
+    was not: the counting path picked a new gate up immediately while the CLI
+    did not, leaving it unreachable from the shell with a "No such command"
+    that looks like a typo rather than a missing registration.
+    """
+
+    @gate_app.command(gate.key, help=f"PASS iff this session emitted spans for "
+                                     f"{gate.describe}.")
+    def _cmd(
+        session: str = typer.Option(
+            ..., "--session", "-s", help="Session/trace id to check."),
+        json: bool = typer.Option(False, "--json",
+                                  help="Emit machine-readable JSON."),
+        _key: str = gate.key,
+    ) -> None:
+        _run_gate(_key, session, json)
 
 
-@gate_app.command(
-    "task-recall-ran",
-    help="PASS iff this session emitted a `memory.recall.task` span "
-         "(goal-verified recall arm anti-skip; `regin memory recall-for-task`).",
-)
-def cmd_task_recall_ran(
-    session: str = typer.Option(
-        ..., "--session", "-s",
-        help="Session/trace id to check (the goal-verified $SID)."),
-    json: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
-) -> None:
-    _run_gate("task-recall-ran", session, json)
+for _gate in GATES.values():
+    _register(_gate)
 
 
 def _run_gate(key: str, session: str, json: bool) -> None:

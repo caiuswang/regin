@@ -50,11 +50,26 @@ export function topicReviewStatusColor(status) {
   return TOPIC_REVIEW_STATUS[status] || 'blue'
 }
 
+const TASK_STATUS = {
+  idea: 'gray',
+  armed: 'blue',
+  queued: 'yellow',
+  running: 'purple',
+  done: 'green',
+  failed: 'red',
+  archived: 'gray',
+}
+/** An `agent_tasks.status` → Badge color. */
+export function taskStatusColor(status) {
+  return TASK_STATUS[String(status || '').toLowerCase()] || 'gray'
+}
+
 /** Generic boolean → ok/neutral (e.g. active vs inactive, healthy vs idle). */
 export function boolColor(on, { onColor = 'green', offColor = 'gray' } = {}) {
   return on ? onColor : offColor
 }
 
 export function useBadgeColor() {
-  return { severityColor, driftKindColor, proposalStateColor, topicReviewStatusColor, boolColor }
+  return { severityColor, driftKindColor, proposalStateColor, topicReviewStatusColor,
+           taskStatusColor, boolColor }
 }

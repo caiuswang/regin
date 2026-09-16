@@ -3743,3 +3743,28 @@ def api_session_repair_spans(trace_id):
 
 
 
+
+
+@trace_bp.route('/api/sessions/<trace_id>/features')
+def api_session_features(trace_id):
+    """What this session built, read the way the feature page counts it.
+
+    The merged reader, not `features_for_session`: that one answers what the
+    session *claimed*, which is what blame demands, and on the live database
+    22 of 23 attributed traces reach their feature only through the task lane.
+    A header built on the narrower reader would call them unattributed while
+    the feature page counted them — two surfaces disagreeing about one fact.
+
+    It lives on the trace blueprint because it is a property of a session, and
+    the trace surface's admin gate is what governs it.
+    """
+    from lib.features import attribution  # noqa: PLC0415  (heavy import)
+    rows = attribution.attributions_for_session(trace_id)
+    return jsonify({
+        "trace_id": trace_id,
+        "features": [{"feature_key": row.feature_key,
+                      "provenance": row.provenance,
+                      "is_primary": bool(row.is_primary),
+                      "round": row.round,
+                      "task_id": row.task_id} for row in rows],
+    })

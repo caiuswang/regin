@@ -83,6 +83,7 @@ Install, configure, and run regin: [docs/setup.md](docs/setup.md).
 - [docs/setup.md](docs/setup.md) — install, configuration, modes, CLI reference, troubleshooting.
 - [ARCHITECTURE.md](ARCHITECTURE.md) — system internals, module layout, procedure types, rule engines.
 - [docs/spec-notation.md](docs/spec-notation.md) — the notation regin specs are written in: types, state machines, decision tables and invariants instead of prose, worked through on Task, Feature Ledger and Session.
+- [docs/defect-task-feature.md](docs/defect-task-feature.md) — how a defect, a task and a feature join: the feature key is the only edge, which key a task holds, and the scopes a reported defect is readable in.
 - [docs/topics/proposals.md](docs/topics/proposals.md) — topic graph proposals via external tool-using agents.
 - [docs/topics/multi-user.md](docs/topics/multi-user.md) — sharing approved topics across users via git without a shared database.
 - [website/README.md](website/README.md) — the standalone Vue 3 marketing/docs site (own build and deploy target).

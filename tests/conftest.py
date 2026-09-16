@@ -142,10 +142,16 @@ def _default_feature_config(monkeypatch):
     non-default value still sets it explicitly (its own monkeypatch wins and
     reverts first, LIFO)."""
     from lib.settings import (AgentMessagesConfig, AgentSdkConfig,
+                              TaskIntegrationsConfig, TasksConfig,
                               TopicEvolutionConfig, settings)
     monkeypatch.setattr(settings, "topic_evolution", TopicEvolutionConfig())
     monkeypatch.setattr(settings, "agent_messages", AgentMessagesConfig())
     monkeypatch.setattr(settings, "agent_sdk", AgentSdkConfig())
+    # `lib/defects/store.py` now puts a tracker fetch on the attribution
+    # write, so a developer's real Linear key would make `store.record(...,
+    # feature_key=...)` a live network call in any test that touches it.
+    monkeypatch.setattr(settings, "task_integrations", TaskIntegrationsConfig())
+    monkeypatch.setattr(settings, "tasks", TasksConfig())
     yield
 
 

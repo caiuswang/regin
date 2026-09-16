@@ -36,8 +36,8 @@
     "claude-opus-4-8": 1000000
   },
   "web_port": 8321,
-  "experimental_providers": true,
-  "experimental_conceal": false,
+  "experimental_providers": false,
+  "experimental_conceal": true,
   "dense_rerank_min_corpus": 1,
   "mode": "standalone",
   "capture_assistant_response": true,

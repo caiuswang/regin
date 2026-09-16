@@ -534,6 +534,19 @@ def _settings_blocks() -> dict:
                       "fields": _agent_sdk_fields(), "scope": "local",
                       "warn": _agent_sdk_warnings,
                       "label": "Agent SDK settings"},
+        "agent-bridge": {"attr": "agent_bridge", "model": AgentBridgeConfig,
+                         "fields": _AGENT_BRIDGE_FIELDS, "scope": "local",
+                         "warn": _agent_bridge_warnings,
+                         "label": "Agent bridge settings"},
+        "tasks": {"attr": "tasks", "model": TasksConfig,
+                  "fields": _TASKS_FIELDS, "scope": "local",
+                  "warn": _tasks_warnings,
+                  "label": "Task capture settings"},
+        "task-integrations": {"attr": "task_integrations",
+                              "model": TaskIntegrationsConfig,
+                              "fields": _TASK_INTEGRATIONS_FIELDS,
+                              "scope": "local",
+                              "label": "Task integration settings"},
     }
 
 
@@ -719,6 +732,28 @@ def api_topic_evolution_settings():
 @require_editor
 def api_update_topic_evolution_settings():
     return _block_put('topic-evolution')
+
+
+@settings_bp.route('/api/settings/tasks')
+def api_tasks_settings():
+    return _block_get('tasks')
+
+
+@settings_bp.route('/api/settings/tasks', methods=['PUT'])
+@require_editor
+def api_update_tasks_settings():
+    return _block_put('tasks')
+
+
+@settings_bp.route('/api/settings/task-integrations')
+def api_task_integrations_settings():
+    return _block_get('task-integrations')
+
+
+@settings_bp.route('/api/settings/task-integrations', methods=['PUT'])
+@require_editor
+def api_update_task_integrations_settings():
+    return _block_put('task-integrations')
 
 
 @settings_bp.route('/api/settings/agent-sdk')

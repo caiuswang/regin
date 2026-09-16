@@ -182,6 +182,19 @@ def create_app():
     from web.blueprints.notifications import notifications_bp
     app.register_blueprint(notifications_bp)
 
+    # ── Task capture (API-key POST → idea rows) + the keys that reach it ──
+    from web.blueprints.tasks import tasks_bp
+    app.register_blueprint(tasks_bp)
+
+    from web.blueprints.features import features_bp
+    app.register_blueprint(features_bp)
+
+    from web.blueprints.defects import defects_bp
+    app.register_blueprint(defects_bp)
+
+    from web.blueprints.api_keys import api_keys_bp
+    app.register_blueprint(api_keys_bp)
+
     # Auth gate installed last so it can validate its allowlist against the
     # fully-registered route table.
     _install_auth_gate(app)
@@ -284,10 +297,19 @@ PUBLIC_API_ENDPOINTS = frozenset({
     "bridge.api_bridge_post_message",
     "bridge.api_bridge_list_sessions",
     "bridge.api_bridge_list_messages",
+    # Task capture: guarded by its own API key (require_scope), a principal
+    # SEPARATE from the web-UI JWT — resolving one never produces a user, so a
+    # key fails every user-gated route. The gate's PUBLIC branch returns with
+    # no auth, so that decorator is the sole guard — intended.
+    "tasks.api_capture_task",
     # Badge stream: EventSource cannot send an Authorization header, so the
     # route is guarded by the single-use ticket it redeems instead — like the
     # bridge entries above, its own credential is the sole guard, intended.
     "notifications.api_notifications_stream",
+    # Pane terminal: a WebSocket cannot send one either. Same ticket store,
+    # and the route additionally demands the admin role on redemption — this
+    # entry buys it past the header check, not past authorization.
+    "bridge_terminal.api_session_terminal",
 })
 
 
@@ -360,6 +382,18 @@ def _notify_trigger_loopback_ok() -> bool:
     return (request.remote_addr or "") in _LOOPBACK_ADDRS
 
 
+def _task_finish_loopback_ok() -> bool:
+    """A task's own agent reports its work finished through
+    `regin task finish`, which runs in the agent's process and holds no JWT.
+    Loopback-only like the two bypasses above: the caller already shares this
+    host's DB, the route settles only a run id that exists, and it can start
+    nothing beyond the tasks the operator already armed behind a dependency
+    edge."""
+    if request.endpoint != "tasks.api_finish_task_run":
+        return False
+    return (request.remote_addr or "") in _LOOPBACK_ADDRS
+
+
 def _install_auth_gate(app: Flask) -> None:
     """Require a valid JWT for every /api/ route outside PUBLIC_API_ENDPOINTS.
 
@@ -392,6 +426,8 @@ def _install_auth_gate(app: Flask) -> None:
             return None  # local auto-inject hook → warm dense models
         if _notify_trigger_loopback_ok():
             return None  # local producer process → badge push fan-out
+        if _task_finish_loopback_ok():
+            return None  # a task's own agent → settle its run, fire dependents
         user = get_current_user()
         if user is None:
             return jsonify({"error": "Authentication required"}), 401

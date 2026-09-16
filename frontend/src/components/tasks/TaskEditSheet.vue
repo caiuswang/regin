@@ -1,0 +1,178 @@
+<script setup>
+// Re-open a saved idea: its wording, its tags, its filing, and its images.
+//
+// The text and the images settle on different clocks, and that is deliberate.
+// Text is a draft until Save PATCHes it, so Cancel really cancels. An image is
+// written the moment it is pasted, because the task row already exists to hang
+// it off and a "saved" thumbnail that vanishes on Cancel is a worse lie than
+// one that appears immediately — the strip shows what the task carries right
+// now, which is also what its next run will deliver.
+import { onMounted, ref } from 'vue'
+import Button from '../ui/Button.vue'
+import Dialog from '../ui/Dialog.vue'
+import Input from '../ui/Input.vue'
+import Select from '../ui/Select.vue'
+import TaskImageStrip from './TaskImageStrip.vue'
+import TaskParentField from './TaskParentField.vue'
+import Textarea from '../ui/Textarea.vue'
+import { PRIORITIES } from '../../utils/taskMeta.js'
+import { imageFilesFrom } from '../../utils/imageFiles'
+import { useProjects } from '../../composables/useProjects.js'
+import { useTaskImages } from '../../composables/useTaskImages.js'
+import { useTaskEdit } from '../../composables/useTaskEdit.js'
+
+const props = defineProps({
+  task: { type: Object, required: true },
+})
+const emit = defineEmits(['close', 'saved'])
+
+const { draft, saving, editError, save } = useTaskEdit(props.task)
+const { items: projects, ensure: ensureProjects } = useProjects()
+const {
+  items: imageItems, busy: imageBusy, error: imageError,
+  bind: bindImages, add: addImages, remove: removeImage,
+} = useTaskImages()
+
+onMounted(() => {
+  bindImages(props.task)
+  ensureProjects()
+})
+
+// Paste and drop are bound on the form rather than on the strip: an operator
+// pastes into the field they are typing in, and the event bubbles to here.
+async function onPaste(e) {
+  if (!imageFilesFrom(e.clipboardData).length) return
+  e.preventDefault()
+  await addImages(e.clipboardData)
+}
+
+async function onDrop(e) {
+  if (!imageFilesFrom(e.dataTransfer).length) return
+  e.preventDefault()
+  await addImages(e.dataTransfer)
+}
+
+async function submit() {
+  if (await save()) emit('saved')
+}
+</script>
+
+<template>
+  <Dialog
+    :open="true"
+    title="Edit idea"
+    description="The wording travels to the agent as the prompt; the images ride beside it."
+    @update:open="v => !v && emit('close')"
+  >
+    <form
+      class="task-edit-form"
+      data-testid="task-edit-form"
+      @submit.prevent="submit"
+      @paste="onPaste"
+      @dragover.prevent
+      @drop="onDrop"
+    >
+      <div>
+        <label class="field-label" for="task-edit-title">Title</label>
+        <Input
+          id="task-edit-title"
+          v-model="draft.title"
+          type="text"
+          :error="!!editError"
+          aria-label="Task title"
+        />
+      </div>
+      <div>
+        <label class="field-label" for="task-edit-body">Details</label>
+        <Textarea
+          id="task-edit-body"
+          v-model="draft.body"
+          :rows="4"
+          aria-label="Task details"
+        />
+      </div>
+      <div>
+        <label class="field-label" for="task-edit-tags">
+          Tags <span class="font-normal text-slate-400">(comma separated)</span>
+        </label>
+        <Input
+          id="task-edit-tags"
+          v-model="draft.tags"
+          type="text"
+          aria-label="Task tags"
+        />
+      </div>
+      <div class="task-edit-row">
+        <div class="task-edit-col">
+          <span class="field-label">Priority</span>
+          <Select
+            v-model="draft.priority"
+            block
+            :options="PRIORITIES.map(p => ({ value: p.value, label: p.label }))"
+            aria-label="Task priority"
+            data-testid="task-edit-priority"
+          />
+        </div>
+        <div class="task-edit-col">
+          <span class="field-label">Project</span>
+          <Select
+            v-model="draft.project_id"
+            block
+            :options="[{ value: '', label: 'No project' },
+                       ...projects.map(p => ({ value: String(p.id),
+                                               label: p.name }))]"
+            aria-label="Task project"
+            data-testid="task-edit-project"
+          />
+        </div>
+      </div>
+      <TaskParentField v-model="draft.parent_id" :child="task.id" />
+      <div>
+        <span class="field-label">Images</span>
+        <TaskImageStrip
+          :items="imageItems"
+          :busy="imageBusy"
+          :error="imageError"
+          @pick="addImages"
+          @remove="removeImage"
+        />
+      </div>
+    </form>
+
+    <p v-if="editError" class="task-edit-error" role="alert" data-testid="task-edit-error">
+      {{ editError }}
+    </p>
+
+    <template #footer>
+      <Button variant="ghost" @click="emit('close')">Cancel</Button>
+      <Button
+        variant="primary"
+        :disabled="saving || !draft.title.trim()"
+        data-testid="task-edit-save"
+        @click="submit"
+      >
+        {{ saving ? 'Saving…' : 'Save changes' }}
+      </Button>
+    </template>
+  </Dialog>
+</template>
+
+<style scoped>
+.task-edit-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    min-width: 0;
+}
+.task-edit-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+}
+.task-edit-col { flex: 1 1 10rem; min-width: 0; }
+.task-edit-error {
+    margin-top: 0.75rem;
+    font-size: 0.8125rem;
+    color: var(--color-danger);
+}
+</style>

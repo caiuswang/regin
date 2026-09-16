@@ -128,7 +128,7 @@ async function _mutate(method, path, body, options = {}) {
   }
   if (!res.ok) {
     const text = await res.text()
-    let msg, detail, errors
+    let msg, detail, errors, body
     try {
       const parsed = JSON.parse(text)
       msg = parsed.error || parsed.msg
@@ -137,9 +137,14 @@ async function _mutate(method, path, body, options = {}) {
       // settings blocks) shows "max_concurrent_runs must be ≥ 1" rather than
       // a bare "Failed to save".
       errors = Array.isArray(parsed.errors) ? parsed.errors : undefined
+      // Some refusals carry structured evidence the sentence only summarizes —
+      // the task ids blocking a run, the pair of tasks a dependency edge would
+      // put in a cycle. A caller that has to re-parse them out of the prose
+      // cannot render them as anything the operator can click.
+      body = parsed
     } catch { msg = text }
     return { ok: false, msg: msg || errors?.join('; ') || `Server error (${res.status})`,
-             detail, errors }
+             detail, errors, body, status: res.status }
   }
   return res.json()
 }

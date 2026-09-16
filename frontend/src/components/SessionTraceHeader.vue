@@ -510,6 +510,19 @@ function titleSourceTooltip(src) {
           </span>
         </template>
       </p>
+      <!-- What this session built. Full state only: the collapsed header is
+           identity and digest, and attribution is not something anyone
+           consults while scrolling spans.
+
+           `via task #N` and the `tasks` badge two lines up mean different
+           things, which is why the label is never dropped — the tag itself is
+           not renamed, because wording that forks by surface is the
+           disagreement the ledger keeps refusing. -->
+      <SessionAttribution
+        v-if="session.trace_id"
+        class="mt-1.5"
+        :trace-id="session.trace_id"
+      />
       <!-- Expanded plans list (mirrors the tasks pattern below).
            Each row is a router-link to /plans/<filename>, so the
            reader can pivot to any of the session's plan files

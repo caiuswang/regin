@@ -68,7 +68,15 @@ def api_list_repos():
             .order_by(Repo.name)
         ).all()
         out = []
+        # One entry per REPO, not per joined branch: the outer join yields a
+        # row per tracked branch, so a repo tracking two of them was listed
+        # twice — a duplicate card on /repos and a duplicate option in every
+        # picker built from this list.
+        seen: set[int] = set()
         for r, b in rows:
+            if r.id in seen:
+                continue
+            seen.add(r.id)
             d = _repo_to_dict(r)
             d["branch_name"] = b.name if b else None
             d["pattern_count"] = session.exec(
