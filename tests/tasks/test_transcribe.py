@@ -301,3 +301,30 @@ def test_transcribe_writes_the_declared_dep_kind(tmp_db, feature_row):
                             .where(AgentTaskDep.task_id == ids["S3"])).all()
     assert {r.depends_on_id: r.kind for r in rows} == {
         ids["S1"]: "requires", ids["S2"]: "after"}
+
+
+def test_retranscribing_does_not_resurrect_an_honoured_after_edge(tmp_db,
+                                                                  feature_row):
+    """The table is re-read every time it changes, and `set_deps` replaces the
+    whole set — so without retiring here, an ordering already honoured would
+    come back into the graph on the next transcription."""
+    from lib.orm.models.tasks import AgentTaskDep, TASK_STATUS_DONE
+    from sqlmodel import select
+
+    feature = feature_row("f76")
+    body = FOUR.replace("| test_d | S1, S2 |", "| test_d | S1, S2 (after) |")
+    ids = {o.n: o.task_id for o in _run(feature.id, body).outcomes}
+
+    with SessionLocal() as session:
+        row = session.get(AgentTask, ids["S2"])
+        row.status = TASK_STATUS_DONE
+        session.add(row)
+        session.commit()
+
+    result = _run(feature.id, body)
+
+    with SessionLocal() as session:
+        rows = session.exec(select(AgentTaskDep)
+                            .where(AgentTaskDep.task_id == ids["S3"])).all()
+    assert {r.depends_on_id: r.kind for r in rows} == {ids["S1"]: "requires"}
+    assert {o.n: o.deps for o in result.outcomes}["S3"] == [ids["S1"]]

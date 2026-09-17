@@ -284,3 +284,109 @@ def test_failed_requires_dependency_still_parks_its_dependent(flask_client,
     assert _task(task_id).status == "armed"
     assert len(launcher.calls) == 1
     assert _chain_card(dep) is not None
+
+
+# ── 6. an ordering is retired once it has been honoured ──────
+
+def _edge_kinds(task_id) -> dict[int, str]:
+    return _stored_kinds(task_id)
+
+
+def test_a_satisfied_after_edge_is_retired_when_its_dependency_settles(
+        flask_client, launcher):
+    """An `after` edge is scaffolding, not a fact: once the task it was
+    ordering behind has stopped, it has nothing left to say and is dropped."""
+    dep = _armed(flask_client, "unrelated")
+    task_id = _armed(flask_client, "next in the queue")
+    flask_client.put(f"/api/tasks/{task_id}/deps",
+                     json={"depends_on": [{"id": dep, "kind": "after"}]})
+    flask_client.post(f"/api/tasks/{dep}/run")
+    assert _edge_kinds(task_id) == {dep: "after"}
+
+    launcher.handles[0].finish()
+
+    assert _edge_kinds(task_id) == {}
+    assert _task(task_id).status == "running"
+
+
+def test_an_after_edge_behind_a_failed_dependency_is_retired_too(flask_client,
+                                                                 launcher):
+    """`after` is satisfied by a failure as much as by a success, so the
+    failure retires it — otherwise the one case the kind exists for is the
+    one case the edge outlives."""
+    dep = _armed(flask_client, "unrelated")
+    task_id = _armed(flask_client, "next in the queue")
+    flask_client.put(f"/api/tasks/{task_id}/deps",
+                     json={"depends_on": [{"id": dep, "kind": "after"}]})
+    flask_client.post(f"/api/tasks/{dep}/run")
+
+    launcher.handles[0].finish(status="failed", detail="boom")
+
+    assert _edge_kinds(task_id) == {}
+
+
+def test_a_requires_edge_survives_its_dependency_settling(flask_client,
+                                                          launcher):
+    """A real dependency is provenance — what this task was built on — and
+    stays in the graph after it lands."""
+    dep = _armed(flask_client, "dependency")
+    task_id = _armed(flask_client, "dependent")
+    flask_client.put(f"/api/tasks/{task_id}/deps", json={"depends_on": [dep]})
+    flask_client.post(f"/api/tasks/{dep}/run")
+
+    launcher.handles[0].finish()
+
+    assert _edge_kinds(task_id) == {dep: "requires"}
+
+
+def test_an_unsatisfied_after_edge_is_kept(flask_client, launcher):
+    """Retirement is not a sweep of every `after` edge: one whose dependency
+    is still running is still holding this task back."""
+    running = _armed(flask_client, "still going")
+    landed = _armed(flask_client, "lands now")
+    task_id = _armed(flask_client, "waits for both")
+    flask_client.put(f"/api/tasks/{task_id}/deps",
+                     json={"depends_on": [{"id": running, "kind": "after"},
+                                          {"id": landed, "kind": "after"}]})
+    flask_client.post(f"/api/tasks/{running}/run")
+    flask_client.post(f"/api/tasks/{landed}/run")
+
+    launcher.handles[1].finish()
+
+    assert _edge_kinds(task_id) == {running: "after"}
+    assert _task(task_id).status == "armed"
+
+
+def test_an_after_edge_written_behind_a_settled_dependency_is_retired_on_write(
+        flask_client, launcher):
+    """Born satisfied is still satisfied. The reply says what the request
+    asked for; the graph keeps only what is still holding something back."""
+    dep = _armed(flask_client, "already finished")
+    flask_client.post(f"/api/tasks/{dep}/run")
+    launcher.handles[0].finish()
+    task_id = _armed(flask_client, "queued behind it")
+
+    resp = flask_client.put(
+        f"/api/tasks/{task_id}/deps",
+        json={"depends_on": [{"id": dep, "kind": "after"}]})
+
+    assert resp.status_code == 200
+    assert _edge_kinds(task_id) == {}
+    # The reply reports what survived, not what was asked for.
+    assert resp.get_json() == {"task_id": task_id, "depends_on": [], "deps": []}
+    # The edge still did its job on the way out: the task it was ordering
+    # behind had already stopped, so this one is released.
+    assert _task(task_id).status == "running"
+
+
+def test_the_graph_stops_drawing_a_retired_after_edge(flask_client, launcher):
+    dep = _armed(flask_client, "unrelated")
+    task_id = _armed(flask_client, "next in the queue")
+    flask_client.put(f"/api/tasks/{task_id}/deps",
+                     json={"depends_on": [{"id": dep, "kind": "after"}]})
+    flask_client.post(f"/api/tasks/{dep}/run")
+
+    launcher.handles[0].finish()
+
+    edges = flask_client.get("/api/tasks/graph").get_json()["edges"]
+    assert [e for e in edges if e["task_id"] == task_id] == []

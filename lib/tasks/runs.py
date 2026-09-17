@@ -1193,10 +1193,18 @@ def fire_if_ready(task_id: int) -> bool:
 
     A task with no dependencies is not resolved here: nothing could ever come
     due for it, and arming one is a request to write parameters, not to run.
+
+    The retirement runs AFTER the fire, never before: an `after` edge written
+    behind a task that already settled is born satisfied, and sweeping it
+    first would leave this task with no dependencies and send the guard above
+    home without launching the very thing the edge was drawn to order.
     """
     if not deps.depends_on(task_id):
         return False
-    return _fire(task_id)
+    try:
+        return _fire(task_id)
+    finally:
+        deps.retire_satisfied_after(task_id)
 
 
 def fire_ready_dependents(task_id: int) -> list[int]:
@@ -1205,9 +1213,15 @@ def fire_ready_dependents(task_id: int) -> list[int]:
     There is no scheduler and no interval behind this: the completion that
     could change the answer is the thing that recomputes it, so a task whose
     last dependency just landed is resolved exactly once, here.
+
+    The same completion retires the `after` edges it just honoured. Last,
+    because the dependent list is read from those edges and the notice below
+    reads it again — a sweep in the middle would shorten the walk it is part
+    of.
     """
+    dependents = deps.dependents(task_id)
     fired = []
-    for dependent in deps.dependents(task_id):
+    for dependent in dependents:
         try:
             if _fire(dependent):
                 fired.append(dependent)
@@ -1219,6 +1233,12 @@ def fire_ready_dependents(task_id: int) -> list[int]:
         _announce_broken_chains(task_id, fired)
     except Exception:  # noqa: BLE001 — a notice cannot sink a completion
         log.error("task_chain_notice_failed", task_id=task_id, exc_info=True)
+    for dependent in dependents:
+        try:
+            deps.retire_satisfied_after(dependent)
+        except Exception:  # noqa: BLE001 — a tidy-up cannot sink a completion
+            log.error("task_after_retire_failed", task_id=dependent,
+                      exc_info=True)
     return fired
 
 
