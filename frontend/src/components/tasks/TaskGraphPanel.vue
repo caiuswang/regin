@@ -88,6 +88,9 @@ onMounted(load)
             v-for="edge in layout.edges"
             :key="edge.key"
             class="tg-edge"
+            :class="{ 'tg-edge-after': edge.kind === 'after' }"
+            :data-kind="edge.kind"
+            :data-testid="`task-graph-edge-${edge.key}`"
             :x1="edge.x1"
             :y1="edge.y1"
             :x2="edge.x2"
@@ -135,6 +138,8 @@ onMounted(load)
       <p class="tg-legend">
         Layers read top to bottom: a task sits below everything it waits for.
         A dashed outline is blocked; a solid green one is armed and runnable.
+        A solid line is a real dependency; a dashed line is ordering only, and
+        its task runs whether the one above it succeeded or failed.
         Click a box — or press Enter on it — to re-root the graph there.
       </p>
     </template>
@@ -158,6 +163,10 @@ onMounted(load)
 .tg-edge {
     stroke: var(--color-border-strong);
     stroke-width: 1.5;
+}
+.tg-edge-after {
+    stroke: var(--color-border);
+    stroke-dasharray: 5 4;
 }
 .tg-node {
     fill: var(--color-surface-2);

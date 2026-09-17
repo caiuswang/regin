@@ -8,7 +8,8 @@ tests" would make the plan mean different things to different sessions.
 
 The parser is deliberately mechanical and refuses on ambiguity. It
 validates *columns* — every required cell present and well-formed — and
-stops there. Whether `depends_on` points at a slice that exists, whether
+stops there. The one thing it reads inside a cell is a dependency's kind,
+because that belongs to the edge and a second column could not say whose. Whether `depends_on` points at a slice that exists, whether
 the edges form a cycle, and what to do about a slice already running are
 questions about the graph, not about the table, and they belong to
 transcription.
@@ -20,9 +21,16 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
+from lib.orm.models.tasks import DEP_KIND_REQUIRES, DEP_KINDS
 from lib.tasks.commands import DEFAULT_SKILL
 
 SLICE_ID_RE = re.compile(r"^S\d+$")
+
+# `S3` is the edge that was always there; `S3 (after)` is an ordering the
+# author drew over slices that do not consume each other. The kind rides in
+# the cell rather than in a second column because it belongs to the edge, and
+# a column of kinds beside a column of ids cannot say which kind is whose.
+_DEP_CELL_RE = re.compile(r"^(?P<n>\S+)\s*\(\s*(?P<kind>[a-z]+)\s*\)$")
 
 # Column id → the header spellings that address it. Headers are matched
 # after case-folding and collapsing every non-alphanumeric run to one space,
@@ -66,6 +74,24 @@ class SliceTableError(ValueError):
         self.column = column
 
 
+class SliceDep(str):
+    """A slice id in a `depends_on` cell, carrying what the edge means.
+
+    A `str` subclass so every reader that treats the cell as a list of slice
+    ids — the cycle walk, the unknown-id check, the tail's leaf set — keeps
+    working on the id and nothing else; only the transcriber that writes the
+    edge reads `.kind`. The two can never drift apart into a list and a
+    lookup table that disagree, because they are one object.
+    """
+
+    kind: str
+
+    def __new__(cls, n: str, kind: str = DEP_KIND_REQUIRES) -> "SliceDep":
+        dep = super().__new__(cls, n)
+        dep.kind = kind
+        return dep
+
+
 @dataclass(frozen=True)
 class SliceRow:
     n: str
@@ -74,7 +100,7 @@ class SliceRow:
     spec_refs: list[str]
     tests: list[str]
     base: str
-    depends_on: list[str] = field(default_factory=list)
+    depends_on: list[SliceDep] = field(default_factory=list)
     skill: str = DEFAULT_SKILL
     verify_cmd: Optional[str] = None
     owns_schema_change: bool = False
@@ -121,6 +147,23 @@ def _as_list(cell: str) -> list[str]:
         return []
     parts = (_clean(part) for part in _LIST_SEPARATORS.split(cell))
     return [part for part in parts if part and part.lower() not in _EMPTY_CELL]
+
+
+def _as_deps(cell: str, row_id: str) -> list[SliceDep]:
+    """A `depends_on` cell as edges. `S3` is `requires`, `S3 (after)` is not."""
+    out: list[SliceDep] = []
+    for part in _as_list(cell):
+        match = _DEP_CELL_RE.match(part)
+        if match is None:
+            out.append(SliceDep(part))
+            continue
+        kind = match.group("kind")
+        if kind not in DEP_KINDS:
+            raise SliceTableError(
+                f"row {row_id} names dependency kind {kind!r} — expected one "
+                f"of {list(DEP_KINDS)}", row_id, "depends_on")
+        out.append(SliceDep(match.group("n"), kind))
+    return out
 
 
 def _header_columns(cells: list[str]) -> Optional[dict[str, int]]:
@@ -207,7 +250,7 @@ def _parse_row(cells: list[str], columns: dict[str, int], ordinal: int) -> Slice
         spec_refs=_required_list(cells, columns, "spec_refs", row_id),
         tests=_required_list(cells, columns, "tests", row_id),
         base=_required_text(cells, columns, "base", row_id),
-        depends_on=_as_list(_cell(cells, columns, "depends_on")),
+        depends_on=_as_deps(_cell(cells, columns, "depends_on"), row_id),
         skill=_optional_text(cells, columns, "skill") or DEFAULT_SKILL,
         verify_cmd=_optional_text(cells, columns, "verify_cmd"),
         owns_schema_change=_is_claimed(_cell(cells, columns, "schema")),

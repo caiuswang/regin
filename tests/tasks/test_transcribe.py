@@ -283,3 +283,21 @@ def test_a_denial_in_the_schema_cell_is_not_a_claim(tmp_db, feature_row):
     result = _run(feature.id, body)
 
     assert [o.action for o in result.outcomes] == ["created", "created"]
+
+
+def test_transcribe_writes_the_declared_dep_kind(tmp_db, feature_row):
+    """A slice the table orders rather than depends on keeps its kind through
+    transcription — otherwise the graph resolves it with the strict rule."""
+    from lib.orm.models.tasks import AgentTaskDep
+    from sqlmodel import select
+
+    feature = feature_row("f76")
+    body = FOUR.replace("| test_d | S1, S2 |", "| test_d | S1, S2 (after) |")
+    result = _run(feature.id, body)
+    ids = {o.n: o.task_id for o in result.outcomes}
+
+    with SessionLocal() as session:
+        rows = session.exec(select(AgentTaskDep)
+                            .where(AgentTaskDep.task_id == ids["S3"])).all()
+    assert {r.depends_on_id: r.kind for r in rows} == {
+        ids["S1"]: "requires", ids["S2"]: "after"}

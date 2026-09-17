@@ -113,3 +113,20 @@ def test_a_dash_in_a_required_cell_is_still_missing():
     with pytest.raises(SliceTableError) as caught:
         parse_slice_table(body)
     assert (caught.value.row, caught.value.column) == ("S0", "delivers")
+
+
+def test_depends_on_cell_reads_an_after_marker():
+    """`S3 (after)` is an ordering, not a dependency — the id reads the same
+    to every reader that only wants the shape of the graph."""
+    table = TABLE.replace("| S0, S1 |", "| S0, S1 (after) |")
+    rows = parse_slice_table(table)
+
+    assert rows[2].depends_on == ["S0", "S1"]
+    assert [dep.kind for dep in rows[2].depends_on] == ["requires", "after"]
+
+
+def test_an_unknown_dependency_kind_is_refused_by_row_and_column():
+    table = TABLE.replace("| S0, S1 |", "| S0, S1 (maybe) |")
+    with pytest.raises(SliceTableError) as exc:
+        parse_slice_table(table)
+    assert (exc.value.row, exc.value.column) == ("S2", "depends_on")

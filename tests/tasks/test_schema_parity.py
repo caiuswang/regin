@@ -1,4 +1,4 @@
-"""`db/schema.sql` and the `0017`–`0030` revisions must describe the same tables.
+"""`db/schema.sql` and the `0017`–`0031` revisions must describe the same tables.
 
 A schema change is two edits that can silently disagree, which is how a fresh
 `regin init` install and a migrated one diverge. This rebuilds the task tables
@@ -20,7 +20,7 @@ from lib import db_migrate
 _TABLES = ("api_keys", "agent_tasks", "agent_task_runs", "agent_task_deps",
            "agent_task_images")
 _SCHEMA_SQL = Path(__file__).resolve().parents[2] / "db" / "schema.sql"
-_LAST_TASK_REVISION = "0030"
+_LAST_TASK_REVISION = "0031"
 #: Tables the revisions between 0021 and the last one create from scratch. They
 #: are dropped with the task tables so the replay does not collide with what
 #: `schema.sql` already built. `agent_task_links` and `issue_cache` are in the

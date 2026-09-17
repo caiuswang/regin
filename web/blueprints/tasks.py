@@ -591,9 +591,13 @@ def api_task_runs(task_id: int):
 @require_editor
 def api_set_task_deps(task_id: int):
     """Replace a task's dependency set. A self-edge or a cycle is a 400 naming
-    the offending pair — rejected here so no reader has to defend against it."""
+    the offending pair — rejected here so no reader has to defend against it.
+
+    An entry is a bare id (a `requires` edge, the strict wait) or
+    `{"id", "kind"}`. `depends_on` comes back as ids for a caller that only
+    wants the shape of the graph; `deps` carries the kinds."""
     try:
-        wanted = deps.parse_dep_ids(request.get_json(silent=True))
+        wanted = deps.parse_deps(request.get_json(silent=True))
         stored = deps.set_deps(task_id, wanted)
     except capture.CaptureRejected as exc:
         return _rejected(exc)
@@ -604,10 +608,15 @@ def api_set_task_deps(task_id: int):
                         "field": "depends_on"}), 400
     if stored is None:
         return _unknown_task()
-    # Dropping the edge that was blocking an armed task releases it exactly as
+    # Dropping the edge that was blocking an armed task — or re-declaring it as
+    # ordering behind something that already failed — releases it exactly as
     # finishing that dependency would have.
     _fire_after_write(task_id)
-    return jsonify({"task_id": task_id, "depends_on": stored})
+    return jsonify({
+        "task_id": task_id,
+        "depends_on": [edge.id for edge in stored],
+        "deps": [{"id": edge.id, "kind": edge.kind} for edge in stored],
+    })
 
 
 @tasks_bp.route('/api/tasks/graph', methods=['GET'])

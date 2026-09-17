@@ -92,10 +92,12 @@ export function useTaskGraph({ cap = null } = {}) {
 
   const layout = computed(() => layoutGraph(nodes.value, edges.value))
 
-  function dependsOn(taskId) {
+  // Edges, not ids: the editor has to show which of the two things each one
+  // means, and an id list cannot carry that.
+  function depEdgesOf(taskId) {
     return edges.value
       .filter(e => e.task_id === taskId)
-      .map(e => e.depends_on_id)
+      .map(e => ({ id: e.depends_on_id, kind: e.kind || 'requires' }))
   }
 
   function titleOf(taskId) {
@@ -103,7 +105,7 @@ export function useTaskGraph({ cap = null } = {}) {
   }
 
   return {
-    nodes, edges, loading, error, layout, load, dependsOn, titleOf,
+    nodes, edges, loading, error, layout, load, depEdgesOf, titleOf,
     root, depth, status, truncated, totalNodes, nodeCap,
     focus, setDepth, setStatus,
   }

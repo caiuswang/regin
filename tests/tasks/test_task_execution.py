@@ -761,7 +761,8 @@ def test_the_graph_carries_every_node_edge_and_flag(flask_client):
     nodes = {node["id"]: node for node in payload["nodes"]}
 
     assert set(nodes) == {dep, task_id, idea}
-    assert payload["edges"] == [{"task_id": task_id, "depends_on_id": dep}]
+    assert payload["edges"] == [{"task_id": task_id, "depends_on_id": dep,
+                                 "kind": "requires"}]
     assert (nodes[dep]["blocked"], nodes[dep]["runnable"]) == (False, True)
     assert (nodes[task_id]["blocked"], nodes[task_id]["runnable"]) == (True,
                                                                        False)

@@ -67,6 +67,13 @@ PRIORITY_ORDER: dict[str, int] = {
     name: rank for rank, name in enumerate(TASK_PRIORITIES)
 }
 
+# What a dependency edge means. `requires` is satisfied only by a dependency
+# that finished successfully; `after` is satisfied by one that finished at all,
+# because the edge is an ordering the operator drew over unrelated work.
+DEP_KIND_REQUIRES = "requires"
+DEP_KIND_AFTER = "after"
+DEP_KINDS: tuple[str, ...] = (DEP_KIND_REQUIRES, DEP_KIND_AFTER)
+
 TITLE_MAX = 200
 # The authenticated edit path's bound. Raised from 8,000 because a feature's
 # spec now lives in this column: the largest real artifact measured is 29,488
@@ -222,6 +229,13 @@ class AgentTaskDep(Base, table=True):
     queried — what blocks a task, and what a finished task unblocks. Acyclicity
     is enforced by the writer (`lib/tasks/deps.py`) before the insert, so no
     reader has to defend against a cycle.
+
+    `kind` is what the edge MEANS, and it is a column because the graph was
+    being asked to carry two intents in one shape. `requires` waits for its
+    dependency to succeed; `after` waits only for it to have settled, because
+    the edge was drawn to serialize unrelated work and a failure there says
+    nothing about the dependent. A row written before this column existed is
+    `requires` — the rule it was resolved under when it was drawn.
     """
 
     __tablename__ = "agent_task_deps"
@@ -231,6 +245,10 @@ class AgentTaskDep(Base, table=True):
     depends_on_id: int = Field(
         sa_column=Column("depends_on_id", Integer, primary_key=True,
                          nullable=False))
+    kind: str = Field(
+        default=DEP_KIND_REQUIRES,
+        sa_column=Column("kind", String, nullable=False,
+                         server_default=text("'requires'")))
 
 
 class AgentTaskImage(Base, table=True):

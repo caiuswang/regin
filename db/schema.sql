@@ -1072,6 +1072,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_task_runs_trace ON agent_task_runs(trace_id
 CREATE TABLE IF NOT EXISTS agent_task_deps (
     task_id       INTEGER NOT NULL,
     depends_on_id INTEGER NOT NULL,
+    -- 'requires' (the dependent consumes this result, so a failure parks it)
+    -- or 'after' (ordering only, satisfied by a failure as much as a success).
+    kind          TEXT NOT NULL DEFAULT 'requires',
     PRIMARY KEY (task_id, depends_on_id)
 );
 
