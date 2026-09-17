@@ -1052,6 +1052,14 @@ CREATE TABLE IF NOT EXISTS agent_task_runs (
     params_json      TEXT,
     verify_cmd       TEXT,
     autorun          INTEGER NOT NULL DEFAULT 0,
+    -- Who settled this attempt: 'agent' (its own `regin task finish`) or
+    -- 'session' (the SDK callback, or a launch that never started). The
+    -- callback only knows the session ended, which is an inference and a wrong
+    -- one for a session aborted and later resumed by hand; the agent's report
+    -- is the fact the chain waits on. Without this column `ended_at` made the
+    -- two indistinguishable and whichever arrived first won. NULL = unsettled,
+    -- or a row settled before anyone recorded it.
+    settled_by       TEXT,
     CONSTRAINT uq_agent_task_runs_attempt UNIQUE (task_id, attempt)
 );
 

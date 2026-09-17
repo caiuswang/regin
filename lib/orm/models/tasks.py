@@ -204,6 +204,15 @@ class AgentTaskRun(Base, table=True):
         default=0,
         sa_column=Column("autorun", Integer, nullable=False,
                          server_default=text("0")))
+    # Which of the two settle paths ended this attempt. The SDK callback knows
+    # only that the session ended — an inference, and a wrong one for a session
+    # aborted and resumed by hand — while the agent's own `task finish` is the
+    # fact the dependency chain waits on. `ended_at` alone cannot tell them
+    # apart, so the inference won by arriving first and the later report was
+    # dropped. NULL is "not settled by the agent", which is what an unsettled
+    # row and a pre-column row both are.
+    settled_by: Optional[str] = Field(
+        default=None, sa_column=Column("settled_by", Text))
 
 
 class AgentTaskDep(Base, table=True):

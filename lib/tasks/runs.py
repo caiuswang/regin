@@ -80,6 +80,12 @@ _TASK_STATUS_FOR = {RUN_STATUS_DONE: TASK_STATUS_DONE,
                     RUN_STATUS_FAILED: TASK_STATUS_FAILED}
 
 _SETTLED = (TASK_STATUS_DONE, TASK_STATUS_FAILED)
+
+#: Who wrote an attempt's terminal state. `SETTLED_BY_SESSION` is an inference
+#: — the session ended, therefore the work did — and it is wrong for exactly
+#: one shape: a session aborted mid-run and later resumed by hand.
+#: `SETTLED_BY_AGENT` is the agent's own report and outranks it.
+SETTLED_BY_AGENT, SETTLED_BY_SESSION = "agent", "session"
 _LAUNCH_DEFAULTS: dict = {"cwd": None, "model": "", "effort": "",
                           "permission_mode": "", "one_shot": False, "env": {}}
 
@@ -758,7 +764,8 @@ def start_run(task_id: int) -> Optional[dict]:
 
 def complete_run(run_id: int, *, status: str, exit_reason: str = "",
                  task_status: Optional[str] = None,
-                 verify_exit_code: Optional[int] = None) -> bool:
+                 verify_exit_code: Optional[int] = None,
+                 settled_by: str = SETTLED_BY_SESSION) -> bool:
     """Settle one attempt, and the task with it. Returns whether this call was
     the one that did it.
 
@@ -769,6 +776,9 @@ def complete_run(run_id: int, *, status: str, exit_reason: str = "",
     The task only follows the run while it is still `running`: a task re-armed
     by a human while the previous attempt was tearing down has moved on, and
     stamping it `done` would undo that.
+
+    `settled_by` records which authority wrote the terminal state, so
+    `reopen_for_agent_report` can later tell an inference apart from a report.
     """
     with SessionLocal() as session:
         row = session.get(AgentTaskRun, run_id)
@@ -779,6 +789,7 @@ def complete_run(run_id: int, *, status: str, exit_reason: str = "",
         row.ended_at = _now()
         row.exit_reason = (exit_reason or "")[:_REASON_MAX] or None
         row.verify_exit_code = verify_exit_code
+        row.settled_by = settled_by
         session.add(row)
         task = session.get(AgentTask, row.task_id) if task_status else None
         if task is not None and task.status == TASK_STATUS_RUNNING:
@@ -876,6 +887,70 @@ def _is_open(run_id: int) -> bool:
         return True
 
 
+def _reopen_refusal(session, run_id: int) -> str:
+    """Why this settled attempt may not be reopened, or `""` when it may.
+
+    Named rather than inlined because each clause is a different thing being
+    protected: the agent's own word is final, a task a human has moved on from
+    is not this run's to re-settle, and a superseded attempt speaks for a run
+    nobody is watching.
+    """
+    row = session.get(AgentTaskRun, run_id)
+    if row is None or row.ended_at is None:
+        return "not settled"
+    if row.settled_by == SETTLED_BY_AGENT:
+        return "already reported by the agent"
+    task = session.get(AgentTask, row.task_id)
+    if task is None or task.status != TASK_STATUS_FAILED:
+        return "the task is no longer holding this attempt's failure"
+    latest = session.exec(
+        select(AgentTaskRun.id)
+        .where(AgentTaskRun.task_id == row.task_id)
+        .order_by(AgentTaskRun.attempt.desc())).first()
+    if latest != run_id:
+        return "a later attempt supersedes it"
+    return ""
+
+
+def reopen_for_agent_report(run_id: int) -> bool:
+    """Undo an *inferred* settle so the agent's own report can decide it.
+
+    The SDK callback settling a run says only that the session ended. For a
+    session aborted mid-work and later resumed by hand that inference is wrong,
+    and `ended_at` made it permanent: the resumed agent's `regin task finish`
+    hit the idempotence guard and was dropped, leaving the task `failed` over
+    finished work. So an agent report reaching a session-settled attempt
+    reopens it and then travels the ordinary settle path.
+
+    The attempt is cleared back to open — `ended_at`, `exit_reason` and
+    `verify_exit_code` all — so a `verify_cmd` is re-claimed and re-run rather
+    than inherited from the aborted attempt: the report is a claim about the
+    work, and the gate is what grades it.
+
+    The `UPDATE` carries its own guard so two concurrent reports cannot both
+    reopen; the loser falls through to `_claim_verify` and `ended_at`, which
+    already arbitrate a live attempt.
+    """
+    with SessionLocal() as session:
+        refusal = _reopen_refusal(session, run_id)
+        if refusal:
+            return False
+        task_id = session.get(AgentTaskRun, run_id).task_id
+        reopened = session.execute(
+            update(AgentTaskRun)
+            .where(AgentTaskRun.id == run_id,
+                   AgentTaskRun.ended_at.is_not(None),
+                   AgentTaskRun.settled_by.is_distinct_from(SETTLED_BY_AGENT))
+            .values(status=RUN_STATUS_RUNNING, ended_at=None, exit_reason=None,
+                    verify_exit_code=None, settled_by=None)).rowcount
+        session.commit()
+    if not reopened:
+        return False
+    store.set_status(task_id, TASK_STATUS_RUNNING)
+    log.write("task_run_reopened", run_id=run_id, task_id=task_id)
+    return True
+
+
 def _verify_cwd(params: dict) -> Optional[str]:
     """The tree the attempt ran in — looked up, never created.
 
@@ -919,7 +994,9 @@ def _apply_verdict(command: str, params: dict, status: str,
 
 def _settle_and_fire(task_id: int, run_id: int, status: str, reason: str,
                      command: str, params: dict,
-                     *, resync: bool = False) -> tuple[bool, list[int]]:
+                     *, resync: bool = False,
+                     settled_by: str = SETTLED_BY_SESSION
+                     ) -> tuple[bool, list[int]]:
     """Verify, settle, fire. The terminal write is in a `finally` because a
     settle that does not happen outlives this process, and one that happens
     wrong does not — and `code` starts at the did-not-run value so even a
@@ -930,7 +1007,7 @@ def _settle_and_fire(task_id: int, run_id: int, status: str, reason: str,
     finally:
         ended = complete_run(run_id, status=status, exit_reason=reason,
                              task_status=_TASK_STATUS_FOR[status],
-                             verify_exit_code=code)
+                             verify_exit_code=code, settled_by=settled_by)
     if not ended:
         return False, []
     if resync:
@@ -944,7 +1021,8 @@ def _settle_and_fire(task_id: int, run_id: int, status: str, reason: str,
 _verifying: dict[int, Thread] = {}
 
 
-def _spawn_verify(args: tuple, *, resync: bool) -> Thread:
+def _spawn_verify(args: tuple, *, resync: bool,
+                  settled_by: str = SETTLED_BY_SESSION) -> Thread:
     """Hand one claimed verify to a worker thread and register it.
 
     Registered before it starts, so a caller that asks the instant after this
@@ -954,7 +1032,7 @@ def _spawn_verify(args: tuple, *, resync: bool) -> Thread:
 
     def _work() -> None:
         try:
-            _settle_and_fire(*args, resync=resync)
+            _settle_and_fire(*args, resync=resync, settled_by=settled_by)
         finally:
             _verifying.pop(run_id, None)
 
@@ -1170,6 +1248,7 @@ def finish_run(run_id: int, *, status: str = RUN_STATUS_DONE,
         return {"run_id": run_id, "task_id": None, "settled": False,
                 "verifying": False, "fired": []}
     reason = reason or "agent signalled finish"
+    reopen_for_agent_report(run_id)
     claim, command, params = _claim_verify(run_id)
     args = (task_id, run_id, status, reason, command, params)
     if claim != NO_VERIFY:
@@ -1180,7 +1259,7 @@ def finish_run(run_id: int, *, status: str = RUN_STATUS_DONE,
         # in reverse — someone else's verify owns this settle, unless that
         # verify already finished, in which case this is simply a second report.
         if claim == VERIFY_MINE:
-            _spawn_verify(args, resync=True)
+            _spawn_verify(args, resync=True, settled_by=SETTLED_BY_AGENT)
         verifying = claim == VERIFY_MINE or _is_open(run_id)
         log.write("task_run_finish_verifying", run_id=run_id, task_id=task_id,
                   claim=claim, verifying=verifying)
@@ -1189,7 +1268,8 @@ def finish_run(run_id: int, *, status: str = RUN_STATUS_DONE,
     # Only this path refreshes the remote: it is the one that runs on a request
     # thread. `handle_completion` runs on the SDK loop's thread and cannot
     # spend a round trip against a tracker.
-    settled, fired = _settle_and_fire(*args, resync=True)
+    settled, fired = _settle_and_fire(*args, resync=True,
+                                      settled_by=SETTLED_BY_AGENT)
     log.write("task_run_finish_signalled", run_id=run_id, task_id=task_id,
               status=status, settled=settled, fired=fired)
     return {"run_id": run_id, "task_id": task_id, "settled": settled,
