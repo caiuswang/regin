@@ -372,32 +372,20 @@ def _finish_block(run_id: int, linked: bool = False,
     does not carry it. The base branch is named when the run was armed with
     one; without it the instruction still stands, unnamed.
     """
+    from lib.prompts import render_surface  # noqa: PLC0415
+    from lib.prompts.surfaces.tasks import (  # noqa: PLC0415
+        FINISH_ORDER_LINKED_SURFACE_ID, FINISH_ORDER_NATIVE_SURFACE_ID,
+        FINISH_SURFACE_ID)
+
     if linked:
-        order = (
-            "Before you run it: record the work on the linked issue and move "
-            "its state — regin re-reads the issue when this command lands, "
-            "and a state you change afterwards will not reach the task.\n"
-        )
+        order = render_surface(FINISH_ORDER_LINKED_SURFACE_ID, {})
     else:
         target = f"`{base}`" if base else "the branch this run was based on"
-        order = (
-            f"Before you run it: merge this run's work back into {target} — "
-            "that merge is a precondition of reporting finished, not an "
-            "optional step, because whatever depends on this task is released "
-            "onto that branch and sees only what has landed there.\n"
-        )
-    return (
-        "\n\n<finish>\n"
-        "This work was launched from a regin task. Running the command below "
-        "is the ONLY thing that marks the task complete and releases whatever "
-        "depends on it; your session stays open either way, so run it as soon "
-        "as the work is done rather than waiting to be stopped.\n"
-        + order
-        + f"   {_finish_command(run_id)}\n"
-        "If you could not finish, run the same command with "
-        "`--status failed --reason '<why>'`.\n"
-        "</finish>"
-    )
+        order = render_surface(FINISH_ORDER_NATIVE_SURFACE_ID,
+                               {"target": target})
+    return "\n\n" + render_surface(
+        FINISH_SURFACE_ID,
+        {"order": order, "finish_cmd": _finish_command(run_id)})
 
 
 def _tracker_block(feature) -> str:
@@ -417,21 +405,13 @@ def _tracker_block(feature) -> str:
     """
     if feature is None or not feature.external_ref:
         return ""
-    name = registry.display_name(feature.origin)
-    return (
-        "\n\n<tracker>\n"
-        f"This work is tracked as {name} {feature.external_ref}. The issue — "
-        "and its comments, which can revise or reverse the description — is "
-        "the source of truth for what is being asked; regin's copy of the "
-        "title and details is a snapshot and may already be stale.\n"
-        f"  {feature.external_url or ''}\n"
-        "Read the issue and its comments before you start. When the work "
-        "lands, record it there: say what changed, and move the issue's state "
-        "to match. Do that before you run the finish command below — regin "
-        "re-reads the issue at that moment, so a state you change afterwards "
-        "is not the one the feature will show.\n"
-        "</tracker>"
-    )
+    from lib.prompts import render_surface  # noqa: PLC0415
+    from lib.prompts.surfaces.tasks import TRACKER_SURFACE_ID  # noqa: PLC0415
+
+    return "\n\n" + render_surface(TRACKER_SURFACE_ID, {
+        "tracker_name": registry.display_name(feature.origin),
+        "external_ref": feature.external_ref,
+        "external_url": feature.external_url or ""})
 
 
 def _followup_rows(task_id: int) -> list[tuple[int, dict]]:
@@ -497,21 +477,15 @@ def _followup_block(task_id: int) -> str:
     lines, dropped = _followup_lines(_followup_rows(task_id))
     if not lines:
         return ""
+    from lib.prompts import render_surface  # noqa: PLC0415
+    from lib.prompts.surfaces.tasks import FOLLOWUP_SURFACE_ID  # noqa: PLC0415
+
     plural = "" if dropped == 1 else "s"
     omitted = (f"\n({dropped} earlier comment{plural} omitted to fit; the "
                "most recent are the ones kept.)\n") if dropped else ""
-    return (
-        "\n\n<followup>\n"
-        "Comments left on this task that nobody has resolved. They were "
-        "written on the task page, possibly after an earlier attempt, and "
-        "they are still here because the conversation is still open — read "
-        "them as part of what is being asked, not as history already dealt "
-        "with. Later ones correct earlier ones. They keep arriving on every "
-        "run until someone resolves the thread.\n"
-        + "".join(lines).lstrip("\n")
-        + omitted
-        + "</followup>"
-    )
+    return "\n\n" + render_surface(FOLLOWUP_SURFACE_ID, {
+        "comments": "".join(lines).lstrip("\n"),
+        "omitted": omitted})
 
 
 def _feature_block(task: dict) -> str:
@@ -526,18 +500,13 @@ def _feature_block(task: dict) -> str:
     if feature_id is None:
         return ""
     from lib.features import store as feature_store  # noqa: PLC0415
+    from lib.prompts import render_surface  # noqa: PLC0415
+    from lib.prompts.surfaces.tasks import FEATURE_SURFACE_ID  # noqa: PLC0415
 
     feature = feature_store.get(feature_id)
     named = f"#{feature_id}" + (f" ({feature.title})" if feature else "")
-    return (
-        "\n\n<feature>\n"
-        f"This run is a session of feature {named}; regin attributes it "
-        "automatically. If you find something the feature got wrong, declare "
-        f"it against that id: `regin defects open \"<what>\" --feature "
-        f"{feature_id} --session <session id>`. Shipping is the operator's "
-        "act on the feature, not yours.\n"
-        "</feature>"
-    )
+    return "\n\n" + render_surface(FEATURE_SURFACE_ID, {
+        "feature_named": named, "feature_id": feature_id})
 
 
 def _prompt(task: dict, run_id: int, params: Optional[dict] = None) -> str:
@@ -571,10 +540,17 @@ def _prompt(task: dict, run_id: int, params: Optional[dict] = None) -> str:
     feature = (feature_store.get(task["feature_id"])
                if task.get("feature_id") is not None else None)
     remote = bool(feature is not None and feature.external_ref)
-    return (_invocation(params or {}) + text[:PROMPT_MAX]
-            + _tracker_block(feature) + _followup_block(task["id"])
-            + _feature_block(task)
-            + _finish_block(run_id, linked=remote, base=_armed_base(params)))
+    from lib.prompts import render_surface  # noqa: PLC0415
+    from lib.prompts.surfaces.tasks import LAUNCH_SURFACE_ID  # noqa: PLC0415
+
+    return render_surface(LAUNCH_SURFACE_ID, {
+        "invocation": _invocation(params or {}),
+        "body": text[:PROMPT_MAX],
+        "tracker": _tracker_block(feature),
+        "followup": _followup_block(task["id"]),
+        "feature": _feature_block(task),
+        "finish": _finish_block(run_id, linked=remote,
+                                base=_armed_base(params))})
 
 
 def _armed_base(params: Optional[dict]) -> str:

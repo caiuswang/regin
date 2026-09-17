@@ -31,9 +31,11 @@ const AREA_LABELS = {
   'topic-graph': 'Topic graph',
   memory: 'Memory',
   grader: 'Grader',
+  'task-run': 'Task run',
 }
 
 function areaOf(slug) {
+  if (slug.startsWith('task-run')) return 'task-run'
   if (slug.startsWith('topic-proposal')) return 'topic-proposal'
   if (slug.startsWith('grader')) return 'grader'
   if (slug.startsWith('memory')) return 'memory'
@@ -53,6 +55,7 @@ const AREA_COLORS = {
   memory: 'blue',
   'topic-graph': 'yellow',
   'topic-proposal': 'green',
+  'task-run': 'cyan',
 }
 
 function areaColorOf(s) {

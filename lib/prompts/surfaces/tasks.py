@@ -1,0 +1,188 @@
+"""The task-run launch prompt — every sentence a regin task says to its agent.
+
+The prompt used to be an f-string assembled in ``lib.tasks.runs._prompt`` and
+its four block builders, which made it the one agent-facing prompt in regin
+that the operator could not change. Each block is a surface here, and the
+envelope (``task-run-launch``) is the one that decides their order — so a
+project that wants a run told something regin never thought of adds it there
+rather than in Python.
+
+The leading ``\\n\\n`` separator that precedes every block is NOT part of these
+bodies: it stays in `runs.py`, because a block renders to the empty string when
+it does not apply and only the caller knows that. An editable body therefore
+starts at its own ``<tag>``.
+"""
+
+from __future__ import annotations
+
+from lib.prompts.registry import (
+    PromptVariable,
+    register_surface,
+)
+
+LAUNCH_SURFACE_ID = "task-run-launch"
+TRACKER_SURFACE_ID = "task-run-tracker"
+FOLLOWUP_SURFACE_ID = "task-run-followup"
+FEATURE_SURFACE_ID = "task-run-feature"
+FINISH_SURFACE_ID = "task-run-finish"
+FINISH_ORDER_LINKED_SURFACE_ID = "task-run-finish-order-linked"
+FINISH_ORDER_NATIVE_SURFACE_ID = "task-run-finish-order-native"
+
+# NOTE: keep byte-identical to the pre-refactor f-string output — a
+# characterization test (tests/prompts/test_task_run_parity.py) asserts
+# `runs._prompt` == the frozen reference builder. Edit the wording here and the
+# reference together.
+_LAUNCH_BODY = (
+    "{{invocation}}{{body}}{{tracker}}{{followup}}{{feature}}{{finish}}"
+)
+
+_TRACKER_BODY = """<tracker>
+This work is tracked as {{tracker_name}} {{external_ref}}. The issue — and its comments, which can revise or reverse the description — is the source of truth for what is being asked; regin's copy of the title and details is a snapshot and may already be stale.
+  {{external_url}}
+Read the issue and its comments before you start. When the work lands, record it there: say what changed, and move the issue's state to match. Do that before you run the finish command below — regin re-reads the issue at that moment, so a state you change afterwards is not the one the feature will show.
+</tracker>"""
+
+_FOLLOWUP_BODY = """<followup>
+Comments left on this task that nobody has resolved. They were written on the task page, possibly after an earlier attempt, and they are still here because the conversation is still open — read them as part of what is being asked, not as history already dealt with. Later ones correct earlier ones. They keep arriving on every run until someone resolves the thread.
+{{comments}}{{omitted}}</followup>"""
+
+_FEATURE_BODY = """<feature>
+This run is a session of feature {{feature_named}}; regin attributes it automatically. If you find something the feature got wrong, declare it against that id: `regin defects open "<what>" --feature {{feature_id}} --session <session id>`. Shipping is the operator's act on the feature, not yours.
+</feature>"""
+
+_FINISH_BODY = """<finish>
+This work was launched from a regin task. Running the command below is the ONLY thing that marks the task complete and releases whatever depends on it; your session stays open either way, so run it as soon as the work is done rather than waiting to be stopped.
+{{order}}
+   {{finish_cmd}}
+If you could not finish, run the same command with `--status failed --reason '<why>'`.
+</finish>"""
+
+_FINISH_ORDER_LINKED_BODY = (
+    "Before you run it: record the work on the linked issue and move its "
+    "state — regin re-reads the issue when this command lands, and a state "
+    "you change afterwards will not reach the task."
+)
+
+_FINISH_ORDER_NATIVE_BODY = (
+    "Before you run it: merge this run's work back into {{target}} — that "
+    "merge is a precondition of reporting finished, not an optional step, "
+    "because whatever depends on this task is released onto that branch and "
+    "sees only what has landed there."
+)
+
+
+register_surface(
+    LAUNCH_SURFACE_ID,
+    label="Task run — launch envelope",
+    area="task-run",
+    default_body=_LAUNCH_BODY,
+    description=(
+        "The whole sentence a regin task run is launched with: the armed "
+        "skill invocation, the captured idea, then each instruction block in "
+        "order. Reorder them here, or add one of your own."
+    ),
+    applies_to=("external-agent",),
+    variables=(
+        PromptVariable("invocation", "`/<skill> <args>` line when the task was armed with a skill, else empty.", example="/goal-verified\\n\\n", required=False),
+        PromptVariable("body", "The task's captured idea (its body, or its title when bodyless), truncated to PROMPT_MAX."),
+        PromptVariable("tracker", "Rendered `task-run-tracker` block. Empty for a native feature.", required=False),
+        PromptVariable("followup", "Rendered `task-run-followup` block. Empty when no thread is open.", required=False),
+        PromptVariable("feature", "Rendered `task-run-feature` block. Empty for a task under no feature.", required=False),
+        PromptVariable("finish", "Rendered `task-run-finish` block. Always present."),
+    ),
+)
+
+register_surface(
+    TRACKER_SURFACE_ID,
+    label="Task run — tracker block",
+    area="task-run",
+    default_body=_TRACKER_BODY,
+    description=(
+        "Told to a run whose feature is tracked in an external issue tracker: "
+        "which issue it is, and that the issue — not regin's snapshot — is "
+        "the source of truth."
+    ),
+    applies_to=("external-agent",),
+    variables=(
+        PromptVariable("tracker_name", "Display name of the tracker integration.", example="Linear"),
+        PromptVariable("external_ref", "The issue's reference in that tracker.", example="CAI-223"),
+        PromptVariable("external_url", "Link to the issue.", required=False),
+    ),
+)
+
+register_surface(
+    FOLLOWUP_SURFACE_ID,
+    label="Task run — follow-up comments block",
+    area="task-run",
+    default_body=_FOLLOWUP_BODY,
+    description=(
+        "The unresolved comment threads left on this task. Redelivered on "
+        "every run until somebody resolves the thread."
+    ),
+    applies_to=("external-agent",),
+    variables=(
+        PromptVariable("comments", "The rendered comments that fit, oldest first, one `[author] body` line each."),
+        PromptVariable("omitted", "Note naming how many older comments were dropped to fit. Empty when none were.", required=False),
+    ),
+)
+
+register_surface(
+    FEATURE_SURFACE_ID,
+    label="Task run — feature block",
+    area="task-run",
+    default_body=_FEATURE_BODY,
+    description=(
+        "Which feature this run counts under, and how to blame a defect on "
+        "it when the work proves the feature got something wrong."
+    ),
+    applies_to=("external-agent",),
+    variables=(
+        PromptVariable("feature_named", "The feature as the prompt names it.", example="#80 (Agent SDK runs)"),
+        PromptVariable("feature_id", "The feature's numeric id.", example="80"),
+    ),
+)
+
+register_surface(
+    FINISH_SURFACE_ID,
+    label="Task run — finish block",
+    area="task-run",
+    default_body=_FINISH_BODY,
+    description=(
+        "The one instruction that lets a task ever complete: the exact "
+        "`task finish` command, and what has to be true before it is run."
+    ),
+    applies_to=("external-agent",),
+    variables=(
+        PromptVariable("order", "What must happen before finishing — the linked or the native variant."),
+        PromptVariable("finish_cmd", "The literal `regin task finish <run id>` command."),
+    ),
+)
+
+register_surface(
+    FINISH_ORDER_LINKED_SURFACE_ID,
+    label="Task run — finish precondition (tracked feature)",
+    area="task-run",
+    default_body=_FINISH_ORDER_LINKED_BODY,
+    description=(
+        "The `{{order}}` line of the finish block when the feature is tracked "
+        "externally: record the work on the issue first, because regin "
+        "re-reads it at the moment the finish command lands."
+    ),
+    applies_to=("external-agent",),
+)
+
+register_surface(
+    FINISH_ORDER_NATIVE_SURFACE_ID,
+    label="Task run — finish precondition (native feature)",
+    area="task-run",
+    default_body=_FINISH_ORDER_NATIVE_BODY,
+    description=(
+        "The `{{order}}` line of the finish block for a run with no external "
+        "issue: merge the slice back first, because dependents are released "
+        "onto that branch and see only what has landed there."
+    ),
+    applies_to=("external-agent",),
+    variables=(
+        PromptVariable("target", "The base branch named, or a generic phrase when the run was armed with none.", example="`master`"),
+    ),
+)
