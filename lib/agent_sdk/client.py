@@ -112,6 +112,11 @@ def build_options(*, cwd: str | None = None, can_use_tool=None,
     operator-launched session, not a ceiling on what regin's own spawns may
     ask for.
 
+    `max_buffer_size` is pinned above the SDK's 1 MiB default because that
+    default is fatal, not lossy: one over-long NDJSON line raises inside the
+    reader, and the reader is the session's only stream, so the whole run dies
+    where a single message was too big.
+
     `fork_session` is pinned rather than left to the SDK's default: forking
     gives the resumed session a NEW child id, which would strand the trace the
     run's first half was recorded under — the two halves would render as
@@ -139,6 +144,8 @@ def build_options(*, cwd: str | None = None, can_use_tool=None,
     # option beats a silently ignored choice.
     if settings.agent_sdk.effort:
         kwargs["effort"] = settings.agent_sdk.effort
+    if settings.agent_sdk.max_buffer_mb:
+        kwargs["max_buffer_size"] = settings.agent_sdk.max_buffer_mb * 1024 * 1024
     kwargs.update(_run_overrides(options))
     # `env` is an overlay the SDK merges over the parent environment, and the
     # bridge flag is applied last: a run's own options may set anything else,

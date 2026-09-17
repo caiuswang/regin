@@ -817,6 +817,12 @@ class AgentSdkConfig(BaseModel):
     Disconnecting on it cuts off an answer that is still streaming; for a
     `one_shot` run that is a silent false success.
 
+    `max_buffer_mb` bounds a single NDJSON message read off the child's stdout.
+    The SDK's own default is 1 MiB, which a real session exceeds routinely — one
+    Bash heredoc or file result over the line kills the *reader*, and the reader
+    is the session's only stream, so the run ends `failed` and the operator has
+    to resume by hand. 0 defers to the SDK's default.
+
     A lull alone is a weak signal — measured against a live child, 15% of gaps
     between frames exceeded a quarter-second and the gap from a task settling
     to the wake turn's first frame was 6.4s. So a lull only ends the wait once
@@ -861,6 +867,9 @@ class AgentSdkConfig(BaseModel):
     permission_mode: str = "default"
     idle_timeout_sec: int = 0
     stop_grace_sec: int = 10
+    # ge=0: a negative ceiling makes the transport's guard raise on the first
+    # frame, which is the very failure this field exists to prevent.
+    max_buffer_mb: int = Field(32, ge=0)
     teardown_settle_sec: float = 0.25
     gate_plan: bool = False
     gated_tools: list[str] = Field(default_factory=list)

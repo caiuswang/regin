@@ -593,3 +593,38 @@ def test_a_launch_that_cannot_be_scheduled_leaves_no_orphan_prompt(
         supervisor.launch_run("draft it", one_shot=True)
 
     assert _prompt_spans(posted_spans) == []
+
+
+# ── stream buffer ─────────────────────────────────────────────────────
+
+
+def test_a_run_reads_messages_larger_than_the_sdk_default(enabled):
+    """The SDK's 1 MiB default is fatal, not lossy: an over-long NDJSON line
+    raises inside the reader, which is the session's only stream, so a run dies
+    on one big message (agent_runs 247: 'JSON message exceeded maximum buffer
+    size of 1048576 bytes')."""
+    built = client.build_options()
+
+    assert built.max_buffer_size > 1024 * 1024
+
+
+def test_the_buffer_ceiling_is_the_configured_mebibytes(enabled, monkeypatch):
+    monkeypatch.setattr(settings.agent_sdk, "max_buffer_mb", 8)
+
+    assert client.build_options().max_buffer_size == 8 * 1024 * 1024
+
+
+def test_a_zero_buffer_defers_to_the_sdk(enabled, monkeypatch):
+    """0 is the escape hatch back to whatever the installed SDK picks, so it
+    must pass no kwarg at all rather than a 0-byte ceiling that admits nothing."""
+    monkeypatch.setattr(settings.agent_sdk, "max_buffer_mb", 0)
+    seen = {}
+
+    def _options(**kwargs):
+        seen.update(kwargs)
+        return object()
+
+    monkeypatch.setattr("claude_agent_sdk.ClaudeAgentOptions", _options)
+    client.build_options()
+
+    assert "max_buffer_size" not in seen

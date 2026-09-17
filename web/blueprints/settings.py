@@ -372,6 +372,13 @@ def _agent_sdk_fields() -> list[dict]:
                         "delegated task is still running a lull proves "
                         "nothing, and the wait runs to the stop grace instead. "
                         "A Stop never waits. 0 disconnects immediately."},
+        {"key": "max_buffer_mb", "group": "Lifecycle", "type": "int",
+         "min": 0, "step": 1, "label": "Stream buffer (MiB)",
+         "description": "Ceiling on one message read off the child's stdout. "
+                        "The SDK's own default is 1 MiB, and a message over it "
+                        "kills the reader — which is the session's only stream, "
+                        "so the whole run ends failed and has to be resumed by "
+                        "hand. 0 defers to the SDK default."},
         # ── Gating ──
         {"key": "gate_plan", "group": "Gating", "type": "bool",
          "label": "Hold ExitPlanMode for approval",
