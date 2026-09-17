@@ -240,13 +240,17 @@ def _write_edges(rows: list[SliceRow],
     """
     for row in rows:
         outcome = outcomes[row.n]
-        wanted = [outcomes[dep].task_id for dep in row.depends_on
+        # `dep` is a `SliceDep`: a slice id that also knows what the edge
+        # means, so the table's `S2 (after)` survives into the graph instead
+        # of being resolved under the strict rule.
+        wanted = [deps_module.DepEdge(outcomes[dep].task_id, dep.kind)
+                  for dep in row.depends_on
                   if outcomes[dep].task_id is not None]
         if outcome.action not in ("created", "updated"):
-            _report_stale(outcome, wanted)
+            _report_stale(outcome, [edge.id for edge in wanted])
             continue
         deps_module.set_deps(outcome.task_id, wanted)
-        outcome.deps = wanted
+        outcome.deps = [edge.id for edge in wanted]
 
 
 def _report_stale(outcome: SliceOutcome, wanted: list[int]) -> None:

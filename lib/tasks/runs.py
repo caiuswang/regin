@@ -1140,6 +1140,10 @@ def _announce_broken_chains(task_id: int, fired: list[int]) -> None:
     The failed slice is not necessarily the one that just completed — a
     dependent can wait on two slices, one landing now and one that failed
     earlier — so the blocker is looked up per dependent.
+
+    `failed_blockers` reads only `requires` edges, so a dependent queued behind
+    unrelated work by an `after` edge raises no card: it was already released
+    by the failure.
     """
     by_blocker: dict[int, tuple[dict, list[int]]] = {}
     for dependent in deps.dependents(task_id):

@@ -11,6 +11,7 @@ import Button from '../ui/Button.vue'
 import Checkbox from '../ui/Checkbox.vue'
 import Dialog from '../ui/Dialog.vue'
 import Input from '../ui/Input.vue'
+import Select from '../ui/Select.vue'
 import { useTaskDeps } from '../../composables/useTaskDeps.js'
 import { useTaskGraph } from '../../composables/useTaskGraph.js'
 
@@ -19,22 +20,41 @@ const props = defineProps({
 })
 const emit = defineEmits(['close', 'saved'])
 
-const { nodes, loading, error, load, dependsOn, titleOf } = useTaskGraph()
+// The two things an edge can mean. `requires` is the strict wait a bare tick
+// has always been; `after` is an ordering, so the task runs once the one above
+// it has stopped — succeeded or not.
+const KINDS = [
+  { value: 'requires', label: 'needs it' },
+  { value: 'after', label: 'just after' },
+]
+
+const { nodes, loading, error, load, depEdgesOf, titleOf } = useTaskGraph()
 const { saving, depError, save } = useTaskDeps()
 const picked = ref([])
 const filter = ref('')
 
 onMounted(async () => {
   await load()
-  picked.value = dependsOn(props.task.id)
+  picked.value = depEdgesOf(props.task.id)
 })
+
+const pickedIds = computed(() => picked.value.map(e => e.id))
+
+function kindOf(id) {
+  return picked.value.find(e => e.id === id)?.kind || 'requires'
+}
+
+function setKind(id, kind) {
+  picked.value = picked.value.map(e => (e.id === id ? { ...e, kind } : e))
+}
 
 // A done or archived task can never hold this one back, so it is not offered
 // — unless it is already an edge, which the reader must still be able to drop.
 const SETTLED = new Set(['done', 'archived'])
 
 const candidates = computed(() => nodes.value.filter(n =>
-  n.id !== props.task.id && (picked.value.includes(n.id) || !SETTLED.has(n.status))))
+  n.id !== props.task.id
+  && (pickedIds.value.includes(n.id) || !SETTLED.has(n.status))))
 
 function matches(node, needle) {
   return String(node.id).includes(needle)
@@ -44,13 +64,14 @@ function matches(node, needle) {
 const shown = computed(() => {
   const needle = filter.value.trim().toLowerCase()
   if (!needle) return candidates.value
-  return candidates.value.filter(n => picked.value.includes(n.id) || matches(n, needle))
+  return candidates.value.filter(
+    n => pickedIds.value.includes(n.id) || matches(n, needle))
 })
 
 function toggle(id, on) {
   picked.value = on
-    ? [...picked.value, id]
-    : picked.value.filter(x => x !== id)
+    ? [...picked.value, { id, kind: 'requires' }]
+    : picked.value.filter(e => e.id !== id)
 }
 
 async function submit() {
@@ -62,7 +83,7 @@ async function submit() {
   <Dialog
     :open="true"
     title="Dependencies"
-    :description="`${task.title} waits for whatever is ticked below.`"
+    :description="`${task.title} waits for whatever is ticked below — for its result, or just for it to stop.`"
     @update:open="v => !v && emit('close')"
   >
     <div v-if="loading" class="task-deps-note">reading the task graph…</div>
@@ -84,22 +105,40 @@ async function submit() {
         No task matches “{{ filter.trim() }}”.
       </div>
       <div v-else class="task-deps-list" data-testid="task-deps-list">
-        <label
+        <!-- The kind control sits OUTSIDE the label: a click anywhere inside a
+             label activates its control, so a Select nested in one would untick
+             the very edge the reader was classifying. -->
+        <div
           v-for="node in shown"
           :key="node.id"
           class="task-deps-row"
         >
-          <Checkbox
-            :model-value="picked.includes(node.id)"
-            :data-testid="`task-dep-${node.id}`"
-            :aria-label="`Depend on task ${node.id}`"
-            @update:model-value="on => toggle(node.id, on)"
+          <label class="task-deps-pick">
+            <Checkbox
+              :model-value="pickedIds.includes(node.id)"
+              :data-testid="`task-dep-${node.id}`"
+              :aria-label="`Depend on task ${node.id}`"
+              @update:model-value="on => toggle(node.id, on)"
+            />
+            <span class="task-deps-id">#{{ node.id }}</span>
+            <span class="task-deps-title">{{ node.title }}</span>
+          </label>
+          <Select
+            v-if="pickedIds.includes(node.id)"
+            :model-value="kindOf(node.id)"
+            :options="KINDS"
+            :data-testid="`task-dep-kind-${node.id}`"
+            :aria-label="`What task ${node.id} means to this one`"
+            @update:model-value="kind => setKind(node.id, kind)"
           />
-          <span class="task-deps-id">#{{ node.id }}</span>
-          <span class="task-deps-title">{{ node.title }}</span>
-          <span class="task-deps-status">{{ node.status }}</span>
-        </label>
+          <span v-else class="task-deps-status">{{ node.status }}</span>
+        </div>
       </div>
+      <p class="task-deps-note">
+        <strong>needs it</strong> waits for that task to succeed, and parks
+        this one if it fails. <strong>just after</strong> only waits for it to
+        stop — use it to run unrelated work one at a time.
+      </p>
     </div>
 
     <p v-if="depError" class="live-launch-warn" role="alert" data-testid="task-deps-refusal">
@@ -150,6 +189,14 @@ async function submit() {
     border-radius: var(--radius-md);
     background: var(--color-surface-2);
     min-width: 0;
+}
+.task-deps-pick {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex: 1;
+    min-width: 0;
+    cursor: pointer;
 }
 .task-deps-id {
     font-size: 0.6875rem;

@@ -86,6 +86,7 @@ function lines(edges, placed) {
     if (!from || !to) continue
     out.push({
       key: `${edge.task_id}-${edge.depends_on_id}`,
+      kind: edge.kind || 'requires',
       x1: from.x + NODE_W / 2, y1: from.y + NODE_H,
       x2: to.x + NODE_W / 2, y2: to.y,
     })

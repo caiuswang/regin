@@ -12,9 +12,9 @@ export function useTaskDeps() {
   const saving = ref(false)
   const depError = ref(null)
 
-  async function save(taskId, ids) {
+  async function save(taskId, edges) {
     saving.value = true
-    const result = await api.put(`/tasks/${taskId}/deps`, { depends_on: ids })
+    const result = await api.put(`/tasks/${taskId}/deps`, { depends_on: edges })
     saving.value = false
     if (result.ok === false) {
       depError.value = {

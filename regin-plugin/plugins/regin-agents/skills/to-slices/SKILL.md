@@ -73,7 +73,7 @@ carry the base and both are load-bearing:
 | `Schema` | a tick (`yes`) on the one slice that owns the install-wide schema move, blank on every other. Naming a migration in `Delivers` also counts — either way, two owners is a refusal |
 | `Spec refs` | the Rules / Acceptance paragraph numbers |
 | `Tests` | acceptance test **names**, not descriptions |
-| `Depends on` | other slice ids |
+| `Depends on` | other slice ids. `S3` means this slice consumes S3's result and parks if S3 fails; `S3 (after)` means ordering only — it runs once S3 has stopped, succeeded or not |
 | `Base` | branch name. A human fills it when reviewing the spec; a machine cannot derive it |
 | `Skill` | optional; defaults to `goal-verified-treenav` |
 | `Verify` | optional; defaults to the project's `test` command |
