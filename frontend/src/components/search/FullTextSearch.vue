@@ -2,6 +2,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { FocusScope } from 'reka-ui'
+import SearchFacetRail from './SearchFacetRail.vue'
 import SearchResultList from './SearchResultList.vue'
 import SearchPreview from './SearchPreview.vue'
 import SessionSwitcherList from './SessionSwitcherList.vue'
@@ -10,15 +11,17 @@ import { useFullTextSearch } from '../../composables/useFullTextSearch.js'
 import { useSessionSwitcher } from '../../composables/useSessionSwitcher.js'
 import { useMediaQuery } from '../../composables/useMediaQuery.js'
 import { useQuickCapture } from '../../composables/useQuickCapture.js'
-import { MIN_ID_CHARS, NARROW_MAX_PX, SCOPES } from '../../utils/searchDocs.js'
+import {
+  KIND_META, MIN_ID_CHARS, NARROW_MAX_PX, SCOPES, hitLines,
+} from '../../utils/searchDocs.js'
 
 const router = useRouter()
 const search = useFullTextSearch()
 const capture = useQuickCapture()
 // One shell, two payloads (spec §01): when the query is empty on the Sessions
 // facet, or is a `#<id>` address, the ROW BODY, the PREVIEW BODY and the
-// FOOTER ACTION swap — the geometry, the focus trap, the facet bar and the key
-// handling stay exactly as they are.
+// FOOTER ACTION swap — the geometry, the focus trap, the facet rail and the
+// key handling stay exactly as they are.
 const switcher = useSessionSwitcher()
 const switcherMode = search.switcherMode
 // Held separately from `search.activeId`, which is keyed on search-document
@@ -114,6 +117,59 @@ const activeDescendant = computed(() => {
   return id ? `search-row-${id}` : undefined
 })
 
+// Which hit inside the highlighted result the preview is parked on, and
+// whether that pane is reading the document or listing its hits. Held here
+// rather than in the preview because both are driven by keys the palette
+// traps — the preview never sees a keystroke.
+const hitIndex = ref(0)
+const previewMode = ref('read')
+
+const previewHits = computed(() => {
+  const row = switcherMode.value ? null : search.activeRow.value
+  return row ? hitLines(row.doc.body, search.trimmed.value) : []
+})
+
+// Landing on a new row means landing on ITS first hit; carrying the index
+// over would park the stepper at hit #31 of a document with four.
+watch(() => search.activeId.value, () => { hitIndex.value = 0 })
+// A query that no longer matches leaves nothing to step through, and the
+// hit list with nothing in it is a worse answer than the document.
+watch(previewHits, (hits) => {
+  if (!hits.length) { hitIndex.value = 0; previewMode.value = 'read' }
+  else if (hitIndex.value >= hits.length) hitIndex.value = 0
+})
+
+function stepHit(delta) {
+  const n = previewHits.value.length
+  if (!n) return
+  hitIndex.value = (hitIndex.value + delta + n) % n
+}
+
+// Picking a line in the hit list is a request to READ there, not to stay in
+// the list — the list answered "which one", and the answer to that is the
+// document open at it.
+function pickHit(i) {
+  hitIndex.value = i
+  previewMode.value = 'read'
+}
+
+function togglePreviewMode() {
+  if (!previewHits.value.length) return
+  previewMode.value = previewMode.value === 'read' ? 'hits' : 'read'
+}
+
+const railLegend = computed(() => {
+  const out = [{ keys: ['↑', '↓'], label: 'move' }]
+  if (!lookupMode.value) out.push({ keys: ['⇥'], label: 'cycle kind' })
+  out.push({ keys: ['↵'], label: switcherMode.value ? 'attach' : 'open' })
+  if (previewHits.value.length) {
+    out.push({ keys: ['⌥', '↑↓'], label: 'walk hits' })
+    out.push({ keys: ['⌥', 'L'], label: 'hit list' })
+  }
+  out.push({ keys: ['⌃', 'I'], label: 'new idea' })
+  return out
+})
+
 const inputEl = ref(null)
 // Below NARROW_MAX_PX the preview stops being a column and becomes a
 // push-over sheet reached by ↵. The query below and the `@media` block at
@@ -126,6 +182,7 @@ const sheetOpen = ref(false)
 
 const facets = computed(() => search.facets.value.map(f => ({
   ...f,
+  icon: f.kind ? (KIND_META[f.kind]?.icon || 'list') : 'list',
   active: f.label === search.activeFacet.value,
   // In the switcher the Sessions chip counts the ROSTER, not the search
   // corpus: with an empty query the corpus is empty by definition, so the chip
@@ -266,6 +323,41 @@ const PLAIN_KEYS = {
   Enter: openOrReveal,
 }
 
+// ⌥ walks INSIDE the highlighted result; bare ↑↓ walks between results. The
+// two axes were collapsed onto one pair of keys before, which is why reading
+// a page with eighty hits meant leaving the palette.
+const ALT_KEYS = {
+  arrowdown: () => stepHit(1),
+  arrowup: () => stepHit(-1),
+  l: togglePreviewMode,
+}
+
+// ⌃ and ⌥ are two chord tables over one modifier test, so which table a
+// keystroke belongs to is decided here rather than inline in the dispatcher
+// — six `&&` clauses spread across two branches is what pushed `onKeydown`
+// past the complexity gate.
+function chordFor(e) {
+  if (e.metaKey) return undefined
+  if (e.ctrlKey && !e.altKey) return CTRL_KEYS[e.key.toLowerCase()]
+  // On macOS ⌥ composes a character, so the caller must preventDefault or
+  // ⌥L drops a `¬` into the query.
+  if (e.altKey && !e.ctrlKey) return ALT_KEYS[e.key.toLowerCase()]
+  return undefined
+}
+
+// 1–9 attach by number, but ONLY in the roster — where the query is empty by
+// definition and the digit would otherwise begin a filter that starts with a
+// numeral. Under `#` the query is a trace id, which is mostly digits, so the
+// hotkey has to give them back or the address can never be typed. That trade
+// is deliberate: a hotkey you can reach beats a filter term almost nobody
+// types, and one keystroke on the query row (any non-digit) leaves the
+// switcher and gives the digits back.
+function isRosterDigit(e) {
+  if (!switcherMode.value || lookupMode.value) return false
+  if (e.metaKey || e.ctrlKey || e.altKey) return false
+  return /^[1-9]$/.test(e.key)
+}
+
 function onKeydown(e) {
   if (e.key === 'Escape') {
     e.preventDefault()
@@ -277,7 +369,7 @@ function onKeydown(e) {
     closeTopLayer()
     return
   }
-  const chord = e.ctrlKey && CTRL_KEYS[e.key.toLowerCase()]
+  const chord = chordFor(e)
   if (chord) {
     e.preventDefault()
     chord()
@@ -288,16 +380,9 @@ function onKeydown(e) {
     search.cycleFacet(e.shiftKey ? -1 : 1)
     return
   }
-  // 1–9 attach by number, but ONLY in the roster — where the query is empty
-  // by definition and the digit would otherwise begin a filter that starts
-  // with a numeral. Under `#` the query is a trace id, which is mostly digits,
-  // so the hotkey has to give them back or the address can never be typed. That trade is deliberate: a hotkey you can reach beats a
-  // filter term almost nobody types, and one keystroke on the query row
-  // (any non-digit) leaves the switcher and gives the digits back.
-  if (switcherMode.value && !lookupMode.value
-      && !e.metaKey && !e.ctrlKey && !e.altKey
-      && /^[1-9]$/.test(e.key)) {
-    if (attachByNumber(Number(e.key))) { e.preventDefault(); return }
+  if (isRosterDigit(e) && attachByNumber(Number(e.key))) {
+    e.preventDefault()
+    return
   }
   const plain = PLAIN_KEYS[e.key]
   if (!plain) return
@@ -371,43 +456,29 @@ function widen() {
             <button
               v-if="search.trimmed.value"
               type="button"
-              class="query-clear"
+              class="query-clear focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               aria-label="Clear query"
               @click="clearQuery"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg>
             </button>
-            <button type="button" class="query-esc" @click="search.closePalette()">esc</button>
-          </div>
-
-          <div class="facet-bar">
-            <div class="scope-group" role="group" aria-label="Search scope">
-              <button
-                v-for="s in scopes"
-                :key="s.value"
-                type="button"
-                class="scope"
-                :class="{ 'is-active': s.active }"
-                :aria-pressed="s.active"
-                :disabled="s.disabled"
-                :title="s.disabled ? 'Open a session trace to search inside it' : undefined"
-                @click="search.setScope(s.value)"
-              >{{ s.label }}</button>
-            </div>
-            <span class="filter-sep" aria-hidden="true" />
             <button
-              v-for="f in facets"
-              :key="f.label"
               type="button"
-              class="facet"
-              :class="{ 'is-active': f.active }"
-              :aria-pressed="f.active"
-              @click="search.setFacet(f.label)"
-            >{{ f.label }}<span class="facet-count">{{ f.count }}</span></button>
-            <span v-if="!lookupMode" class="facet-hint">tab cycles kind</span>
+              class="query-esc focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              @click="search.closePalette()"
+            >esc</button>
           </div>
 
           <div class="search-panes" :class="{ 'is-sheet': narrow && sheetOpen }">
+            <SearchFacetRail
+              :scopes="scopes"
+              :facets="facets"
+              :recents="search.held.value ? search.recents.value : []"
+              :legend="railLegend"
+              @scope="search.setScope"
+              @facet="search.setFacet"
+              @recent="useRecent"
+            />
             <SessionSwitcherList
               v-if="switcherMode"
               id="search-listbox"
@@ -433,18 +504,20 @@ function widen() {
               :groups="search.groups.value"
               :query="search.trimmed.value"
               :active-id="search.activeId.value"
-              :recents="search.recents.value"
-              :show-recents="search.held.value"
               :no-matches="noMatches"
+              :held="search.held.value"
               :can-widen="canWiden"
               @select="select"
               @open="openRow"
               @retry="search.retry()"
-              @recent="useRecent"
               @widen="widen"
             />
             <div v-if="narrow && sheetOpen" class="sheet-back">
-              <button type="button" @click="sheetOpen = false">← results</button>
+              <button
+                type="button"
+                class="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                @click="sheetOpen = false"
+              >← results</button>
             </div>
             <SessionSwitcherPreview
               v-if="switcherMode"
@@ -456,20 +529,13 @@ function widen() {
               v-else
               :row="search.activeRow.value"
               :query="search.trimmed.value"
+              :hit-index="hitIndex"
+              :mode="previewMode"
               @open="openRow"
+              @step="stepHit"
+              @pick-hit="pickHit"
+              @mode="m => previewMode = m"
             />
-          </div>
-
-          <div class="hint-bar">
-            <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
-            <span v-if="switcherMode"><kbd>↵</kbd> attach</span>
-            <span v-else><kbd>↵</kbd> open</span>
-            <span v-if="switcherMode && !lookupMode"><kbd>1</kbd>–<kbd>9</kbd> jump</span>
-            <span v-if="!lookupMode"><kbd>tab</kbd> kind</span>
-            <span v-if="!switcherMode"><kbd>ctrl</kbd><kbd>s</kbd> scope</span>
-            <span><kbd>ctrl</kbd><kbd>i</kbd> new idea</span>
-            <span><kbd>esc</kbd> close</span>
-            <span class="hint-spans">{{ switcherMode ? switcherCount : scopeHint }}</span>
           </div>
 
           <p class="sr-only" role="status" aria-live="polite">
@@ -495,7 +561,34 @@ function widen() {
   padding: 56px 24px 24px;
 }
 
+/* ============================================================
+   TYPE SCALE — six steps, and nothing inside the palette may use
+   a size that is not one of them. Before this pass there were
+   eleven (9.5 / 10 / 10.5 / 11 / 11.5 / 12 / 12.5 / 13 / 13.5 /
+   17 / 19px), which is why neighbouring labels read as accidents
+   rather than as a hierarchy.
+
+   Declared on the panel, not on :root — the palette is one
+   surface with its own density, and the rest of the app has no
+   business inheriting it. Custom properties cascade to every
+   descendant regardless of scoped-CSS attributes, so the child
+   components pick these up without importing anything.
+
+   Monospace never gets its own px value: at equal px it reads
+   ~8% larger than the sans, so it takes 0.93em on the step it
+   already inherits. One rule, not a second ladder.
+   ============================================================ */
 .search-panel {
+  --sp-t-display: 1.125rem;   /* 18px — the preview title. One per pane.   */
+  --sp-t-input: 1rem;         /* 16px — the query. The only other large.   */
+  --sp-t-body: 0.8125rem;     /* 13px — prose, result titles, hit lines.   */
+  --sp-t-meta: 0.75rem;       /* 12px — controls: facets, scope, buttons.  */
+  --sp-t-micro: 0.6875rem;    /* 11px — counts, crumbs, kickers, legends.  */
+  --sp-t-kbd: 0.625rem;       /* 10px — key caps only; they sit in micro.  */
+  --sp-lh-display: 1.28;
+  --sp-lh-body: 1.62;
+  --sp-lh-micro: 1.4;
+
   display: flex;
   flex-direction: column;
   width: 100%;
@@ -511,8 +604,9 @@ function widen() {
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: 1rem 1.125rem 0.875rem 1.25rem;
+  gap: 0.625rem;
+  height: 3.5rem;
+  padding: 0 0.875rem 0 1.125rem;
   border-bottom: 1px solid var(--color-border);
 }
 
@@ -524,8 +618,10 @@ function widen() {
   border: 0;
   outline: none;
   background: transparent;
-  font-size: 1.25rem;
-  font-weight: 500;
+  font-size: var(--sp-t-input);
+  line-height: 1.45;
+  font-weight: 450;
+  letter-spacing: -0.005em;
   color: var(--color-fg);
   padding: 0;
 }
@@ -534,7 +630,7 @@ function widen() {
 
 .query-count {
   flex-shrink: 0;
-  font-size: 0.71875rem;
+  font-size: var(--sp-t-micro);
   color: var(--color-fg-subtle);
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-variant-numeric: tabular-nums;
@@ -563,7 +659,7 @@ function widen() {
 .query-esc {
   flex-shrink: 0;
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  font-size: 0.6875rem;
+  font-size: var(--sp-t-kbd);
   color: var(--color-fg-muted);
   background: var(--color-background);
   border: 1px solid var(--color-border);
@@ -572,105 +668,24 @@ function widen() {
   cursor: pointer;
 }
 
-.facet-bar {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  gap: 0.4375rem;
-  padding: 0.6875rem 1.25rem;
-  border-bottom: 1px solid var(--color-border);
-  background: var(--color-background);
-  overflow-x: auto;
-}
 
-.facet {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.375rem;
-  font-size: 0.75rem;
-  font-weight: 600;
-  padding: 0.3125rem 0.6875rem;
-  border-radius: 9px;
-  cursor: pointer;
-  background: var(--color-surface);
-  color: var(--color-fg-muted);
-  border: 1px solid var(--color-border);
-  white-space: nowrap;
-}
 
-.facet.is-active {
-  background: var(--color-fg);
-  color: var(--color-surface);
-  border-color: var(--color-fg);
-}
 
-.scope-group {
-  display: inline-flex;
-  flex-shrink: 0;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: 9px;
-  padding: 2px;
-  gap: 2px;
-}
 
-.scope {
-  font-size: 0.75rem;
-  font-weight: 600;
-  padding: 0.1875rem 0.5625rem;
-  border-radius: 7px;
-  border: 0;
-  background: transparent;
-  color: var(--color-fg-muted);
-  cursor: pointer;
-  white-space: nowrap;
-}
 
-.scope.is-active { background: var(--color-info-soft); color: var(--color-info-strong); }
 
-.scope:disabled { opacity: 0.45; cursor: not-allowed; }
 
-.filter-sep {
-  flex-shrink: 0;
-  width: 1px;
-  align-self: stretch;
-  margin: 0 0.1875rem;
-  background: var(--color-border);
-}
 
-.facet-count { font-size: 0.65625rem; color: var(--color-fg-subtle); font-variant-numeric: tabular-nums; }
 
-.facet.is-active .facet-count { color: var(--color-surface); opacity: 0.62; }
 
-.facet-hint {
-  margin-left: auto;
-  font-size: 0.6875rem;
-  color: var(--color-fg-subtle);
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  white-space: nowrap;
-}
 
 .search-panes { flex: 1; min-height: 0; display: flex; position: relative; }
 
-.hint-bar {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  padding: 0.625rem 1.25rem;
-  border-top: 1px solid var(--color-border);
-  background: var(--color-background);
-  font-size: 0.6875rem;
-  color: var(--color-fg-subtle);
-}
 
-.hint-bar span { display: inline-flex; align-items: center; gap: 0.25rem; }
-
-.hint-spans { margin-left: auto; font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); }
 
 kbd {
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  font-size: 0.625rem;
+  font-size: var(--sp-t-kbd);
   background: var(--color-surface-2);
   border: 1px solid var(--color-border);
   color: var(--color-fg-muted);
@@ -716,6 +731,9 @@ kbd {
 @media (max-width: 900px) {
   .search-backdrop { padding: 16px 12px 12px; }
   .search-panel { height: calc(100vh - 28px); border-radius: 16px; }
+  /* The rail lies down (see SearchFacetRail), so the panes have to stack or
+     a horizontal strip would sit in a column beside the results. */
+  .search-panes { flex-direction: column; }
   /* The preview stops being a column and becomes a push-over sheet the
      result list slides out from under. */
   .search-panes > :deep(.search-preview) { display: none; }
@@ -723,13 +741,4 @@ kbd {
   .search-panes.is-sheet > :deep(.search-preview) { display: flex; padding-top: 2.25rem; }
 }
 
-/* The keyboard legends are the only content here that cannot shrink, so they
-   set the panel's minimum width and push it into horizontal overflow on a
-   phone — where they are also advice for keys the reader does not have. The
-   count stays: it is the one line that still means something by touch. */
-@media (max-width: 560px) {
-  .hint-bar span:not(.hint-spans) { display: none; }
-  .hint-spans { margin-left: 0; }
-  .facet-hint { display: none; }
-}
 </style>

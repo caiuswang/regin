@@ -323,7 +323,10 @@ test.describe('full-text search palette', () => {
     await expect(page.locator(`${PANEL} .preview-diff mark`).first()).toHaveText(NEEDLE)
   })
 
-  test('patterns keep the plain line preview', async ({ page }) => {
+  // A pattern body is markdown and is now RENDERED, not printed. The line
+  // preview it used to share with diffs and shell output survives for bodies
+  // that must not reflow; a wiki page reading `## Symptom` was the defect.
+  test('patterns render their markdown rather than printing it', async ({ page }) => {
     await seed(page)
     await openPalette(page)
     await setScope(page, 'Everywhere')
@@ -331,8 +334,49 @@ test.describe('full-text search palette', () => {
     const row = page.locator(`${PANEL} [role="group"][aria-label="Patterns & wiki"] [role="option"]`)
     if (!(await row.count())) test.skip(true, 'no pattern corpus in this environment')
     await row.first().click()
-    await expect(page.locator(`${PANEL} .preview-line`).first()).toBeVisible()
+    const body = page.locator(`${PANEL} .preview-body`)
+    await expect(body.locator('.prose-block').first()).toBeVisible()
+    // Neither the rich span renderer nor the verbatim line renderer.
     await expect(page.locator(`${PANEL} .present-content`)).toHaveCount(0)
+    await expect(page.locator(`${PANEL} .preview-line`)).toHaveCount(0)
+    // The syntax is consumed, not shown.
+    await expect(body).not.toContainText('## ')
+  })
+
+  // The hit list answers "which of these matches do I want" — the question a
+  // reading view cannot answer for a page holding eighty of them.
+  test('⌥L lists every matching line, and picking one reads there', async ({ page }) => {
+    await seed(page)
+    await openPalette(page, 'Spans')
+    await search(page, NEEDLE)
+    await page.locator(ROW).first().click()
+
+    const flip = page.locator(`${PANEL} .preview-flip`)
+    await expect(flip).toContainText('Hit list')
+    await flip.click()
+
+    const hits = page.locator(`${PANEL} .hit-row`)
+    await expect(hits.first()).toBeVisible()
+    // Every listed line carries its line number and the marked term.
+    await expect(hits.first().locator('.hit-line')).not.toBeEmpty()
+    await expect(hits.first().locator('mark').first()).toHaveText(NEEDLE)
+
+    // Picking a line is a request to READ there, not to stay in the list. The
+    // button names its DESTINATION, so back in the reader it offers the list
+    // again.
+    await hits.first().click()
+    await expect(page.locator(`${PANEL} .hit-row`)).toHaveCount(0)
+    await expect(flip).toContainText('Hit list')
+  })
+
+  // Two quantities that must not be printed as one: occurrences (what the row
+  // ranks on) and lines (what the stepper walks).
+  test('the preview counts matches and lines separately', async ({ page }) => {
+    await seed(page)
+    await openPalette(page, 'Spans')
+    await search(page, NEEDLE)
+    await page.locator(ROW).first().click()
+    await expect(page.locator(`${PANEL} .preview-hits`)).toContainText(/\d+ match(es)? · \d+ line/)
   })
 
   test('facet counts sum to the All count', async ({ page }) => {

@@ -36,6 +36,11 @@ export const PREVIEW_SOURCE_LINES = 60
 export const PREVIEW_WINDOW_LINES = 34
 export const SNIPPET_BEFORE = 16
 export const SNIPPET_AFTER = 120
+// The hit list is a triage surface, not the document: past this many lines
+// the reader should open the page rather than keep scrolling a list.
+export const HIT_LINE_CAP = 200
+export const HIT_LEAD = 28
+export const HIT_TRAIL = 150
 // The width below which the preview becomes a sheet. Mirrored by the
 // `@media (max-width: 900px)` blocks in the search components — change both.
 export const NARROW_MAX_PX = 900
@@ -322,17 +327,146 @@ export function markLine(line, query) {
   }
 }
 
-export function previewWindow(body, query) {
+export function previewWindow(body, query, hitIndex = 0) {
   const lines = String(body || '').split('\n').slice(0, PREVIEW_SOURCE_LINES)
-  let first = -1
+  let target = -1
   if (query) {
     const needle = query.toLowerCase()
-    first = lines.findIndex(l => l.toLowerCase().includes(needle))
+    let seen = -1
+    for (let i = 0; i < lines.length; i += 1) {
+      if (!lines[i].toLowerCase().includes(needle)) continue
+      seen += 1
+      if (seen >= hitIndex) { target = i; break }
+    }
   }
-  const from = first > 12 ? first - 6 : 0
+  const from = target > 12 ? target - 6 : 0
   return {
     lines: lines.slice(from, from + PREVIEW_WINDOW_LINES),
     elidedAbove: from,
     truncated: lines.length > from + PREVIEW_WINDOW_LINES,
+    // Where the walked hit sits INSIDE the returned window, so the renderer
+    // can mark that one line apart from the others and scroll it into view.
+    cursor: target < 0 ? -1 : target - from,
   }
+}
+
+// ── Prose bodies ─────────────────────────────────────────────
+//
+// A wiki page or a pattern is markdown; a diff, a shell log or a file body
+// is not. The palette printed both through one raw-line renderer, which is
+// why a wiki page read as `## Symptom` instead of a heading. These helpers
+// are the split: they parse the markdown a prose body is written in, and
+// keep each block's line span so the hit stepper — which addresses LINES —
+// can still say which block it is parked in.
+
+const HEADING_RE = /^(#{1,6})\s+(.*)$/
+const BULLET_RE = /^\s*[-*]\s+(.*)$/
+const STRONG_RE = /\*\*([^*]+?)\*\*/g
+
+// What the reader will SEE on that line. The hit list cites lines out of a
+// prose body, and quoting `## Symptom` at someone who will land on a heading
+// rendered as SYMPTOM makes the two views disagree about the same line.
+export function plainLine(text, literal) {
+  if (literal) return String(text ?? '')
+  return String(text ?? '')
+    .replace(HEADING_RE, '$2')
+    .replace(STRONG_RE, '$1')
+    .replace(/`/g, '')
+}
+
+// Every line of the body the query occurs on, clipped around the term. This
+// is the unit the preview's stepper walks and the hit list renders, and it is
+// deliberately NOT the occurrence count the row badge shows: a line holding
+// three occurrences is one place to look, not three.
+export function hitLines(body, query, cap = HIT_LINE_CAP, { plain = false } = {}) {
+  if (!query) return []
+  const needle = query.toLowerCase()
+  const src = String(body || '').split('\n')
+  const out = []
+  for (let i = 0; i < src.length && out.length < cap; i += 1) {
+    if (!src[i].toLowerCase().includes(needle)) continue
+    const text = plain ? plainLine(src[i], false) : src[i]
+    out.push({ line: i + 1, index: i, text, ...snippet(text, query, HIT_LEAD, HIT_TRAIL) })
+  }
+  return out
+}
+
+export function proseBlocks(body) {
+  const lines = String(body || '').split('\n')
+  const out = []
+  let para = null
+  const flush = () => { if (para) { out.push(para); para = null } }
+  lines.forEach((line, i) => {
+    if (!line.trim()) { flush(); return }
+    const heading = line.match(HEADING_RE)
+    if (heading) {
+      flush()
+      out.push({
+        type: 'h',
+        depth: heading[1].length,
+        text: plainLine(heading[2], false),
+        from: i,
+        to: i,
+      })
+      return
+    }
+    const bullet = line.match(BULLET_RE)
+    if (bullet) {
+      flush()
+      out.push({ type: 'li', text: bullet[1], from: i, to: i })
+      return
+    }
+    // A hard-wrapped paragraph is one paragraph, not six lines. Joining is
+    // what lets it reflow to the pane instead of breaking at the width the
+    // author's editor happened to be.
+    if (para) { para.text += ` ${line.trim()}`; para.to = i }
+    else para = { type: 'p', text: line.trim(), from: i, to: i }
+  })
+  flush()
+  return out
+}
+
+// The inline markdown regin's own bodies actually use: backticked code and
+// `**bold**`, which NEST — ``**`session_spans`**`` is the commonest shape in
+// the wiki. Split rather than replaced, so the query mark can still be placed
+// INSIDE a run instead of being swallowed by an innerHTML pass.
+//
+// Emphasis is tokenised FIRST and code inside it second. The other order
+// leaves the two `**` on opposite sides of a code token, where nothing can
+// pair them, and the reader sees literal asterisks.
+const CODE_SPLIT = /(`[^`]+`)/
+const STRONG_SPLIT = /(\*\*[^*]+?\*\*)/
+
+export function inlineSpans(text) {
+  const out = []
+  String(text ?? '').split(STRONG_SPLIT).filter(Boolean).forEach((part) => {
+    const strong = part.length > 4 && part.startsWith('**') && part.endsWith('**')
+    const inner = strong ? part.slice(2, -2) : part
+    inner.split(CODE_SPLIT).filter(Boolean).forEach((run) => {
+      const code = run.length > 2 && run.startsWith('`') && run.endsWith('`')
+      out.push({ code, strong, text: code ? run.slice(1, -1) : run })
+    })
+  })
+  return out
+}
+
+// Every occurrence, not just the first. `snippet` answers "show me the match"
+// for a one-line row; a rendered paragraph has to mark all of them or the
+// reader counts three hits in the badge and finds one in the text.
+export function splitOnQuery(text, query) {
+  const src = String(text ?? '')
+  if (!query) return [{ text: src, hit: false }]
+  const needle = query.toLowerCase()
+  const hay = src.toLowerCase()
+  const out = []
+  let from = 0
+  let at = hay.indexOf(needle)
+  while (at > -1) {
+    if (at > from) out.push({ text: src.slice(from, at), hit: false })
+    out.push({ text: src.slice(at, at + query.length), hit: true })
+    from = at + query.length
+    at = hay.indexOf(needle, from)
+  }
+  if (from < src.length) out.push({ text: src.slice(from), hit: false })
+  return out
 }

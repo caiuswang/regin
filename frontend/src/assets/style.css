@@ -169,16 +169,22 @@
   --search-diff-add: var(--color-emerald-600);
   --search-diff-del: var(--color-red-600);
 
-  /* Amber is reserved for "this is why you are seeing this row". Two tints
-     so a title hit and a snippet hit are distinguishable, plus a line bar
-     rather than a full-row fill — a solid amber row would collide with the
-     semantic warning amber that lives on turn chrome. */
-  --search-hit-bg: var(--color-amber-200);
-  --search-hit-fg: var(--color-amber-950);
-  --search-hit-soft-bg: var(--color-amber-100);
-  --search-hit-soft-fg: var(--color-amber-800);
-  --search-hit-line-bg: var(--color-amber-50);
-  --search-hit-line-bar: var(--color-amber-400);
+  /* The mark is a TERM treatment, not a block fill: a tint plus an underline
+     on the matched characters, so a paragraph holding six hits reads as prose
+     with six marked words rather than as six highlighted blocks. `-cur` is
+     the one hit the stepper is parked on, and must be findable at a glance
+     among its neighbours — it is the only one that gets a ring.
+     Blue, not amber: amber is the semantic warning colour on turn chrome, and
+     a hit is not a warning. */
+  --search-hit-bg: color-mix(in srgb, var(--color-primary) 16%, transparent);
+  --search-hit-fg: var(--color-fg);
+  --search-hit-rule: color-mix(in srgb, var(--color-primary) 45%, transparent);
+  --search-hit-soft-bg: color-mix(in srgb, var(--color-primary) 11%, transparent);
+  --search-hit-soft-fg: var(--color-fg-muted);
+  --search-hit-cur-bg: color-mix(in srgb, var(--color-primary) 30%, transparent);
+  --search-hit-cur-ring: color-mix(in srgb, var(--color-primary) 38%, transparent);
+  --search-hit-line-bg: transparent;
+  --search-hit-line-bar: color-mix(in srgb, var(--color-primary) 30%, transparent);
 }
 
 [data-theme="dark"] {
@@ -189,15 +195,18 @@
      what made the selected menu row invisible. */
   --color-surface-selected: #3a4a66;
 
-  /* The amber ramp inverts under dark, so the light-mode hit tints land on
-     the wrong side of the text they wrap. Pin the highlight to a dark-amber
-     fill with light text — the mark must stay legible, not merely amber. */
-  --search-hit-bg: #b45309;
-  --search-hit-fg: #fffbeb;
-  --search-hit-soft-bg: #78350f;
-  --search-hit-soft-fg: #fde68a;
-  --search-hit-line-bg: rgba(180, 83, 9, 0.16);
-  --search-hit-line-bar: #f59e0b;
+  /* `--color-primary` already inverts to the light-on-dark blue, so the
+     color-mix tints above carry over. Only the percentages move: the same 16%
+     over a dark surface is a wash nobody can see. */
+  --search-hit-bg: color-mix(in srgb, var(--color-primary) 26%, transparent);
+  --search-hit-fg: var(--color-fg);
+  --search-hit-rule: color-mix(in srgb, var(--color-primary) 62%, transparent);
+  --search-hit-soft-bg: color-mix(in srgb, var(--color-primary) 18%, transparent);
+  --search-hit-soft-fg: var(--color-fg-muted);
+  --search-hit-cur-bg: color-mix(in srgb, var(--color-primary) 44%, transparent);
+  --search-hit-cur-ring: color-mix(in srgb, var(--color-primary) 52%, transparent);
+  --search-hit-line-bg: transparent;
+  --search-hit-line-bar: color-mix(in srgb, var(--color-primary) 42%, transparent);
 
   /* keep the code surface a touch deeper than cards so it reads as a
      distinct well, but soft (not pure black) */
@@ -4312,13 +4321,16 @@ button.live-qa-pick.live-qa-staged {
 
 /* Marks the search preview injects into the presentation renderers' own DOM.
    Global because the directive creates these outside any component's render,
-   so no scoped `data-v-` attribute reaches them. Same amber as SearchMark. */
+   so no scoped `data-v-` attribute reaches them. Same treatment as SearchMark. */
 mark[data-search-hit] {
     background: var(--search-hit-bg);
     color: var(--search-hit-fg);
-    border-radius: 3px;
+    box-shadow: inset 0 -1.5px 0 var(--search-hit-rule);
+    font-weight: 650;
+    border-radius: 2px;
     padding: 0 1px;
-    font: inherit;
+    font-family: inherit;
+    font-size: inherit;
 }
 
 /* Literal text in the presentation reader: a code well, wrapping rather than
