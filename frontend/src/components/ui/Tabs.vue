@@ -68,8 +68,21 @@ watch(model, revealActive)
 
 <style scoped>
 /* Scroll the tab bar horizontally when it outgrows a narrow (mobile)
-   container rather than pushing the whole page sideways. */
-.ds-tablist { display: inline-flex; align-items: center; max-width: 100%; overflow-x: auto; }
+   container rather than pushing the whole page sideways. `overflow-y: hidden`
+   is not decoration: leaving it `visible` makes CSS compute it to `auto`, and
+   the active tab's -1px margin overflows the strip by a pixel — enough for a
+   platform with classic (space-taking) scrollbars to paint a full-height
+   vertical scrollbar across the tab labels. The fade already signals the
+   horizontal overflow, so the bar itself is hidden on both axes. */
+.ds-tablist {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.ds-tablist::-webkit-scrollbar { display: none; }
 .ds-tab { flex-shrink: 0; white-space: nowrap; }
 
 /* Right-edge fade signalling more tabs off-screen; applied only while the
