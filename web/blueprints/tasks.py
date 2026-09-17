@@ -612,10 +612,15 @@ def api_set_task_deps(task_id: int):
     # ordering behind something that already failed — releases it exactly as
     # finishing that dependency would have.
     _fire_after_write(task_id)
+    # Re-read rather than echo: an `after` edge drawn behind a dependency that
+    # has already settled is honoured and retired inside that same call, and a
+    # reply naming an edge the graph no longer holds sends its reader off to
+    # draw one that is not there.
+    edges = deps.dep_edges(task_id)
     return jsonify({
         "task_id": task_id,
-        "depends_on": [edge.id for edge in stored],
-        "deps": [{"id": edge.id, "kind": edge.kind} for edge in stored],
+        "depends_on": [edge.id for edge in edges],
+        "deps": [{"id": edge.id, "kind": edge.kind} for edge in edges],
     })
 
 

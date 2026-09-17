@@ -250,7 +250,13 @@ def _write_edges(rows: list[SliceRow],
             _report_stale(outcome, [edge.id for edge in wanted])
             continue
         deps_module.set_deps(outcome.task_id, wanted)
-        outcome.deps = [edge.id for edge in wanted]
+        # `set_deps` replaces the whole set, so a re-read of an unchanged table
+        # would otherwise put back every ordering the graph has already
+        # honoured. Retiring here is what keeps re-transcription idempotent
+        # against a feature whose earlier slices have run.
+        deps_module.retire_satisfied_after(outcome.task_id)
+        outcome.deps = [edge.id for edge in deps_module.dep_edges(
+            outcome.task_id)]
 
 
 def _report_stale(outcome: SliceOutcome, wanted: list[int]) -> None:

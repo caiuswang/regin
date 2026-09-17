@@ -128,6 +128,43 @@ def as_edges(wanted: Iterable[Union[int, DepEdge, tuple]]) -> list[DepEdge]:
     return out
 
 
+def retire_satisfied_after(task_id: int) -> list[int]:
+    """Drop `task_id`'s `after` edges that have nothing left to hold back.
+
+    An `after` edge is scaffolding, not a fact. It says "do not start this
+    until that one has stopped", and the moment that one stops the sentence is
+    true forever — keeping the row would leave the DAG accumulating orderings
+    that describe no relationship, which is the shape this kind exists to stop
+    drawing. A `requires` edge is the opposite and is never retired: what a
+    task was built on is provenance, and the graph is where it is recorded.
+
+    Scoped to one task and called from the write that could have satisfied an
+    edge, so there is no sweep and no interval. It is a garbage collection of
+    edges `blocking()` already ignores, not a second opinion about them: if
+    the two ever disagree, `blocking()` decides and nothing hangs.
+    """
+    with SessionLocal() as session:
+        rows = session.exec(
+            select(AgentTaskDep.depends_on_id)
+            .where(AgentTaskDep.task_id == task_id)
+            .where(AgentTaskDep.kind == DEP_KIND_AFTER)).all()
+        if not rows:
+            return []
+        settled = sorted(session.exec(
+            select(AgentTask.id)
+            .where(AgentTask.id.in_(set(rows)))
+            .where(AgentTask.status.in_(_SETTLED_FOR_AFTER))).all())
+        if not settled:
+            return []
+        session.exec(delete(AgentTaskDep)
+                     .where(AgentTaskDep.task_id == task_id)
+                     .where(AgentTaskDep.kind == DEP_KIND_AFTER)
+                     .where(AgentTaskDep.depends_on_id.in_(settled)))
+        session.commit()
+    log.write("task_after_edges_retired", task_id=task_id, retired=settled)
+    return settled
+
+
 def _edges(session) -> dict[int, set[int]]:
     """`{task: {tasks it depends on}}` for the whole graph."""
     out: dict[int, set[int]] = {}
@@ -222,6 +259,16 @@ def depends_on(task_id: int) -> list[int]:
             select(AgentTaskDep.depends_on_id)
             .where(AgentTaskDep.task_id == task_id)).all()
     return sorted(rows)
+
+
+def dep_edges(task_id: int) -> list[DepEdge]:
+    """The edges `task_id` still waits on, id and kind, lowest id first."""
+    with SessionLocal() as session:
+        rows = session.exec(
+            select(AgentTaskDep.depends_on_id, AgentTaskDep.kind)
+            .where(AgentTaskDep.task_id == task_id)
+            .order_by(AgentTaskDep.depends_on_id)).all()
+    return [DepEdge(dep, kind) for dep, kind in rows]
 
 
 def dependents(task_id: int) -> list[int]:

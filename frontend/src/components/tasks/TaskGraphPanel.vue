@@ -138,8 +138,9 @@ onMounted(load)
       <p class="tg-legend">
         Layers read top to bottom: a task sits below everything it waits for.
         A dashed outline is blocked; a solid green one is armed and runnable.
-        A solid line is a real dependency; a dashed line is ordering only, and
-        its task runs whether the one above it succeeded or failed.
+        A solid line is a real dependency and stays. A dashed line is ordering
+        only: its task runs whether the one above it succeeded or failed, and
+        the line is dropped once that has happened.
         Click a box — or press Enter on it — to re-root the graph there.
       </p>
     </template>
