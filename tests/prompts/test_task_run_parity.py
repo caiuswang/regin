@@ -1,12 +1,13 @@
-"""Characterization test: the editable task-run skeletons render byte-identical
-to the pre-refactor hardcoded f-strings.
+"""Characterization test: the editable task-run skeletons render exactly the
+text the hardcoded f-strings did, plus the two instructions deliberately added
+on top of the port (the follow-up reply command, the feature spec rewrite).
 
 The ``_reference_*`` builders below are a **frozen copy** of what
-``lib.tasks.runs`` produced before the prompt-surface refactor. They call the
-same (unchanged, shared) helpers — ``_invocation``, ``_finish_command``,
-``_followup_lines`` — so the only thing under test is the migrated template
-bodies plus the context wiring. If the two ever diverge, the migration dropped
-or mangled text: edit the surface body and this reference together.
+``lib.tasks.runs`` produced. They call the same (unchanged, shared) helpers —
+``_invocation``, ``_finish_command``, ``_followup_lines`` — so the only thing
+under test is the migrated template bodies plus the context wiring. If the two
+ever diverge, an edit dropped or mangled text: change the surface body and this
+reference together.
 """
 
 from __future__ import annotations
@@ -64,6 +65,7 @@ def _reference_tracker(name: str, ref: str, url: str) -> str:
 
 
 def _reference_followup(lines: list[str], dropped: int) -> str:
+    """The ported block plus the reply instruction added on top of it."""
     plural = "" if dropped == 1 else "s"
     omitted = (f"\n({dropped} earlier comment{plural} omitted to fit; the "
                "most recent are the ones kept.)\n") if dropped else ""
@@ -77,11 +79,20 @@ def _reference_followup(lines: list[str], dropped: int) -> str:
         "run until someone resolves the thread.\n"
         + "".join(lines).lstrip("\n")
         + omitted
-        + "</followup>"
+        + "Answer them where they are, not only in your final report. For "
+        "each thread, say what you did about it and close it:\n"
+        "\n"
+        f"  {runs._cli_command('task', 'comment', '<thread id>', '--body', '<what you did about it>', '--resolve')}\n"
+        "\n"
+        "Drop `--resolve` when you are asking something back instead of "
+        "settling it. An unresolved thread is delivered again on every later "
+        "run, so leaving one open is how you hand a question forward.\n"
+        "</followup>"
     )
 
 
 def _reference_feature(feature_id: int, named: str) -> str:
+    """The ported block plus the spec-rewrite instruction added on top."""
     return (
         "\n\n<feature>\n"
         f"This run is a session of feature {named}; regin attributes it "
@@ -89,6 +100,17 @@ def _reference_feature(feature_id: int, named: str) -> str:
         f"it against that id: `regin defects open \"<what>\" --feature "
         f"{feature_id} --session <session id>`. Shipping is the operator's "
         "act on the feature, not yours.\n"
+        "The feature's spec is the description this task was cut from, and "
+        "this run is what proves it right or wrong. If you finish knowing the "
+        "spec now contradicts the code — a decision reversed, a constraint "
+        "that turned out false, a piece deliberately not built — rewrite it "
+        "rather than leaving the next run to inherit the stale text:\n"
+        "\n"
+        f"  {runs._cli_command('feature', 'spec', str(feature_id), '--file', '-')}\n"
+        "\n"
+        "Revise it in place as the design now stands; do not append a "
+        "changelog of this run. Leave it alone when the work simply did what "
+        "it already said.\n"
         "</feature>"
     )
 
@@ -190,3 +212,54 @@ def test_task_body_braces_are_not_re_rendered(monkeypatch):
     task = {"id": 1, "title": "t", "body": "use {{finish}} and {literal}",
             "feature_id": None}
     assert runs._prompt(task, 7, None) == "use {{finish}} and {literal}"
+
+
+# ── the point of the port: the operator can change any of it ──────────────
+
+def test_a_stored_edit_replaces_the_built_in_default(tmp_db):
+    """What the whole refactor buys: an edited row is what a run is launched
+    with, no code change."""
+    from lib.prompt_templates import seed_builtin_skeletons, update_template
+    from lib.prompts.surfaces.tasks import FINISH_SURFACE_ID
+
+    seed_builtin_skeletons()
+    update_template(FINISH_SURFACE_ID,
+                    {"body": "<finish>run {{finish_cmd}}</finish>"})
+    block = runs._finish_block(7)
+    assert block == f"\n\n<finish>run {runs._finish_command(7)}</finish>"
+
+
+def test_a_broken_edit_degrades_to_the_default_instead_of_killing_a_run(
+        tmp_db):
+    """A prompt is user-editable, so a run must survive a bad edit."""
+    from lib.prompt_templates import seed_builtin_skeletons, update_template
+    from lib.prompts.surfaces.tasks import FINISH_SURFACE_ID
+
+    seed_builtin_skeletons()
+    update_template(FINISH_SURFACE_ID, {"body": "{{no_such_variable}}"})
+    assert runs._finish_block(7) == _reference_finish(7)
+
+
+def test_every_task_run_surface_is_seeded_as_a_builtin_row(tmp_db):
+    from lib.prompt_templates import list_templates, seed_builtin_skeletons
+    from lib.prompts.registry import list_surfaces
+
+    seed_builtin_skeletons()
+    seeded = {row["slug"] for row in list_templates() if row["builtin"]}
+    registered = {s.id for s in list_surfaces() if s.area == "task-run"}
+    assert registered and registered <= seeded
+
+
+def test_the_ported_bodies_are_registered_as_retired_defaults():
+    """The follow-up and feature bodies changed after their first release, so
+    an un-edited row seeded from the ported text must heal rather than pin it."""
+    import hashlib
+
+    from lib.prompt_templates import _body_sha256
+    from lib.prompts.registry import retired_default_hashes
+    from lib.prompts.surfaces.tasks import (FEATURE_SURFACE_ID,
+                                            FOLLOWUP_SURFACE_ID)
+
+    assert _body_sha256("x") == hashlib.sha256(b"x").hexdigest()
+    assert retired_default_hashes(FOLLOWUP_SURFACE_ID)
+    assert retired_default_hashes(FEATURE_SURFACE_ID)

@@ -353,6 +353,15 @@ def _finish_command(run_id: int) -> str:
     return " ".join(shlex.quote(part) for part in parts)
 
 
+def _cli_command(*parts: str) -> str:
+    """A `regin <…>` command as the prompt must write it — the server's own
+    interpreter and CLI path, for the same reason `_finish_command` does it:
+    the agent's cwd is a worktree and its PATH may not carry regin at all."""
+    cli = settings.project_root / "cli" / "regin.py"
+    argv = [sys.executable, str(cli), *parts]
+    return " ".join(shlex.quote(part) for part in argv)
+
+
 def _finish_block(run_id: int, linked: bool = False,
                   base: str = "") -> str:
     """The `<finish>` instruction appended to a run's launch prompt.
@@ -374,13 +383,14 @@ def _finish_block(run_id: int, linked: bool = False,
     """
     from lib.prompts import render_surface  # noqa: PLC0415
     from lib.prompts.surfaces.tasks import (  # noqa: PLC0415
-        FINISH_ORDER_LINKED_SURFACE_ID, FINISH_ORDER_NATIVE_SURFACE_ID,
-        FINISH_SURFACE_ID)
+        FINISH_BASE_UNNAMED_SURFACE_ID, FINISH_ORDER_LINKED_SURFACE_ID,
+        FINISH_ORDER_NATIVE_SURFACE_ID, FINISH_SURFACE_ID)
 
     if linked:
         order = render_surface(FINISH_ORDER_LINKED_SURFACE_ID, {})
     else:
-        target = f"`{base}`" if base else "the branch this run was based on"
+        target = (f"`{base}`" if base
+                  else render_surface(FINISH_BASE_UNNAMED_SURFACE_ID, {}))
         order = render_surface(FINISH_ORDER_NATIVE_SURFACE_ID,
                                {"target": target})
     return "\n\n" + render_surface(
@@ -437,9 +447,16 @@ def _followup_rows(task_id: int) -> list[tuple[int, dict]]:
 
 def _followup_line(thread_id: int, comment: dict, previous) -> str:
     """One comment, labelled by who wrote it, with a blank line where one
-    conversation ends and the next begins."""
+    conversation ends and the next begins.
+
+    The thread id is on every line, not just the first of a run: it is the
+    handle the reply command takes, and a run whose oldest comments were
+    dropped to fit could otherwise be shown a continuation line with no id
+    anywhere above it.
+    """
     gap = "\n" if previous not in (None, thread_id) else ""
-    return f"{gap}  [{comment['author_kind']}] {comment['body'].strip()}\n"
+    return (f"{gap}  [thread {thread_id} · {comment['author_kind']}] "
+            f"{comment['body'].strip()}\n")
 
 
 def _followup_lines(rows: list[tuple[int, dict]]) -> tuple[list[str], int]:
@@ -478,14 +495,19 @@ def _followup_block(task_id: int) -> str:
     if not lines:
         return ""
     from lib.prompts import render_surface  # noqa: PLC0415
-    from lib.prompts.surfaces.tasks import FOLLOWUP_SURFACE_ID  # noqa: PLC0415
+    from lib.prompts.surfaces.tasks import (  # noqa: PLC0415
+        FOLLOWUP_OMITTED_SURFACE_ID, FOLLOWUP_SURFACE_ID)
 
-    plural = "" if dropped == 1 else "s"
-    omitted = (f"\n({dropped} earlier comment{plural} omitted to fit; the "
-               "most recent are the ones kept.)\n") if dropped else ""
+    omitted = "\n" + render_surface(
+        FOLLOWUP_OMITTED_SURFACE_ID,
+        {"dropped": dropped, "plural": "" if dropped == 1 else "s"}
+    ) + "\n" if dropped else ""
     return "\n\n" + render_surface(FOLLOWUP_SURFACE_ID, {
         "comments": "".join(lines).lstrip("\n"),
-        "omitted": omitted})
+        "omitted": omitted,
+        "comment_cmd": _cli_command("task", "comment", "<thread id>",
+                                    "--body", "<what you did about it>",
+                                    "--resolve")})
 
 
 def _feature_block(task: dict) -> str:
@@ -506,7 +528,9 @@ def _feature_block(task: dict) -> str:
     feature = feature_store.get(feature_id)
     named = f"#{feature_id}" + (f" ({feature.title})" if feature else "")
     return "\n\n" + render_surface(FEATURE_SURFACE_ID, {
-        "feature_named": named, "feature_id": feature_id})
+        "feature_named": named, "feature_id": feature_id,
+        "spec_cmd": _cli_command("feature", "spec", str(feature_id),
+                                 "--file", "-")})
 
 
 def _prompt(task: dict, run_id: int, params: Optional[dict] = None) -> str:
@@ -533,6 +557,11 @@ def _prompt(task: dict, run_id: int, params: Optional[dict] = None) -> str:
     `<followup>` sits after `<tracker>` so a linked task reads the external
     issue as the source of truth first, and the local unresolved comments as
     what was additionally said here.
+
+    None of the wording is here: every block is a prompt surface under the
+    `task-run` area (`lib/prompts/surfaces/tasks.py`), so an operator changes
+    what a run is told without changing this file. The order is the envelope's
+    to decide, which is why even the assembly renders through a template.
     """
     body = (task.get("body") or "").strip()
     text = body or task["title"]
@@ -543,14 +572,20 @@ def _prompt(task: dict, run_id: int, params: Optional[dict] = None) -> str:
     from lib.prompts import render_surface  # noqa: PLC0415
     from lib.prompts.surfaces.tasks import LAUNCH_SURFACE_ID  # noqa: PLC0415
 
-    return render_surface(LAUNCH_SURFACE_ID, {
+    finish = _finish_block(run_id, linked=remote, base=_armed_base(params))
+    prompt = render_surface(LAUNCH_SURFACE_ID, {
         "invocation": _invocation(params or {}),
         "body": text[:PROMPT_MAX],
         "tracker": _tracker_block(feature),
         "followup": _followup_block(task["id"]),
         "feature": _feature_block(task),
-        "finish": _finish_block(run_id, linked=remote,
-                                base=_armed_base(params))})
+        "finish": finish})
+    # An envelope edited to drop `{{finish}}` renders fine — a *missing*
+    # placeholder is not a render error, so `render_surface` never falls back —
+    # and produces a task that can never complete. Every other block is the
+    # operator's to remove; this one is the control instruction regin needs
+    # back, so it is re-appended rather than silently lost.
+    return prompt if finish in prompt else prompt + finish
 
 
 def _armed_base(params: Optional[dict]) -> str:

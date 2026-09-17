@@ -267,7 +267,10 @@ def test_comments_arrive_oldest_first(flask_client, launcher):
     assert block.index("first thing") < block.index("second thing")
 
 
-def test_each_comment_is_labelled_with_its_author_kind(flask_client, launcher):
+def test_each_comment_is_labelled_with_its_thread_and_author_kind(
+        flask_client, launcher):
+    """The thread id joined the label once the block started asking for a
+    reply: `task comment` takes a thread id, and nothing else carries it."""
     task_id = _armed(flask_client, "shelf", body="wire the thing")
     thread = comments.open_thread("task", str(task_id))
     comments.add_comment(thread["id"], body="from a person",
@@ -277,8 +280,8 @@ def test_each_comment_is_labelled_with_its_author_kind(flask_client, launcher):
 
     block = _block(_launch(flask_client, launcher, task_id)[0])
 
-    assert "[user] from a person" in block
-    assert "[agent] from a machine" in block
+    assert f"[thread {thread['id']} · user] from a person" in block
+    assert f"[thread {thread['id']} · agent] from a machine" in block
 
 
 def test_the_block_says_why_these_are_still_here(flask_client, launcher):

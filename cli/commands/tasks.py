@@ -18,6 +18,7 @@ Subcommands:
   list    — the backlog, newest first
   show    — one task in full
   delete  — remove a task and everything keyed to it
+  comment — reply into a comment thread, and optionally settle it
   finish  — report a run's work done (the agent's own final step)
 
 The done-claim is **not** here. It is an act on a feature, and a feature is its
@@ -39,6 +40,8 @@ from sqlmodel import select
 
 from lib.orm import SessionLocal
 from lib.orm.models.sync import Repo
+from lib.orm.models.comments import (
+    AUTHOR_AGENT, RESOLUTION_OPEN, RESOLUTION_RESOLVED, SUBJECT_TASK)
 from lib.orm.models.tasks import TASK_PRIORITIES
 from lib.tasks import store
 from lib.tasks.commands import (
@@ -198,6 +201,82 @@ def cmd_delete(
         print(str(exc))
         raise typer.Exit(code=1)
     _emit(deleted, json, lambda t: print(f"deleted #{t['id']}  {t['title']}"))
+
+
+@tasks_app.command(
+    "comment",
+    help="Reply into a task's comment thread (run BY the task's own agent).")
+def cmd_comment(
+    thread_id: int = typer.Argument(
+        ..., help="Thread id, as the run's <followup> block labels it."),
+    body: str = typer.Option(..., "--body", help="What you did about it."),
+    resolve: bool = typer.Option(
+        False, "--resolve",
+        help="Settle the thread so it stops reaching later runs."),
+    reopen: bool = typer.Option(
+        False, "--reopen", help="Re-open a settled thread."),
+    json: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Post an agent's answer into a thread, and settle it in the same act.
+
+    A local write, so it goes straight through the store like every other
+    command here — `finish` is the lone exception, and only because settling an
+    attempt has to launch whatever depends on it.
+
+    Resolving is the same call the task page makes: it says the conversation is
+    dealt with, not that the task is done. Without `--resolve` the thread stays
+    open and is delivered to the next run — which is how an agent hands a
+    question back.
+    """
+    from lib.comments import store as comments
+
+    if resolve and reopen:
+        _refuse("--resolve and --reopen are opposites", 2)
+    thread = _task_thread(thread_id)
+    try:
+        comment = comments.add_comment(thread_id, body=body,
+                                       author_kind=AUTHOR_AGENT)
+    except comments.CommentRejected as exc:
+        _refuse(str(exc), 2)
+    if comment is None:                        # deleted between the two reads
+        _refuse(f"no thread #{thread_id}", 1)
+    if resolve or reopen:
+        thread = comments.resolve(
+            thread_id, RESOLUTION_RESOLVED if resolve else RESOLUTION_OPEN)
+    _emit({"comment": comment, "thread_id": thread_id,
+           "resolution_state": (thread or {}).get("resolution_state")
+           or RESOLUTION_OPEN},
+          json, _render_comment)
+
+
+def _refuse(message: str, code: int) -> None:
+    typer.echo(f"task comment: {message}", err=True)
+    raise typer.Exit(code=code)
+
+
+def _task_thread(thread_id: int) -> dict:
+    """The thread, once it is proved to be one this command may write to.
+
+    An id off a prompt is not proof of what it belongs to, and a mistyped one
+    would otherwise post as `agent` into somebody else's conversation.
+    """
+    from lib.comments import store as comments
+
+    thread = comments.get_thread(thread_id)
+    if thread is None:
+        _refuse(f"no thread #{thread_id}", 1)
+    if thread["subject_kind"] != SUBJECT_TASK:
+        _refuse(f"thread #{thread_id} is on a {thread['subject_kind']}, "
+                "not a task", 2)
+    return thread
+
+
+def _render_comment(payload: dict) -> None:
+    state = payload["resolution_state"]
+    print(f"comment #{payload['comment']['id']} posted to thread "
+          f"#{payload['thread_id']} ({state})")
+    if state == RESOLUTION_OPEN:
+        print("still open — it reaches the next run until someone resolves it")
 
 
 @tasks_app.command(

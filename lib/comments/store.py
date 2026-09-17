@@ -144,6 +144,15 @@ def resolve(thread_id: int, state: str) -> Optional[dict]:
     return view
 
 
+def get_thread(thread_id: int) -> Optional[dict]:
+    """One thread by id, or None. Callers that were handed a bare id need its
+    subject before they write to it — an id is not proof of what it belongs
+    to."""
+    with SessionLocal() as session:
+        row = session.get(CommentThread, thread_id)
+        return serialize_thread(row) if row is not None else None
+
+
 def threads_for(subject_kind: str, subject_id: str) -> list[dict]:
     """Every thread about one subject, oldest first."""
     with SessionLocal() as session:

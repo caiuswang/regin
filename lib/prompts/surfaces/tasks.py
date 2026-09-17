@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from lib.prompts.registry import (
     PromptVariable,
+    register_retired_default,
     register_surface,
 )
 
@@ -27,11 +28,12 @@ FEATURE_SURFACE_ID = "task-run-feature"
 FINISH_SURFACE_ID = "task-run-finish"
 FINISH_ORDER_LINKED_SURFACE_ID = "task-run-finish-order-linked"
 FINISH_ORDER_NATIVE_SURFACE_ID = "task-run-finish-order-native"
+FINISH_BASE_UNNAMED_SURFACE_ID = "task-run-finish-base-unnamed"
+FOLLOWUP_OMITTED_SURFACE_ID = "task-run-followup-omitted"
 
-# NOTE: keep byte-identical to the pre-refactor f-string output — a
-# characterization test (tests/prompts/test_task_run_parity.py) asserts
-# `runs._prompt` == the frozen reference builder. Edit the wording here and the
-# reference together.
+# NOTE: tests/prompts/test_task_run_parity.py asserts `runs._prompt` == a
+# frozen reference builder, so the port stays provable against the f-strings it
+# replaced. Edit the wording here and that reference together.
 _LAUNCH_BODY = (
     "{{invocation}}{{body}}{{tracker}}{{followup}}{{feature}}{{finish}}"
 )
@@ -44,10 +46,20 @@ Read the issue and its comments before you start. When the work lands, record it
 
 _FOLLOWUP_BODY = """<followup>
 Comments left on this task that nobody has resolved. They were written on the task page, possibly after an earlier attempt, and they are still here because the conversation is still open — read them as part of what is being asked, not as history already dealt with. Later ones correct earlier ones. They keep arriving on every run until someone resolves the thread.
-{{comments}}{{omitted}}</followup>"""
+{{comments}}{{omitted}}Answer them where they are, not only in your final report. For each thread, say what you did about it and close it:
+
+  {{comment_cmd}}
+
+Drop `--resolve` when you are asking something back instead of settling it. An unresolved thread is delivered again on every later run, so leaving one open is how you hand a question forward.
+</followup>"""
 
 _FEATURE_BODY = """<feature>
 This run is a session of feature {{feature_named}}; regin attributes it automatically. If you find something the feature got wrong, declare it against that id: `regin defects open "<what>" --feature {{feature_id}} --session <session id>`. Shipping is the operator's act on the feature, not yours.
+The feature's spec is the description this task was cut from, and this run is what proves it right or wrong. If you finish knowing the spec now contradicts the code — a decision reversed, a constraint that turned out false, a piece deliberately not built — rewrite it rather than leaving the next run to inherit the stale text:
+
+  {{spec_cmd}}
+
+Revise it in place as the design now stands; do not append a changelog of this run. Leave it alone when the work simply did what it already said.
 </feature>"""
 
 _FINISH_BODY = """<finish>
@@ -56,6 +68,13 @@ This work was launched from a regin task. Running the command below is the ONLY 
    {{finish_cmd}}
 If you could not finish, run the same command with `--status failed --reason '<why>'`.
 </finish>"""
+
+_FINISH_BASE_UNNAMED_BODY = "the branch this run was based on"
+
+_FOLLOWUP_OMITTED_BODY = (
+    "({{dropped}} earlier comment{{plural}} omitted to fit; the most recent "
+    "are the ones kept.)"
+)
 
 _FINISH_ORDER_LINKED_BODY = (
     "Before you run it: record the work on the linked issue and move its "
@@ -116,13 +135,15 @@ register_surface(
     area="task-run",
     default_body=_FOLLOWUP_BODY,
     description=(
-        "The unresolved comment threads left on this task. Redelivered on "
-        "every run until somebody resolves the thread."
+        "The unresolved comment threads left on this task, and how the run "
+        "answers them. Redelivered on every run until somebody resolves the "
+        "thread."
     ),
     applies_to=("external-agent",),
     variables=(
         PromptVariable("comments", "The rendered comments that fit, oldest first, one `[author] body` line each."),
         PromptVariable("omitted", "Note naming how many older comments were dropped to fit. Empty when none were.", required=False),
+        PromptVariable("comment_cmd", "The literal `regin task comment` command, with placeholders for the thread and the reply."),
     ),
 )
 
@@ -132,13 +153,14 @@ register_surface(
     area="task-run",
     default_body=_FEATURE_BODY,
     description=(
-        "Which feature this run counts under, and how to blame a defect on "
-        "it when the work proves the feature got something wrong."
+        "Which feature this run counts under: how to blame a defect on it, "
+        "and when to rewrite its spec because the work proved the spec wrong."
     ),
     applies_to=("external-agent",),
     variables=(
         PromptVariable("feature_named", "The feature as the prompt names it.", example="#80 (Agent SDK runs)"),
         PromptVariable("feature_id", "The feature's numeric id.", example="80"),
+        PromptVariable("spec_cmd", "The literal `regin feature spec` command, with this feature's id filled in."),
     ),
 )
 
@@ -156,6 +178,36 @@ register_surface(
         PromptVariable("order", "What must happen before finishing — the linked or the native variant."),
         PromptVariable("finish_cmd", "The literal `regin task finish <run id>` command."),
     ),
+)
+
+register_surface(
+    FOLLOWUP_OMITTED_SURFACE_ID,
+    label="Task run — dropped-comments note",
+    area="task-run",
+    default_body=_FOLLOWUP_OMITTED_BODY,
+    description=(
+        "Told to a run whose oldest comments would not fit the block's "
+        "budget. The agent is told its history is incomplete rather than left "
+        "to assume it has all of it."
+    ),
+    applies_to=("external-agent",),
+    variables=(
+        PromptVariable("dropped", "How many older comments were dropped.", example="2"),
+        PromptVariable("plural", "`s` unless exactly one was dropped.", required=False),
+    ),
+)
+
+register_surface(
+    FINISH_BASE_UNNAMED_SURFACE_ID,
+    label="Task run — unnamed base branch",
+    area="task-run",
+    default_body=_FINISH_BASE_UNNAMED_BODY,
+    description=(
+        "Stands in for `{{target}}` in the native finish precondition when "
+        "the run was armed with no base branch: the instruction still holds, "
+        "it just cannot name where to merge."
+    ),
+    applies_to=("external-agent",),
 )
 
 register_surface(
@@ -186,3 +238,15 @@ register_surface(
         PromptVariable("target", "The base branch named, or a generic phrase when the run was armed with none.", example="`master`"),
     ),
 )
+
+
+# The bodies as first ported from the f-strings, before the follow-up block
+# learned to ask for a reply and the feature block for a spec rewrite. A stored
+# row still hashing to one of these was seeded, never edited, and is healed to
+# the current default by `seed_builtin_skeletons`.
+register_retired_default(
+    FOLLOWUP_SURFACE_ID,
+    sha256="217bbcf15f95146ee252082e8b5768f9d3977d15a2f618d21690656e06ea8457")
+register_retired_default(
+    FEATURE_SURFACE_ID,
+    sha256="cf0c2b6f698a75a4ae248e1bde62e13069053b56727f3e7ec7383e91b3a4db52")
