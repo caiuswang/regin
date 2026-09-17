@@ -1041,14 +1041,35 @@ class AgentRunner:
         return True, "prompt updated"
 
     def cancel_pending(self, prompt_id: str) -> tuple[bool, str]:
-        """Drop a queued prompt before its turn starts. Any thread."""
+        """Drop a queued prompt before its turn starts. Any thread.
+
+        The record's abandonment is accounted for here, which is what `dropped`
+        marks — the pump reaches it only once the current turn ends, and
+        reporting a *drop* there resurrected the cancelled text as a chip the
+        moment the session went idle.
+        """
         with self._queue_lock:
             item = self._find_pending(prompt_id)
             if item is None:
                 return False, "that prompt is no longer queued"
             item.cancelled = True
+            item.dropped = True
             self._pending.remove(item)
+        self._record_cancel(item)
         return True, "prompt removed"
+
+    def _record_cancel(self, item: "_Queued") -> None:
+        """Stop a cancelled prompt's row reading `delivered` without earning it
+        the chip a drop earns. A failure to record must not fail the cancel —
+        the operator's removal already happened."""
+        if item.row_id is None:
+            return
+        try:
+            from lib.agent_bridge import store as bridge_store
+            bridge_store.mark_cancelled(item.row_id)
+        except Exception as exc:
+            log.error("sdk_prompt_cancel_unrecorded", trace_id=self.trace_id,
+                      prompt_id=item.id, row_id=item.row_id, detail=str(exc))
 
     def close(self) -> None:
         """End the session once everything already queued has run."""
@@ -1130,7 +1151,10 @@ class AgentRunner:
 
         A cancelled record is skipped rather than run: it is already inside the
         queue when it is dropped, so this is where a removed prompt actually
-        stops existing.
+        stops existing. Both removers account for its row before it gets here
+        (`cancel_pending`, and `request_stop` via `_drain_pending`), so the
+        drop below is a backstop for a record neither of them recorded — it is
+        a no-op for the ones they did.
 
         An idle session still holds a `claude` child process, so an abandoned
         one is reclaimed rather than pinned against `max_concurrent_runs`

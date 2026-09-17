@@ -191,6 +191,19 @@ SET delivered = 0, delivery_detail = ?, state = 'pending',
 WHERE id = ?
 """
 
+# An operator who cancels a queued prompt removed it deliberately, so the row
+# is corrected WITHOUT the `dropped: ` prefix that earns a chip — re-serving
+# the text they just deleted is the same as never having cancelled it. `state`
+# is terminal for the same reason: `pending` is one `mark_delivered` away from
+# the delivered-steer feed, which would resurrect the chip through the other
+# door.
+_MARK_CANCELLED_SQL = """
+UPDATE bridge_messages
+SET delivered = 0, delivery_detail = 'cancelled by operator',
+    state = 'cancelled', state_at = datetime('now')
+WHERE id = ?
+"""
+
 _DROPPED_STEERS_SQL = f"""
 SELECT id, body, delivery_detail, created_at
 FROM bridge_messages
@@ -467,6 +480,21 @@ def mark_dropped(row_id: int, reason: str) -> None:
     finally:
         conn.close()
     log.error("bridge_message_dropped", row_id=row_id, reason=reason)
+
+
+def mark_cancelled(row_id: int) -> None:
+    """Record that the operator removed this prompt from the queue themselves.
+
+    Deliberately not `mark_dropped`: a drop is a prompt the session lost, whose
+    text survives nowhere else, so it earns a chip. A cancel is the operator
+    throwing that text away, and a chip would hand it straight back."""
+    conn = get_connection()
+    try:
+        conn.execute(_MARK_CANCELLED_SQL, (row_id,))
+        conn.commit()
+    finally:
+        conn.close()
+    log.write("bridge_message_cancelled", row_id=row_id)
 
 
 def list_dropped_steers(trace_id: str) -> list[dict]:

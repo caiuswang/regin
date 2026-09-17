@@ -133,3 +133,53 @@ def test_a_delivered_steer_is_not_served_as_dropped(captured, fake_client,
     bridge_store.mark_delivered(row_id, True, "prompt queued")
 
     assert bridge_store.list_dropped_steers(_TRACE) == []
+
+
+def test_a_cancelled_prompt_is_not_served_back_as_dropped(captured,
+                                                          fake_client, tmp_db):
+    """The operator deleting a queued prompt is not the session losing it.
+
+    The record stays inside the queue after `cancel_pending`, so the pump only
+    reaches it once the current turn ends — reporting a drop there handed the
+    deleted text straight back as a chip the moment the session went idle.
+    """
+    row_id = _row("cancel me")
+    bridge_store.mark_delivered(row_id, True, "prompt queued")
+
+    async def scenario():
+        run = await _started()
+        run.enqueue("cancel me", row_id=row_id)
+        target = run.pending_prompts()[0]["id"]
+        assert run.cancel_pending(target) == (True, "prompt removed")
+        run.close()
+        await asyncio.wait_for(run.pump(), timeout=5)
+        await run.stop()
+        return fake_client.prompts
+
+    assert asyncio.run(scenario()) == []
+    assert bridge_store.list_dropped_steers(_TRACE) == []
+    assert _detail(row_id) == "cancelled by operator"
+    assert _delivered(row_id) == 0
+
+    # A late ack must not reopen the other door: `pending` + `delivered` is
+    # the delivered-steer feed, and the chip would come back through it.
+    bridge_store.mark_delivered(row_id, True, "prompt queued")
+    assert bridge_store.list_pending_steers(_TRACE) == []
+    assert bridge_store.list_dropped_steers(_TRACE) == []
+
+
+def test_the_operators_stop_still_reports_what_it_strands(captured,
+                                                          fake_client, tmp_db):
+    """`request_stop` cancels every queued record too — but those the operator
+    never asked to lose, so they keep earning a chip."""
+    row_id = _row("stranded by stop")
+
+    async def scenario():
+        run = await _started()
+        run.enqueue("stranded by stop", row_id=row_id)
+        await run.request_stop()
+
+    asyncio.run(scenario())
+
+    assert _detail(row_id) == "dropped: stopped_by_operator"
+    assert [r["id"] for r in bridge_store.list_dropped_steers(_TRACE)] == [row_id]
