@@ -109,29 +109,20 @@ function goTo(link) {
   router.push(link.to)
 }
 
+// Group and within-group order follows assumed usage frequency, not topic
+// alphabetization: the groups you check continuously while an agent runs
+// (Observability) sit above the ones you open to configure or reference
+// something (Library, System).
 const navGroups = computed(() => [
-  {
-    label: 'Library',
-    links: [
-      { to: '/repos', label: 'Repos', icon: 'repos' },
-      // Patterns and skills are one library behind one entry — a skill is
-      // deployed FROM a pattern, so two rail items described one thing twice.
-      // The switcher is the tab strip in LibraryView, not the rail.
-      { to: '/patterns', label: 'Patterns & Skills', icon: 'patterns',
-        match: ['/patterns', '/skills'] },
-      { to: '/prompt-templates', label: 'Prompts', icon: 'prompts' },
-    ],
-  },
   {
     label: 'Observability',
     links: [
-      // Trace exposes every user's session list + full transcripts and
-      // sessions carry no per-user owner, so it is admin-only (matches the
-      // ADMIN_API_ENDPOINTS gate on /api/sessions*).
-      ...(isAdmin.value ? [{ to: '/trace', label: 'Trace', icon: 'trace' }] : []),
       { to: '/live', label: 'Live', icon: 'live' },
       { to: '/inbox', label: 'Inbox', exact: true, icon: 'inbox',
         badge: () => inboxUnread.value, tone: () => inboxTone.value },
+      // Sessions carry no per-user owner, so Trace is admin-only (matches
+      // the ADMIN_API_ENDPOINTS gate on /api/sessions*).
+      ...(isAdmin.value ? [{ to: '/trace', label: 'Trace', icon: 'trace' }] : []),
       { to: '/memory', label: 'Memory', exact: true, icon: 'memory' },
       { to: '/grades', label: 'Grades', exact: true, icon: 'grades' },
       { to: '/audit', label: 'Audit', icon: 'audit' },
@@ -140,18 +131,28 @@ const navGroups = computed(() => [
   {
     label: 'Engineering',
     links: [
+      // Tasks, features and defects are one workbench behind one entry — the
+      // switcher is the tab strip in PipelineView. No role conditional: the
+      // ledger reads are authenticated-any-role.
+      { to: '/tasks', label: 'Pipeline', icon: 'pipeline',
+        match: ['/tasks', '/features', '/defects'] },
       { to: '/rules', label: 'Rules', exact: true, icon: 'rules' },
+      { to: '/plans', label: 'Plans', icon: 'plans' },
       ...(features.experimental_conceal
         ? [{ to: '/experiments', label: 'Experiments', icon: 'experiments' }]
         : []),
-      { to: '/plans', label: 'Plans', icon: 'plans' },
-      // Tasks, features and defects are one workbench behind one entry — the
-      // switcher is the tab strip in PipelineView, not three rail items that
-      // hid the loop they belong to. No role conditional: the ledger reads are
-      // authenticated-any-role, and nothing in their payloads varies by who is
-      // asking.
-      { to: '/tasks', label: 'Pipeline', icon: 'pipeline',
-        match: ['/tasks', '/features', '/defects'] },
+    ],
+  },
+  {
+    label: 'Library',
+    links: [
+      // Patterns and skills are one library behind one entry — a skill is
+      // deployed FROM a pattern, so two rail items described one thing twice.
+      // The switcher is the tab strip in LibraryView, not the rail.
+      { to: '/patterns', label: 'Patterns & Skills', icon: 'patterns',
+        match: ['/patterns', '/skills'] },
+      { to: '/repos', label: 'Repos', icon: 'repos' },
+      { to: '/prompt-templates', label: 'Prompts', icon: 'prompts' },
     ],
   },
   ...(diagEnabled.value ? [{
