@@ -16,6 +16,7 @@ const CUSTOM_KEY = 'regin_sessions_custom_span'
 const SCOPE_KEY = 'regin_sessions_search_scope'
 const TAG_KEY = 'regin_sessions_tag'
 const REPO_KEY = 'regin_sessions_repo'
+const RUNS_KEY = 'regin_sessions_runs'
 
 export const SCOPE_OPTIONS = [
   { value: 'title', label: 'Title' },
@@ -126,6 +127,20 @@ export function useSessionListQuery() {
   const tagFilter = ref(localStorage.getItem(TAG_KEY) || '')
   const repoFilter = ref(localStorage.getItem(REPO_KEY) || 'all')
 
+  // Non-interactive runs (`origin` in workflow / llm-stage — the `system`
+  // builtin category) are folded away rather than listed one row per agent: a
+  // single fan-out writes hundreds of them and buries the handful of sessions
+  // a human actually opened. The tag facet alone cannot express this — it is
+  // positive-selection only, so selecting `system` gives runs *instead of*
+  // sessions and there is no way back to a mixed list. The request therefore
+  // keeps driving the server's own `workflow=` axis, which the "N hidden"
+  // chip flips. Hiding is also suppressed once a tag is chosen (`tag=system`
+  // would otherwise cancel itself to nothing) and for a trace-id lookup,
+  // which is a deep link and must resolve a run's own row.
+  const runsShown = ref(localStorage.getItem(RUNS_KEY) === '1')
+  const hideRuns = computed(() =>
+    !runsShown.value && !tagFilter.value && !activeTraceId.value)
+
   const cursor = useCursor({
     path: '/sessions',
     size: 50,
@@ -137,6 +152,8 @@ export function useSessionListQuery() {
         // 'real' is the server default; only send when narrowing/widening.
         kind: kind.value !== 'real' ? kind.value : undefined,
         tag: tagFilter.value || undefined,
+        // 'show' is the server default; only send when narrowing.
+        workflow: hideRuns.value ? 'hide' : undefined,
         active: activeFilter.value !== 'all' ? activeFilter.value : undefined,
         trace_id: activeTraceId.value || undefined,
         q: activeSearch.value || undefined,
@@ -157,6 +174,9 @@ export function useSessionListQuery() {
   const totalCount = computed(() => extras.value?.total_count ?? null)
   const activeCount = computed(() => extras.value?.active_count ?? 0)
   const builtinTags = computed(() => extras.value?.builtin_tags || [])
+  // Run rows the SAME other filters would have matched — served only while
+  // `workflow=hide` is in force, which is what makes it the chip's guard.
+  const hiddenRunCount = computed(() => extras.value?.workflow_hidden_count || 0)
 
   const filterCount = computed(() => {
     const on = [
@@ -231,6 +251,10 @@ export function useSessionListQuery() {
       [kind, KIND_KEY], [activeFilter, ACTIVE_KEY], [range, RANGE_KEY],
       [tagFilter, TAG_KEY], [repoFilter, REPO_KEY],
     ]
+    watch(runsShown, (v) => {
+      localStorage.setItem(RUNS_KEY, v ? '1' : '0')
+      if (!batching) reload()
+    })
     for (const [source, key] of bindings) {
       watch(source, (v) => {
         localStorage.setItem(key, v ?? '')
@@ -282,6 +306,10 @@ export function useSessionListQuery() {
     })
   }
 
+  function toggleRuns(reload) {
+    return batched(() => { runsShown.value = !runsShown.value }, reload ?? reloadFn)
+  }
+
   const CLEARERS = {
     range: () => { clearSpan(); range.value = DEFAULTS.range },
     kind: () => { kind.value = DEFAULTS.kind },
@@ -309,6 +337,7 @@ export function useSessionListQuery() {
       clearSpan()
       tagFilter.value = DEFAULTS.tag
       repoFilter.value = DEFAULTS.repo
+      runsShown.value = false
     }, reload ?? reloadFn)
   }
 
@@ -318,7 +347,7 @@ export function useSessionListQuery() {
     kind, activeFilter, range, tagFilter, repoFilter,
     customStart, customEnd, rangeLabel, tagLabels, activeFilters,
     serverClock, tagCounts, repoCounts, totalCount, activeCount, builtinTags,
-    filterCount, persistAndReload, commitSearch, resetFilters,
-    selectRangePreset, pickRangeDay, clearFilter,
+    hiddenRunCount, runsShown, filterCount, persistAndReload, commitSearch, resetFilters,
+    selectRangePreset, pickRangeDay, clearFilter, toggleRuns,
   }
 }

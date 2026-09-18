@@ -119,6 +119,21 @@ def test_tag_counts_match_group_by(client):
         'user', 'topic-proposal', 'system'}
 
 
+def test_system_facet_count_survives_hiding_the_rows_it_counts(client):
+    """The list hides run rows by default and offers the `system` facet as the
+    way back in — which only works if the facet still advertises a count while
+    its rows are excluded. `tag_counts` is therefore computed WITHOUT the
+    origin clause; `workflow_hidden_count` is what the pivot reads."""
+    p = client._db_path
+    _seed(p, 'a', origin='session')
+    _seed(p, 'd', origin='workflow')
+    _seed(p, 'e', origin='llm-stage')
+    j = client.get('/api/sessions?workflow=hide').get_json()
+    assert {x['trace_id'] for x in j['items']} == {'a'}
+    assert j['tag_counts']['system'] == 2
+    assert j['workflow_hidden_count'] == 2
+
+
 def test_invalid_tag_narrows_to_empty(client):
     _seed(client._db_path, 'x', origin='session')
     # malformed slug (bad charset) → requested but unusable → empty

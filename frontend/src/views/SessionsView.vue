@@ -8,6 +8,7 @@ import SessionActiveFilters from '../components/sessions/SessionActiveFilters.vu
 import SessionCard from '../components/sessions/SessionCard.vue'
 import SessionListRow from '../components/sessions/SessionListRow.vue'
 import SessionToolbar from '../components/sessions/SessionToolbar.vue'
+import Button from '../components/ui/Button.vue'
 import Checkbox from '../components/ui/Checkbox.vue'
 import { useConfirm } from '../composables/useConfirm'
 import { useFlash } from '../composables/useFlash'
@@ -36,7 +37,7 @@ const {
   serverClock, tagCounts, repoCounts, totalCount, activeCount, builtinTags,
   filterCount, searchInput, activeSearch, traceIdInput, searchScope,
   kind, activeFilter, range, tagFilter, repoFilter,
-  customStart, customEnd, rangeLabel, activeFilters,
+  customStart, customEnd, rangeLabel, activeFilters, hiddenRunCount, runsShown,
 } = query
 
 const { customTags, loadCustomTags, patchRowTags, addTag, removeTag } = useSessionTags()
@@ -69,6 +70,14 @@ function groupCount(group) {
   }
   return String(group.rows.length)
 }
+
+// With a search term live, the hidden rows are HITS the user is looking at a
+// list without — say so, or the empty result reads as "no matches" when the
+// matches are simply folded away.
+const runsHiddenLabel = computed(() => {
+  const noun = activeSearch.value ? 'matching system run' : 'system run'
+  return `⚙ ${hiddenRunCount.value} ${noun}${hiddenRunCount.value === 1 ? '' : 's'} hidden →`
+})
 
 const footerNote = computed(() => (hasNext.value && groupMode.value !== 'flat'
   ? 'keyset-paginated, 50 per page · groups cover the loaded rows'
@@ -350,6 +359,17 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape))
         @clear="(key) => query.clearFilter(key)"
         @clear-all="query.resetFilters(reload)"
       />
+
+      <Button
+        v-if="hiddenRunCount || runsShown"
+        variant="link"
+        size="sm"
+        class="mt-1"
+        :title="runsShown
+          ? 'Fold workflow runs and LLM stages back out of the list'
+          : 'List workflow runs and LLM stages alongside these sessions'"
+        @click="query.toggleRuns(reload)"
+      >{{ runsShown ? '⚙ Hide system runs' : runsHiddenLabel }}</Button>
     </div>
 
     <div class="slist">
