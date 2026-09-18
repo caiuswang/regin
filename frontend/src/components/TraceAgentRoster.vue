@@ -81,7 +81,7 @@ function statusOf(agent) {
         <span class="inline-block w-1.5 h-1.5 rounded-full shrink-0 bg-slate-300" aria-hidden="true"></span>
         <span class="flex-1 min-w-0">
           <span class="block text-xs font-medium text-slate-600">{{ a.agentType }}</span>
-          <span class="block text-[11px] text-slate-400 truncate">{{ a.resultPreview || a.description }}</span>
+          <span class="block text-[11px] text-slate-400 truncate">{{ a.description || a.resultPreview }}</span>
         </span>
         <span class="font-mono text-[10px] text-slate-400 shrink-0">{{ statusOf(a) }}</span>
       </Button>

@@ -2,9 +2,10 @@
 // Agents sheet body for the /live card. Running agents first (pulsing violet
 // dot, agent_type eyebrow, description 2-line clamp, ticking elapsed —
 // waiting-for-input agents ride this group with amber treatment); a
-// default-collapsed "Finished (N)" group below (muted, result_preview +
-// duration) — finished agents are still data users investigate, so collapse,
-// don't hide. Interrupted/stale agents (launch denied, or gone silent with
+// default-collapsed "Finished (N)" group below (muted, description +
+// duration — the row keeps naming the TASK after the agent finishes; a
+// structured result is unreadable JSON in a one-line slot) — finished
+// agents are still data users investigate, so collapse, don't hide. Interrupted/stale agents (launch denied, or gone silent with
 // no subagent.stop ever coming) render in the same group with a muted-amber
 // status instead of a duration — still scopeable, never counted as running.
 // Primary tap on a card SCOPES the tail to that agent's spans; the chevron
@@ -121,7 +122,7 @@ function elapsedOf(agent) {
               <span class="live-agent-dot" aria-hidden="true"></span>
               <span class="live-agent-main">
                 <span class="live-agent-eyebrow">{{ a.agentType }} · {{ a.startClock }}</span>
-                <span class="live-agent-desc">{{ a.resultPreview || a.description }}</span>
+                <span class="live-agent-desc">{{ a.description || a.resultPreview }}</span>
               </span>
               <!-- compact: the verbose "stale · last seen HH:MM" squeezes
                    the description to ~10ch in this column at 375px. -->

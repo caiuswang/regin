@@ -33,6 +33,8 @@ const INT_FILE_B = 'src/AGENT_B_INTERNAL_MARKER.js'
 const REAL_TASK_PROMPT = 'REAL_TASK_PROMPT_MARKER — verify the acceptance items'
 const AGENT_EARLY_ANSWER = 'AGENT_EARLY_ANSWER_MARKER'
 const AGENT_LAST_ANSWER = 'AGENT_LAST_ANSWER_MARKER'
+const DONE_AGENT_DESC = 'DONE_AGENT_DESC_MARKER — synthesize the cluster'
+const DONE_AGENT_JSON = '{"node":"DONE_AGENT_JSON_MARKER","clusters":[{"sources":["abc"]}]}'
 
 async function post(page, spans) {
   const res = await page.request.post('/api/session-spans', { data: spans })
@@ -44,7 +46,7 @@ async function post(page, spans) {
 // finished agent (terminal-empty state), a second agent (switch test), filler.
 async function seedScoped(page, {
   realPrompt = false, emptyAgent = false, secondAgent = false, filler = 0,
-  agentTurn = false, desc = 'Map the breakpoints',
+  agentTurn = false, doneAgent = false, desc = 'Map the breakpoints',
 } = {}) {
   const traceId = randomUUID()
   const sfx = traceId.slice(0, 8)
@@ -88,6 +90,21 @@ async function seedScoped(page, {
       name: 'subagent.stop', start_time: now,
       attributes: { agent_type: 'ghost', agent_id: `ag-empty-${sfx}`,
         result_preview: 'nothing captured', is_test: true } })
+  }
+  // A FINISHED agent whose launch named a task and whose stop carries a
+  // structured (JSON) result — the roster row must keep naming the task.
+  if (doneAgent) {
+    const agIdD = `ag-done-${sfx}`
+    spans.push({ trace_id: traceId, span_id: `agent-d-${sfx}`, parent_id: `prompt-${sfx}`, name: 'tool.Agent',
+      start_time: now, attributes: { subagent_type: 'synth',
+        description: DONE_AGENT_DESC, tool_use_id: `tud-${sfx}`, agent_id: agIdD, is_test: true } })
+    spans.push({ trace_id: traceId, span_id: `substart-d-${sfx}`, parent_id: `prompt-${sfx}`,
+      name: 'subagent.start', start_time: now,
+      attributes: { agent_type: 'synth', agent_id: agIdD, is_test: true } })
+    spans.push({ trace_id: traceId, span_id: `substop-d-${sfx}`, parent_id: `prompt-${sfx}`,
+      name: 'subagent.stop', start_time: later,
+      attributes: { agent_type: 'synth', agent_id: agIdD,
+        result_preview: DONE_AGENT_JSON, is_test: true } })
   }
   const agIdB = `ag-run-b-${sfx}`
   if (secondAgent) {
@@ -308,6 +325,19 @@ test.describe('Pane roster mode (≥xl)', () => {
     await expect(pane(page).getByText('AGENT_B_INTERNAL_MARKER').first())
       .toBeVisible({ timeout: 10_000 })
     expect(page.url()).toContain(`agent=${agIdB}`)
+  })
+
+  test('a finished row names its TASK, not its structured result', async ({ page }) => {
+    const { traceId } = await seedScoped(page, { doneAgent: true, emptyAgent: true })
+    await gotoTrace(page, traceId)
+    await agentsBtn(page).click()
+    const roster = page.locator('[data-testid="trace-agent-pane-roster"]')
+    await expect(roster).toBeVisible({ timeout: 10_000 })
+
+    await expect(roster).toContainText('DONE_AGENT_DESC_MARKER')
+    await expect(roster).not.toContainText('DONE_AGENT_JSON_MARKER')
+    // Description-less agents keep the result as the only thing left to show.
+    await expect(roster).toContainText('nothing captured')
   })
 })
 

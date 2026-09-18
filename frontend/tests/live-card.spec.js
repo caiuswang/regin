@@ -2627,7 +2627,7 @@ test.describe('Header agents button + agents sheet', () => {
     await expect(card).toContainText('Verify acceptance items')
   })
 
-  test('a finished agent → no badge; Finished group is collapsed by default and expands to the result', async ({ page }) => {
+  test('a finished agent → no badge; Finished group is collapsed by default and expands to the description', async ({ page }) => {
     const { traceId } = await seedAgents(page, { withStop: true })
     await page.goto(`/live/${traceId}`)
     await settle(page)
@@ -2641,7 +2641,10 @@ test.describe('Header agents button + agents sheet', () => {
     await expect(toggle).toContainText('Finished (1)')
     await toggle.click()
     await expect(page.locator('[data-testid="live-agent-finished"]')).toBeVisible()
-    await expect(page.locator('[data-testid="live-agent-sheet"]')).toContainText('All checks passed')
+    // The row keeps naming the TASK after the agent finishes — a structured
+    // result (JSON) in this one-line slot reads as garbage and loses identity.
+    await expect(page.locator('[data-testid="live-agent-sheet"]')).toContainText('Verify acceptance items')
+    await expect(page.locator('[data-testid="live-agent-sheet"]')).not.toContainText('All checks passed')
   })
 
   test('empty state when no agents were launched', async ({ page }) => {
