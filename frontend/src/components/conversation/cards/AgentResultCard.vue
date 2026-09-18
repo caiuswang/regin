@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import { AGENT_RESULT_PREVIEW_CHARS } from '../../../composables/useAgentLaunchMerge.js'
+import { prettyJson, jsonFence } from '../../../utils/jsonBody.js'
 import MarkdownContent from '../../MarkdownContent.vue'
 import Button from '../../ui/Button.vue'
 
@@ -15,8 +16,25 @@ const props = defineProps({
   folding: { type: Object, required: true },
 })
 
-const resultText = computed(() => props.agentMerge.agentResultText(props.span))
+const resultText = computed(() => String(props.agentMerge.agentResultText(props.span) ?? ''))
 const expanded = computed(() => props.folding.isAgentResultExpanded(props.span.span_id))
+
+const jsonText = computed(() => prettyJson(resultText.value))
+
+const renderedMarkdown = computed(() =>
+  (jsonText.value ? jsonFence(jsonText.value) : resultText.value))
+
+// The clamp cuts by HEIGHT, so the affordance has to be gated on what is
+// actually rendered. Pretty-printing turns a 66-char JSON result into eleven
+// lines: gating that on the raw char count clips it with no way to expand.
+// 4 = what .agent-result-clamp (7.4em) fits of an 11.5px <pre> with padding.
+const CLAMPED_CODE_LINES = 4
+// The char clause is not redundant with the line clause: `pre-wrap` reflows a
+// single 600-char value into ~9 visual rows, so a 3-line result can still clip.
+const clipped = computed(() => (jsonText.value
+  ? jsonText.value.split('\n').length > CLAMPED_CODE_LINES
+    || jsonText.value.length > AGENT_RESULT_PREVIEW_CHARS
+  : resultText.value.length > AGENT_RESULT_PREVIEW_CHARS))
 </script>
 
 <template>
@@ -27,7 +45,7 @@ const expanded = computed(() => props.folding.isAgentResultExpanded(props.span.s
     <div class="flex items-center justify-between gap-2 mb-1">
       <span class="text-[10px] font-semibold uppercase tracking-wider text-emerald-700">result</span>
       <Button
-        v-if="resultText.length > AGENT_RESULT_PREVIEW_CHARS"
+        v-if="clipped"
         variant="link"
         size="sm"
         class="min-w-0 max-w-full text-[11px] font-medium text-emerald-700 hover:text-emerald-900"
@@ -39,8 +57,9 @@ const expanded = computed(() => props.folding.isAgentResultExpanded(props.span.s
          a fade so the cut lands between rendered blocks, never mid-token. -->
     <div
       class="agent-result-md text-[12.5px] text-slate-700 break-words leading-relaxed"
-      :class="expanded ? 'max-h-[32rem] overflow-y-auto' : 'agent-result-clamp'"
-    ><MarkdownContent :markdown="resultText" /></div>
+      :class="[expanded ? 'max-h-[32rem] overflow-y-auto' : 'agent-result-clamp', jsonText ? 'agent-result-json' : '']"
+      :data-result-format="jsonText ? 'json' : 'markdown'"
+    ><MarkdownContent :markdown="renderedMarkdown" /></div>
   </div>
 </template>
 
@@ -74,4 +93,10 @@ const expanded = computed(() => props.folding.isAgentResultExpanded(props.span.s
   font-size: 11.5px;
 }
 .agent-result-md :deep(.pattern-content > :first-child) { margin-top: 0; }
+/* A pretty-printed JSON value line runs to ~600 chars; an unwrapped <pre> would
+   scroll the card sideways. Prose results keep the default <pre> behaviour. */
+.agent-result-json :deep(pre) {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 </style>

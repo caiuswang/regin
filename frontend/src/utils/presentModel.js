@@ -272,6 +272,14 @@ const TITLE_MAX = 120
 // command otherwise wrapped the header to the height of the payload.
 const collapseWhitespace = (text) => String(text || '').replace(/\s+/g, ' ').trim()
 
+// A pretty-printed JSON body opens on a bare `{`, which is no subject at all.
+// Skip the structural line and land on the first key instead.
+function firstSubjectLine(text) {
+  return plainText(text).split('\n')
+    .map(line => line.trim())
+    .find(line => line && !/^[[{]$/.test(line))
+}
+
 export function presentFor(span, ctx = {}) {
   if (!span) return null
   const a = span.attributes || {}
@@ -295,7 +303,7 @@ export function presentFor(span, ctx = {}) {
   const rawTitle = ask
     ? (ask.questions[0]?.question || label)
     : ((hasProse && label === span.name)
-      ? (plainText(prose.text).split('\n').find(Boolean) || label)
+      ? (firstSubjectLine(prose.text) || label)
       : label)
   // ONE cap, applied last, on every branch. `spanLabel` is unbounded for
   // `tool.failure` (a 16,384-char error in this store), `harness.local_command`

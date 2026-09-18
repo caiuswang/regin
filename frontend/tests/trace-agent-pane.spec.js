@@ -339,6 +339,29 @@ test.describe('Pane roster mode (≥xl)', () => {
     // Description-less agents keep the result as the only thing left to show.
     await expect(roster).toContainText('nothing captured')
   })
+
+  test('a structured (JSON) result renders pretty-printed in a code block', async ({ page }) => {
+    const { traceId } = await seedScoped(page, { doneAgent: true })
+    await gotoTrace(page, traceId)
+
+    const result = page.locator('[data-testid="agent-result"]').first()
+    await expect(result).toBeVisible({ timeout: 10_000 })
+    await expect(result.locator('[data-result-format="json"]')).toHaveCount(1)
+    // Pretty-printed: the keys land on their own indented lines, not one wall.
+    await expect(result.locator('pre code')).toContainText('"node": "DONE_AGENT_JSON_MARKER"')
+    await expect(result.locator('pre code')).toContainText('\n  "clusters"')
+
+    // Pretty-printing multiplies the line count, so a JSON result short enough
+    // to pass the RAW char threshold would be height-clipped with no way out.
+    // The expand affordance must track what is RENDERED, not the raw string.
+    const toggle = result.getByRole('button', { name: /Show full|Collapse/ })
+    await expect(toggle).toBeVisible()
+    await toggle.click()
+    await expect(result.locator('[data-result-format]')).toHaveClass(/overflow-y-auto/)
+    const reachable = await result.locator('pre').evaluate(
+      el => el.scrollHeight <= el.closest('[data-result-format]').clientHeight)
+    expect(reachable).toBe(true)
+  })
 })
 
 // ---- acceptance 3/4: not-found + divergence in the pane -----------------------

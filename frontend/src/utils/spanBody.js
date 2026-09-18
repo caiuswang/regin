@@ -1,4 +1,4 @@
-// The ONE resolver for "which attribute carries this span's readable body".
+// The resolver for "which attribute carries this span's readable body".
 //
 // Three surfaces used to answer this question from three hand-maintained
 // lists, and the three had drifted: Focus's condensed row opened a
@@ -6,14 +6,42 @@
 // presentation reader showed its `summary`; `assistant.thinking` could never
 // promote out of the fold because the failure probe was the only one of the
 // three that did not read `thinking_text`; and a `subagent.stop`'s
-// `result_preview` reached none of them. Adding a span kind is now one edit
-// here rather than three that can disagree.
+// `result_preview` reached none of them.
+//
+// READ THIS BEFORE CHANGING HOW A SPAN'S BODY RENDERS. This file used to call
+// itself "the ONE resolver" and it is not one — editing it reaches FOUR
+// surfaces and misses the rest, which is how the same fix has had to be made
+// twice in a row (ac12839f fixed the feed card and left the reader broken;
+// eb0eaadf fixed the reader):
+//
+//   reached  presentation reader (presentModel.proseFor), its content-only
+//            walk filter (spanHasBody), the search palette's preview pane
+//            (SearchSpanPreview → presentFor), Focus's condensed row
+//            (dispatch.condensedBody → CondensedRow)
+//   missed   the search INDEX — searchDocs.js carries its own function also
+//            named `spanBody`, and its key list knows 6 kinds to this file's
+//            19; every feed card (Thinking / AssistantResponse / Recap /
+//            ServerTool / Prompt / Compaction / Rewind) hardcodes its own
+//            key; the agent result and brief (useAgentLaunchMerge's
+//            `agentResultText` / `agentDescription` / `agentPrompt`, plus the
+//            gates in useSpanTree and SubagentCard that decide whether a
+//            result card exists at all); the timeline and /live rows
+//            (traceFormatters `rowParts` / `fullLabel`, liveRows `humanMain`);
+//            the detail rail (SpanDetailPanel); and the agent roster and live
+//            sheet, which read roster ENTRIES rather than spans and so cannot
+//            be reached from a span-keyed resolver at all.
+//
+// The missed surfaces are not all delegable: the index appends `file_path` /
+// `diff` / `stdout` and short-circuits on `redacted`, and every row builder
+// flattens and hard-truncates. But grep the attribute key you are changing
+// across src/ before calling a body fix done.
 //
 // `verbatim` marks a body that is literal text — a file, a git status, an
 // injected block — rather than model-authored markdown. A reader that renders
 // it through the markdown pipeline eats its indentation and swallows anything
 // that looks like a mark.
 import { isSendToUserSpan } from './spanAttributes.js'
+import { prettyJson } from './jsonBody.js'
 
 // name → { label, keys: [preferred, …fallbacks], verbatim?, verbatimKeys? }
 export const SPAN_BODY_SPEC = {
@@ -75,6 +103,20 @@ export const SPAN_BODY_SPEC = {
 
 const EMPTY = { label: '', key: '', text: '', verbatim: false }
 
+// An agent's REPORT that turns out to be a JSON document is literal text, not
+// markdown: the renderer finds no structure in it and flattens the payload
+// into one paragraph. Pretty-print it and show it the way a file is shown.
+//
+// Only a body the spec left as prose. An already-verbatim body is bytes the
+// reader must see unchanged — a `tool.Read` of package.json re-indented here
+// would round its 64-bit ints, decode its escapes and drop a duplicate key,
+// and a pasted-JSON `prompt` would stop being what the user typed.
+function asJsonBody(body) {
+  if (body.verbatim) return body
+  const pretty = prettyJson(body.text)
+  return pretty ? { ...body, text: pretty, verbatim: true } : body
+}
+
 // A key whose value is not a non-empty STRING is not a body: several kinds
 // carry a list or an object under a name this table also uses for prose
 // (`harness.task_reminder.content` is a 769-element array), and rendering one
@@ -87,12 +129,12 @@ export function spanBody(span) {
   const spec = SPAN_BODY_SPEC[span?.name]
   if (spec) {
     const key = spec.keys.find(k => typeof a[k] === 'string' && a[k])
-    return {
+    return asJsonBody({
       label: (key && spec.labels?.[key]) || spec.label,
       key: key || spec.keys[spec.keys.length - 1],
       text: key ? a[key] : '',
       verbatim: !!spec.verbatim || !!(key && spec.verbatimKeys?.includes(key)),
-    }
+    })
   }
   if (a.server_side && typeof a.response_text === 'string' && a.response_text) {
     return { label: 'Result', key: 'response_text', text: a.response_text, verbatim: false }

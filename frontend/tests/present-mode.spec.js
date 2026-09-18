@@ -495,6 +495,82 @@ test('a subagent’s child rows stay inside the content column', async ({ page }
     .toHaveAttribute('title', /GREP DONE/)
 })
 
+test('a structured (JSON) agent result reads as a document, not one paragraph', async ({ page }) => {
+  test.setTimeout(90_000)
+  const traceId = randomUUID()
+  const p8 = traceId.slice(0, 8)
+  const prompt = `p-${p8}`
+  // What an agent handed an output schema really returns: memory-curate's
+  // step-4 prompt ends "OUTPUT exactly one JSON object, no prose".
+  const RESULT = JSON.stringify({
+    clusters: [{ node: 'orphan', sources: ['2efccebb', 'aa3e15e9'],
+      title: 'PRESENT_JSON_MARKER — never count session_spans raw',
+      reason: 'a'.repeat(400) }],
+  })
+  const spans = [
+    { trace_id: traceId, span_id: prompt, parent_id: null, name: 'prompt',
+      start_time: '2026-05-08T12:00:00', attributes: { text: 'curate', is_test: true } },
+    { trace_id: traceId, span_id: `sa-${p8}`, parent_id: prompt, name: 'subagent.start',
+      start_time: '2026-05-08T12:00:01', duration_ms: 138_000,
+      attributes: { agent_type: 'general-purpose', agent_id: `ag-json-${p8}`,
+                    agent_segment_result: RESULT, is_test: true } },
+  ]
+  await page.goto('/trace/sessions')
+  const token = await page.evaluate(() => localStorage.getItem('regin_auth_token'))
+  expect((await page.request.post('/api/session-spans', {
+    headers: { Authorization: `Bearer ${token}` }, data: spans,
+  })).ok()).toBeTruthy()
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto(`/trace/sessions/${traceId}?view=conversation`)
+  await expect(page.locator('.event-spine')).toBeVisible({ timeout: 20_000 })
+
+  await rowFor(page, 'general-purpose').locator('.present-open').click()
+  await expect(reader(page)).toBeVisible()
+
+  // Literal, pretty-printed, in the verbatim well — NOT reflowed by markdown
+  // into a single <p>, which is how 8 KB of payload became one grey wall.
+  const verbatim = reader(page).locator('.present-verbatim')
+  await expect(verbatim).toContainText('PRESENT_JSON_MARKER')
+  await expect(verbatim).toContainText('\n  "clusters"')
+  await expect(reader(page).locator('.present-prose p')).toHaveCount(0)
+
+  // The 400-char value must wrap, not push the reader sideways.
+  const overflow = await contentOverflow(page)
+  expect(overflow.scrollWidth, JSON.stringify(overflow)).toBeLessThanOrEqual(overflow.clientWidth + 1)
+})
+
+test('a JSON FILE keeps its bytes — only a prose body is promoted', async ({ page }) => {
+  test.setTimeout(90_000)
+  const traceId = randomUUID()
+  const p8 = traceId.slice(0, 8)
+  const prompt = `p-${p8}`
+  // Re-serialising a file would round the 64-bit int, decode the \u escape and
+  // drop the duplicate key — three silent edits to bytes the reader is being
+  // shown AS the file. A verbatim body is never promoted, so this is literal.
+  const FILE = '{\n    "id": 12345678901234567890,\n    "name": "caf\\u00e9",\n    "dup": 1,\n    "dup": 2\n}'
+  const spans = [
+    { trace_id: traceId, span_id: prompt, parent_id: null, name: 'prompt',
+      start_time: '2026-05-08T12:00:00', attributes: { text: 'read it', is_test: true } },
+    { trace_id: traceId, span_id: `rd-${p8}`, parent_id: prompt, name: 'tool.Read',
+      start_time: '2026-05-08T12:00:01', duration_ms: 40,
+      attributes: { tool_name: 'Read', file_path: 'PRESENT_FILE_MARKER.json',
+                    content: FILE, is_test: true } },
+  ]
+  await page.goto('/trace/sessions')
+  const token = await page.evaluate(() => localStorage.getItem('regin_auth_token'))
+  expect((await page.request.post('/api/session-spans', {
+    headers: { Authorization: `Bearer ${token}` }, data: spans,
+  })).ok()).toBeTruthy()
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto(`/trace/sessions/${traceId}?view=conversation`)
+  await expect(page.locator('.event-spine')).toBeVisible({ timeout: 20_000 })
+
+  await rowFor(page, 'PRESENT_FILE_MARKER').locator('.present-open').click()
+  await expect(reader(page)).toBeVisible()
+  const verbatim = reader(page).locator('.present-verbatim')
+  await expect(verbatim).toHaveText(FILE)
+})
+
 test('scrolling inside the reader does not drive the feed\'s pagination', async ({ page }) => {
   test.setTimeout(120_000)
   await page.setViewportSize({ width: 1280, height: 800 })
