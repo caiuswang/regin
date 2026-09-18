@@ -37,16 +37,3 @@ test.describe('Triggers', () => {
   })
 })
 
-test.describe('Experiments', () => {
-  test('loads experiments list page', async ({ page }) => {
-    // /experiments is gated behind the experimental_conceal feature flag (off by
-    // default → the router guard redirects to the dashboard). useFeatures reads
-    // the flag from the /api/settings feed, so enable it there to render the page.
-    await page.route('**/api/settings', async route => {
-      await route.fulfill({ json: [{ key: 'experimental_conceal', value: true }] })
-    })
-    await page.goto('/experiments')
-    await expect(page.locator('h1')).toHaveText('Concealment Experiments')
-    await expect(page.locator('text=/experiment.*defined/')).toBeVisible()
-  })
-})

@@ -7,7 +7,6 @@ import Badge from '../components/Badge.vue'
 import Breadcrumb from '../components/Breadcrumb.vue'
 import ChannelRow from '../components/ChannelRow.vue'
 import PatternTagsEditor from '../components/PatternTagsEditor.vue'
-import PatternExperimentCreator from '../components/PatternExperimentCreator.vue'
 import PatternContentEditor from '../components/PatternContentEditor.vue'
 import PatternDescriptionEditor from '../components/PatternDescriptionEditor.vue'
 import PatternProjectsPicker from '../components/PatternProjectsPicker.vue'
@@ -16,10 +15,7 @@ import Button from '../components/ui/Button.vue'
 import Tabs from '../components/ui/Tabs.vue'
 import { useFlash } from '../composables/useFlash'
 import { useConfirm } from '../composables/useConfirm'
-import { useFeatures } from '../composables/useFeatures'
 import { useTabRoute } from '../composables/useTabRoute'
-
-const { features } = useFeatures()
 
 const route = useRoute()
 const router = useRouter()
@@ -28,7 +24,7 @@ const { confirm } = useConfirm()
 const data = ref(null)
 const loading = ref(true)
 
-const activeTab = useTabRoute({ default: 'content', valid: ['overview', 'content', 'rules', 'experiments'] })
+const activeTab = useTabRoute({ default: 'content', valid: ['overview', 'content', 'rules'] })
 
 // Project deployments
 const deployments = ref([])
@@ -39,9 +35,6 @@ const repos = ref([])
 // Content editing
 
 // Description editing
-
-// Experiment creation
-const expProcessing = ref(null)
 
 const notFound = ref(false)
 
@@ -173,53 +166,6 @@ async function promoteToSkill() {
 }
 
 
-async function activateExp(id) {
-  expProcessing.value = id
-  for (const e of data.value.experiments) {
-    e.active = e.id === id
-  }
-  updateConcealedTexts()
-  const result = await api.post(`/experiments/${id}/activate`)
-  expProcessing.value = null
-  if (!result.ok) {
-    flash(result.msg || 'Failed to activate', 'error')
-    await load()
-    return
-  }
-  flash(result.msg)
-  await load()
-}
-
-async function deactivateExp(id) {
-  expProcessing.value = id
-  const exp = data.value.experiments.find(e => e.id === id)
-  if (exp) exp.active = false
-  updateConcealedTexts()
-  const result = await api.post(`/experiments/${id}/deactivate`)
-  expProcessing.value = null
-  if (!result.ok) {
-    flash(result.msg || 'Failed to deactivate', 'error')
-    await load()
-    return
-  }
-  flash(result.msg)
-  await load()
-}
-
-function headingToPlain(s) {
-  let i = 0
-  while (i < s.length && s[i] === '#') i++
-  return s.slice(i).trim().split('`').join('')
-}
-
-function updateConcealedTexts() {
-  const sections = new Set()
-  for (const e of data.value.experiments || []) {
-    if (e.active) e.sections.forEach(s => sections.add(headingToPlain(s)))
-  }
-  data.value.concealed_texts = [...sections]
-}
-
 const skillBadge = {
   in_sync: { color: 'green', label: 'deployed', scope: 'global' },
   drifted: { color: 'yellow', label: 'out of sync', scope: 'global' },
@@ -234,11 +180,6 @@ const hasRules = computed(() =>
   Boolean(data.value?.enforcing_rules?.length) ||
   Boolean(data.value?.attached_rule_bundles?.length),
 )
-const hasExperiments = computed(() =>
-  features.experimental_conceal
-  && Boolean(data.value?.procedure_id)
-  && Boolean(data.value?.available_sections?.length),
-)
 const ruleCount = computed(() => {
   const direct = data.value?.enforcing_rules?.length || 0
   const bundles = (data.value?.attached_rule_bundles || []).reduce((s, b) => s + (b.rules?.length || 0), 0)
@@ -251,10 +192,6 @@ const detailTabs = computed(() => {
     { value: 'content', label: 'Content' },
   ]
   if (hasRules.value) tabs.push({ value: 'rules', label: `Rules ${ruleCount.value}` })
-  if (hasExperiments.value) {
-    const n = data.value?.experiments?.length
-    tabs.push({ value: 'experiments', label: n ? `Experiments ${n}` : 'Experiments' })
-  }
   return tabs
 })
 
@@ -422,7 +359,6 @@ const ruleEnforcementKebab = computed(() => {
           <PatternContentEditor
             :slug="route.params.slug"
             :body-md="data.body_md || ''"
-            :concealed-texts="data.concealed_texts || []"
             @saved="load" />
         </section>
 
@@ -437,36 +373,6 @@ const ruleEnforcementKebab = computed(() => {
             @saved="load" />
         </section>
 
-        <!-- Experiments -->
-        <section v-show="activeTab === 'experiments' && hasExperiments" class="pdv-panel" role="tabpanel">
-          <h2 class="pdv-section-title">Concealment experiments</h2>
-          <p class="text-xs text-gray-500 mb-4">
-            Hide H2 sections before shipping as a skill to measure behavioral impact.
-            <router-link to="/experiments" class="text-blue-600 hover:underline">All experiments</router-link>.
-          </p>
-          <div v-for="e in data.experiments" :key="e.id" class="border border-gray-200 rounded-lg p-4 mb-3" :class="{ 'bg-emerald-50/50': e.active }">
-            <div class="flex items-center gap-3 flex-wrap">
-              <router-link :to="`/experiments/${e.id}`" class="font-semibold text-blue-600 hover:underline">{{ e.name }}</router-link>
-              <Badge :color="e.active ? 'green' : 'gray'" :label="e.active ? 'active' : 'idle'" />
-              <span class="flex-1"></span>
-              <Button v-if="e.active" variant="secondary" size="sm" :disabled="expProcessing === e.id" @click="deactivateExp(e.id)">
-                {{ expProcessing === e.id ? 'Deactivating...' : 'Deactivate' }}
-              </Button>
-              <Button v-else variant="primary" size="sm" :disabled="expProcessing === e.id" @click="activateExp(e.id)">
-                {{ expProcessing === e.id ? 'Activating...' : 'Activate' }}
-              </Button>
-            </div>
-            <div class="mt-2 text-sm text-gray-600">
-              <span class="text-xs font-medium text-gray-500">Concealed:</span>
-              <code v-for="s in e.sections" :key="s" class="text-xs mr-1">{{ s }}</code>
-            </div>
-          </div>
-
-          <PatternExperimentCreator
-            :pattern-slug="data.procedure_id"
-            :available-sections="data.available_sections || []"
-            @saved="load" />
-        </section>
       </main>
 
       <aside class="pdv-rail" aria-label="Deployment">

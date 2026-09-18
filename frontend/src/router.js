@@ -1,5 +1,4 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import { useFeatures } from './composables/useFeatures'
 
 const DashboardView = () => import('./views/DashboardView.vue')
 const ReposView = () => import('./views/ReposView.vue')
@@ -21,15 +20,12 @@ const DefectsView = () => import('./views/DefectsView.vue')
 const DefectDetailView = () => import('./views/DefectDetailView.vue')
 const SkillDetailView = () => import('./views/SkillDetailView.vue')
 const PromptTemplatesView = () => import('./views/PromptTemplatesView.vue')
-const ExperimentsView = () => import('./views/ExperimentsView.vue')
-const ExperimentDetailView = () => import('./views/ExperimentDetailView.vue')
 const PlansView = () => import('./views/PlansView.vue')
 const PlanDetailView = () => import('./views/PlanDetailView.vue')
 const SkillReadsView = () => import('./views/SkillReadsView.vue')
 const MCPCallsView = () => import('./views/MCPCallsView.vue')
 const InboxView = () => import('./views/InboxView.vue')
 const MemoryView = () => import('./views/MemoryView.vue')
-const GradesView = () => import('./views/GradesView.vue')
 const IngestErrorsView = () => import('./views/IngestErrorsView.vue')
 const TraceView = () => import('./views/TraceView.vue')
 const SessionsView = () => import('./views/SessionsView.vue')
@@ -101,8 +97,6 @@ const routes = [
   { path: '/tags', redirect: '/patterns' },
   { path: '/tags/:name', redirect: (to) => ({ path: '/patterns', query: { tag: to.params.name } }) },
   { path: '/prompt-templates', name: 'prompt-templates', component: PromptTemplatesView },
-  { path: '/experiments', name: 'experiments', component: ExperimentsView },
-  { path: '/experiments/:id', name: 'experiment-detail', component: ExperimentDetailView },
   { path: '/plans', name: 'plans', component: PlansView },
   { path: '/plans/:filename(.*)', name: 'plan-detail', component: PlanDetailView },
   // fixedViewport: the view owns its own scroll regions, so the app-shell
@@ -113,7 +107,6 @@ const routes = [
   { path: '/live/:id?', name: 'live', component: LiveSessionView, meta: { fixedViewport: true } },
   { path: '/inbox', name: 'inbox', component: InboxView, meta: { fixedViewport: 'lg' } },
   { path: '/memory', name: 'memory', component: MemoryView },
-  { path: '/grades', name: 'grades', component: GradesView },
   {
     path: '/trace',
     name: 'trace',
@@ -160,16 +153,10 @@ const router = createRouter({
 })
 
 // Auth guard: redirect to /login if no token (unless route is public).
-// Also gates /experiments/* behind the experimental_conceal feature flag.
 router.beforeEach(async (to) => {
   if (to.meta.public) return true
   const token = localStorage.getItem('regin_auth_token')
   if (!token) return { name: 'login' }
-  if (to.path === '/experiments' || to.path.startsWith('/experiments/')) {
-    const { features, ready } = useFeatures()
-    await ready
-    if (!features.experimental_conceal) return { name: 'dashboard' }
-  }
   // Trace (session list + transcripts) is admin-only — the backend enforces
   // this via ADMIN_API_ENDPOINTS; redirect non-admins here so a deep link
   // lands on the dashboard instead of a 403 error page.

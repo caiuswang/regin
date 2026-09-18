@@ -4,7 +4,7 @@
  * Kimi trace ids are literally `session_<uuid>`, so a raw `slice(0, 8)`
  * renders the constant string "session_" for every Kimi row — every such id
  * looks identical. These tests RENDER the real components (sessions table,
- * /live switcher, grades list, span detail panel) against mocked API
+ * /live switcher, span detail panel) against mocked API
  * responses and assert the short id actually discriminates. A pure
  * unit-assert on the helper would not have caught the original defect, whose
  * whole shape was "helper written, call sites never switched over".
@@ -154,30 +154,6 @@ test.describe('session ids stay distinguishable across providers', () => {
     expect(texts.join(' ')).toContain('0526b6b6')
   })
 
-  test('grades list renders discriminating Kimi ids', async ({ page }) => {
-    const grade = (traceId) => ({
-      trace_id: traceId, axis: 'correctness', verdict: 'satisfied',
-      tier: 'quick', judge: 'claude', report: 'fixture', rubric_version: 'v1',
-      session: {},
-    })
-    await page.route('**/api/grades?*', route => route.fulfill({
-      json: { grades: [grade(KIMI_A), grade(KIMI_B), grade(CLAUDE_A)] },
-    }))
-    await page.route('**/api/grades/pareto*', route => route.fulfill({
-      json: { summary: {}, points: [] },
-    }))
-
-    await page.goto(url('/grades'))
-    await expect(page.locator('a[href*="/trace/sessions/"]').first())
-      .toBeVisible({ timeout: 15_000 })
-
-    const body = await page.locator('body').textContent()
-    expect(body).not.toContain(PREFIX)
-    // Both the id line (8 chars) and the titleless title fallback (12 chars).
-    expect(body).toContain('113dcdf9')
-    expect(body).toContain('0526b6b6')
-    expect(body).toContain(CLAUDE_A.slice(0, 12))
-  })
 })
 
 test.describe('deny badge reads the same inline and in the detail panel', () => {

@@ -18,6 +18,12 @@ test.describe('Settings page', () => {
     await expect(page.locator('.card', { hasText: 'Claude Code' }).first()).toBeVisible()
     await expect(page.locator('.badge-green, .badge-gray').last()).toBeVisible()
   })
+
+  test('grading section hosts the aspects/judge-provider config', async ({ page }) => {
+    // GradeAspectsConfig moved here from the retired /grades page.
+    await page.goto('/settings?section=grading')
+    await expect(page.locator('button', { hasText: 'Grader settings' })).toBeVisible()
+  })
 })
 
 test.describe('Triggers mutations', () => {
@@ -33,54 +39,6 @@ test.describe('Triggers mutations', () => {
     const noisyChip = page.locator('.filter-chip', { hasText: 'Noisy' })
     await noisyChip.click()
     await expect(page).toHaveURL(/status=noisy/)
-  })
-})
-
-test.describe('Experiment detail mutations', () => {
-  test('loads experiment detail with action buttons', async ({ page }) => {
-    // Establish a real origin first so localStorage (the auth token) is readable
-    // (page.evaluate on about:blank throws SecurityError). page.request is a
-    // separate APIRequestContext that doesn't inherit the SPA's Authorization
-    // header; the deny-by-default /api interceptor 401s without it (→ expData.grouped
-    // would be undefined), so forward the Bearer token explicitly.
-    await page.goto('/')
-    const token = await page.evaluate(() => localStorage.getItem('regin_auth_token'))
-    const resp = await page.request.get('/api/experiments', { headers: { Authorization: `Bearer ${token}` } })
-    const expData = await resp.json()
-    if (expData.grouped.length === 0) {
-      test.skip()
-      return
-    }
-    const firstExp = expData.grouped[0][1][0]
-    await page.goto(`/experiments/${firstExp.id}`)
-    await expect(page.locator('h1')).toHaveText(firstExp.name)
-
-    const activateBtn = page.locator('button', { hasText: 'Activate' })
-    const deactivateBtn = page.locator('button', { hasText: 'Deactivate' })
-    const hasActivate = await activateBtn.isVisible({ timeout: 1000 }).catch(() => false)
-    const hasDeactivate = await deactivateBtn.isVisible({ timeout: 1000 }).catch(() => false)
-    expect(hasActivate || hasDeactivate).toBeTruthy()
-    await expect(page.locator('button', { hasText: 'Delete' })).toBeVisible()
-  })
-
-  test('edit form opens', async ({ page }) => {
-    // Establish a real origin first so localStorage (the auth token) is readable
-    // (page.evaluate on about:blank throws SecurityError). page.request is a
-    // separate APIRequestContext that doesn't inherit the SPA's Authorization
-    // header; the deny-by-default /api interceptor 401s without it (→ expData.grouped
-    // would be undefined), so forward the Bearer token explicitly.
-    await page.goto('/')
-    const token = await page.evaluate(() => localStorage.getItem('regin_auth_token'))
-    const resp = await page.request.get('/api/experiments', { headers: { Authorization: `Bearer ${token}` } })
-    const expData = await resp.json()
-    if (expData.grouped.length === 0) {
-      test.skip()
-      return
-    }
-    const firstExp = expData.grouped[0][1][0]
-    await page.goto(`/experiments/${firstExp.id}`)
-    await page.locator('summary', { hasText: 'Edit experiment' }).click()
-    await expect(page.locator('button', { hasText: 'Save changes' })).toBeVisible()
   })
 })
 

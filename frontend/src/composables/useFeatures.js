@@ -2,7 +2,6 @@ import { reactive } from 'vue'
 import api from '../api.js'
 
 const features = reactive({
-  experimental_conceal: false,
   experimental_dense_search: false,
 })
 

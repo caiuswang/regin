@@ -1221,13 +1221,6 @@ class Settings(BaseSettings):
     # experimental `codex` and `generic` providers.
     experimental_providers: bool = False
 
-    # Gate for the SKILL.md concealment-experiments feature. When false
-    # (default), the Experiments nav link, the pattern-detail Experiments
-    # tab + create-experiment affordance, and the /experiments routes are
-    # hidden in the UI. The backend table and conceal filter remain so
-    # any rows already written still drive deploy behavior.
-    experimental_conceal: bool = False
-
     # Gate for the dense (semantic) pattern search UI on the Patterns
     # page. When false (default), the "Dense search" toggle, query
     # input, and Route button are hidden. The /patterns/route backend
@@ -1479,8 +1472,6 @@ SETTINGS_SCHEMA: list[tuple[str, object, str]] = [
      "Primary agent provider (claude, codex, generic, kimi). Used as the default for single-provider operations and as the source of truth when no explicit provider is given."),
     ("experimental_providers", False,
      "Surface experimental agent providers (codex, generic) in the Settings hook-manager UI. When off, only claude is shown."),
-    ("experimental_conceal", False,
-     "Surface the SKILL.md concealment-experiments UI (Experiments nav link, pattern-detail tab, /experiments routes). When off, the broken-by-design feature is hidden."),
     ("experimental_dense_search", False,
      "Surface the dense (semantic) pattern search UI on the Patterns page (toggle, query input, Route button). When off, only the standard tag/category filters are shown."),
     ("dense_rerank_min_corpus", 1,

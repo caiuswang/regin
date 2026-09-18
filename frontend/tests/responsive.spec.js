@@ -65,7 +65,6 @@ const STATIC_ROUTES = [
   '/prompt-templates',
   '/inbox',
   '/memory',
-  '/grades',
   '/audit',
   '/rules',
   '/plans',

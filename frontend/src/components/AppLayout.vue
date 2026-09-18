@@ -14,7 +14,6 @@ import BlockerBanner from './notifications/BlockerBanner.vue'
 import NotificationHost from './notifications/NotificationHost.vue'
 import QuickCaptureBubble from './tasks/QuickCaptureBubble.vue'
 import api from '../api.js'
-import { useFeatures } from '../composables/useFeatures'
 import { useDriftSummary } from '../composables/useDriftSummary'
 import { useDiagnosticsState } from '../composables/useDiagnosticsState'
 import { useInboxUnread } from '../composables/useInboxUnread'
@@ -24,7 +23,6 @@ import { useTheme } from '../composables/useTheme'
 import Button from './ui/Button.vue'
 
 const { theme, toggleTheme } = useTheme()
-const { features } = useFeatures()
 const { pending: driftPending } = useDriftSummary()
 const { enabled: diagEnabled } = useDiagnosticsState()
 const { unread: inboxUnread, severity: inboxSeverity } = useInboxUnread()
@@ -124,7 +122,6 @@ const navGroups = computed(() => [
       // the ADMIN_API_ENDPOINTS gate on /api/sessions*).
       ...(isAdmin.value ? [{ to: '/trace', label: 'Trace', icon: 'trace' }] : []),
       { to: '/memory', label: 'Memory', exact: true, icon: 'memory' },
-      { to: '/grades', label: 'Grades', exact: true, icon: 'grades' },
       { to: '/audit', label: 'Audit', icon: 'audit' },
     ],
   },
@@ -138,9 +135,6 @@ const navGroups = computed(() => [
         match: ['/tasks', '/features', '/defects'] },
       { to: '/rules', label: 'Rules', exact: true, icon: 'rules' },
       { to: '/plans', label: 'Plans', icon: 'plans' },
-      ...(features.experimental_conceal
-        ? [{ to: '/experiments', label: 'Experiments', icon: 'experiments' }]
-        : []),
     ],
   },
   {

@@ -12,6 +12,7 @@ import SettingsRuleTriggers from '../components/SettingsRuleTriggers.vue'
 import SettingsBlock from '../components/SettingsBlock.vue'
 import SettingsProviders from '../components/SettingsProviders.vue'
 import SettingsApiKeys from '../components/SettingsApiKeys.vue'
+import GradeAspectsConfig from '../components/GradeAspectsConfig.vue'
 import NotificationPrefsCard from '../components/notifications/NotificationPrefsCard.vue'
 import { useFlash } from '../composables/useFlash'
 import { useFeatures } from '../composables/useFeatures'
@@ -41,7 +42,7 @@ const providerSupportedEvents = ref({})
 const selectedProvider = ref('claude')
 const handlerLoading = ref({})
 
-const SECTIONS = ['config', 'providers', 'hooks', 'install', 'triggers', 'agent-memory', 'agent-messages', 'agent-bridge', 'agent-sdk', 'tasks', 'task-integrations', 'topic-evolution', 'api-keys', 'debug']
+const SECTIONS = ['config', 'providers', 'hooks', 'install', 'triggers', 'agent-memory', 'agent-messages', 'agent-bridge', 'agent-sdk', 'tasks', 'task-integrations', 'topic-evolution', 'grading', 'api-keys', 'debug']
 const activeSection = useTabRoute({ param: 'section', default: 'config', valid: SECTIONS })
 
 // ── Nested settings blocks (Agent Memory, Agent Messages) ──────
@@ -409,67 +410,27 @@ watch([activeSection, selectedProvider], ([section]) => {
           Rule Triggers
         </button>
 
+        <!-- One entry per BLOCK_META key: each is a generic settings block
+             rendered by the same SettingsBlock further down, so the nav item
+             needs nothing but the key and its title. -->
         <button
+          v-for="key in Object.keys(BLOCK_META)"
+          :key="key"
           type="button"
           class="sv-nav-item focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1"
-          :class="{ active: activeSection === 'agent-memory' }"
-          @click="onSelectBlock('agent-memory')"
+          :class="{ active: activeSection === key }"
+          @click="onSelectBlock(key)"
         >
-          Agent Memory
+          {{ BLOCK_META[key].title }}
         </button>
 
         <button
           type="button"
           class="sv-nav-item focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1"
-          :class="{ active: activeSection === 'agent-messages' }"
-          @click="onSelectBlock('agent-messages')"
+          :class="{ active: activeSection === 'grading' }"
+          @click="activeSection = 'grading'"
         >
-          Agent Messages
-        </button>
-
-        <button
-          type="button"
-          class="sv-nav-item focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1"
-          :class="{ active: activeSection === 'agent-bridge' }"
-          @click="onSelectBlock('agent-bridge')"
-        >
-          Agent Bridge
-        </button>
-
-        <button
-          type="button"
-          class="sv-nav-item focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1"
-          :class="{ active: activeSection === 'agent-sdk' }"
-          @click="onSelectBlock('agent-sdk')"
-        >
-          Agent SDK
-        </button>
-
-        <button
-          type="button"
-          class="sv-nav-item focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1"
-          :class="{ active: activeSection === 'tasks' }"
-          @click="onSelectBlock('tasks')"
-        >
-          Task Capture
-        </button>
-
-        <button
-          type="button"
-          class="sv-nav-item focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1"
-          :class="{ active: activeSection === 'task-integrations' }"
-          @click="onSelectBlock('task-integrations')"
-        >
-          Task Integrations
-        </button>
-
-        <button
-          type="button"
-          class="sv-nav-item focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1"
-          :class="{ active: activeSection === 'topic-evolution' }"
-          @click="onSelectBlock('topic-evolution')"
-        >
-          Topic Evolution
+          Grading
         </button>
 
         <!-- Minting a credential that authenticates without a login is an
@@ -572,6 +533,11 @@ watch([activeSection, selectedProvider], ([section]) => {
       <!-- Providers -->
       <template v-else-if="activeSection === 'providers'">
         <SettingsProviders />
+      </template>
+
+      <!-- Grading: aspects the deep judge weighs + the default judge provider. -->
+      <template v-else-if="activeSection === 'grading'">
+        <GradeAspectsConfig />
       </template>
 
       <!-- API keys -->
