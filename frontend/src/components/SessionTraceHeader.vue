@@ -277,25 +277,34 @@ function titleSourceTooltip(src) {
          lays out on one row. It has to clear (available width − the actions'
          intrinsic width) at 1024px: the mode menu made that column ~270px
          narrower than the segmented strip did, and at basis-80 the two fit
-         one line again, squeezing the title to 184px. The compact row is
-         exempt: it truncates rather than wraps, so it wants to keep sharing
-         the row. `session-header-collapse.spec.js` pins the floor. -->
+         one line again, squeezing the title to 184px. The compact row needs
+         it too: its digest span is `lg:shrink-0` (a percentage silently
+         dropped mid-number reads worse than a shrunk title), so a basis-0
+         left column let the actions row (view switcher, Full/Condensed/
+         Focus, Details, Reload) squeeze it to ~180px, clipping everything
+         in the digest past "181 spans" — duration, tokens, cost and ctx%
+         gone with no ellipsis to show they were cut. The same floor here
+         drops the actions onto their own row instead.
+         `session-header-collapse.spec.js` pins the floor. -->
     <div
       :key="collapsed ? 'compact' : 'full'"
-      class="min-w-0 flex-1 trace-fold-enter"
-      :class="collapsed ? '' : 'basis-96'"
+      class="min-w-0 flex-1 trace-fold-enter basis-96"
     >
       <!-- Compact identity row: status dot + title + mono digest. Everything
            else (eyebrow, title row, meta chips, expanded lists) only renders
            in the full state. -->
-      <!-- Wraps below lg, one line from lg up. The digest is the whole point
-           of the collapsed header — session status at a glance while scrolling
-           a long transcript — and `shrink-0` inside an `overflow-hidden` row
-           means a phone gets the first stat and silently loses the rest: at
-           390px it ran to x=559 against a pane ending at 382, clipped with no
-           indication that 177px of it was there. Two short lines beat four
-           missing numbers. -->
-      <div class="flex flex-wrap items-center gap-x-2.5 gap-y-1 overflow-hidden lg:flex-nowrap" v-if="collapsed">
+      <!-- Wraps at every width, not just below lg. The digest is the whole
+           point of the collapsed header — session status at a glance while
+           scrolling a long transcript — and `shrink-0` inside an
+           `overflow-hidden` row means a squeezed row silently loses the
+           tail stats: at 390px it ran to x=559 against a pane ending at
+           382, clipped with no indication that 177px of it was there. A
+           wide actions row (view switcher, Full/Condensed/Focus, Details,
+           Reload) can squeeze this column just as narrow at ≥lg — an
+           `lg:flex-nowrap` here clipped duration/tokens/cost/ctx% behind
+           "181 spans ·" with nothing to show they were cut. Two short
+           lines beat four missing numbers, at any width. -->
+      <div class="flex flex-wrap items-center gap-x-2.5 gap-y-1 overflow-hidden" v-if="collapsed">
         <router-link
           to="/trace/sessions"
           class="-ml-1 shrink-0 inline-flex items-center rounded p-0.5 text-slate-400 no-underline hover:text-slate-700 focus-visible:outline-2 focus-visible:outline-blue-500"
