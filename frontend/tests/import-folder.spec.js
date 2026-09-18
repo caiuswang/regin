@@ -54,7 +54,7 @@ test.describe('Pattern folder import', () => {
 
   test('selecting a skill folder imports SKILL.md plus its scripts/references', async ({ page }) => {
     await page.goto('/patterns')
-    await expect(page.locator('h1')).toHaveText('Patterns')
+    await expect(page.locator('h1')).toHaveText('Patterns & Skills')
 
     const [fileChooser] = await Promise.all([
       page.waitForEvent('filechooser'),

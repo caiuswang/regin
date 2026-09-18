@@ -61,42 +61,38 @@ const typeDescriptions = {
 <template>
   <div v-if="loading" class="empty-state">Loading skills…</div>
   <div v-else>
-    <header class="page-header">
-      <div class="page-header-text">
-        <div class="page-eyebrow">Library</div>
-        <h1 class="page-title">Skills</h1>
-        <p class="page-subtitle">Skill packs deployed globally and per-project.</p>
-      </div>
-      <div class="page-actions">
-        <Badge color="blue" :label="`${data.total} global`" />
-        <Badge color="green" :label="`${projectDeployments.length} project deploy${projectDeployments.length !== 1 ? 's' : ''}`" />
-        <Badge v-if="data.drift_count" color="yellow" :label="`${data.drift_count} drifted`" />
-        <Badge v-else color="gray" label="all in sync" />
-        <span class="text-xs text-slate-400">enabled:</span>
-        <Badge
-          v-for="p in enabledProviders"
-          :key="p.id"
-          :color="p.id === provider.id ? 'blue' : 'gray'"
-          :label="p.name"
-        />
-        <Button
-          variant="secondary"
-          aria-label="Batch import skills"
-          @click="folderVisible = true"
-        >
-          <Icon name="folder-plus" :size="14" />
-          Import
-        </Button>
-        <Button
-          variant="primary"
-          @click="showCreate = true"
-        >
-          <Icon name="plus" :size="14" />
-          New skill
-        </Button>
-        <input ref="importInput" type="file" webkitdirectory multiple aria-label="Import skill folder" class="hidden" @change="onImportPick">
-      </div>
-    </header>
+    <!-- The identity and the tab strip belong to the Library shell; this view
+         owns only its own counts and actions, which stand in the shell's
+         header so every page's actions sit where the eye already looks. -->
+    <Teleport defer to="#library-actions">
+      <Badge color="blue" :label="`${data.total} global`" />
+      <Badge color="green" :label="`${projectDeployments.length} project deploy${projectDeployments.length !== 1 ? 's' : ''}`" />
+      <Badge v-if="data.drift_count" color="yellow" :label="`${data.drift_count} drifted`" />
+      <Badge v-else color="gray" label="all in sync" />
+      <span class="text-xs text-slate-400">enabled:</span>
+      <Badge
+        v-for="p in enabledProviders"
+        :key="p.id"
+        :color="p.id === provider.id ? 'blue' : 'gray'"
+        :label="p.name"
+      />
+      <Button
+        variant="secondary"
+        aria-label="Batch import skills"
+        @click="folderVisible = true"
+      >
+        <Icon name="folder-plus" :size="14" />
+        Import
+      </Button>
+      <Button
+        variant="primary"
+        @click="showCreate = true"
+      >
+        <Icon name="plus" :size="14" />
+        New skill
+      </Button>
+      <input ref="importInput" type="file" webkitdirectory multiple aria-label="Import skill folder" class="hidden" @change="onImportPick">
+    </Teleport>
 
     <PatternFolderImportModal v-model:visible="folderVisible" @imported="load" />
     <PatternCreateForm v-if="showCreate" :tags="allTags" redirect-to="skills" @close="showCreate = false" />

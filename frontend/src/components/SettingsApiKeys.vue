@@ -1,11 +1,11 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import api from '../api.js'
-import Badge from '../components/Badge.vue'
-import Card from '../components/Card.vue'
-import Button from '../components/ui/Button.vue'
-import Icon from '../components/ui/Icon.vue'
-import Input from '../components/ui/Input.vue'
+import Badge from './Badge.vue'
+import Card from './Card.vue'
+import Button from './ui/Button.vue'
+import Icon from './ui/Icon.vue'
+import Input from './ui/Input.vue'
 import { KEY_SCOPES, useApiKeys } from '../composables/useApiKeys.js'
 import { useCopy } from '../composables/useCopy.js'
 
@@ -25,16 +25,13 @@ onMounted(load)
 
 <template>
   <div class="space-y-5">
-    <header class="page-header">
-      <div class="page-header-text">
-        <div class="page-eyebrow">System</div>
-        <h1 class="page-title">API keys</h1>
-        <p class="page-subtitle">
-          Machine credentials for <code>POST /api/tasks/capture</code>. A key is
-          not a user: it can add backlog ideas and nothing else.
-        </p>
-      </div>
-    </header>
+    <div class="sv-section-header">
+      <h2 class="sv-section-title">API keys</h2>
+      <p class="sv-section-desc">
+        Machine credentials for <code>POST /api/tasks/capture</code>. A key is
+        not a user: it can add backlog ideas and nothing else.
+      </p>
+    </div>
 
     <div v-if="!isAdmin" class="empty-state" data-testid="keys-forbidden">
       API keys are managed by admins.

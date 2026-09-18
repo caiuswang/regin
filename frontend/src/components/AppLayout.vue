@@ -114,8 +114,11 @@ const navGroups = computed(() => [
     label: 'Library',
     links: [
       { to: '/repos', label: 'Repos', icon: 'repos' },
-      { to: '/patterns', label: 'Patterns', icon: 'patterns' },
-      { to: '/skills', label: 'Skills', icon: 'skills' },
+      // Patterns and skills are one library behind one entry — a skill is
+      // deployed FROM a pattern, so two rail items described one thing twice.
+      // The switcher is the tab strip in LibraryView, not the rail.
+      { to: '/patterns', label: 'Patterns & Skills', icon: 'patterns',
+        match: ['/patterns', '/skills'] },
       { to: '/prompt-templates', label: 'Prompts', icon: 'prompts' },
     ],
   },
@@ -161,10 +164,11 @@ const navGroups = computed(() => [
   {
     label: 'System',
     links: [
-      { to: '/settings', label: 'Settings', icon: 'settings' },
-      // Minting a credential that authenticates without a login is an admin
-      // act (the /api/api-keys routes are require_role('admin')).
-      ...(isAdmin.value ? [{ to: '/api-keys', label: 'API keys', icon: 'keys' }] : []),
+      // API keys are a section of Settings, not a rail entry: minting a
+      // machine credential is configuration. `match` keeps the entry lit on
+      // the legacy /api-keys URL while its redirect resolves.
+      { to: '/settings', label: 'Settings', icon: 'settings',
+        match: ['/settings', '/api-keys'] },
     ],
   },
 ])

@@ -256,35 +256,30 @@ const skillBadge = {
   <PatternFolderImportModal v-model:visible="folderVisible" @imported="load" />
   <div v-if="loading" class="empty-state">Loading patterns…</div>
   <div v-else>
-    <header class="page-header">
-      <div class="page-header-text">
-        <div class="page-eyebrow">Library</div>
-        <h1 class="page-title">
-          Patterns
-          <Badge v-if="data.tag_filter" color="blue" :label="`tag: ${data.tag_filter}`" />
-          <Badge v-if="data.cat_filter" color="purple" :label="data.cat_filter" />
-        </h1>
-        <p class="page-subtitle">Curated procedure guides synced from sibling source repos. {{ data.docs.length }} pattern{{ data.docs.length === 1 ? '' : 's' }} shown.</p>
-      </div>
-      <div class="page-actions">
-        <Button
-          variant="secondary"
-          aria-label="Batch import"
-          @click="folderVisible = true"
-        >
-          <Icon name="folder-plus" :size="14" />
-          Batch import
-        </Button>
-        <Button
-          variant="primary"
-          @click="showCreate = true"
-        >
-          <Icon name="plus" :size="14" />
-          New pattern
-        </Button>
-        <input ref="importInput" type="file" webkitdirectory multiple aria-label="Import skill folder" class="hidden" @change="onImportPick">
-      </div>
-    </header>
+    <!-- The identity and the tab strip belong to the Library shell; this view
+         owns only the facts about its own list — the active filters — plus
+         its actions, which stand in the shell's header. The row count already
+         stands in the filter row below; repeating it here says it twice. -->
+    <Teleport defer to="#library-actions">
+      <Badge v-if="data.tag_filter" color="blue" :label="`tag: ${data.tag_filter}`" />
+      <Badge v-if="data.cat_filter" color="purple" :label="data.cat_filter" />
+      <Button
+        variant="secondary"
+        aria-label="Batch import"
+        @click="folderVisible = true"
+      >
+        <Icon name="folder-plus" :size="14" />
+        Batch import
+      </Button>
+      <Button
+        variant="primary"
+        @click="showCreate = true"
+      >
+        <Icon name="plus" :size="14" />
+        New pattern
+      </Button>
+      <input ref="importInput" type="file" webkitdirectory multiple aria-label="Import skill folder" class="hidden" @change="onImportPick">
+    </Teleport>
 
     <!-- Filter row -->
     <div class="filter-row">

@@ -149,7 +149,7 @@ test.describe('Sidebar rail collapse', () => {
     const active = page.locator('nav.sb-nav .sb-item.is-active')
     await expect(active).toHaveCount(1)
     await expect(active).toHaveAttribute('aria-current', 'page')
-    await expect(active).toHaveAttribute('aria-label', 'Patterns')
+    await expect(active).toHaveAttribute('aria-label', 'Patterns & Skills')
 
     await page.getByRole('button', { name: 'Collapse sidebar' }).click()
     await settledRailWidth(page)

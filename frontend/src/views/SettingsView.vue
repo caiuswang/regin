@@ -11,6 +11,7 @@ import ListInput from '../components/ListInput.vue'
 import SettingsRuleTriggers from '../components/SettingsRuleTriggers.vue'
 import SettingsBlock from '../components/SettingsBlock.vue'
 import SettingsProviders from '../components/SettingsProviders.vue'
+import SettingsApiKeys from '../components/SettingsApiKeys.vue'
 import NotificationPrefsCard from '../components/notifications/NotificationPrefsCard.vue'
 import { useFlash } from '../composables/useFlash'
 import { useFeatures } from '../composables/useFeatures'
@@ -40,7 +41,7 @@ const providerSupportedEvents = ref({})
 const selectedProvider = ref('claude')
 const handlerLoading = ref({})
 
-const SECTIONS = ['config', 'providers', 'hooks', 'install', 'triggers', 'agent-memory', 'agent-messages', 'agent-bridge', 'agent-sdk', 'tasks', 'task-integrations', 'topic-evolution', 'debug']
+const SECTIONS = ['config', 'providers', 'hooks', 'install', 'triggers', 'agent-memory', 'agent-messages', 'agent-bridge', 'agent-sdk', 'tasks', 'task-integrations', 'topic-evolution', 'api-keys', 'debug']
 const activeSection = useTabRoute({ param: 'section', default: 'config', valid: SECTIONS })
 
 // ── Nested settings blocks (Agent Memory, Agent Messages) ──────
@@ -471,6 +472,21 @@ watch([activeSection, selectedProvider], ([section]) => {
           Topic Evolution
         </button>
 
+        <!-- Minting a credential that authenticates without a login is an
+             admin act (the /api/api-keys routes are require_role('admin')), so
+             the entry is admin-only. The section itself still renders its own
+             refusal for a deep link, since hiding a button is not a guard. -->
+        <button
+          v-if="isAdmin"
+          type="button"
+          class="sv-nav-item focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1"
+          :class="{ active: activeSection === 'api-keys' }"
+          data-testid="settings-nav-api-keys"
+          @click="activeSection = 'api-keys'"
+        >
+          API keys
+        </button>
+
         <button
           type="button"
           class="sv-nav-item focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1"
@@ -556,6 +572,11 @@ watch([activeSection, selectedProvider], ([section]) => {
       <!-- Providers -->
       <template v-else-if="activeSection === 'providers'">
         <SettingsProviders />
+      </template>
+
+      <!-- API keys -->
+      <template v-else-if="activeSection === 'api-keys'">
+        <SettingsApiKeys />
       </template>
 
       <!-- Rule Triggers -->

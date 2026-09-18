@@ -979,10 +979,12 @@ test.describe('/tasks — the dependency picker', () => {
   })
 })
 
-test.describe('/api-keys', () => {
+const KEYS_SECTION = '/settings?section=api-keys'
+
+test.describe('API keys (Settings section)', () => {
   test('mints a key, shows the plaintext once, then revokes it', async ({ page }) => {
     const errors = watchConsole(page)
-    await page.goto('/api-keys')
+    await page.goto(KEYS_SECTION)
     await page.fill('#key-name', 'e2e key')
     await page.getByTestId('mint-key').click()
 
@@ -1009,7 +1011,18 @@ test.describe('/api-keys', () => {
     expect(errors).toEqual([])
   })
 
-  test('a non-admin sees no sidebar entry and no key management', async ({ page }) => {
+  test('the legacy /api-keys URL redirects into the settings section', async ({ page }) => {
+    await page.goto('/api-keys')
+    await expect(page).toHaveURL(/\/settings\?section=api-keys$/)
+    await expect(page.getByTestId('mint-key')).toBeVisible()
+    // The rail carries no query, so Settings is what must stay lit here.
+    const item = page.locator('nav.sb-nav .sb-item', { hasText: 'Settings' })
+    await expect(item).toHaveClass(/is-active/)
+    await expect(page.locator('nav.sb-nav .sb-item', { hasText: 'API keys' }))
+      .toHaveCount(0)
+  })
+
+  test('a non-admin sees no settings entry and no key management', async ({ page }) => {
     await page.addInitScript(() => {
       const raw = localStorage.getItem('regin_auth_user')
       if (raw) {
@@ -1022,14 +1035,15 @@ test.describe('/api-keys', () => {
     await expect(page.locator('nav.sb-nav .sb-item', { hasText: 'API keys' }))
       .toHaveCount(0)
 
-    await page.goto('/api-keys')
+    await page.goto(KEYS_SECTION)
+    await expect(page.getByTestId('settings-nav-api-keys')).toHaveCount(0)
     await expect(page.getByTestId('keys-forbidden')).toBeVisible()
     await expect(page.getByTestId('mint-key')).toHaveCount(0)
   })
 })
 
 test.describe('sidebar + rendering', () => {
-  for (const [path, label] of [['/tasks', 'Pipeline'], ['/api-keys', 'API keys']]) {
+  for (const [path, label] of [['/tasks', 'Pipeline'], ['/settings', 'Settings']]) {
     test(`${path} highlights its sidebar entry`, async ({ page }) => {
       await page.goto('/')
       const item = page.locator('nav.sb-nav .sb-item', { hasText: label })
@@ -1046,7 +1060,7 @@ test.describe('sidebar + rendering', () => {
     })
   }
 
-  for (const path of ['/tasks', '/api-keys']) {
+  for (const path of ['/tasks', KEYS_SECTION]) {
     for (const theme of ['light', 'dark']) {
       for (const width of [1440, 390]) {
         test(`${path} renders clean — ${theme} @ ${width}px`, async ({ page }) => {

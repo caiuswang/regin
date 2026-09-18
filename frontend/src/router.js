@@ -13,6 +13,7 @@ const RuleDetailView = () => import('./views/RuleDetailView.vue')
 const TriggersView = () => import('./views/TriggersView.vue')
 const TriggersRawView = () => import('./views/TriggersRawView.vue')
 const SkillsView = () => import('./views/SkillsView.vue')
+const LibraryView = () => import('./views/LibraryView.vue')
 const PipelineView = () => import('./views/PipelineView.vue')
 const FeaturesView = () => import('./views/FeaturesView.vue')
 const FeatureLedgerView = () => import('./views/FeatureLedgerView.vue')
@@ -41,7 +42,6 @@ const AuditView = () => import('./views/AuditView.vue')
 const UsersView = () => import('./views/UsersView.vue')
 const TasksView = () => import('./views/TasksView.vue')
 const TaskDetailView = () => import('./views/TaskDetailView.vue')
-const ApiKeysView = () => import('./views/ApiKeysView.vue')
 const SchemaDriftView = () => import('./views/SchemaDriftView.vue')
 const PayloadLogView = () => import('./views/PayloadLogView.vue')
 const DesignSystemView = () => import('./views/DesignSystemView.vue')
@@ -55,12 +55,25 @@ const routes = [
   { path: '/repos/:name', name: 'repo-detail', component: RepoDetailView },
   { path: '/repos/:name/topics', name: 'repo-topics', component: RepoTopicsView },
   { path: '/repos/:name/topics/compare', name: 'repo-topics-compare', component: RevisionCompareView },
-  { path: '/patterns', name: 'patterns', component: PatternsView },
-  { path: '/patterns/:slug(.*)', name: 'pattern-detail', component: PatternDetailView },
   { path: '/rules', name: 'rules', component: RulesView },
   { path: '/rules/triggers', redirect: '/trace/triggers' },
   { path: '/rules/:id', name: 'rule-detail', component: RuleDetailView },
-  { path: '/skills', name: 'skills', component: SkillsView },
+  // A pattern is the source a skill is deployed from, so the two lists are one
+  // library behind one shell and one sidebar entry. The children are ABSOLUTE
+  // paths: the grouping is new, the URLs are not, so every existing link, test
+  // and bookmark still resolves. The detail pages stay SIBLINGS — a document
+  // is not a third reading of the list, and it carries its own header.
+  {
+    path: '/library',
+    name: 'library',
+    component: LibraryView,
+    redirect: '/patterns',
+    children: [
+      { path: '/patterns', name: 'patterns', component: PatternsView },
+      { path: '/skills', name: 'skills', component: SkillsView },
+    ],
+  },
+  { path: '/patterns/:slug(.*)', name: 'pattern-detail', component: PatternDetailView },
   // Tasks, features and defects are three readings of one loop, so they share
   // one shell and one sidebar entry. The children are ABSOLUTE paths: the
   // grouping is new, the URLs are not, and every existing link — in a view, a
@@ -134,7 +147,8 @@ const routes = [
   { path: '/ds', name: 'design-system', component: DesignSystemView },
   { path: '/account', name: 'account', component: UsersView },
   { path: '/tasks/:id', name: 'task-detail', component: TaskDetailView },
-  { path: '/api-keys', name: 'api-keys', component: ApiKeysView },
+  // Minting a machine credential is a settings act, not a page of its own.
+  { path: '/api-keys', redirect: { path: '/settings', query: { section: 'api-keys' } } },
   // Catch-all: App.vue only mounts the shell for matched routes, so an
   // unmatched path would otherwise render a blank page with no way out.
   { path: '/:pathMatch(.*)*', name: 'not-found', component: NotFoundView },

@@ -65,7 +65,7 @@ test.describe('Pattern import conflict', () => {
 
   test('import without conflict succeeds', async ({ page }) => {
     await page.goto('/patterns')
-    await expect(page.locator('h1')).toHaveText('Patterns')
+    await expect(page.locator('h1')).toHaveText('Patterns & Skills')
 
     const [fileChooser] = await Promise.all([
       page.waitForEvent('filechooser'),

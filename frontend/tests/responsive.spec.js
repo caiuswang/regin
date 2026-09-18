@@ -23,7 +23,9 @@ test.describe('Responsive layout', () => {
 
     const drawer = page.locator('.p-drawer')
     await expect(drawer).toBeVisible()
-    for (const label of ['Patterns', 'Skills', 'Rules', 'Trace', 'Settings']) {
+    // 'Patterns & Skills' is one entry now — asserted whole, so a regression
+    // that split it back into two cannot pass on a substring match.
+    for (const label of ['Patterns & Skills', 'Rules', 'Trace', 'Settings']) {
       await expect(drawer.locator('nav a', { hasText: label })).toBeVisible()
     }
   })
@@ -69,7 +71,7 @@ const STATIC_ROUTES = [
   '/plans',
   '/tasks',
   '/settings',
-  '/api-keys',
+  '/settings?section=api-keys',
   '/account',
   '/trace/sessions',
   '/trace/triggers',
