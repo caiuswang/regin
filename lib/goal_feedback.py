@@ -71,7 +71,7 @@ def record_outcome(goal: str, *,
                    tags: list[str] | None = None,
                    topics: list[str] | None = None,
                    trace_id: str | None = None,
-                   importance: float = 0.6,
+                   importance: float = 0.25,
                    is_test: bool = False) -> OutcomeResult:
     """Fold one `/goal-verified` outcome back into memory.
 
@@ -80,7 +80,11 @@ def record_outcome(goal: str, *,
     surfaced; any offered-but-not-included id is recorded as ignored (no
     penalty here — decay is reflect's job). `failures` — acceptance items
     that failed verification, each phrased as a transferable rule; written
-    as new lessons tagged by area + FAIL_TAG. `topics` — authoritative
+    as new lessons tagged by area + FAIL_TAG, at an `importance` BELOW
+    `remember()`'s 0.5 default: the tree-nav leaf orders by importance
+    (`Store.memories_for_topic_subtree`) and caps at `top_k`, so an
+    auto-written defect post-mortem must rank under a hand-judged lesson
+    rather than displace it. `topics` — authoritative
     topic short-paths (node ids the agent already knows from its tree walk)
     to file every new failure-lesson under, so the next roadmap recalls it
     by subsystem instead of waiting for the async classifier. Returns what

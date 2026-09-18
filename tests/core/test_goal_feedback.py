@@ -73,6 +73,21 @@ def test_failures_become_new_lessons(seed_lesson):
             memory.forget(mid)
 
 
+def test_failure_lesson_ranks_below_a_hand_written_one(seed_lesson):
+    """The tree-nav leaf orders by importance, so an auto-written failure
+    lesson must not displace a hand-judged one at the same node."""
+    hand = seed_lesson("Never key trace UI on the last turn.", ["trace"],
+                       is_test=True)
+    result = record_outcome("fix trace header", failures=["Cap the header text."],
+                            tags=["trace"], is_test=True)
+    try:
+        auto = memory.get(result.new_lessons[0])
+        assert auto.importance < memory.get(hand).importance
+    finally:
+        for mid in result.new_lessons:
+            memory.forget(mid)
+
+
 def test_blank_failures_are_dropped():
     result = record_outcome("x", failures=["   ", ""])
     assert result.new_lessons == []
