@@ -103,6 +103,11 @@ function onRow(event, row) {
         @click="onRow($event, row)"
       >
         <td>
+          <!-- The id first: every declaration in the pipeline is
+               `--feature <id>`, so it is the one string a reader has to be
+               able to retype. A reference says where a feature is tracked and
+               cannot stand in for it. -->
+          <span class="fid" data-testid="feature-id">#{{ row.id }}</span>
           <router-link class="key" :to="`/features/${row.id}`"
           >{{ row.title }}</router-link>
           <!-- The reference, where there is one. Beside the title, never
@@ -193,6 +198,11 @@ function onRow(event, row) {
 .sort-header:focus-visible { outline: 2px solid var(--color-blue-500); }
 .index th.num .sort-header { flex-direction: row-reverse; }
 .sort-mark { font-size: 11px; }
+.fid {
+    margin-right: 0.4rem;
+    font-family: var(--font-mono, monospace); font-size: 11.5px;
+    color: var(--color-fg-faint); font-variant-numeric: tabular-nums;
+}
 .key {
     font-family: var(--font-mono, monospace); font-weight: 600;
     color: var(--color-primary); text-decoration: none;

@@ -68,6 +68,11 @@ const synced = computed(() => asOf(props.syncedAt))
 <template>
   <section class="stage-line">
     <div class="stage-line-main">
+      <!-- The address, then the name. `--feature <id>` is the argument every
+           declaration in this pipeline takes, and the page held it only in the
+           URL — which is the one place a reader cannot select a word from
+           without taking the rest of the path with it. -->
+      <span class="stage-id" data-testid="feature-id">#{{ featureId }}</span>
       <span class="stage-key">{{ title }}</span>
 
       <!-- The reference, where there is one. A link, because an operator who
@@ -174,6 +179,11 @@ const synced = computed(() => asOf(props.syncedAt))
 .stage-line { display: flex; flex-direction: column; gap: 0.5rem; }
 .stage-line-main {
     display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
+}
+.stage-id {
+    font-family: var(--font-mono, monospace); font-weight: 600;
+    font-size: 0.8125rem; color: var(--color-fg-faint);
+    font-variant-numeric: tabular-nums;
 }
 .stage-key {
     font-family: var(--font-mono, monospace); font-weight: 700;
