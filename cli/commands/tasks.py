@@ -287,7 +287,9 @@ def cmd_finish(
     status: str = typer.Option(
         "done", "--status", help="done | failed."),
     reason: Optional[str] = typer.Option(
-        None, "--reason", help="Why it failed; recorded on the attempt."),
+        None, "--reason",
+        help="What this run did and why. Recorded on the attempt AND posted "
+             "on the task as the run's report."),
     json: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ) -> None:
     """Settle the attempt and release its dependents, without ending the

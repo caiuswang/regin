@@ -48,7 +48,9 @@ from lib.activity_log import get_activity_logger
 from lib.agent_sdk import store as sdk_store, supervisor, worktree
 from lib.comments import store as comments
 from lib.orm import SessionLocal
-from lib.orm.models.comments import RESOLUTION_OPEN, SUBJECT_TASK
+from lib.orm.models.comments import (
+    AUTHOR_AGENT, COMMENT_BODY_MAX, RESOLUTION_OPEN, RESOLUTION_RESOLVED,
+    SUBJECT_TASK)
 from lib.orm.models.agent_runs import AgentRun
 from lib.orm.models.tasks import (
     AgentTask, AgentTaskRun, RUN_STATUS_ARMED, RUN_STATUS_DONE,
@@ -1242,6 +1244,47 @@ def fire_ready_dependents(task_id: int) -> list[int]:
     return fired
 
 
+# Stamped into the report's first line so a second `task finish` for the same
+# attempt recognises its own earlier report instead of opening a duplicate
+# thread. The identity is the attempt, which is stable; nothing here is timed.
+_REPORT_MARKER = "[attempt {run_id} · {status}]"
+
+
+def _already_reported(task_id: int, run_id: int) -> bool:
+    marker = _REPORT_MARKER.split(" ·")[0].format(run_id=run_id)
+    return any(
+        (comment["body"] or "").startswith(marker)
+        for thread in comments.thread_with_comments(SUBJECT_TASK, str(task_id))
+        for comment in thread["comments"])
+
+
+def _post_agent_report(task_id: int, run_id: int, status: str,
+                       reason: str) -> None:
+    """The run's own account of what it did, filed where a human reads it.
+
+    `exit_reason` already holds this text, but on the *attempt* — a line in the
+    run history that the next attempt pushes out of view. A report is about the
+    task, so it belongs in the task's conversation, beside whatever a person
+    said there.
+
+    The thread's resolution mirrors the outcome, and that is what carries a
+    failure forward: `done` is a statement and is settled on arrival, while
+    `failed` stays open, so `_followup_block` delivers it to the next attempt
+    unchanged. The next agent reads why the last one could not finish without
+    regin growing a second delivery path to tell it.
+    """
+    if _already_reported(task_id, run_id):
+        return
+    thread = comments.open_thread(SUBJECT_TASK, str(task_id))
+    body = f"{_REPORT_MARKER.format(run_id=run_id, status=status)} {reason}"
+    comments.add_comment(thread["id"], body=body[:COMMENT_BODY_MAX],
+                         author_kind=AUTHOR_AGENT)
+    if status == RUN_STATUS_DONE:
+        comments.resolve(thread["id"], RESOLUTION_RESOLVED)
+    log.write("task_run_reported", task_id=task_id, run_id=run_id,
+              status=status, thread_id=thread["id"])
+
+
 def finish_run(run_id: int, *, status: str = RUN_STATUS_DONE,
                reason: str = "") -> dict:
     """The agent's own report, from inside its run, that the work is done.
@@ -1271,6 +1314,10 @@ def finish_run(run_id: int, *, status: str = RUN_STATUS_DONE,
     if task_id is None:
         return {"run_id": run_id, "task_id": None, "settled": False,
                 "verifying": False, "fired": []}
+    # Before the default is substituted: only what the AGENT actually wrote is
+    # a report. "agent signalled finish" is regin talking to itself.
+    if reason.strip():
+        _post_agent_report(task_id, run_id, status, reason.strip())
     reason = reason or "agent signalled finish"
     reopen_for_agent_report(run_id)
     claim, command, params = _claim_verify(run_id)

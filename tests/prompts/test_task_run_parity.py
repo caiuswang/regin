@@ -40,9 +40,17 @@ def _reference_finish(run_id: int, linked: bool = False,
         "depends on it; your session stays open either way, so run it as soon "
         "as the work is done rather than waiting to be stopped.\n"
         + order
-        + f"   {runs._finish_command(run_id)}\n"
+        + f"   {runs._finish_command(run_id)} --reason "
+        "'<what you did, and why>'\n"
+        "The reason is not bookkeeping: regin posts it on the task as your "
+        "report, and it is the only account of this run anybody gets without "
+        "reading the whole session. Say what you actually did, what you "
+        "decided, and anything you deliberately left — a few sentences, not a "
+        "transcript.\n"
         "If you could not finish, run the same command with "
-        "`--status failed --reason '<why>'`.\n"
+        "`--status failed --reason '<what is blocking it>'`. That report stays "
+        "an open thread and is delivered to the next attempt, so write it for "
+        "whoever picks this up.\n"
         "</finish>"
     )
 

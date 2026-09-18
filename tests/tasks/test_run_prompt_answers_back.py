@@ -244,3 +244,85 @@ def test_the_unnamed_base_branch_phrase_is_an_editable_surface(tmp_db):
     update_template(FINISH_BASE_UNNAMED_SURFACE_ID, {"body": "wherever"})
 
     assert "merge this run's work back into wherever" in runs._finish_block(7)
+
+
+# 5 ── the run reports what it did, on the task
+
+def _finish(task_id, *, status="done", reason=""):
+    return runs.finish_run(_latest_run(task_id), status=status, reason=reason)
+
+
+def _agent_bodies(task_id):
+    return [c["body"]
+            for t in comments.thread_with_comments("task", str(task_id))
+            for c in t["comments"] if c["author_kind"] == "agent"]
+
+
+def test_a_finished_run_posts_its_reason_as_a_report_on_the_task(
+        flask_client, launcher):
+    """The status chip says a run ended; only this says what it did."""
+    task_id = _armed(flask_client, "shelf", body="wire the thing")
+    _launch(flask_client, launcher, task_id)
+
+    _finish(task_id, reason="rewired it through the store; left the CLI alone")
+
+    bodies = _agent_bodies(task_id)
+    assert len(bodies) == 1
+    assert "rewired it through the store" in bodies[0]
+    assert bodies[0].startswith("[attempt ")
+
+
+def test_a_done_report_is_settled_so_it_does_not_haunt_the_next_run(
+        flask_client, launcher):
+    """A report is a statement, not a question — it must not come back as an
+    unresolved thread the next attempt has to answer."""
+    task_id = _armed(flask_client, "shelf", body="wire the thing")
+    _launch(flask_client, launcher, task_id)
+    _finish(task_id, reason="done and merged")
+
+    assert flask_client.post(f"/api/tasks/{task_id}/arm",
+                             json={}).status_code == 200
+    assert "<followup>" not in _launch(flask_client, launcher, task_id)
+
+
+def test_a_failed_report_stays_open_and_reaches_the_next_attempt(
+        flask_client, launcher):
+    """The whole point of filing it as a comment: a failure's account travels
+    to whoever picks the task up, through the delivery path that already
+    exists, with no second mechanism."""
+    task_id = _armed(flask_client, "shelf", body="wire the thing")
+    _launch(flask_client, launcher, task_id)
+    _finish(task_id, status="failed",
+            reason="blocked: the upstream migration has not landed")
+
+    assert flask_client.post(f"/api/tasks/{task_id}/arm",
+                             json={}).status_code == 200
+    prompt = _launch(flask_client, launcher, task_id)
+
+    assert "<followup>" in prompt
+    assert "the upstream migration has not landed" in prompt
+
+
+def test_regins_own_default_reason_is_not_reported_as_the_agents_words(
+        flask_client, launcher):
+    """`agent signalled finish` is regin talking to itself. Posting it would
+    put a sentence the agent never wrote on the task under its name."""
+    task_id = _armed(flask_client, "shelf", body="wire the thing")
+    _launch(flask_client, launcher, task_id)
+
+    _finish(task_id, reason="")
+
+    assert _agent_bodies(task_id) == []
+
+
+def test_reporting_twice_for_one_attempt_does_not_open_a_second_thread(
+        flask_client, launcher):
+    """`finish` is idempotent and a resumed session may send it again; the
+    attempt id in the report is what lets the second one recognise the first."""
+    task_id = _armed(flask_client, "shelf", body="wire the thing")
+    _launch(flask_client, launcher, task_id)
+
+    _finish(task_id, reason="did the thing")
+    _finish(task_id, reason="did the thing")
+
+    assert len(_agent_bodies(task_id)) == 1

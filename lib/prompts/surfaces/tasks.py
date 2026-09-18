@@ -65,8 +65,9 @@ Revise it in place as the design now stands; do not append a changelog of this r
 _FINISH_BODY = """<finish>
 This work was launched from a regin task. Running the command below is the ONLY thing that marks the task complete and releases whatever depends on it; your session stays open either way, so run it as soon as the work is done rather than waiting to be stopped.
 {{order}}
-   {{finish_cmd}}
-If you could not finish, run the same command with `--status failed --reason '<why>'`.
+   {{finish_cmd}} --reason '<what you did, and why>'
+The reason is not bookkeeping: regin posts it on the task as your report, and it is the only account of this run anybody gets without reading the whole session. Say what you actually did, what you decided, and anything you deliberately left — a few sentences, not a transcript.
+If you could not finish, run the same command with `--status failed --reason '<what is blocking it>'`. That report stays an open thread and is delivered to the next attempt, so write it for whoever picks this up.
 </finish>"""
 
 _FINISH_BASE_UNNAMED_BODY = "the branch this run was based on"
@@ -250,3 +251,7 @@ register_retired_default(
 register_retired_default(
     FEATURE_SURFACE_ID,
     sha256="cf0c2b6f698a75a4ae248e1bde62e13069053b56727f3e7ec7383e91b3a4db52")
+# The finish block before it asked for a report rather than only a status.
+register_retired_default(
+    FINISH_SURFACE_ID,
+    sha256="2b4848c1013bcebd4d7d731c4d83989c08996f39515faa4da90762b9c223b2fa")
