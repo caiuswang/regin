@@ -1,10 +1,11 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, inject, ref } from 'vue'
 import {
   fmtDuration, fmtBytes, fullLabel, bashEditSummary, hasBashEdits, backgroundShell,
 } from '../../../utils/traceFormatters.js'
 import CopyButton from './CopyButton.vue'
 import BashEditDiffs from './BashEditDiffs.vue'
+import { useAgentElapsed } from '../../../composables/useAgentElapsed.js'
 
 // Bash row: flat one-liner like other inline tool rows when collapsed, led by
 // a `Shell` verb. Output expands into a dark terminal-themed panel; the
@@ -37,6 +38,23 @@ const BG_TINTS = {
   failed: 'bg-red-100 border-red-200 text-red-800',
 }
 const bgTint = computed(() => BG_TINTS[bg.value?.status] || BG_UNKNOWN_TINT)
+
+// A shell with no completion has only its launch stamp, so its elapsed time
+// has to be counted rather than read off a recorded duration. Same server-
+// anchored formula and 1s tick every other live surface uses; it stops the
+// moment a completion lands and the recorded figure takes over.
+const clock = inject('traceServerClock', ref({ now: '', at: 0 }))
+const bgUnfinished = computed(() =>
+  bg.value?.status === 'running' || bg.value?.status === 'launching')
+const bgTicking = useAgentElapsed(
+  () => props.span?.start_time || '',
+  () => clock.value.now,
+  () => clock.value.at,
+  () => bgUnfinished.value,
+)
+const bgElapsed = computed(() => (
+  bgUnfinished.value ? bgTicking.value : fmtDuration(bg.value?.elapsedMs || 0)
+))
 
 const edits = computed(() => bashEditSummary(props.span?.attributes))
 
@@ -102,10 +120,11 @@ function toggleOutput() { outputOverride.value = !outputOpen.value }
       <!-- The shell's own elapsed time, not the call's: `duration_ms` beside it
            is the milliseconds the tool took to hand back. -->
       <span
-        v-if="bg && bg.elapsedMs"
+        v-if="bg && bgElapsed"
         class="font-mono text-[10.5px] text-sky-600 shrink-0"
         data-bash-background-elapsed
-      >{{ fmtDuration(bg.elapsedMs) }}</span>
+        :title="bgUnfinished ? 'running for this long' : 'the shell ran for this long'"
+      >{{ bgElapsed }}</span>
       <span
         v-if="span.attributes?.return_code_interpretation"
         class="text-[11px] text-slate-400 italic truncate shrink-0 max-w-[35%]"
@@ -117,7 +136,13 @@ function toggleOutput() { outputOverride.value = !outputOpen.value }
       >{{ edits.label }}</span>
       <span v-if="edits.added" class="font-mono text-[10.5px] text-emerald-600 shrink-0">+{{ edits.added }}</span>
       <span v-if="edits.removed" class="font-mono text-[10.5px] text-red-600 shrink-0">−{{ edits.removed }}</span>
-      <span v-if="span.duration_ms" class="font-mono text-[10.5px] text-slate-400 shrink-0">{{ fmtDuration(span.duration_ms) }}</span>
+      <span
+        v-if="span.duration_ms"
+        class="font-mono text-[10.5px] text-slate-400 shrink-0"
+        data-tool-duration
+        :title="bg ? 'the tool call itself — how long before the shell was handed back'
+          : 'how long the command took'"
+      >{{ fmtDuration(span.duration_ms) }}</span>
       <!-- Only when there is a body to reveal: an `interrupted`-only Bash span
            carries no command or output, and its caret opened an empty box. -->
       <span

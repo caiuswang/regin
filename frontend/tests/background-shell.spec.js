@@ -13,7 +13,16 @@ import { test, expect } from './auth-fixture.js'
 
 const OUT = '/tmp/tasks/bo58vwcaw.output'
 
-async function seed(page, { notification = null } = {}) {
+// A naive local ISO stamp `parseLocalIso` reads the same way the server's
+// `server_now` is written — no trailing Z, no offset.
+function localIso(ms) {
+  const d = new Date(ms)
+  const pad = n => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+    + `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
+async function seed(page, { notification = null, startedAt = null } = {}) {
   const traceId = randomUUID()
   const p8 = traceId.slice(0, 8)
   const prompt = `p-${p8}`
@@ -26,7 +35,8 @@ async function seed(page, { notification = null } = {}) {
     // status are what make `_body_needed` withhold the body on later polls,
     // which is the whole condition this test exists to exercise.
     { trace_id: traceId, span_id: `b1-${p8}`, parent_id: prompt, name: 'tool.Bash',
-      start_time: '2026-05-09T09:00:01', end_time: '2026-05-09T09:00:01',
+      start_time: startedAt || '2026-05-09T09:00:01',
+      end_time: startedAt || '2026-05-09T09:00:01',
       status_code: 'OK', duration_ms: 3,
       attributes: { tool_name: 'Bash', command_preview: 'npm run dev',
         command_description: 'Start the dev server', run_in_background: true,
@@ -128,4 +138,34 @@ test('the badge flips to completed on the live poll, with no reload', async ({ p
   await expect(row.locator('[data-bash-background]'))
     .toHaveText('background · completed', { timeout: 30_000 })
   await expect(row.locator('[data-bash-background-elapsed]')).toHaveText('30s')
+})
+
+test('a running shell counts up from its launch', async ({ page }) => {
+  test.setTimeout(60_000)
+  // The launch is the only timestamp a running shell has; the completion that
+  // would give it a recorded duration has not happened. Without this the row's
+  // only number was the 3ms handoff, which reads as the shell's own cost.
+  await seed(page, { startedAt: localIso(Date.now() - 75_000) })
+
+  const row = shellRow(page)
+  await expect(row.locator('[data-bash-background]')).toHaveText('background · running')
+  await expect(row.locator('[data-bash-background-elapsed]'))
+    .toHaveText(/^1m1\ds$/, { timeout: 15_000 })
+
+  // It ticks: a second readout, later, is not the first one frozen.
+  const first = await row.locator('[data-bash-background-elapsed]').innerText()
+  await expect(row.locator('[data-bash-background-elapsed]'))
+    .not.toHaveText(first, { timeout: 15_000 })
+})
+
+test('the handoff cost is named, not left to be read as the shell duration', async ({ page }) => {
+  test.setTimeout(60_000)
+  await seed(page, {
+    notification: { status: 'completed', summary: 'done' },
+  })
+
+  const row = shellRow(page)
+  await expect(row.locator('[data-bash-background-elapsed]')).toHaveText('30s')
+  await expect(row.locator('[data-tool-duration]'))
+    .toHaveAttribute('title', /handed back|handoff/i)
 })
