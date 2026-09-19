@@ -25,6 +25,9 @@ writing to the developer's real `db/regin.db`:
 - `_no_bridge_pane_registration` — `bridge_registry` claiming the developer's
   own tmux pane for a fixture session id, which silently evicted the live
   session sitting in it.
+- `_block_push_transport`      — the `send_to_user` push fan-out reaching the
+  developer's real webhook / Telegram / Feishu bot, because `maybe_dispatch`
+  reads the live `config/settings.json` rather than a pristine one.
 """
 
 from __future__ import annotations
@@ -191,6 +194,46 @@ def _block_notify_transport(monkeypatch):
     # spawn one that runs the real hook handlers. Point its port at a closed
     # one so the child's own probe fails instead of finding the dev server.
     monkeypatch.setenv('REGIN_WEB_PORT', '1')
+
+
+@pytest.fixture(autouse=True)
+def _block_push_transport(monkeypatch):
+    """Sever outbound push-channel delivery (webhook / Telegram / Lark).
+
+    `store.record_message` fans every write out through
+    `push.registry.maybe_dispatch`, which reads the *developer's live*
+    `config/settings.json`. On a machine with a configured Feishu bot a
+    single full run fired 21 real chat messages — all from the
+    PermissionRequest / ExitPlanMode handlers, whose `push_*_events`
+    switches are off in a pristine checkout but on in a real config.
+
+    Layer 1 restores that pristine checkout: the whole `agent_messages`
+    block is replaced with model defaults, so no channel is configured,
+    `active_channels()` is empty and `maybe_dispatch` returns None without
+    building a payload. `tests/conftest.py::_default_feature_config` already
+    does this for everything under `tests/`; every one of the 21 observed
+    pushes came from `hook_manager/tests`, the testpath that conftest cannot
+    reach. Reset wholesale rather than blanking the URL fields one by one so
+    a channel added later is covered without touching this.
+
+    Layer 2 severs the one network seam every channel shares, for the tests
+    that configure a channel of their own and would otherwise escape layer 1.
+    It reaches all three channels only because each calls
+    `base.http_post_json(...)` through the module — a channel that imported
+    the name directly would keep its own live binding. Silent rather than
+    raising: the registry catches a channel's exception and records `failed`,
+    so a raise would not surface as a test failure — it would only rewrite
+    `webhook_status`. Tests that assert on payloads patch this same attribute
+    per-test, which is applied afterwards and wins.
+    """
+    from lib.settings import AgentMessagesConfig, settings
+    monkeypatch.setattr(settings, "agent_messages", AgentMessagesConfig())
+
+    from lib.agent_messages.push import base as push_base
+    monkeypatch.setattr(
+        push_base, "http_post_json",
+        lambda _url, _payload, *, timeout=None, headers=None: None,
+    )
 
 
 @pytest.fixture(autouse=True)
