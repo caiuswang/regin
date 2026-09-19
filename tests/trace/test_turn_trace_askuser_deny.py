@@ -314,6 +314,50 @@ def test_denied_tool_with_file_path_carries_file_path(tmp_path, _isolated_state_
     assert tool_spans[0]['attributes']['file_path'] == '/some/file.json'
 
 
+def test_denied_bash_carries_command_preview(tmp_path, _isolated_state_dir, _captured):
+    """A denied Bash has no `file_path`, so without `command_preview` the
+    row label (`toolOutcomeMain`, frontend/src/utils/liveRows.js) renders a
+    bare "Bash denied" and the command lives only inside the collapsed
+    `tool_input` bag. The two sibling builders (`build_recorded_deny_attrs`,
+    `build_interrupt_attrs`) already stamp it; this path must match."""
+    spans = _captured
+    deny_text = ("The user doesn't want to proceed with this tool use. "
+                 "The tool use was rejected.")
+    command = 'grep -n "RUNS_KEY" -A 12 frontend/src/composables/useSessionListQuery.js'
+    usage = read_usage(_generic_deny_transcript(
+        tmp_path,
+        tool_name='Bash',
+        tool_input={'command': command, 'description': 'Read toggleRuns wiring'},
+        is_error=True,
+        result_text=deny_text,
+    ))
+    assert usage is not None
+
+    tool_spans = _emit_generic(usage, spans, 'Bash')
+    assert len(tool_spans) == 1
+    attrs = tool_spans[0]['attributes']
+    assert attrs['command_preview'] == command
+    assert attrs['tool_input']['command'] == command
+    # A top-level `command` would divert rendering to BashCard, whose badge
+    # keys on `interrupted` rather than `denied`.
+    assert 'command' not in attrs
+
+
+def test_denied_bash_command_preview_is_capped(tmp_path, _isolated_state_dir, _captured):
+    spans = _captured
+    deny_text = "The user doesn't want to proceed with this tool use."
+    command = 'echo ' + 'x' * 400
+    usage = read_usage(_generic_deny_transcript(
+        tmp_path, tool_name='Bash', tool_input={'command': command},
+        is_error=True, result_text=deny_text,
+    ))
+    assert usage is not None
+
+    attrs = _emit_generic(usage, spans, 'Bash')[0]['attributes']
+    assert attrs['command_preview'] == command[:200] + '…'
+    assert attrs['tool_input']['command'] == command
+
+
 # --- Pre-execution tool rejections (<tool_use_error> envelope) -------
 #
 # Same shape of problem as permission deny: PostToolUse never fires for

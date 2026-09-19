@@ -173,6 +173,27 @@ def _apply_tool_input(attrs: dict, tc: dict) -> None:
             attrs['tool_input_truncated_bytes'] = dropped
 
 
+# Bash command-preview cap. The full command still rides in `tool_input`;
+# this is the one truncated line `toolOutcomeMain` (frontend liveRows.js)
+# renders after the outcome verb, via `command_preview`.
+_COMMAND_PREVIEW_MAX = 200
+
+
+def _apply_command_preview(attrs: dict, tool_name: str, tool_input: object) -> None:
+    """Stamp `command_preview` for Bash. Not a top-level `command`: that would
+    divert rendering to BashCard, whose badge keys on `interrupted` rather than
+    `denied`."""
+    if tool_name != 'Bash' or not isinstance(tool_input, dict):
+        return
+    cmd = tool_input.get('command')
+    if not isinstance(cmd, str) or not cmd:
+        return
+    attrs['command_preview'] = (
+        cmd[:_COMMAND_PREVIEW_MAX]
+        + ('…' if len(cmd) > _COMMAND_PREVIEW_MAX else '')
+    )
+
+
 def _deny_skeleton(tool_name: str, tu_id: str) -> dict:
     """The `tool.<name>` deny-span attrs shared by every deny path: a denied
     flag and the ids that link back to the originating call. Both the Claude
@@ -180,11 +201,6 @@ def _deny_skeleton(tool_name: str, tu_id: str) -> dict:
     path (`build_recorded_deny_attrs`) build on this so the deny contract lives
     in one place."""
     return {'tool_name': tool_name, 'tool_use_id': tu_id, 'denied': True}
-
-
-# Recorded-denial command preview cap (Bash). Kept short: the full command
-# still rides along in `tool_input`.
-_DENY_COMMAND_PREVIEW_MAX = 200
 
 
 def build_recorded_deny_attrs(
@@ -212,18 +228,8 @@ def build_recorded_deny_attrs(
         attrs['denial_reason'] = denial_reason[:_DENIAL_REASON_MAX_BYTES]
     if isinstance(tool_input, dict) and tool_input:
         attrs['tool_input'] = tool_input
-        cmd = tool_input.get('command')
-        if tool_name == 'Bash' and isinstance(cmd, str) and cmd:
-            attrs['command_preview'] = (
-                cmd[:_DENY_COMMAND_PREVIEW_MAX]
-                + ('…' if len(cmd) > _DENY_COMMAND_PREVIEW_MAX else '')
-            )
+        _apply_command_preview(attrs, tool_name, tool_input)
     return attrs
-
-
-# Bash command-preview cap for the interrupt synth — same as the
-# recorded-deny path; the full command still rides in `tool_input`.
-_INTERRUPT_COMMAND_PREVIEW_MAX = 200
 
 
 def build_interrupt_attrs(
@@ -251,13 +257,7 @@ def build_interrupt_attrs(
     if turn_uuid:
         attrs['turn_uuid'] = turn_uuid
     _apply_tool_input(attrs, tc)
-    if tool_name == 'Bash':
-        cmd = (tc.get('tool_input') or {}).get('command') if isinstance(tc.get('tool_input'), dict) else None
-        if isinstance(cmd, str) and cmd:
-            attrs['command_preview'] = (
-                cmd[:_INTERRUPT_COMMAND_PREVIEW_MAX]
-                + ('…' if len(cmd) > _INTERRUPT_COMMAND_PREVIEW_MAX else '')
-            )
+    _apply_command_preview(attrs, tool_name, tc.get('tool_input'))
     return attrs
 
 
@@ -278,6 +278,8 @@ def _build_deny_attrs(
         (capped).
       * `tool_input` — the raw `tool_use.input` block (cap honoured
         upstream in `_capture_tool_input`).
+      * `command_preview` — Bash only; the one line the row label shows
+        after the "denied" verb.
       * `questions` — structured AskUserQuestion form (only when the
         denied tool is AskUserQuestion), so the existing per-question
         renderer keeps working without a fallback path.
@@ -287,6 +289,7 @@ def _build_deny_attrs(
         attrs['turn_uuid'] = turn_uuid
     _apply_denial_reason(attrs, result_text)
     _apply_tool_input(attrs, tc)
+    _apply_command_preview(attrs, tool_name, tc.get('tool_input'))
     if tool_name == 'AskUserQuestion':
         qs = tc.get('input_questions')
         if isinstance(qs, list) and qs:
