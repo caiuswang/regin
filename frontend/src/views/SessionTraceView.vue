@@ -676,6 +676,7 @@ const feedProps = computed(() => ({
   serverNowAt: session.value?.server_now_at || 0,
   followUp: followUpMeta.value,
   sendSeq: sendSeq.value,
+  backgroundShells: session.value?.background_shells || [],
 }))
 
 

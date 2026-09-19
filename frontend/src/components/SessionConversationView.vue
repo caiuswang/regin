@@ -6,6 +6,7 @@ import ConversationPromptCard from './conversation/ConversationPromptCard.vue'
 import TurnToolChips from './conversation/TurnToolChips.vue'
 import CompactionDivider from './conversation/CompactionDivider.vue'
 import SpineLiveNode from './conversation/SpineLiveNode.vue'
+import BackgroundShellsBlock from './conversation/BackgroundShellsBlock.vue'
 import { runStateOf } from '../utils/liveRows.js'
 import TurnUsageFooter from './conversation/TurnUsageFooter.vue'
 import RewindCard from './conversation/RewindCard.vue'
@@ -88,6 +89,10 @@ const props = defineProps({
   // Bumped by a send from ANOTHER surface addressed at this session (the span
   // reader's Reply). A send is a send: it should clear the deck here too.
   sendSeq: { type: Number, default: 0 },
+  // `session.background_shells` — the whole-session shell roster. Server-owned
+  // for the same reason `agents` is: a shell running for half an hour has
+  // scrolled out of the loaded page, and that is the one worth surfacing.
+  backgroundShells: { type: Array, default: () => [] },
   // The session's whole agent roster (useLiveAgents entries). The server owns
   // each agent's status, so a subagent card's liveness — and whether its rows
   // may appear here at all — is read off this, never off the marker span.
@@ -739,6 +744,11 @@ const liveNode = computed(() => ({
   screen: props.followUp.liveScreen,
 }))
 
+const liveShells = computed(() => ({
+  traceId: props.traceId,
+  shells: props.backgroundShells,
+}))
+
 // Everything the prompt card shows that only the span tree knows. No numeral
 // here describes spans the mode set aside: an exact tally reads as an error
 // budget and invites counting instead of reading. Whether anything IS set
@@ -972,6 +982,12 @@ function revealFolds(entry) {
           <!-- Anchored to the SESSION, after every turn: a last prompt with no
                children renders no spine, and the way to the live terminal must
                not go down with it. -->
+          <!-- Above the status row: a running shell is work in progress, and
+               the row below it is the session's own state. -->
+          <BackgroundShellsBlock
+            :live="liveShells" :server-now="serverNow" :server-now-at="serverNowAt"
+          />
+
           <SpineLiveNode :live="liveNode" />
 
           <!-- Terminator: the feed has a bottom, so a reader who reaches it knows

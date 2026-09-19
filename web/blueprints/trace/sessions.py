@@ -2782,8 +2782,69 @@ def _shallow_map_response(trace_id: str):
         'queued_prompts': _queued_prompts(trace_id),
         'task_list': _fetch_session_task_list(trace_id),
         'agent_roster': roster,
+        # Whole-session, deliberately not derived from `structural`: a shell
+        # running for half an hour has scrolled out of the loaded page, and
+        # that is precisely the shell the reader still needs to see.
+        'background_shells': _background_shells(trace_id),
         **_bridge_reachability(trace_id),
         **_session_summary(trace_id, roster=roster, activity=activity),
+    })
+
+
+def _background_shells(trace_id: str) -> list:
+    """The session's background shells, newest state first-class."""
+    from lib.orm.engine import get_connection
+    from lib.trace.background_shells import shell_roster
+    conn = get_connection()
+    try:
+        return shell_roster(conn, _alias_group_ids(trace_id))
+    finally:
+        conn.close()
+
+
+# One screenful of a growing output file. A background shell can emit
+# megabytes (a dev server, a `tail -f`); the block exists to show what it is
+# doing NOW, so the tail is the whole useful part and the cap is what keeps a
+# runaway log off the wire.
+_SHELL_OUTPUT_TAIL_BYTES = 64 * 1024
+
+
+@trace_bp.route('/api/sessions/<trace_id>/background/<task_id>/output')
+def api_background_shell_output(trace_id, task_id):
+    """The tail of one background shell's output file.
+
+    The path is resolved server-side from what this session's own rows state
+    — never taken from the caller, and never assembled from a directory
+    convention — so this endpoint cannot be pointed at an arbitrary file.
+    `available: false` is a first-class answer: a session that has not yet
+    stated its task directory has no readable path, which is a gap to report
+    rather than to guess around.
+    """
+    from lib.orm.engine import get_connection
+    from lib.trace.background_shells import output_path
+    conn = get_connection()
+    try:
+        path = output_path(conn, _alias_group_ids(trace_id), task_id)
+    finally:
+        conn.close()
+    if not path:
+        return jsonify({'task_id': task_id, 'available': False, 'text': '',
+                        'reason': 'no output file recorded for this task'})
+    try:
+        size = os.path.getsize(path)
+        with open(path, 'rb') as fh:
+            if size > _SHELL_OUTPUT_TAIL_BYTES:
+                fh.seek(size - _SHELL_OUTPUT_TAIL_BYTES)
+            body = fh.read()
+    except OSError as exc:
+        return jsonify({'task_id': task_id, 'available': False, 'text': '',
+                        'reason': str(exc)})
+    return jsonify({
+        'task_id': task_id,
+        'available': True,
+        'text': body.decode('utf-8', 'replace'),
+        'size': size,
+        'truncated': size > _SHELL_OUTPUT_TAIL_BYTES,
     })
 
 

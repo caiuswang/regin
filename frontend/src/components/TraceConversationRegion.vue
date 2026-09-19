@@ -124,6 +124,7 @@ const feedFollowUp = computed(() => (props.takeover
     :hide-toc="hideToc"
     :follow-up="feedFollowUp"
     :send-seq="feed.sendSeq"
+    :background-shells="feed.backgroundShells"
     :follow-selection="selectionOrigin !== 'pane'"
     class="flex-1 min-w-0 xl:min-w-72"
     data-testid="trace-conversation-feed"
