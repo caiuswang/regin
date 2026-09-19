@@ -38,6 +38,7 @@ from lib.activity_log import get_activity_logger
 from lib.agent_bridge import roots
 from lib.orm.engine import SessionLocal
 from lib.orm.models.trace import SessionSpan
+from hook_manager.core import PROBE_ENV
 
 log = get_activity_logger("agent_bridge")
 
@@ -207,10 +208,24 @@ def _scan_workflows(base: Path, scope: str) -> list[dict]:
 
 
 async def _server_info_commands(root: str) -> list[dict]:
-    """The SDK's command list for `root` — the raw terminal's own catalog."""
+    """The SDK's command list for `root` — the raw terminal's own catalog.
+
+    The child is marked as a probe so regin's own hooks stand down inside it.
+    They otherwise fire a full session lifecycle for a client that opens, reads
+    `get_server_info()` and closes without ever taking a prompt — one phantom
+    session row per cold autocomplete, and the largest single source of the
+    empty rows in the sessions list. `options.env` merges over the inherited
+    environment, so this adds the marker rather than replacing PATH.
+
+    Narrowing `setting_sources` instead would also silence the hooks — they
+    live in the user-scope settings — but it drops that scope's commands from
+    the answer: 136 → 115 for this repo. The catalog is the whole point of the
+    handshake, so the marker is the lever, not the settings.
+    """
     from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 
-    async with ClaudeSDKClient(options=ClaudeAgentOptions(cwd=root)) as client:
+    options = ClaudeAgentOptions(cwd=root, env={PROBE_ENV: "1"})
+    async with ClaudeSDKClient(options=options) as client:
         info = await client.get_server_info()
     entries = (info or {}).get("commands") or []
     return [dict(entry) for entry in entries

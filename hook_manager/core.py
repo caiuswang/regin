@@ -14,6 +14,15 @@ import functools
 import re
 
 
+# Set by regin on a `claude` child it spawns only to interrogate the CLI — the
+# `bridge-commands` handshake opens a client, reads `get_server_info()` and
+# closes without ever taking a prompt. Its hooks would otherwise describe a
+# conversation that does not exist: a full session row per cold autocomplete.
+# Lives here rather than in the runner so the spawning side can name it
+# without importing the runner, which touches the filesystem at import time.
+PROBE_ENV = 'REGIN_INTERNAL_PROBE'
+
+
 # ── Spec events ────────────────────────────────────────────────────────
 # Kept as a module-level constant so the test suite can assert that every
 # event registered in REGISTRY is a real spec event, and so unknown events

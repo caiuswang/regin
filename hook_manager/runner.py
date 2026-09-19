@@ -18,6 +18,7 @@ from .core import (
     Handler,
     HookPayload,
     HookResponse,
+    PROBE_ENV,
     SPEC_EVENTS,
     STDOUT_IS_DATA,
 )
@@ -221,7 +222,13 @@ def main(argv: list[str] | None = None) -> int:
     from .registry import REGISTRY  # late import so tests can swap in
     args = argv if argv is not None else sys.argv[1:]
     event_hint, agent_type = _parse_args(args)
+    # Drained even when ignored: the CLI writes the payload to this process's
+    # stdin, and exiting without reading it hands the writer a broken pipe.
     stdin_text = sys.stdin.read()
+    # Keyed on the spawn, not on what the session later turns out to hold, so
+    # the row is never created rather than filtered back out afterwards.
+    if os.environ.get(PROBE_ENV):
+        return 0
     return run(event_hint, REGISTRY, stdin_text, sys.stdout, agent_type=agent_type)
 
 

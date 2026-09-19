@@ -606,8 +606,21 @@ def test_server_info_commands_reads_the_payload(monkeypatch):
     monkeypatch.setitem(sys.modules, "claude_agent_sdk", module)
     rows = anyio.run(_real_server_info, "/some/where")
     assert rows == [{"name": "help", "description": "Show help"}]
-    assert built[0] == {"cwd": "/some/where"}   # handshake runs in that cwd
+    assert built[0]["cwd"] == "/some/where"     # handshake runs in that cwd
     assert built[-1] == {"closed": True}        # client always torn down
+
+
+def test_server_info_commands_marks_the_child_as_a_probe(monkeypatch):
+    """The child opens, answers get_server_info and closes without ever taking
+    a prompt. Unmarked, regin's own hooks recorded that as a session — a full
+    5-span row per cold autocomplete, and the biggest single source of the
+    empty rows in the sessions list."""
+    from hook_manager.core import PROBE_ENV
+
+    module, built = _fake_sdk_module({"commands": [{"name": "help"}]})
+    monkeypatch.setitem(sys.modules, "claude_agent_sdk", module)
+    anyio.run(_real_server_info, "/some/where")
+    assert built[0]["env"] == {PROBE_ENV: "1"}
 
 
 @pytest.mark.parametrize("payload", [None, {}, {"commands": None}])

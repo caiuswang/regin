@@ -345,3 +345,58 @@ def test_worktree_create_still_dispatches_handlers():
         agent_type='claude')
     assert seen == ['WorktreeCreate']
     assert out.getvalue() == ''
+
+
+# ── Probe children (regin's own CLI interrogations) ───────────────────
+
+def test_probe_marker_stands_every_handler_down(monkeypatch, capsys):
+    """regin spawns a `claude` child purely to read `get_server_info()` for the
+    /-autocomplete catalog. It never takes a prompt, so its hooks would record
+    a session that never happened — one phantom row per cold autocomplete."""
+    import sys
+    from hook_manager import runner
+    from hook_manager.core import PROBE_ENV
+
+    fired = []
+    handler = Handler(name='h', events=['PreToolUse'], kind='enrich',
+                      priority=1,
+                      fn=lambda p: (fired.append(p), HookResponse())[1])
+    monkeypatch.setattr('hook_manager.registry.REGISTRY', [handler])
+    monkeypatch.setattr(sys, 'stdin', io.StringIO(_payload()))
+    monkeypatch.setenv(PROBE_ENV, '1')
+
+    assert runner.main(['PreToolUse']) == 0
+    assert fired == []
+    assert capsys.readouterr().out == ''
+
+
+def test_probe_marker_still_drains_stdin(monkeypatch):
+    """Exiting without reading the payload hands the CLI a broken pipe."""
+    import sys
+    from hook_manager import runner
+    from hook_manager.core import PROBE_ENV
+
+    stdin = io.StringIO(_payload())
+    monkeypatch.setattr(sys, 'stdin', stdin)
+    monkeypatch.setenv(PROBE_ENV, '1')
+    runner.main(['PreToolUse'])
+    assert stdin.read() == ''      # consumed to EOF
+
+
+def test_without_the_marker_handlers_still_fire(monkeypatch):
+    """The guard is keyed on the marker alone — an ordinary session is
+    untouched."""
+    import sys
+    from hook_manager import runner
+    from hook_manager.core import PROBE_ENV
+
+    fired = []
+    handler = Handler(name='h', events=['PreToolUse'], kind='enrich',
+                      priority=1,
+                      fn=lambda p: (fired.append(p), HookResponse())[1])
+    monkeypatch.setattr('hook_manager.registry.REGISTRY', [handler])
+    monkeypatch.setattr(sys, 'stdin', io.StringIO(_payload()))
+    monkeypatch.delenv(PROBE_ENV, raising=False)
+
+    runner.main(['PreToolUse'])
+    assert len(fired) == 1
