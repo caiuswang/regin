@@ -45,6 +45,17 @@ _COUNTER_RE = {
 ENVELOPE_MARKER = '<task-notification>'
 
 
+def _named_task_ids(body: str) -> list[str]:
+    """Every real task the envelope names, in order.
+
+    One envelope settles SEVERAL tasks when a session ends with background
+    shells still running. The `__orphan_summary` entries alongside them are
+    internal scan markers, which the envelope's own note spells out.
+    """
+    found = (t.strip() for t in _ALL_TASK_IDS_RE.findall(body))
+    return [t for t in found if t and not t.startswith(_SCAN_MARKER_PREFIX)]
+
+
 def parse_task_notification(text: str) -> dict | None:
     """Return the envelope's fields, or None when `text` isn't one.
 
@@ -62,19 +73,29 @@ def parse_task_notification(text: str) -> dict | None:
         m = regex.search(body)
         if m:
             fields[key] = m.group(1).strip()
-    task_ids = [t.strip() for t in _ALL_TASK_IDS_RE.findall(body)]
-    real = [t for t in task_ids if t and not t.startswith(_SCAN_MARKER_PREFIX)]
-    if real:
-        fields['task_ids'] = real
+    ids = _named_task_ids(body)
+    if ids:
+        fields['task_ids'] = ids
     result = _RESULT_RE.search(body)
     if result:
         fields['result'] = result.group(1).strip()
-    # Scoped to `<usage>` rather than the whole body: `<result>` precedes it and
-    # a report that quotes these tags — a verifier reporting on this parser does
-    # exactly that — would otherwise win the search and poison the counters.
-    usage = _USAGE_RE.search(body)
-    for key, regex in _COUNTER_RE.items():
-        m = regex.search(usage.group(1)) if usage else None
-        if m:
-            fields[key] = int(m.group(1))
+    fields.update(_usage_counters(body))
     return fields
+
+
+def _usage_counters(body: str) -> dict:
+    """The `<usage>` block's integer counters.
+
+    Scoped to `<usage>` rather than the whole body: `<result>` precedes it and
+    a report that quotes these tags — a verifier reporting on this parser does
+    exactly that — would otherwise win the search and poison the counters.
+    """
+    usage = _USAGE_RE.search(body)
+    if not usage:
+        return {}
+    out = {}
+    for key, regex in _COUNTER_RE.items():
+        m = regex.search(usage.group(1))
+        if m:
+            out[key] = int(m.group(1))
+    return out
