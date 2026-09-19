@@ -390,6 +390,15 @@ def _build_bash_input_attrs(attrs: dict, tool_input: dict) -> None:
         attrs['command'] = command
         if dropped_cmd:
             attrs['command_truncated_bytes'] = dropped_cmd
+    description = tool_input.get('description')
+    if isinstance(description, str) and description:
+        attrs['command_description'] = description[:_PREVIEW_MAX]
+    # The DECLARED intent, which is all a PreToolUse row can know and all that
+    # survives when the PostToolUse that would have carried `background_task_id`
+    # is lost. The harness may also background a call the model ran in the
+    # foreground; that one is only ever visible through the response id.
+    if tool_input.get('run_in_background') is True:
+        attrs['run_in_background'] = True
 
 
 def _build_bash_attrs(attrs: dict, tool_input: dict, tool_response: dict, payload: HookPayload) -> None:

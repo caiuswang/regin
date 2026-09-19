@@ -13,7 +13,7 @@ time as a pure function over the rows of one window — no DB writes, no
 mutation — so the store stays append-only and projection rules can change
 without a data migration (they self-heal on the next read).
 
-It owns three things, in order:
+It owns four things, in order:
 
   1. **dedup / supersession** — drop the transient placeholder/pending rows
      whose resolved counterpart is present in the window (this replaces the
@@ -22,6 +22,8 @@ It owns three things, in order:
   2. **reparent** — `_graft_orphans` (the 3-tier ladder in projection.py).
   3. **reorder** — `_graft_orphans` already sorts; `_build_span_tree`
      (downstream) does the final stable sort by (start_time, id).
+  4. **link** — `_link_background_tasks` joins a backgrounded `Bash` call to
+     the `task.notification` its shell emitted on completion, by task id.
 
 When the resolved counterpart is NOT yet present (a prompt still in flight,
 a permission still blocking), the placeholder is kept — that is exactly how
@@ -1197,6 +1199,80 @@ def _reconcile_bucket(rows: list[dict]) -> list[dict]:
     return _pair_cross_source(hooks, sdks)
 
 
+# Attribute keys the background-shell join stamps on a launching `tool.Bash`
+# span. Named apart from the Bash call's own `stdout`/`duration_ms` because
+# they describe the SHELL, which outlives the call that started it.
+_BG_STATUS = 'background_status'
+_BG_RUNNING = 'running'
+
+
+def _background_completions(spans: list[dict]) -> dict:
+    """`{task_id: notification span}` for every `task.notification` in the
+    window. Agent reports land here too; they simply match no shell."""
+    done: dict = {}
+    for s in spans:
+        if s.get('name') != 'task.notification':
+            continue
+        task_id = _attrs(s).get('task_id')
+        if isinstance(task_id, str) and task_id:
+            done[task_id] = s
+    return done
+
+
+def _elapsed_ms(started: str | None, ended: str | None) -> int | None:
+    """Milliseconds between two RECORDED events. Not a window, threshold or
+    skew allowance — both endpoints are stamps the harness already wrote."""
+    a, b = _merge_ts(started), _merge_ts(ended)
+    if a is None or b is None or b < a:
+        return None
+    return int((b - a).total_seconds() * 1000)
+
+
+def _link_background_tasks(spans: list[dict]) -> list[dict]:
+    """Join each backgrounded `tool.Bash` call to its completion notification.
+
+    A `run_in_background` call returns in milliseconds and its shell keeps
+    running; the completion arrives later as an independent
+    `task.notification` row. Without this the trace shows an instant
+    no-output success and an unrelated notification elsewhere, and a shell
+    still running shows nothing at all.
+
+    Keyed on `background_task_id == task_id` — an identifier equality, never a
+    timestamp or ordering test, so parallel shells cannot be crossed. The
+    launching span's own `duration_ms` is left alone: 3 ms is the true cost of
+    the tool call and the cost aggregates read it.
+    """
+    done = _background_completions(spans)
+    out = []
+    for s in spans:
+        attrs = _attrs(s)
+        task_id = attrs.get('background_task_id')
+        if s.get('name') != 'tool.Bash' or not isinstance(task_id, str) or not task_id:
+            out.append(s)
+            continue
+        out.append({**s, 'attributes': _background_attrs(attrs, done.get(task_id), s)})
+    return out
+
+
+def _background_attrs(attrs: dict, notification: dict | None, bash: dict) -> dict:
+    if notification is None:
+        return {**attrs, _BG_STATUS: _BG_RUNNING}
+    note = _attrs(notification)
+    ended = notification.get('start_time')
+    merged = {**attrs,
+              _BG_STATUS: note.get('status') or _BG_RUNNING,
+              'background_ended_at': ended}
+    for src, dst in (('summary', 'background_summary'),
+                     ('output_file', 'background_output_file')):
+        value = note.get(src)
+        if value:
+            merged[dst] = value
+    elapsed = _elapsed_ms(bash.get('start_time'), ended)
+    if elapsed is not None:
+        merged['background_elapsed_ms'] = elapsed
+    return merged
+
+
 def merge_spans(
     raw: list[dict], prompt_id_ceiling=None, session_activity=None,
 ) -> list[dict]:
@@ -1233,4 +1309,6 @@ def merge_spans(
     spans = _dedup_cross_source(spans)
     spans = _drop_stale_blockers(spans, prompt_id_ceiling=prompt_id_ceiling)
     spans = _demote_stale_pending(spans, session_activity=session_activity)
+    # Last: it reads the survivors, and stamps attributes no earlier rule keys on.
+    spans = _link_background_tasks(spans)
     return _graft_orphans(spans)

@@ -1036,6 +1036,34 @@ export function hasBashEdits(attributes) {
   return Boolean((a.bash_edits || []).length || (a.bash_edit_files || []).length)
 }
 
+// The shell a backgrounded Bash call left running: its declared intent, the
+// harness's task id, and the lifecycle the serve-time join stamped on the span
+// (`lib/trace/merge.py::_link_background_tasks`). `null` for an ordinary
+// foreground call, which is what every caller branches on.
+export function backgroundShell(attributes) {
+  const a = attributes || {}
+  const taskId = a.background_task_id || ''
+  if (!taskId && a.run_in_background !== true) return null
+  return {
+    taskId,
+    // No task id yet means the response that carries it never arrived, so the
+    // launch is all we know — never a completion we failed to find.
+    status: taskId ? (a.background_status || 'running') : 'launching',
+    elapsedMs: a.background_elapsed_ms || 0,
+    summary: a.background_summary || '',
+    outputFile: a.background_output_file || '',
+  }
+}
+
+// Does this Bash span deserve the full Shell card rather than a bare inline
+// row? Output, an interruption, a long command, a file change — or a
+// background shell, whose whole story is the lifecycle and never stdout.
+export function rendersAsBashCard(attributes) {
+  const a = attributes || {}
+  return Boolean(a.stdout || a.stderr || a.interrupted || a.command
+    || hasBashEdits(a) || backgroundShell(a))
+}
+
 export function diffFileName(span) {
   const fp = span?.attributes?.file_path
   if (!fp) return ''

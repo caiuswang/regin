@@ -1,7 +1,7 @@
 <script setup>
 import { computed, ref } from 'vue'
 import {
-  fmtDuration, fmtBytes, fullLabel, bashEditSummary, hasBashEdits,
+  fmtDuration, fmtBytes, fullLabel, bashEditSummary, hasBashEdits, backgroundShell,
 } from '../../../utils/traceFormatters.js'
 import CopyButton from './CopyButton.vue'
 import BashEditDiffs from './BashEditDiffs.vue'
@@ -17,10 +17,26 @@ const props = defineProps({
 })
 defineEmits(['activate'])
 
+const bg = computed(() => backgroundShell(props.span?.attributes))
+
+// A backgrounded call returns instantly with nothing captured, so its panel is
+// the launch record itself — the command plus how the shell ended.
 const hasBody = computed(() => {
   const a = props.span?.attributes || {}
-  return Boolean(a.command || a.stdout || a.stderr || hasBashEdits(a))
+  return Boolean(a.command || a.stdout || a.stderr || hasBashEdits(a) || bg.value)
 })
+
+// The status is whatever word the harness's <status> tag carried, so an
+// unrecognised one must still render — amber, the same "needs a look" tint as
+// an interrupted call.
+const BG_UNKNOWN_TINT = 'bg-amber-100 border-amber-200 text-amber-800'
+const BG_TINTS = {
+  launching: 'bg-sky-100 border-sky-200 text-sky-800',
+  running: 'bg-sky-100 border-sky-200 text-sky-800',
+  completed: 'bg-slate-100 border-slate-200 text-slate-600',
+  failed: 'bg-red-100 border-red-200 text-red-800',
+}
+const bgTint = computed(() => BG_TINTS[bg.value?.status] || BG_UNKNOWN_TINT)
 
 const edits = computed(() => bashEditSummary(props.span?.attributes))
 
@@ -77,10 +93,19 @@ function toggleOutput() { outputOverride.value = !outputOpen.value }
         class="text-[10px] bg-amber-100 border border-amber-200 text-amber-800 px-1 rounded shrink-0"
       >interrupted</span>
       <span
-        v-if="span.attributes?.background_task_id"
-        class="text-[10px] bg-sky-100 border border-sky-200 text-sky-800 px-1 rounded shrink-0"
-        :title="`background task ${span.attributes.background_task_id}`"
-      >background</span>
+        v-if="bg"
+        class="text-[10px] border px-1 rounded shrink-0"
+        :class="bgTint"
+        data-bash-background
+        :title="bg.summary || `background task ${bg.taskId || '(not yet assigned)'}`"
+      >background · {{ bg.status }}</span>
+      <!-- The shell's own elapsed time, not the call's: `duration_ms` beside it
+           is the milliseconds the tool took to hand back. -->
+      <span
+        v-if="bg && bg.elapsedMs"
+        class="font-mono text-[10.5px] text-sky-600 shrink-0"
+        data-bash-background-elapsed
+      >{{ fmtDuration(bg.elapsedMs) }}</span>
       <span
         v-if="span.attributes?.return_code_interpretation"
         class="text-[11px] text-slate-400 italic truncate shrink-0 max-w-[35%]"
@@ -175,10 +200,25 @@ function toggleOutput() { outputOverride.value = !outputOpen.value }
           class="text-[12px] text-red-300 whitespace-pre-wrap break-words font-mono leading-snug max-h-64 overflow-auto"
         >{{ span.attributes.stderr }}</pre>
       </div>
+      <div
+        v-if="bg"
+        class="px-3 py-2 border-t border-slate-800"
+        data-bash-background-detail
+      >
+        <div class="text-[10px] font-semibold uppercase tracking-wider text-sky-400 mb-1">background shell</div>
+        <div class="text-[12px] text-slate-300 font-mono leading-snug break-words">
+          <div v-if="bg.summary">{{ bg.summary }}</div>
+          <div v-else class="text-slate-500">no completion reported yet</div>
+          <div v-if="bg.outputFile" class="mt-1 flex items-center gap-2">
+            <span class="text-slate-400 break-all">{{ bg.outputFile }}</span>
+            <CopyButton :text="bg.outputFile" />
+          </div>
+        </div>
+      </div>
       <BashEditDiffs
         v-if="edits.count"
         :attrs="span.attributes"
-        :divided="Boolean(commandText || span.attributes?.stdout || span.attributes?.stderr)"
+        :divided="Boolean(commandText || span.attributes?.stdout || span.attributes?.stderr || bg)"
       />
     </div>
   </div>

@@ -16,7 +16,7 @@
 import { isAskSpan, runStateOf } from '../../utils/liveRows.js'
 import { searchText } from '../../utils/plainText.js'
 import { isSendToUserSpan } from '../../utils/spanAttributes.js'
-import { hasBashEdits } from '../../utils/traceFormatters.js'
+import { hasBashEdits, rendersAsBashCard } from '../../utils/traceFormatters.js'
 import { spanBody } from '../../utils/spanBody.js'
 
 const EXACT_NAMES = new Set([
@@ -355,6 +355,5 @@ export function condensedBody(span) {
 export function keepsOwnCard(span, hasTaskSnapshot = false) {
   if (hasTaskSnapshot) return true
   if (span?.name !== 'tool.Bash') return false
-  const a = span.attributes || {}
-  return Boolean(a.stdout || a.stderr || a.interrupted || a.command || hasBashEdits(a))
+  return rendersAsBashCard(span.attributes)
 }

@@ -20,7 +20,7 @@ import WorkflowLaunchRow from './cards/WorkflowLaunchRow.vue'
 import InlineToolRow from './cards/InlineToolRow.vue'
 import TaskListCard from './cards/TaskListCard.vue'
 import { isAskSpan } from '../../utils/liveRows.js'
-import { hasBashEdits } from '../../utils/traceFormatters.js'
+import { rendersAsBashCard } from '../../utils/traceFormatters.js'
 
 // Dispatcher for one descendant span inside an expanded prompt group. The
 // v-if/v-else-if chain order + guards are load-bearing: a `tool.Bash` with no
@@ -83,7 +83,7 @@ const snapshotFor = (span) => taskSnapshots.value.get(span.span_id)
     @activate="$emit('activate', $event)"
   />
   <BashCard
-    v-else-if="span.name === 'tool.Bash' && (span.attributes?.stdout || span.attributes?.stderr || span.attributes?.interrupted || span.attributes?.command || hasBashEdits(span.attributes))"
+    v-else-if="span.name === 'tool.Bash' && rendersAsBashCard(span.attributes)"
     :span="span" :selected-span="selectedSpan" :folding="folding"
     @activate="$emit('activate', $event)"
   />
