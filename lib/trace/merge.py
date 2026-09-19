@@ -1205,6 +1205,19 @@ def _reconcile_bucket(rows: list[dict]) -> list[dict]:
 _BG_STATUS = 'background_status'
 _BG_RUNNING = 'running'
 
+#: Row id of the OTHER span a serve-time-derived body was built from.
+#:
+#: `_body_needed` (web/blueprints/trace/sessions.py) withholds a span the
+#: client already holds once it is below the watermark and settled — resting
+#: on "a body only changes when its own row changes". That holds for every
+#: attribute a hook wrote and fails for one derived here: the source row is an
+#: INSERT with a fresh id, while the span it enriches keeps the id it had. The
+#: reader ships the body when THIS id is above the watermark, which is the same
+#: identifier test applied to the row the body actually came from — so it
+#: settles as soon as the client has read past it, rather than re-sending
+#: forever.
+DERIVED_FROM_ID_KEY = 'derived_from_id'
+
 
 def _background_completions(spans: list[dict]) -> dict:
     """`{task_id: notification span}` for every `task.notification` in the
@@ -1262,6 +1275,9 @@ def _background_attrs(attrs: dict, notification: dict | None, bash: dict) -> dic
     merged = {**attrs,
               _BG_STATUS: note.get('status') or _BG_RUNNING,
               'background_ended_at': ended}
+    source_id = notification.get('id')
+    if source_id is not None:
+        merged[DERIVED_FROM_ID_KEY] = source_id
     for src, dst in (('summary', 'background_summary'),
                      ('output_file', 'background_output_file')):
         value = note.get(src)

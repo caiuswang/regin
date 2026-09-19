@@ -22,8 +22,12 @@ async function seed(page, { notification = null } = {}) {
       start_time: '2026-05-09T09:00:00',
       attributes: { text: 'background shell', is_test: true } },
     // Exactly what the hook stores: preview only, no stdout, 3 ms.
+    // Settled exactly as the hook writes it — `end_time` + a non-PENDING
+    // status are what make `_body_needed` withhold the body on later polls,
+    // which is the whole condition this test exists to exercise.
     { trace_id: traceId, span_id: `b1-${p8}`, parent_id: prompt, name: 'tool.Bash',
-      start_time: '2026-05-09T09:00:01', duration_ms: 3,
+      start_time: '2026-05-09T09:00:01', end_time: '2026-05-09T09:00:01',
+      status_code: 'OK', duration_ms: 3,
       attributes: { tool_name: 'Bash', command_preview: 'npm run dev',
         command_description: 'Start the dev server', run_in_background: true,
         background_task_id: 'bo58vwcaw', is_test: true } },
@@ -90,4 +94,38 @@ test('a failed shell is badged as failed', async ({ page }) => {
 
   await expect(shellRow(page).locator('[data-bash-background]'))
     .toHaveText('background · failed')
+})
+
+test('the badge flips to completed on the live poll, with no reload', async ({ page }) => {
+  test.setTimeout(90_000)
+  const traceId = await seed(page)
+  const row = shellRow(page)
+  await expect(row.locator('[data-bash-background]')).toHaveText('background · running')
+
+  // The completion lands as a NEW row while the page stays open. The Bash span
+  // it enriches is settled and keeps its id, so nothing about that row moved —
+  // which is exactly what used to leave the badge stuck on `running`.
+  // Wait until the client has actually deep-loaded the prompt and begun
+  // quoting a watermark for it. Until then it asks for every body anyway, and
+  // the test would pass without exercising the withholding rule at all.
+  await page.waitForRequest(
+    req => req.url().includes('/subtrees?') && req.url().includes('known='),
+    { timeout: 30_000 })
+
+  const token = await page.evaluate(() => localStorage.getItem('regin_auth_token'))
+  expect((await page.request.post('/api/session-spans', {
+    headers: { Authorization: `Bearer ${token}` },
+    data: [{
+      trace_id: traceId, span_id: `task-late-${traceId.slice(0, 8)}`,
+      parent_id: `p-${traceId.slice(0, 8)}`, name: 'task.notification',
+      start_time: '2026-05-09T09:00:31',
+      attributes: { text: '<task-notification/>', task_id: 'bo58vwcaw',
+        status: 'completed', summary: 'completed (exit code 0)',
+        output_file: OUT, is_test: true },
+    }],
+  })).ok()).toBeTruthy()
+
+  await expect(row.locator('[data-bash-background]'))
+    .toHaveText('background · completed', { timeout: 30_000 })
+  await expect(row.locator('[data-bash-background-elapsed]')).toHaveText('30s')
 })

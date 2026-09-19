@@ -2328,7 +2328,12 @@ def _body_needed(span, watermark, dirty: set) -> bool:
       why the watermark alone is not the whole answer);
     * the push stream did not name it as changed since;
     * the span has settled. An unfinished span is still being written, and its
-      body is the one thing that grows without any identifier moving.
+      body is the one thing that grows without any identifier moving;
+    * the body was not DERIVED from a row the client has yet to read. A
+      serve-time join builds one span's body out of another's, so the enriched
+      span settles and keeps its id while its body still changes —
+      `DERIVED_FROM_ID_KEY` names the row it came from, and the same watermark
+      test applied to that id is what makes the refresh both arrive and stop.
     """
     if span is None or watermark is None:
         return True
@@ -2337,7 +2342,17 @@ def _body_needed(span, watermark, dirty: set) -> bool:
     row_id = span.get('id')
     if row_id is None or row_id > watermark:
         return True
+    if _derived_from_id(span, watermark):
+        return True
     return not (span.get('end_time') and span.get('status_code') != 'PENDING')
+
+
+def _derived_from_id(span, watermark) -> bool:
+    """Was this span's body built from a row above the client's watermark?"""
+    from lib.trace.merge import DERIVED_FROM_ID_KEY
+    attrs = span.get('attributes')
+    source = attrs.get(DERIVED_FROM_ID_KEY) if isinstance(attrs, dict) else None
+    return isinstance(source, int) and source > watermark
 
 
 def _find_child_nodes(nodes, span_id):
