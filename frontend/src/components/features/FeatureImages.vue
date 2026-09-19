@@ -6,42 +6,37 @@
 // exists while a textarea is open would hide the images from every reader of
 // the page, and paste would have nothing to land in.
 //
+// The list itself belongs to the LEDGER VIEW, not here: the spec editor writes
+// `![](image:N)` references against the same attachments, and two composable
+// instances would let the reference and the thumbnail disagree about what is
+// attached.
+//
 // The strip itself is the tasks surface's — same three props, same two events.
 // Its class and testid names still say `task-image-*`; they are load-bearing
 // in the task E2E specs, so the component was left where it was rather than
 // renamed under them.
-import { watch } from 'vue'
 import Card from '../Card.vue'
 import TaskImageStrip from '../tasks/TaskImageStrip.vue'
-import { useAttachedImages } from '../../composables/useAttachedImages.js'
 import { imageFilesFrom } from '../../utils/imageFiles'
 
 const props = defineProps({
-  featureId: { type: Number, required: true },
-  images: { type: Array, default: () => [] },
+  items: { type: Array, default: () => [] },
+  busy: { type: Boolean, default: false },
+  error: { type: String, default: '' },
   canWrite: { type: Boolean, default: false },
 })
+const emit = defineEmits(['pick', 'remove'])
 
-const {
-  items, busy, error, bind, add, remove,
-} = useAttachedImages('features')
-
-watch(
-  () => [props.featureId, props.images],
-  () => bind({ id: props.featureId, images: props.images }),
-  { immediate: true },
-)
-
-async function onPaste(e) {
+function onPaste(e) {
   if (!props.canWrite || !imageFilesFrom(e.clipboardData).length) return
   e.preventDefault()
-  await add(e.clipboardData)
+  emit('pick', e.clipboardData)
 }
 
-async function onDrop(e) {
+function onDrop(e) {
   if (!props.canWrite || !imageFilesFrom(e.dataTransfer).length) return
   e.preventDefault()
-  await add(e.dataTransfer)
+  emit('pick', e.dataTransfer)
 }
 </script>
 
@@ -83,8 +78,8 @@ async function onDrop(e) {
       :items="items"
       :busy="busy"
       :error="error"
-      @pick="add"
-      @remove="remove"
+      @pick="emit('pick', $event)"
+      @remove="emit('remove', $event)"
     />
   </Card>
 </template>

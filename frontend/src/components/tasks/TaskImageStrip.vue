@@ -27,6 +27,14 @@ function onPick(e) {
     <div v-if="items.length" class="task-image-strip" data-testid="task-image-strip">
       <span v-for="img in items" :key="img.key" class="task-image-chip">
         <img :src="img.url" :alt="img.name" class="task-image-thumb">
+        <!-- The index is the name an `![](image:N)` reference uses, so the
+             hint that points at "each thumbnail" has to be true here. Absent
+             on a held file: a composer's images have no idx until the row
+             they hang off exists. -->
+        <span
+          v-if="img.idx !== null && img.idx !== undefined"
+          class="task-image-idx"
+        >image:{{ img.idx }}</span>
         <Button
           variant="ghost"
           size="icon"
@@ -73,6 +81,22 @@ function onPick(e) {
     flex-direction: column;
     gap: 0.5rem;
     min-width: 0;
+}
+.task-image-idx {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 0 0.1875rem;
+    font-size: 0.5625rem;
+    font-family: var(--font-mono, ui-monospace, monospace);
+    line-height: 1.4;
+    color: var(--color-fg-muted);
+    background: var(--color-surface);
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 .task-image-strip {
     display: flex;

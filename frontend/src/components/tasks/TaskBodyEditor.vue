@@ -74,9 +74,13 @@ function insertAtCaret(text) {
 async function onPaste(e) {
   if (!imageFilesFrom(e.clipboardData).length) return
   e.preventDefault()
-  for (const idx of await props.attach(e.clipboardData)) {
-    insertAtCaret(`\n${imageRef(idx)}\n`)
-  }
+  // One insert for the whole paste, not one per image: `insertAtCaret` reads
+  // the caret off the live textarea, and Vue has not flushed the previous
+  // write by the next iteration — so a second insert lands at the ORIGINAL
+  // caret and a two-image paste comes out reversed.
+  const refs = (await props.attach(e.clipboardData))
+    .map(idx => `\n${imageRef(idx)}\n`).join('')
+  if (refs) insertAtCaret(refs)
 }
 </script>
 

@@ -19,6 +19,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import api from '../api'
+import { useAttachedImages } from '../composables/useAttachedImages.js'
 import { useBusyAction } from '../composables/useBusyAction'
 import { useConfirm } from '../composables/useConfirm'
 import { rememberedQuery } from '../composables/usePipelineTabState'
@@ -51,6 +52,14 @@ const refreshFailed = ref('')
 const declaring = ref(false)
 const writeFailed = ref('')
 const { busyAction, startBusy, stopBusy } = useBusyAction()
+// One list for the two cards that show it. The spec editor writes
+// `![](image:N)` references into prose the Images card holds the bytes for, so
+// a second composable instance would let the reference and the thumbnail
+// disagree about what is attached.
+const {
+  items: imageItems, busy: imagesBusy, error: imagesError,
+  bind: bindImages, add: addImages, remove: removeImage,
+} = useAttachedImages('features')
 const { confirm } = useConfirm()
 
 const user = api.getStoredUser()
@@ -65,6 +74,10 @@ async function load() {
   loadError.value = ''
   try {
     ledger.value = await api.get(`/features/${featureId.value}`)
+    // Here and not on every `ledger` reassignment: a ship, a refresh or a
+    // project edit returns the same attachments, and rebinding on each would
+    // re-fetch every blob and blow away thumbnails the operator just added.
+    bindImages(ledger.value)
   } catch (e) {
     loadError.value = e?.message || String(e)
   } finally {
@@ -163,6 +176,17 @@ async function undeclare(row) {
   await load()
 }
 
+// The idx of each image this gesture actually added, by difference: the
+// shared composable reports only whether it claimed the files, and the
+// reference written into the spec is made of the index.
+async function attachImages(source) {
+  const before = new Set(imageItems.value.map(img => img.idx))
+  await addImages(source)
+  return imageItems.value
+    .map(img => img.idx)
+    .filter(idx => idx !== null && idx !== undefined && !before.has(idx))
+}
+
 function onDeclared() {
   declaring.value = false
   load()
@@ -223,14 +247,19 @@ function onDeclared() {
       <FeatureSpec
         :feature-id="ledger.id"
         :body="ledger.body"
+        :images="imageItems"
         :can-write="canWrite"
+        :attach="attachImages"
         @saved="ledger = $event"
       />
 
       <FeatureImages
-        :feature-id="ledger.id"
-        :images="ledger.images"
+        :items="imageItems"
+        :busy="imagesBusy"
+        :error="imagesError"
         :can-write="canWrite"
+        @pick="addImages"
+        @remove="removeImage"
       />
 
       <FeatureTasks :feature-id="ledger.id" :can-write="canWrite" />
