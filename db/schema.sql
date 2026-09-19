@@ -973,6 +973,27 @@ CREATE TABLE IF NOT EXISTS feature_events (
 CREATE INDEX IF NOT EXISTS idx_feature_events_feature
     ON feature_events(feature_id, id);
 
+-- Images attached to a feature. The mirror of `agent_task_images`, one level
+-- up: a feature's mockup is read THROUGH a task's `feature_id` at launch
+-- rather than copied onto the slices when the spec is transcribed, so
+-- replacing it corrects the next attempt of every slice already cut.
+-- `idx` is a per-feature order and a freed one is never reissued, which is
+-- what lets the byte-serving GET be cached hard.
+CREATE TABLE IF NOT EXISTS feature_images (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    feature_id INTEGER NOT NULL,
+    idx        INTEGER NOT NULL,
+    media_type TEXT NOT NULL,
+    bytes      BLOB NOT NULL,
+    byte_size  INTEGER NOT NULL,
+    sha256     TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    CONSTRAINT uq_feature_images_idx UNIQUE (feature_id, idx)
+);
+
+CREATE INDEX IF NOT EXISTS idx_feature_images_feature
+    ON feature_images(feature_id);
+
 
 -- Captured task ideas — the intent layer in front of the SDK launcher. No
 -- execution parameter lives here by construction (no cwd, no model, no

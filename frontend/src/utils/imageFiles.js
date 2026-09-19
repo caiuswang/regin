@@ -3,7 +3,7 @@
 //
 // Shared because two composers already needed it and a third would have
 // forked it: the bridge's `useImagePaste` (bytes staged against a live trace)
-// and the tasks surface's `useTaskImages` (bytes attached to an idea row).
+// and the tasks surface's `useAttachedImages` (bytes attached to an idea row).
 
 /**
  * The image files in `source` — a ClipboardEvent's `clipboardData`, a

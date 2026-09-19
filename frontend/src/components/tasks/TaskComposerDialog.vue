@@ -20,7 +20,7 @@ import { PRIORITIES } from '../../utils/taskMeta.js'
 import { TITLE_MAX, emptyDraft, useTaskMutations }
   from '../../composables/useTasks.js'
 import { imageFilesFrom } from '../../utils/imageFiles'
-import { useTaskImages } from '../../composables/useTaskImages.js'
+import { useAttachedImages } from '../../composables/useAttachedImages.js'
 
 const open = defineModel('open', { type: Boolean, default: false })
 defineProps({ projects: { type: Array, default: () => [] } })
@@ -34,7 +34,7 @@ const titleInput = ref(null)
 const {
   items: images, busy: imagesBusy, error: imagesError,
   add: addImages, remove: removeImage, flush: flushImages, reset: resetImages,
-} = useTaskImages()
+} = useAttachedImages()
 
 // The images cannot survive a close: they are browser blobs held against a
 // task id that does not exist yet, and a thumbnail still sitting there on the

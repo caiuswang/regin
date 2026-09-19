@@ -715,6 +715,25 @@ def _resolve_stuck(task_id: int) -> None:
     events.resolve(TASK_READY_TRACE, f"chain-stopped:{task_id}")
 
 
+def _launch_images(task: dict) -> list[dict]:
+    """The feature's images, then the task's own.
+
+    Resolved here rather than copied onto the slice when the spec was
+    transcribed: the mockup is the part of a spec most likely to be replaced
+    after the slices exist, and reading it through `feature_id` means
+    correcting it corrects the next attempt of every slice already cut. The
+    feature's go first — they are the shared backdrop the slice-specific shot
+    is read against.
+    """
+    own = images.payload_for(task["id"])
+    feature_id = task.get("feature_id")
+    if feature_id is None:
+        return own
+    from lib.features import images as feature_images  # noqa: PLC0415
+
+    return feature_images.payload_for(feature_id) + own
+
+
 def start_run(task_id: int) -> Optional[dict]:
     """Launch one attempt at a task. None when the task is unknown.
 
@@ -730,7 +749,7 @@ def start_run(task_id: int) -> Optional[dict]:
     try:
         handle = supervisor.launch_run(_prompt(task, row["id"],
                                                row["params"]),
-                                       images=images.payload_for(task_id),
+                                       images=_launch_images(task),
                                        **kwargs)
     except (supervisor.LaunchRefused, ImportError) as exc:
         # A refusal is not a crash: the attempt never started, so it is settled

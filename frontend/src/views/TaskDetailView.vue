@@ -29,7 +29,7 @@ import { taskStatusColor } from '../composables/useBadgeColor.js'
 import { useConfirm } from '../composables/useConfirm.js'
 import { useProjects } from '../composables/useProjects.js'
 import { useTaskExec } from '../composables/useTaskExec.js'
-import { useTaskImages } from '../composables/useTaskImages.js'
+import { useAttachedImages } from '../composables/useAttachedImages.js'
 import { useTaskMutations } from '../composables/useTasks.js'
 import { rememberedQuery } from '../composables/usePipelineTabState'
 
@@ -38,7 +38,7 @@ const route = useRoute()
 const { byId, ensure: ensureProjects } = useProjects()
 const { confirm } = useConfirm()
 const { remove } = useTaskMutations()
-const { items: imageItems, bind: bindImages, add: addImages } = useTaskImages()
+const { items: imageItems, bind: bindImages, add: addImages } = useAttachedImages()
 
 const task = ref(null)
 const loading = ref(true)

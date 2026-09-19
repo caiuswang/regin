@@ -19,7 +19,10 @@ import api from '../../api'
 import Button from '../ui/Button.vue'
 import Dialog from '../ui/Dialog.vue'
 import Input from '../ui/Input.vue'
+import TaskImageStrip from '../tasks/TaskImageStrip.vue'
 import Textarea from '../ui/Textarea.vue'
+import { useAttachedImages } from '../../composables/useAttachedImages.js'
+import { imageFilesFrom } from '../../utils/imageFiles'
 
 const open = defineModel('open', { type: Boolean, default: false })
 const emit = defineEmits(['declared'])
@@ -31,6 +34,13 @@ const reference = ref('')
 const provider = ref('')
 const saving = ref(false)
 const failed = ref('')
+// Bound to no feature: the mockup is pasted before the row exists, so it is
+// held in the browser and flushed against the new id. Nothing is staged
+// server-side for a feature abandoned mid-typing, so there is no orphan.
+const {
+  items: images, busy: imagesBusy, error: imagesError,
+  add: addImages, remove: removeImage, flush: flushImages, reset: resetImages,
+} = useAttachedImages('features')
 
 const adopting = computed(() => mode.value === 'adopt')
 const description = computed(() => (adopting.value
@@ -47,7 +57,20 @@ watch(open, (isOpen) => {
   reference.value = ''
   provider.value = ''
   failed.value = ''
+  resetImages()
 })
+
+async function onPaste(e) {
+  if (!imageFilesFrom(e.clipboardData).length) return
+  e.preventDefault()
+  await addImages(e.clipboardData)
+}
+
+async function onDrop(e) {
+  if (!imageFilesFrom(e.dataTransfer).length) return
+  e.preventDefault()
+  await addImages(e.dataTransfer)
+}
 
 // The empty title and the unresolvable reference are both refused by the
 // server, and that refusal is the one this renders: a second rule in the page
@@ -64,6 +87,11 @@ async function declare() {
     failed.value = ledger.msg || 'that feature was refused'
     return
   }
+  // Uploaded before the caller reloads, so the new row renders already
+  // carrying them. A declare that saved but could not take an image still
+  // closes — the feature exists, and the strip's own error says which half
+  // failed.
+  await flushImages(ledger.id)
   open.value = false
   emit('declared', ledger)
 }
@@ -92,7 +120,8 @@ async function declare() {
       >Adopt a tracker issue</Button>
     </div>
 
-    <form class="nf-form" @submit.prevent="declare">
+    <form class="nf-form" @submit.prevent="declare" @paste="onPaste"
+          @dragover.prevent @drop="onDrop">
       <template v-if="adopting">
         <label class="nf-label" for="nf-ref">Issue reference</label>
         <Input
@@ -130,6 +159,15 @@ async function declare() {
         />
       </template>
 
+      <span class="nf-label">Images <span class="nf-optional">(optional)</span></span>
+      <TaskImageStrip
+        :items="images"
+        :busy="imagesBusy"
+        :error="imagesError"
+        @pick="addImages"
+        @remove="removeImage"
+      />
+
       <p v-if="failed" class="nf-fail" role="alert">{{ failed }}</p>
     </form>
 
@@ -152,6 +190,7 @@ async function declare() {
     font-size: 11.5px; font-weight: 600; color: var(--color-fg-subtle);
     margin-top: 0.4rem;
 }
+.nf-optional { font-weight: 400; color: var(--color-fg-faint); }
 .nf-fail {
     margin-top: 0.5rem; font-size: 12px; color: var(--color-red-700);
 }

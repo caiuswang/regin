@@ -3,7 +3,7 @@
 // `N` is the attachment's `idx`, which `lib/tasks/images.py` never reuses — so
 // a reference names the same bytes for as long as they exist. It is NOT a URL:
 // the bytes endpoint is authenticated and an `<img>` tag cannot attach the
-// header, which is why `useTaskImages` pulls every image through the api
+// header, which is why `useAttachedImages` pulls every image through the api
 // client into an object URL and why the reference has to be rewritten here
 // rather than being an href the browser could follow on its own.
 //

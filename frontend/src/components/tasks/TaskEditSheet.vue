@@ -17,7 +17,7 @@ import Textarea from '../ui/Textarea.vue'
 import { PRIORITIES } from '../../utils/taskMeta.js'
 import { imageFilesFrom } from '../../utils/imageFiles'
 import { useProjects } from '../../composables/useProjects.js'
-import { useTaskImages } from '../../composables/useTaskImages.js'
+import { useAttachedImages } from '../../composables/useAttachedImages.js'
 import { useTaskEdit } from '../../composables/useTaskEdit.js'
 
 const props = defineProps({
@@ -30,7 +30,7 @@ const { items: projects, ensure: ensureProjects } = useProjects()
 const {
   items: imageItems, busy: imageBusy, error: imageError,
   bind: bindImages, add: addImages, remove: removeImage,
-} = useTaskImages()
+} = useAttachedImages()
 
 onMounted(() => {
   bindImages(props.task)

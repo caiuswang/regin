@@ -1,10 +1,12 @@
-// Images on a captured idea, for both surfaces that edit one.
+// Images hung off a saved row — a task, or a feature. `resource` is the api
+// segment (`tasks` | `features`); everything else is identical, because both
+// serve `{id, images:[{idx}]}` and the same three image routes under it.
 //
-// The two differ in exactly one way, and it is the reason this is not
-// `useImagePaste`: the capture composer has no task id yet. Bytes pasted there
+// The surfaces differ in exactly one way, and it is the reason this is not
+// `useImagePaste`: a capture composer has no row id yet. Bytes pasted there
 // are HELD in the browser and uploaded by `flush(id)` once the row exists, so
 // nothing is staged server-side for an idea that is abandoned mid-typing and
-// there is no orphan to sweep. The edit sheet binds a saved task and every
+// there is no orphan to sweep. An edit sheet binds a saved row and every
 // gesture is an immediate write, because there the row is already there to
 // hang the bytes off.
 //
@@ -16,12 +18,12 @@ import { onUnmounted, ref } from 'vue'
 import api from '../api'
 import { imageFilesFrom, toBase64 } from '../utils/imageFiles'
 
-export function useTaskImages() {
+export function useAttachedImages(resource = 'tasks') {
   const items = ref([])
   const busy = ref(false)
   const error = ref('')
 
-  let taskId = null
+  let ownerId = null
   let seq = 0
   // Bumped by every `bind`, so an adopt still in flight when the sheet is
   // rebound (or torn down) drops its URL instead of repopulating a list that
@@ -40,16 +42,16 @@ export function useTaskImages() {
              name: name || (idx ? `image ${idx}` : 'pasted image') }
   }
 
-  /** Point the composable at a saved task, or at nothing for the composer. */
-  async function bind(task) {
+  /** Point the composable at a saved row, or at nothing for a composer. */
+  async function bind(row) {
     reset()
-    taskId = task?.id ?? null
+    ownerId = row?.id ?? null
     generation += 1
     const mine = generation
-    for (const img of task?.images || []) {
+    for (const img of row?.images || []) {
       // Best-effort per image: one that cannot be fetched is left out rather
       // than breaking the strip.
-      const url = await api.getBlobUrl(`/tasks/${taskId}/images/${img.idx}`)
+      const url = await api.getBlobUrl(`/${resource}/${ownerId}/images/${img.idx}`)
         .catch(() => '')
       if (mine !== generation) { if (url) URL.revokeObjectURL(url); return }
       if (url) items.value = [...items.value, entry(url, { idx: img.idx })]
@@ -58,7 +60,7 @@ export function useTaskImages() {
 
   async function upload(file) {
     const data_b64 = await toBase64(file)
-    const res = await api.post(`/tasks/${taskId}/images`, { data_b64 })
+    const res = await api.post(`/${resource}/${ownerId}/images`, { data_b64 })
     if (res.ok === false) throw new Error(res.msg || 'could not attach the image')
     return res.image
   }
@@ -72,7 +74,7 @@ export function useTaskImages() {
     const files = imageFilesFrom(source)
     if (!files.length) return false
     error.value = ''
-    if (taskId == null) {
+    if (ownerId == null) {
       items.value = [...items.value, ...files.map(
         file => entry(URL.createObjectURL(file), { name: file.name, pending: true, file }))]
       return true
@@ -99,7 +101,7 @@ export function useTaskImages() {
       drop(item)
       return true
     }
-    const res = await api.del(`/tasks/${taskId}/images/${item.idx}`)
+    const res = await api.del(`/${resource}/${ownerId}/images/${item.idx}`)
     if (res.ok === false) {
       error.value = res.msg || 'could not remove this image'
       return false
@@ -114,12 +116,12 @@ export function useTaskImages() {
   }
 
   /**
-   * Upload everything held for a task that did not exist when it was pasted.
-   * False when one upload was refused — the task is already saved by then, so
+   * Upload everything held for a row that did not exist when it was pasted.
+   * False when one upload was refused — the row is already saved by then, so
    * the caller reports the images rather than the capture as the failure.
    */
   async function flush(id) {
-    taskId = id
+    ownerId = id
     const held = items.value.filter(i => i.pending)
     if (!held.length) return true
     busy.value = true

@@ -25,7 +25,8 @@ from __future__ import annotations
 from typing import Optional
 
 from sqlmodel import (
-    Column, Field, ForeignKey, Integer, String, Text, UniqueConstraint, text,
+    Column, Field, ForeignKey, Integer, LargeBinary, String, Text,
+    UniqueConstraint, text,
 )
 
 from lib.orm.base import Base
@@ -171,4 +172,38 @@ class SessionFeature(Base, table=True):
     created_at: Optional[str] = Field(
         default=None,
         sa_column=Column("created_at", Text, nullable=False,
+                         server_default=text("(datetime('now'))")))
+
+
+class FeatureImage(Base, table=True):
+    """An image attached to a feature.
+
+    The mirror of `AgentTaskImage` one level up, and kept a separate table
+    rather than a nullable owner column on that one for the reason the two
+    differ in: a task's image is delivered with that task alone, while a
+    feature's is delivered with every slice cut from it. Folding both into one
+    table would put two owners on one column and make "whose image is this"
+    a join away from ambiguous.
+
+    `idx` is a per-feature display and delivery order, allocated by the
+    writer and never reissued once freed.
+    """
+
+    __tablename__ = "feature_images"
+    __table_args__ = (UniqueConstraint("feature_id", "idx",
+                                       name="uq_feature_images_idx"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    feature_id: int = Field(
+        sa_column=Column("feature_id", Integer, nullable=False, index=True))
+    idx: int = Field(sa_column=Column("idx", Integer, nullable=False))
+    media_type: str = Field(
+        sa_column=Column("media_type", String, nullable=False))
+    bytes_: bytes = Field(
+        sa_column=Column("bytes", LargeBinary, nullable=False))
+    byte_size: int = Field(
+        sa_column=Column("byte_size", Integer, nullable=False))
+    sha256: str = Field(sa_column=Column("sha256", String, nullable=False))
+    created_at: str = Field(
+        sa_column=Column("created_at", String, nullable=False,
                          server_default=text("(datetime('now'))")))

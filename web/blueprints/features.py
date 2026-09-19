@@ -20,11 +20,15 @@ appends to an append-only table. Native features have no such route at all.
 
 from __future__ import annotations
 
-from flask import Blueprint, jsonify, request
+import base64
+import binascii
+
+from flask import Blueprint, Response, jsonify, request
 from sqlmodel import text
 
-from lib.auth import require_editor
-from lib.features import attribution, index as index_module
+from lib.auth import require_auth, require_editor
+from lib.features import attribution, images as images_module
+from lib.features import index as index_module
 from lib.features import ledger as ledger_module
 from lib.features import spans
 from lib.features import store as feature_store
@@ -115,6 +119,9 @@ def _ledger_body(feature_id: int) -> dict:
     feature = feature_store.require(feature_id)
     body["synced_at"] = feature.synced_at
     body["stage_live"] = not sync_module.is_remote(feature)
+    # Summaries, never the bytes: a spec with four screenshots on it would
+    # otherwise put megabytes of base64 into every read of the ledger.
+    body["images"] = images_module.list_for(feature_id)
     return body
 
 
@@ -261,3 +268,62 @@ def api_feature_refresh(feature_id):
             "figure is local")
         return jsonify(body), 502
     return jsonify(body)
+
+
+# ── images ───────────────────────────────────────────────────
+
+def _decoded_image(payload) -> bytes:
+    """The bytes a composer sent, or ValueError with the reason.
+
+    Base64 in JSON rather than multipart because that is what the sibling
+    task-image and `bridge-attachments` ingests take, and what the SPA's api
+    client can send without a second transport.
+    """
+    raw = (payload or {}).get("data_b64")
+    if not isinstance(raw, str) or not raw:
+        raise ValueError("data_b64 required")
+    try:
+        return base64.b64decode(raw, validate=True)
+    except (ValueError, binascii.Error):
+        raise ValueError("data_b64 is not valid base64") from None
+
+
+@features_bp.route("/api/features/<int:feature_id>/images", methods=["POST"])
+@require_editor
+def api_attach_feature_image(feature_id: int):
+    """Attach one image to a feature.
+
+    A refusal is a 400 with the reason, not a silent drop: the operator is
+    watching a thumbnail that has to either appear or explain itself.
+    """
+    if feature_store.get(feature_id) is None:
+        return jsonify({"error": f"no feature {feature_id}"}), 404
+    try:
+        data = _decoded_image(request.get_json(silent=True))
+        return jsonify({"image": images_module.attach(feature_id, data)}), 201
+    except ValueError as exc:
+        return jsonify({"error": str(exc), "field": "data_b64"}), 400
+
+
+@features_bp.route("/api/features/<int:feature_id>/images/<int:idx>",
+                   methods=["DELETE"])
+@require_editor
+def api_remove_feature_image(feature_id: int, idx: int):
+    """Detach one image. 404 when nothing is at that index."""
+    if not images_module.remove(feature_id, idx):
+        return jsonify({"error": "unknown image"}), 404
+    return jsonify({"removed": True, "idx": idx})
+
+
+@features_bp.route("/api/features/<int:feature_id>/images/<int:idx>")
+@require_auth
+def api_get_feature_image(feature_id: int, idx: int):
+    """Serve one image as raw bytes, for the thumbnail beside the spec."""
+    found = images_module.get_bytes(feature_id, idx)
+    if found is None:
+        return jsonify({"error": "unknown image"}), 404
+    data, media_type = found
+    # `idx` is never reissued once freed, so a (feature, idx) pair names the
+    # same bytes forever and can be cached hard.
+    return Response(data, mimetype=media_type,
+                    headers={"Cache-Control": "private, max-age=86400"})

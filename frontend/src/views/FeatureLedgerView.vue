@@ -30,6 +30,7 @@ import FeatureDefects from '../components/features/FeatureDefects.vue'
 import FeatureEvidence from '../components/features/FeatureEvidence.vue'
 import FeatureFigures from '../components/features/FeatureFigures.vue'
 import FeatureProject from '../components/features/FeatureProject.vue'
+import FeatureImages from '../components/features/FeatureImages.vue'
 import FeatureSpec from '../components/features/FeatureSpec.vue'
 import FeatureStageLine from '../components/features/FeatureStageLine.vue'
 import FeatureTasks from '../components/features/FeatureTasks.vue'
@@ -224,6 +225,12 @@ function onDeclared() {
         :body="ledger.body"
         :can-write="canWrite"
         @saved="ledger = $event"
+      />
+
+      <FeatureImages
+        :feature-id="ledger.id"
+        :images="ledger.images"
+        :can-write="canWrite"
       />
 
       <FeatureTasks :feature-id="ledger.id" :can-write="canWrite" />

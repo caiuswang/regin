@@ -21,7 +21,7 @@ import { imageFilesFrom } from '../../utils/imageFiles'
 import { TITLE_MAX } from '../../composables/useTasks.js'
 import { useFlash } from '../../composables/useFlash.js'
 import { useQuickCapture } from '../../composables/useQuickCapture.js'
-import { useTaskImages } from '../../composables/useTaskImages.js'
+import { useAttachedImages } from '../../composables/useAttachedImages.js'
 
 defineProps({
   // The phone blocker bar is `position: fixed` at the bottom of the viewport;
@@ -42,7 +42,7 @@ const { open, draft, error, create, captured } = useQuickCapture()
 const {
   items: images, busy: imagesBusy, error: imagesError,
   add: addImages, remove: removeImage, flush: flushImages, reset: resetImages,
-} = useTaskImages()
+} = useAttachedImages()
 
 const titleInput = ref(null)
 
