@@ -17,6 +17,7 @@ const SCOPE_KEY = 'regin_sessions_search_scope'
 const TAG_KEY = 'regin_sessions_tag'
 const REPO_KEY = 'regin_sessions_repo'
 const RUNS_KEY = 'regin_sessions_runs'
+const EMPTY_KEY = 'regin_sessions_empty'
 
 export const SCOPE_OPTIONS = [
   { value: 'title', label: 'Title' },
@@ -141,6 +142,17 @@ export function useSessionListQuery() {
   const hideRuns = computed(() =>
     !runsShown.value && !tagFilter.value && !activeTraceId.value)
 
+  // A `claude` started without a prompt boots far enough to fire
+  // InstructionsLoaded / SessionStart / git-status, then aborts on the missing
+  // input ~2s later and fires SessionEnd — five spans, no transcript, no
+  // conversation. regin cannot refuse the row (at SessionStart no prompt has
+  // happened yet either), so the list refuses to *show* it: 743 of 3280 rows
+  // in the dev store are such launches. Held out by default, on the same
+  // toggle-and-count shape as the runs axis; suppressed for a trace-id lookup,
+  // which is a deep link that must still resolve its own row.
+  const emptyShown = ref(localStorage.getItem(EMPTY_KEY) === '1')
+  const hideEmpty = computed(() => !emptyShown.value && !activeTraceId.value)
+
   const cursor = useCursor({
     path: '/sessions',
     size: 50,
@@ -154,6 +166,7 @@ export function useSessionListQuery() {
         tag: tagFilter.value || undefined,
         // 'show' is the server default; only send when narrowing.
         workflow: hideRuns.value ? 'hide' : undefined,
+        empty: hideEmpty.value ? 'hide' : undefined,
         active: activeFilter.value !== 'all' ? activeFilter.value : undefined,
         trace_id: activeTraceId.value || undefined,
         q: activeSearch.value || undefined,
@@ -177,6 +190,8 @@ export function useSessionListQuery() {
   // Run rows the SAME other filters would have matched — served only while
   // `workflow=hide` is in force, which is what makes it the chip's guard.
   const hiddenRunCount = computed(() => extras.value?.workflow_hidden_count || 0)
+  // Same guard: served only while `empty=hide` is in force.
+  const hiddenEmptyCount = computed(() => extras.value?.empty_hidden_count || 0)
 
   const filterCount = computed(() => {
     const on = [
@@ -255,6 +270,10 @@ export function useSessionListQuery() {
       localStorage.setItem(RUNS_KEY, v ? '1' : '0')
       if (!batching) reload()
     })
+    watch(emptyShown, (v) => {
+      localStorage.setItem(EMPTY_KEY, v ? '1' : '0')
+      if (!batching) reload()
+    })
     for (const [source, key] of bindings) {
       watch(source, (v) => {
         localStorage.setItem(key, v ?? '')
@@ -310,6 +329,10 @@ export function useSessionListQuery() {
     return batched(() => { runsShown.value = !runsShown.value }, reload ?? reloadFn)
   }
 
+  function toggleEmpty(reload) {
+    return batched(() => { emptyShown.value = !emptyShown.value }, reload ?? reloadFn)
+  }
+
   const CLEARERS = {
     range: () => { clearSpan(); range.value = DEFAULTS.range },
     kind: () => { kind.value = DEFAULTS.kind },
@@ -338,6 +361,7 @@ export function useSessionListQuery() {
       tagFilter.value = DEFAULTS.tag
       repoFilter.value = DEFAULTS.repo
       runsShown.value = false
+      emptyShown.value = false
     }, reload ?? reloadFn)
   }
 
@@ -347,7 +371,8 @@ export function useSessionListQuery() {
     kind, activeFilter, range, tagFilter, repoFilter,
     customStart, customEnd, rangeLabel, tagLabels, activeFilters,
     serverClock, tagCounts, repoCounts, totalCount, activeCount, builtinTags,
-    hiddenRunCount, runsShown, filterCount, persistAndReload, commitSearch, resetFilters,
-    selectRangePreset, pickRangeDay, clearFilter, toggleRuns,
+    hiddenRunCount, runsShown, hiddenEmptyCount, emptyShown,
+    filterCount, persistAndReload, commitSearch, resetFilters,
+    selectRangePreset, pickRangeDay, clearFilter, toggleRuns, toggleEmpty,
   }
 }

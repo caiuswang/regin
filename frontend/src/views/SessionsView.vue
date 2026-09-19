@@ -38,6 +38,7 @@ const {
   filterCount, searchInput, activeSearch, traceIdInput, searchScope,
   kind, activeFilter, range, tagFilter, repoFilter,
   customStart, customEnd, rangeLabel, activeFilters, hiddenRunCount, runsShown,
+  hiddenEmptyCount, emptyShown,
 } = query
 
 const { customTags, loadCustomTags, patchRowTags, addTag, removeTag } = useSessionTags()
@@ -77,6 +78,15 @@ function groupCount(group) {
 const runsHiddenLabel = computed(() => {
   const noun = activeSearch.value ? 'matching system run' : 'system run'
   return `⚙ ${hiddenRunCount.value} ${noun}${hiddenRunCount.value === 1 ? '' : 's'} hidden →`
+})
+
+// Launches that never held a conversation — a `claude` started with no prompt
+// aborts ~2s in, leaving session.start/git-status/session.end and nothing else.
+// Same wording rule as the runs chip: with a search live these are HITS being
+// withheld, so name that rather than let the page read as "no matches".
+const emptyHiddenLabel = computed(() => {
+  const noun = activeSearch.value ? 'matching empty launch' : 'empty launch'
+  return `◌ ${hiddenEmptyCount.value} ${noun}${hiddenEmptyCount.value === 1 ? '' : 'es'} hidden →`
 })
 
 const footerNote = computed(() => (hasNext.value && groupMode.value !== 'flat'
@@ -370,6 +380,18 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape))
           : 'List workflow runs and LLM stages alongside these sessions'"
         @click="query.toggleRuns(reload)"
       >{{ runsShown ? '⚙ Hide system runs' : runsHiddenLabel }}</Button>
+
+      <Button
+        v-if="hiddenEmptyCount || emptyShown"
+        variant="link"
+        size="sm"
+        class="mt-1"
+        :title="emptyShown
+          ? 'Fold launches that never held a conversation back out of the list'
+          : 'A claude started with no prompt aborts a couple of seconds in — '
+            + 'it leaves a session row with no prompt and no tool call'"
+        @click="query.toggleEmpty(reload)"
+      >{{ emptyShown ? '◌ Hide empty launches' : emptyHiddenLabel }}</Button>
     </div>
 
     <div class="slist">

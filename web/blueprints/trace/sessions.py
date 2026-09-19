@@ -376,6 +376,63 @@ _RUN_ORIGINS = system_origins()
 _CLAIMED_ORIGINS = tuple(o for t in BUILTIN_TAGS for o in t["origins"])
 
 
+def _holds_work():
+    """`EXISTS` clause: this session holds at least one `prompt` or `tool.*` span.
+
+    Span truth, not `sessions.prompts` / `sessions.tool_calls`: those counters
+    are only bumped by the ingest batch that inserted the span, so a prompt
+    that reached the store by any other path (repair, alias regrouping) leaves
+    the counter at 0 — 102 rows in the dev DB read `prompts = 0` while holding
+    a real `prompt` span, and a counter-keyed filter would have hidden every
+    one of them as empty.
+
+    Correlated rather than an `IN (SELECT …)` list, and a range comparison
+    rather than `LIKE 'tool.%'`: SQLite's default LIKE is case-insensitive, so
+    it cannot prefix-scan, and the list subquery is then materialized by
+    scanning every span once per statement — page, total, active, repo facet
+    and hidden count each paid it, 39ms → 959ms on a 665k-span store. `EXISTS`
+    searches `session_spans` by trace_id and stops at the first hit, which
+    costs one probe per session row instead (~93ms, flat to page 10, and
+    scaling with session count rather than span count). `'/'` is `'.'` + 1, so
+    the range matches exactly what the LIKE did. It is also NULL-safe, which
+    `NOT IN` over a nullable column is not.
+    """
+    from sqlmodel import select as _select
+    from sqlalchemy import or_ as _or, and_ as _and
+    from lib.orm.models.trace import SessionSpan
+    return (_select(SessionSpan.trace_id)
+            .where(SessionSpan.trace_id == SessionModel.trace_id)
+            .where(_or(SessionSpan.name == 'prompt',
+                       _and(SessionSpan.name >= 'tool.',
+                            SessionSpan.name < 'tool/')))
+            .correlate(SessionModel)
+            .exists())
+
+
+def _apply_empty(stmt, mode):
+    """The `empty` axis: a launch that never carried work.
+
+    Claude Code mints a session id and fires SessionStart at process launch,
+    before any prompt exists, so a `claude` quit at the prompt box — or a
+    `/clear` that re-ids the session — leaves a permanent 3-5 span row
+    (session.start, instructions.loaded, environment.git_status, session.end)
+    that regin cannot tell from a real session by origin. It is orthogonal to
+    `origin` (who launched it), which is why it gets its own axis rather than
+    another origin value.
+    """
+    if mode == 'only':
+        return stmt.where(~_holds_work())
+    if mode == 'hide':
+        return stmt.where(_holds_work())
+    return stmt
+
+
+def _tri_state(value, default='show'):
+    """Normalize a hide|show|only query param, falling back to `default`."""
+    v = (value or default).strip().lower()
+    return v if v in ('hide', 'show', 'only') else default
+
+
 # ── Session tags: derived-builtin + stored-custom, one flat surface ──
 
 # Sentinel slug: a `tag=` was requested but nothing valid survived. Resolves
@@ -517,6 +574,17 @@ def api_sessions():
       repo=<name>        — only sessions tagged with this registered repo
                            (unique repo name). Multi-repo sessions match
                            every repo they touched.
+      empty=hide|show|only
+                         — filter by the `work` axis, orthogonal to `origin`:
+                           a session holds work when it has at least one
+                           `prompt` or `tool.*` span. show (server default) →
+                           every row; hide → only sessions that carried work;
+                           only → just the launches that never did (Claude Code
+                           mints a session id at process launch, so a `claude`
+                           abandoned at the prompt box leaves a permanent row).
+                           When 'hide' the envelope carries `empty_hidden_count`.
+                           Suppressed under an explicit `trace_id=` prefix,
+                           which is a deep link and must still resolve.
       workflow=hide|show|only
                          — filter by the `origin` axis. show (server default) →
                            every row, so external callers and E2E fixtures are
@@ -548,9 +616,10 @@ def api_sessions():
     since = (request.args.get('since') or '').strip()
     until = (request.args.get('until') or '').strip()
     date_filtered = bool(since or until)
-    workflow = (request.args.get('workflow') or 'show').strip().lower()
-    if workflow not in ('hide', 'show', 'only'):
-        workflow = 'show'
+    workflow = _tri_state(request.args.get('workflow'))
+    empty = _tri_state(request.args.get('empty'))
+    if trace_id_q and empty == 'hide':
+        empty = 'show'
     tag_slugs = _parse_tag_filter()
     cursor_token = request.args.get('cursor')
     size = clamp_size(request.args.get('size'), default=50)
@@ -735,9 +804,10 @@ def api_sessions():
         return _filter_sessions_by_repo(s, request.args.get('repo'))
 
     def _narrow(s, skip_repo=False):
-        """The request's COMPLETE filter set: shared WHERE + origin + tag."""
-        return _apply_tag_filter(_apply_origin(_apply_filters(s, skip_repo=skip_repo)),
-                                 tag_slugs)
+        """The request's COMPLETE filter set: shared WHERE + origin + work + tag."""
+        return _apply_tag_filter(
+            _apply_empty(_apply_origin(_apply_filters(s, skip_repo=skip_repo)), empty),
+            tag_slugs)
 
     with SessionLocal() as session:
         hidden_alias_ids = aliased_run_ids(session)
@@ -778,12 +848,27 @@ def api_sessions():
         # matched so the frontend can offer a pivot hint. Same _apply_filters,
         # restricted to the run origins.
         if workflow == 'hide':
-            hidden_workflow_count = session.exec(
+            # Also narrowed by the work axis: a run row that is ALSO an empty
+            # launch stays hidden when runs are toggled on, so counting it here
+            # would promise one more row than the toggle reveals.
+            hidden_workflow_count = session.exec(_apply_empty(
                 _apply_filters(_select(_func.count()).select_from(SessionModel))
-                .where(SessionModel.origin.in_(_RUN_ORIGINS))
+                .where(SessionModel.origin.in_(_RUN_ORIGINS)), empty)
             ).one()
         else:
             hidden_workflow_count = None
+
+        # Rows the SAME other filters (including the origin axis) would have
+        # matched but for the work axis — the chip's "N empty launches hidden".
+        if empty == 'hide':
+            empty_hidden_count = session.exec(_apply_tag_filter(
+                _apply_empty(
+                    _apply_origin(_apply_filters(
+                        _select(_func.count()).select_from(SessionModel))),
+                    'only'),
+                tag_slugs)).one()
+        else:
+            empty_hidden_count = None
 
         # When showing only runs and a date filter is active, count how many
         # workflow rows the date filter excluded, for a "widen date range" hint.
@@ -813,6 +898,7 @@ def api_sessions():
     envelope['sessions'] = envelope['items']  # legacy field
     envelope['search'] = search
     envelope['workflow_hidden_count'] = hidden_workflow_count
+    envelope['empty_hidden_count'] = empty_hidden_count
     envelope['workflow_date_hidden_count'] = workflow_date_hidden_count
     envelope['tag_counts'] = tag_counts
     envelope['builtin_tags'] = builtin_meta()

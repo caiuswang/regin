@@ -973,6 +973,129 @@ def test_sessions_workflow_hide_count_respects_other_filters(client, trace_db):
     assert body['workflow_hidden_count'] == 1   # only run_x, not run_y
 
 
+# --- /api/sessions list: empty (work) axis -------------------------------
+
+def _seed_work_mix(trace_db):
+    """Four rows across the work axis, distinct last_seen for a stable keyset.
+
+    `worked_prompt` and `worked_tool` carried work; `blank` is the abandoned
+    launch (SessionStart..SessionEnd, no prompt, no tool); `drifted` is the
+    trap — a real prompt span while `sessions.prompts` stayed 0, which is the
+    state 102 rows of the dev DB are actually in.
+    """
+    for tid, ls in (('worked_prompt', '2026-01-01T00:00:04'),
+                    ('worked_tool', '2026-01-01T00:00:03'),
+                    ('blank', '2026-01-01T00:00:02'),
+                    ('drifted', '2026-01-01T00:00:01')):
+        _seed_session_row(trace_db, tid, last_seen=ls)
+    _seed(trace_db, [
+        {'trace_id': 'worked_prompt', 'span_id': 'p1', 'name': 'prompt',
+         'start_time': '2026-01-01T00:00:00'},
+        {'trace_id': 'worked_tool', 'span_id': 't1', 'name': 'tool.Bash',
+         'start_time': '2026-01-01T00:00:00'},
+        {'trace_id': 'blank', 'span_id': 's1', 'name': 'session.start',
+         'start_time': '2026-01-01T00:00:00'},
+        {'trace_id': 'blank', 'span_id': 's2', 'name': 'session.end',
+         'start_time': '2026-01-01T00:00:01'},
+        {'trace_id': 'drifted', 'span_id': 'd1', 'name': 'session.start',
+         'start_time': '2026-01-01T00:00:00'},
+        {'trace_id': 'drifted', 'span_id': 'd2', 'name': 'prompt',
+         'start_time': '2026-01-01T00:00:01'},
+    ])
+
+
+def test_sessions_empty_default_show_returns_all(client, trace_db):
+    """Server default is `show`, so no existing caller's population moves and
+    `empty_hidden_count` stays absent."""
+    _seed_work_mix(trace_db)
+    body = client.get('/api/sessions').get_json()
+    assert _ids(body) == {'worked_prompt', 'worked_tool', 'blank', 'drifted'}
+    assert body['empty_hidden_count'] is None
+
+
+def test_sessions_empty_hide_drops_launches_that_did_no_work(client, trace_db):
+    _seed_work_mix(trace_db)
+    body = client.get('/api/sessions?empty=hide').get_json()
+    assert _ids(body) == {'worked_prompt', 'worked_tool', 'drifted'}
+    assert body['empty_hidden_count'] == 1
+
+
+def test_sessions_empty_hide_keeps_a_session_whose_prompt_counter_drifted(
+        client, trace_db):
+    """The counters are bumped only by the ingest batch that inserted the span,
+    so `sessions.prompts` can read 0 over a real `prompt` span. Keying the axis
+    on span truth is what keeps `drifted` in the list."""
+    _seed_work_mix(trace_db)
+    conn = sqlite3.connect(str(trace_db))
+    try:
+        assert conn.execute(
+            "SELECT prompts, tool_calls FROM sessions WHERE trace_id = 'drifted'"
+        ).fetchone() == (0, 0)
+    finally:
+        conn.close()
+    assert 'drifted' in _ids(client.get('/api/sessions?empty=hide').get_json())
+
+
+def test_sessions_empty_only_returns_just_the_blank_launches(client, trace_db):
+    _seed_work_mix(trace_db)
+    body = client.get('/api/sessions?empty=only').get_json()
+    assert _ids(body) == {'blank'}
+    assert body['empty_hidden_count'] is None
+
+
+def test_sessions_empty_hidden_count_respects_other_filters(client, trace_db):
+    """The count runs the page's own filter set, so a blank row the date bound
+    already excluded is not counted as hidden-by-emptiness."""
+    _seed_work_mix(trace_db)
+    body = client.get(
+        '/api/sessions?empty=hide&since=2026-01-01T00:00:03').get_json()
+    assert _ids(body) == {'worked_prompt', 'worked_tool'}
+    assert body['empty_hidden_count'] == 0
+
+
+def test_sessions_empty_hide_is_suppressed_for_a_trace_id_deep_link(
+        client, trace_db):
+    """A `trace_id=` prefix is a deep link: the row must resolve even though it
+    never carried work, or the list cannot explain what the link points at."""
+    _seed_work_mix(trace_db)
+    body = client.get('/api/sessions?empty=hide&trace_id=blank').get_json()
+    assert _ids(body) == {'blank'}
+
+
+def test_sessions_each_hidden_count_predicts_only_its_own_toggle(
+        client, trace_db):
+    """With both axes hiding, a row held out by BOTH belongs to neither chip:
+    flipping one axis still leaves the other holding it. `run_blank` is a run
+    AND an empty launch, so each count must exclude it or the chip promises a
+    row its own toggle cannot reveal."""
+    _seed_session_row(trace_db, 'run_worked', origin='workflow',
+                      last_seen='2026-01-01T00:00:03')
+    _seed_session_row(trace_db, 'run_blank', origin='llm-stage',
+                      last_seen='2026-01-01T00:00:02')
+    _seed_session_row(trace_db, 'sess', last_seen='2026-01-01T00:00:01')
+    _seed(trace_db, [
+        {'trace_id': 'run_worked', 'span_id': 'r1', 'name': 'tool.Bash',
+         'start_time': '2026-01-01T00:00:00'},
+        {'trace_id': 'sess', 'span_id': 'p1', 'name': 'prompt',
+         'start_time': '2026-01-01T00:00:00'},
+    ])
+    body = client.get('/api/sessions?workflow=hide&empty=hide').get_json()
+    assert _ids(body) == {'sess'}
+    # run_worked is the only row toggling runs on reveals; run_blank stays
+    # hidden by the work axis, so it is not counted here.
+    assert body['workflow_hidden_count'] == 1
+    # Toggling empty on reveals nothing: run_blank is still a run.
+    assert body['empty_hidden_count'] == 0
+    revealed = client.get('/api/sessions?workflow=show&empty=hide').get_json()
+    assert _ids(revealed) == {'sess', 'run_worked'}
+    assert len(revealed['items']) - len(body['items']) == 1
+
+    # The other toggle, from the same starting point: reveals nothing, exactly
+    # as its count promised.
+    other = client.get('/api/sessions?workflow=hide&empty=show').get_json()
+    assert _ids(other) == {'sess'}
+
+
 def test_sessions_rows_carry_cost_usd(client, trace_db):
     """Each row carries the stored `sessions.cost_usd`, distinguishing a priced
     session from one regin has no usage for. Omitting the column made every row
