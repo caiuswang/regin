@@ -145,3 +145,29 @@ def test_a_missing_file_is_not_reported_as_a_path(conn, tmp_path):
     _launch(conn, 'gone', span_id='b1')
 
     assert output_path(conn, ['t'], 'gone') == ''
+
+
+def test_an_ended_session_has_no_running_shells(conn):
+    """A shell cannot outlive the process that launched it. Once the session
+    is over, a launch with no completion is a shell that stopped without
+    reporting — never one still running, which is what left two dead shells
+    ticking upward at 9m31s in the foot-of-feed block."""
+    _launch(conn, 'orphan', span_id='b1')
+
+    [entry] = shell_roster(conn, ['t'], session_ended=True)
+    assert entry['status'] == 'stopped'
+
+
+def test_an_ended_session_keeps_a_real_outcome(conn):
+    _launch(conn, 'done', span_id='b1')
+    _done(conn, 'done', status='completed')
+
+    [entry] = shell_roster(conn, ['t'], session_ended=True)
+    assert entry['status'] == 'completed'
+
+
+def test_a_live_session_still_reports_running(conn):
+    _launch(conn, 'live', span_id='b1')
+
+    [entry] = shell_roster(conn, ['t'], session_ended=False)
+    assert entry['status'] == 'running'

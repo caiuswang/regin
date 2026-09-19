@@ -26,6 +26,15 @@ _FLAT_RE = {
 # entity-escaped, so it needs a DOTALL body rather than the `[^<]*` above.
 _RESULT_RE = re.compile(r'<result>(.*?)</result>', re.DOTALL)
 
+# Every `<task-id>` in the envelope, not just the first. A session that ends
+# with background shells still running is reported to the NEXT session as ONE
+# envelope naming all of them at once.
+_ALL_TASK_IDS_RE = re.compile(r'<task-id>([^<]*)</task-id>')
+
+# The envelope documents this itself: ids beginning `__orphan_summary` are
+# internal scan markers the harness emits alongside the real ids, never tasks.
+_SCAN_MARKER_PREFIX = '__orphan_summary'
+
 _USAGE_RE = re.compile(r'<usage>(.*?)</usage>', re.DOTALL)
 _COUNTER_RE = {
     'subagent_tokens': re.compile(r'<subagent_tokens>(\d+)</subagent_tokens>'),
@@ -53,6 +62,10 @@ def parse_task_notification(text: str) -> dict | None:
         m = regex.search(body)
         if m:
             fields[key] = m.group(1).strip()
+    task_ids = [t.strip() for t in _ALL_TASK_IDS_RE.findall(body)]
+    real = [t for t in task_ids if t and not t.startswith(_SCAN_MARKER_PREFIX)]
+    if real:
+        fields['task_ids'] = real
     result = _RESULT_RE.search(body)
     if result:
         fields['result'] = result.group(1).strip()

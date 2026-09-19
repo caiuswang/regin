@@ -132,3 +132,23 @@ test('a shell with no locatable output says so', async ({ page }) => {
   await expect(block(page).locator('[data-background-shell-output-missing]'))
     .toHaveText('no readable output yet', { timeout: 15_000 })
 })
+
+test('an ended session shows no running shells', async ({ page }) => {
+  test.setTimeout(60_000)
+  // A shell is a child of the process that launched it. Once the session is
+  // over the shell is too — whether teardown killed it or it was orphaned —
+  // so a launch nothing ever reported on must not keep ticking upward.
+  const traceId = await seed(page, (t, p8, prompt) => [
+    shellSpan(t, prompt, `b1-${p8}`, 'shellA', 'Dev server'),
+  ])
+  await expect(block(page).locator('[data-background-shells-count]'))
+    .toHaveText('1 running')
+  const token = await page.evaluate(() => localStorage.getItem('regin_auth_token'))
+  expect((await page.request.post(`/api/sessions/${traceId}/close`, {
+    headers: { Authorization: `Bearer ${token}` }, data: {},
+  })).ok()).toBeTruthy()
+
+  await page.reload()
+  await expect(page.locator('.event-spine')).toBeVisible({ timeout: 20_000 })
+  await expect(block(page)).toHaveCount(0)
+})

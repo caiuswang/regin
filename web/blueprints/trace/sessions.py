@@ -2117,7 +2117,7 @@ def _session_summary(trace_id: str, roster=None, activity=None) -> dict:
     main_for_pct = next(
         (v for v in (live, peak_main, peak) if isinstance(v, int)), peak)
     if roster is None or activity is None:
-        roster, activity, _ended = _roster_with_activity(trace_id)
+        roster, activity, ended = _roster_with_activity(trace_id)
     screen = _live_screen_state(trace_id, group)
     _record_screen_retry(group, screen)
     phase, agent_phase = _session_phase(activity, roster, status == 'ended',
@@ -2766,7 +2766,7 @@ def _shallow_map_response(trace_id: str):
             and request.args.get('retired_seen') == structural['retired_digest']:
         structural = {k: v for k, v in structural.items()
                       if k != 'retired_span_ids'}
-    roster, activity, _ended = _roster_with_activity(trace_id)
+    roster, activity, ended = _roster_with_activity(trace_id)
     return jsonify({
         'trace_id': trace_id,
         # The authoritative count of span changes, against which the client
@@ -2785,19 +2785,24 @@ def _shallow_map_response(trace_id: str):
         # Whole-session, deliberately not derived from `structural`: a shell
         # running for half an hour has scrolled out of the loaded page, and
         # that is precisely the shell the reader still needs to see.
-        'background_shells': _background_shells(trace_id),
+        'background_shells': _background_shells(trace_id, ended),
         **_bridge_reachability(trace_id),
         **_session_summary(trace_id, roster=roster, activity=activity),
     })
 
 
-def _background_shells(trace_id: str) -> list:
-    """The session's background shells, newest state first-class."""
+def _background_shells(trace_id: str, ended: bool = False) -> list:
+    """The session's background shells, newest state first-class.
+
+    `ended` settles the shells nothing ever reported on: a shell is a child of
+    the process that launched it, so a session that is over cannot still have
+    one running.
+    """
     from lib.orm.engine import get_connection
     from lib.trace.background_shells import shell_roster
     conn = get_connection()
     try:
-        return shell_roster(conn, _alias_group_ids(trace_id))
+        return shell_roster(conn, _alias_group_ids(trace_id), bool(ended))
     finally:
         conn.close()
 

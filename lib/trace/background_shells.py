@@ -57,16 +57,24 @@ def _attrs(raw) -> dict:
 
 
 def _completions(conn, trace_ids) -> dict:
-    """`{task_id: {status, summary, output_file, ended_at}}`."""
+    """`{task_id: {status, summary, output_file, ended_at}}`.
+
+    One envelope can settle SEVERAL tasks — that is how the harness reports
+    shells orphaned by a session that ended — so every id it names is read,
+    not just the one that keys the span.
+    """
     out: dict = {}
     for start_time, raw in _rows(conn, _NOTIFICATION_SQL, trace_ids):
         a = _attrs(raw)
-        task_id = a.get('task_id')
-        if isinstance(task_id, str) and task_id:
-            out[task_id] = {'status': a.get('status') or RUNNING,
-                            'summary': a.get('summary') or '',
-                            'output_file': a.get('output_file') or '',
-                            'ended_at': start_time}
+        ids = a.get('task_ids')
+        if not isinstance(ids, list) or not ids:
+            ids = [a.get('task_id')]
+        for task_id in ids:
+            if isinstance(task_id, str) and task_id:
+                out[task_id] = {'status': a.get('status') or RUNNING,
+                                'summary': a.get('summary') or '',
+                                'output_file': a.get('output_file') or '',
+                                'ended_at': start_time}
     return out
 
 
@@ -120,11 +128,23 @@ def _entry(row, attrs: dict, task_id: str, end: dict) -> dict:
     }
 
 
-def shell_roster(conn, trace_ids) -> list[dict]:
+#: A launch with no completion, on a session that is over. Not `running`: a
+#: shell is a child of the process that launched it, so once that process is
+#: gone the shell is too — whether the teardown killed it or it was orphaned.
+#: The harness reports orphans to the NEXT session, which may be a different
+#: trace entirely, so this session's own rows can never say so themselves.
+STOPPED = 'stopped'
+
+
+def shell_roster(conn, trace_ids, session_ended: bool = False) -> list[dict]:
     """Every background shell this session started, oldest first.
 
     One entry per task id: the append-only store holds a pending and a
     resolved row for the same call, and they are one shell.
+
+    `session_ended` settles the launches nothing ever reported on. A real
+    outcome always wins — an ended session does not rewrite a shell that
+    already said how it finished.
     """
     done = _completions(conn, trace_ids)
     by_task: dict = {}
@@ -134,4 +154,8 @@ def shell_roster(conn, trace_ids) -> list[dict]:
         if isinstance(task_id, str) and task_id:
             by_task[task_id] = _entry(row, attrs, task_id,
                                       done.get(task_id) or {})
-    return sorted(by_task.values(), key=lambda e: e['started_at'] or '')
+    entries = sorted(by_task.values(), key=lambda e: e['started_at'] or '')
+    if not session_ended:
+        return entries
+    return [e if e['status'] != RUNNING else {**e, 'status': STOPPED}
+            for e in entries]
