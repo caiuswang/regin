@@ -230,6 +230,16 @@ const SESSION_SUMMARY_KEYS = [
   'task_list',
   'queued_prompts',
   'agent_roster',
+  // The shell roster, for the same reason as `agent_roster`: it is
+  // whole-session and server-owned, so it changes without any span this
+  // client watches changing — a shell settles when a notification lands
+  // elsewhere. Pinned to the page-load row, the foot-of-feed block went on
+  // claiming a killed shell was running, elapsed ticking upward.
+  //
+  // Deliberately NOT added to useLiveTail's sibling allowlist: the /live card
+  // renders no shell block, so carrying it there would ship a payload nothing
+  // reads.
+  'background_shells',
   'server_now',
   'server_now_utc',
   // Steerability gates the conversation feed's follow-up composer; pinned to

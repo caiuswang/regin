@@ -176,6 +176,32 @@ def _selfheal_lost_tool_spans(trace_id: str, main_changed: bool) -> None:
         pass
 
 
+def _selfheal_lost_task_notifications(trace_id: str, main: str,
+                                      main_changed: bool) -> None:
+    """Recover `task.notification` spans the UserPromptSubmit hook never saw.
+
+    A notification arriving as a QUEUED item fires no prompt hook, so the hook
+    was a single point of loss — and the fact it carries (a background shell
+    was killed) has no other source. Gated on a shell that never settled, so a
+    session with nothing outstanding pays two indexed reads and no walk.
+    """
+    if not main_changed or not main:
+        return
+    try:
+        from lib.orm.engine import get_connection
+        from lib.trace.background_shells import has_unreported_shells
+        from lib.trace.repair import backfill_task_notifications
+        conn = get_connection()
+        try:
+            if not has_unreported_shells(conn, [trace_id]):
+                return
+        finally:
+            conn.close()
+        backfill_task_notifications(trace_id, main)
+    except Exception:
+        pass
+
+
 def _rescan_foreign_format(trace_id: str, provider, main: str) -> None:
     """Rescan a session whose transcript is not Claude-shaped.
 
@@ -255,6 +281,7 @@ def _do_rescan(trace_id: str) -> None:
 
         _selfheal_ghost_agents(trace_id)
         _selfheal_lost_tool_spans(trace_id, main_changed)
+        _selfheal_lost_task_notifications(trace_id, main, main_changed)
         _record_rescan_gate(trace_id, main)
 
         with _lock:

@@ -142,8 +142,8 @@ def _emit_task_notification_span(payload: HookPayload, text: str, fields: dict) 
     the task_id is missing (best-effort idempotency).
     """
     from lib.hook_plugin import post_span  # type: ignore
-    task_id = fields.get('task_id') or ''
-    span_id = f'task-{task_id[:13]}' if task_id else None
+    from lib.trace.task_notification import notification_span_id  # type: ignore
+    span_id = notification_span_id(fields.get('task_id') or '')
     attributes = {'text': text, **fields}
     post_span(
         trace_id=payload.session_id,

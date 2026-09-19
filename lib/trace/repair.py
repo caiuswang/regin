@@ -639,6 +639,65 @@ def _resolved_tool_use_ids(trace_id: str) -> set:
         conn.close()
 
 
+def _existing_notification_span_ids(trace_id: str) -> set:
+    """`task.notification` span ids already in the trace."""
+    from lib.orm.engine import get_connection
+
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT span_id FROM session_spans "
+            " WHERE trace_id = ? AND name = 'task.notification'",
+            (trace_id,),
+        ).fetchall()
+        return {r[0] for r in rows if r[0]}
+    finally:
+        conn.close()
+
+
+def _notification_texts(entries: list[dict]):
+    """Every `<task-notification>` body in the transcript, in order."""
+    from lib.trace.task_notification import ENVELOPE_MARKER
+    for e in entries:
+        if e.get('type') != 'user':
+            continue
+        content = e.get('message', {}).get('content')
+        if isinstance(content, str) and ENVELOPE_MARKER in content:
+            yield content
+
+
+def backfill_task_notifications(trace_id: str, path: str) -> int:
+    """Post `task.notification` spans the hook never wrote. Returns the count.
+
+    A notification injected as a QUEUED item — which is how a resumed session
+    learns its predecessor's background shells were killed — fires no
+    UserPromptSubmit hook, so the hook was a single point of loss for a fact
+    nothing else records. The transcript has the entry regardless.
+
+    Idempotent: keyed on the same span id the hook derives, and skipped
+    outright when that row is already present.
+    """
+    from lib.hook_plugin import post_span
+    from lib.trace.task_notification import (
+        notification_span_id, parse_task_notification,
+    )
+    entries = _load_transcript_entries(path)
+    if not entries:
+        return 0
+    existing = _existing_notification_span_ids(trace_id)
+    posted = 0
+    for text in _notification_texts(entries):
+        fields = parse_task_notification(text)
+        span_id = notification_span_id((fields or {}).get('task_id') or '')
+        if not span_id or span_id in existing:
+            continue
+        if post_span(trace_id=trace_id, name='task.notification',
+                     span_id=span_id, attributes={'text': text, **fields}):
+            existing.add(span_id)
+            posted += 1
+    return posted
+
+
 def has_stuck_pending_tools(trace_id: str, older_than_sec: int = 60) -> bool:
     """Cheap gate for the backfill: does the trace hold a PENDING
     `tool.*`/`permission.request` placeholder older than `older_than_sec`?

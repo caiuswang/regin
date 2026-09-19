@@ -152,3 +152,29 @@ test('an ended session shows no running shells', async ({ page }) => {
   await expect(page.locator('.event-spine')).toBeVisible({ timeout: 20_000 })
   await expect(block(page)).toHaveCount(0)
 })
+
+test('the block follows the roster on the live poll, with no reload', async ({ page }) => {
+  test.setTimeout(90_000)
+  // The roster is server-owned and whole-session, so it changes without any
+  // span the client is watching changing — a shell settles when a notification
+  // lands, and the block must stop claiming it is running.
+  const traceId = await seed(page, (t, p8, prompt) => [
+    shellSpan(t, prompt, `b1-${p8}`, 'shellA', 'Dev server'),
+  ])
+  await expect(block(page).locator('[data-background-shells-count]'))
+    .toHaveText('1 running')
+
+  const token = await page.evaluate(() => localStorage.getItem('regin_auth_token'))
+  expect((await page.request.post('/api/session-spans', {
+    headers: { Authorization: `Bearer ${token}` },
+    data: [{
+      trace_id: traceId, span_id: `task-late-${traceId.slice(0, 8)}`,
+      parent_id: `p-${traceId.slice(0, 8)}`, name: 'task.notification',
+      start_time: '2026-05-09T09:00:31',
+      attributes: { text: 'x', task_id: 'shellA', status: 'stopped',
+        summary: 'killed', is_test: true },
+    }],
+  })).ok()).toBeTruthy()
+
+  await expect(block(page)).toHaveCount(0, { timeout: 30_000 })
+})

@@ -45,6 +45,17 @@ _COUNTER_RE = {
 ENVELOPE_MARKER = '<task-notification>'
 
 
+def notification_span_id(task_id: str) -> str | None:
+    """The span id a notification lands on, or None without a task id.
+
+    Derived from the task id so the two writers — the UserPromptSubmit hook
+    and the transcript backfill — upsert ONE row instead of racing into a
+    duplicate. Shared rather than spelled out at each writer: they must agree
+    by construction.
+    """
+    return f'task-{task_id[:13]}' if task_id else None
+
+
 def _named_task_ids(body: str) -> list[str]:
     """Every real task the envelope names, in order.
 

@@ -113,6 +113,16 @@ def output_path(conn, trace_ids, task_id: str) -> str:
     return guess if os.path.exists(guess) else ''
 
 
+def has_unreported_shells(conn, trace_ids) -> bool:
+    """Does this session hold a shell nothing has reported the end of?
+
+    The gate for the notification backfill: a lost notification shows up
+    exactly here, as a launch that never settles. False costs two indexed
+    reads and skips the transcript walk entirely.
+    """
+    return any(e['status'] == RUNNING for e in shell_roster(conn, trace_ids))
+
+
 def _entry(row, attrs: dict, task_id: str, end: dict) -> dict:
     span_id, tool_use_id, start_time = row[0], row[1], row[2]
     return {
