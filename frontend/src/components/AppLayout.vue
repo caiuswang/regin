@@ -313,6 +313,12 @@ const navGroups = computed(() => [
   display: flex;
   flex-direction: column;
   height: calc(100vh - 2rem);
+  /* `overflow: hidden` only clips descendants this box is the containing
+     block for. Static, it clipped nothing absolutely positioned: a Tailwind
+     `.sr-only` input deep in the scroller resolved against the initial
+     containing block, escaped the clip, and grew the document past 100vh —
+     the window then scrolled to a blank slab below the shell. */
+  position: relative;
   overflow: hidden;
 }
 

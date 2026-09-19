@@ -109,6 +109,67 @@ test.describe('No horizontal overflow at narrow widths', () => {
   }
 })
 
+/**
+ * No-window-scroll invariant (the vertical counterpart).
+ *
+ * `.content` is sized to the viewport and declares `overflow: hidden`, so the
+ * window itself must never scroll — every page scrolls inside
+ * `.content-scroll`. A clip only reaches descendants the clipping box is the
+ * containing block for, so an absolutely positioned descendant (Tailwind's
+ * `.sr-only` is one) escapes it unless `.content` is positioned. Escaped, it
+ * grows the document past 100vh and the window scrolls to a blank slab below
+ * the shell — with the page's own last rows clipped out of reach.
+ */
+const windowScroll = (page) => page.evaluate(() => {
+  const d = document.documentElement
+  return { over: d.scrollHeight - d.clientHeight }
+})
+
+test.describe('No window scroll — the shell clips its own content', () => {
+  // `/trace/sessions/:id` is in the list on purpose: it is the only shell
+  // consumer flagged `fixedViewport: 'lg'`, so it takes a different `.content`
+  // branch above and below 1200px, and the mobile/tablet projects cross that
+  // threshold.
+  const ROUTES = ['/', '/tasks', '/inbox', '/memory', '/settings', `/trace/sessions/${BASELINE_TRACE}`]
+  for (const route of ROUTES) {
+    test(`the document does not scroll past the viewport on ${route}`, async ({ page }) => {
+      await page.goto(route)
+      // Asserted, not skipped: an unmounted shell means auth or the render
+      // failed, and a silently green invariant test is worth less than none.
+      // Auto-retrying, because `settle` can return before the SPA has mounted.
+      await expect(page.locator('.content'), `${route}: app shell never mounted`).toBeAttached()
+      await settle(page)
+      const m = await windowScroll(page)
+      expect(m.over, `${route}: window scrolls ${m.over}px past the shell`).toBeLessThanOrEqual(1)
+    })
+  }
+
+  test('an absolutely positioned child deep in the scroller cannot grow the document', async ({ page }) => {
+    await page.goto('/tasks')
+    await expect(page.locator('.content-scroll'), '/tasks: content pane never mounted').toBeAttached()
+    await settle(page)
+
+    const m = await page.evaluate(() => {
+      const scroller = document.querySelector('.content-scroll')
+      if (!scroller) return null
+      const spacer = document.createElement('div')
+      const filler = document.createElement('div')
+      filler.style.height = '2400px'
+      const probe = document.createElement('input')
+      probe.className = 'sr-only'
+      spacer.append(filler, probe)
+      scroller.appendChild(spacer)
+      const d = document.documentElement
+      const over = d.scrollHeight - d.clientHeight
+      const scrolls = scroller.scrollHeight > scroller.clientHeight
+      spacer.remove()
+      return { over, scrolls }
+    })
+    expect(m.scrolls, 'the inner pane must still scroll').toBe(true)
+    expect(m.over, `an .sr-only 2400px down grew the document by ${m.over}px`).toBeLessThanOrEqual(1)
+  })
+})
+
 test.describe('Detail pages — no horizontal overflow', () => {
   test('session trace detail: timeline spine wraps, pane does not scroll sideways', async ({ page }) => {
     // Straight to the seeded session. Clicking "the first link in the list"

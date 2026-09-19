@@ -65,6 +65,31 @@ async function stub(page, images, { body, onPatch } = {}) {
     route.fulfill({ json: { items: [] } }))
 }
 
+// The strip's file input is `.sr-only` — `position: absolute` with no insets.
+// Sitting deep in `.content-scroll`, it escaped the shell's `overflow: hidden`
+// until `.content` was given `position: relative`, grew the document past
+// 100vh, and left the window scrolling onto a blank slab below the layout.
+test('the image strip does not make the window scroll past the shell',
+  async ({ page }) => {
+    await stub(page, [summary(1), summary(2)], {
+      body: Array.from({ length: 120 }, (_, i) => `spec line ${i}`).join('\n\n'),
+    })
+    await page.goto('/features/242')
+    await expect(page.getByTestId('feature-images').locator('.task-image-thumb'))
+      .toHaveCount(2)
+
+    const m = await page.evaluate(() => {
+      const d = document.documentElement
+      const pane = document.querySelector('.content-scroll')
+      return {
+        over: d.scrollHeight - d.clientHeight,
+        paneScrolls: !!pane && pane.scrollHeight > pane.clientHeight,
+      }
+    })
+    expect(m.paneScrolls, 'the page must be long enough to be a real probe').toBe(true)
+    expect(m.over, `the window scrolls ${m.over}px past the shell`).toBeLessThanOrEqual(1)
+  })
+
 test('the feature renders every image it carries', async ({ page }) => {
   await stub(page, [summary(1), summary(2)])
   await page.goto('/features/242')
