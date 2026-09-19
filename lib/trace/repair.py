@@ -698,6 +698,50 @@ def backfill_task_notifications(trace_id: str, path: str) -> int:
     return posted
 
 
+def backfill_killed_shell_notifications(trace_id: str) -> int:
+    """Post the completion of every background shell that died unreported.
+
+    The third writer of a `task.notification`, after the UserPromptSubmit hook
+    and the transcript backfill. Both of those need the harness to say
+    something, and for a killed shell it never does — the only record is the
+    `[killed]` / `[exited with code N]` line the harness appends to the
+    shell's OWN output file, whose name is the task id. Without this a dead
+    shell counts as running in the foot-of-feed roster forever and its
+    launching card never settles.
+
+    Idempotent, and it never overwrites a real outcome: only shells the roster
+    still calls running are read, and the span id is the one all three writers
+    derive, so a real envelope arriving later replaces this row.
+    """
+    from lib.hook_plugin import post_span
+    from lib.orm.engine import get_connection
+    from lib.trace.background_shells import (
+        RUNNING, output_path, shell_roster, terminal_outcome,
+    )
+    from lib.trace.task_notification import notification_span_id
+
+    conn = get_connection()
+    try:
+        unreported = [(e['task_id'], output_path(conn, [trace_id], e['task_id']))
+                      for e in shell_roster(conn, [trace_id])
+                      if e['status'] == RUNNING]
+    finally:
+        conn.close()
+    posted = 0
+    for task_id, path in unreported:
+        outcome = terminal_outcome(path) if path else None
+        if outcome and post_span(
+                trace_id=trace_id, name='task.notification',
+                span_id=notification_span_id(task_id),
+                start_time=outcome['ended_at'],
+                attributes={'task_id': task_id, 'task_ids': [task_id],
+                            'status': outcome['status'],
+                            'summary': outcome['summary'],
+                            'output_file': path}):
+            posted += 1
+    return posted
+
+
 def has_stuck_pending_tools(trace_id: str, older_than_sec: int = 60) -> bool:
     """Cheap gate for the backfill: does the trace hold a PENDING
     `tool.*`/`permission.request` placeholder older than `older_than_sec`?

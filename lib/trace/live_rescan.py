@@ -181,23 +181,30 @@ def _selfheal_lost_task_notifications(trace_id: str, main: str,
     """Recover `task.notification` spans the UserPromptSubmit hook never saw.
 
     A notification arriving as a QUEUED item fires no prompt hook, so the hook
-    was a single point of loss — and the fact it carries (a background shell
-    was killed) has no other source. Gated on a shell that never settled, so a
-    session with nothing outstanding pays two indexed reads and no walk.
+    was a single point of loss.
+
+    Two writers run here: the transcript, for an envelope the hook missed, and
+    the shell's own output file, for the death the harness told nobody about.
+    The file writer runs last, so a real envelope wins the span id they share,
+    and unconditionally, because a killed shell may leave no further
+    transcript entry to trigger on. Both are gated on a shell that never
+    settled — one roster read on a session with nothing outstanding.
     """
-    if not main_changed or not main:
-        return
     try:
         from lib.orm.engine import get_connection
         from lib.trace.background_shells import has_unreported_shells
-        from lib.trace.repair import backfill_task_notifications
-        conn = get_connection()
-        try:
-            if not has_unreported_shells(conn, [trace_id]):
-                return
-        finally:
-            conn.close()
-        backfill_task_notifications(trace_id, main)
+        from lib.trace.repair import (
+            backfill_killed_shell_notifications, backfill_task_notifications,
+        )
+        if main_changed and main:
+            conn = get_connection()
+            try:
+                unreported = has_unreported_shells(conn, [trace_id])
+            finally:
+                conn.close()
+            if unreported:
+                backfill_task_notifications(trace_id, main)
+        backfill_killed_shell_notifications(trace_id)
     except Exception:
         pass
 

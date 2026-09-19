@@ -14,7 +14,9 @@ import sqlite3
 
 import pytest
 
-from lib.trace.background_shells import output_path, shell_roster, tasks_dir
+from lib.trace.background_shells import (
+    output_path, shell_roster, tasks_dir, terminal_outcome,
+)
 
 TASKS = '/private/tmp/claude-501/-Users-taowang-regin/PARENT/tasks'
 
@@ -171,3 +173,52 @@ def test_a_live_session_still_reports_running(conn):
 
     [entry] = shell_roster(conn, ['t'], session_ended=False)
     assert entry['status'] == 'running'
+
+
+def _output(tmp_path, text):
+    path = tmp_path / 'bo58vwcaw.output'
+    path.write_text(text)
+    return str(path)
+
+
+def test_a_killed_shell_is_read_off_its_own_output_file(tmp_path):
+    """The harness appends its last word to the output file and tells nobody
+    else — two thirds of the corpus's shells never got a notification at all,
+    and a killed one never does."""
+    outcome = terminal_outcome(_output(tmp_path, 'step 1\nstep 2\n\n[killed]\n'))
+
+    assert outcome['status'] == 'killed'
+    assert outcome['summary'] == 'Shell killed'
+    assert outcome['ended_at']
+
+
+def test_a_clean_exit_reads_completed(tmp_path):
+    outcome = terminal_outcome(_output(tmp_path, 'done\n\n[exited with code 0]\n'))
+
+    assert outcome['status'] == 'completed'
+    assert outcome['summary'] == 'Shell exited with code 0'
+
+
+def test_a_nonzero_exit_reads_failed(tmp_path):
+    outcome = terminal_outcome(_output(tmp_path, 'boom\n\n[exited with code 1]\n'))
+
+    assert outcome['status'] == 'failed'
+
+
+def test_a_file_with_no_marker_settles_nothing(tmp_path):
+    assert terminal_outcome(_output(tmp_path, 'still writing\n')) is None
+
+
+def test_a_marker_the_command_printed_settles_nothing(tmp_path):
+    """The marker is the harness's LAST line. A shell that merely prints the
+    phrase and keeps running is still running."""
+    assert terminal_outcome(_output(tmp_path, '[killed]\nand on we go\n')) is None
+
+
+def test_a_missing_file_settles_nothing(tmp_path):
+    assert terminal_outcome(str(tmp_path / 'gone.output')) is None
+
+
+def test_a_long_file_is_read_from_its_tail(tmp_path):
+    assert terminal_outcome(
+        _output(tmp_path, 'x' * 100_000 + '\n[killed]\n'))['status'] == 'killed'

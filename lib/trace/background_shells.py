@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+from datetime import datetime
 
 _LAUNCH_SQL = """
     SELECT span_id, tool_use_id, start_time, status_code, attributes
@@ -41,6 +43,49 @@ _NOTIFICATION_SQL = """
 """
 
 RUNNING = 'running'
+
+#: The harness's own last word on a shell, appended to its output file when
+#: the shell dies: `[killed]` for a KillShell or a teardown, the exit code for
+#: a shell that ran to its end. Matched as a whole line, so the phrase inside
+#: a line of a command's own output settles nothing — a live command whose
+#: LAST line is exactly the marker is the one ambiguity this format leaves.
+_TERMINAL_RE = re.compile(r'^\[(?:killed|exited with code (\d+))\]$')
+
+_TAIL_BYTES = 256
+
+
+def terminal_outcome(path: str) -> dict | None:
+    """`{status, summary, ended_at}` when the file ends in the harness's
+    end-of-shell marker, else None.
+
+    The third source of a completion, and for most shells the only one: two
+    thirds of the corpus's background shells never got a `task.notification`
+    at all, and a killed one is reported to nobody. None means nothing said so
+    — a shell still writing and a file that is gone are both left `running`
+    rather than guessed at.
+    """
+    try:
+        with open(path, 'rb') as fh:
+            stat = os.fstat(fh.fileno())
+            if stat.st_size > _TAIL_BYTES:
+                fh.seek(stat.st_size - _TAIL_BYTES)
+            tail = fh.read().decode('utf-8', 'replace')
+    except OSError:
+        return None
+    lines = [line.strip() for line in tail.splitlines() if line.strip()]
+    match = _TERMINAL_RE.match(lines[-1]) if lines else None
+    if not match:
+        return None
+    code = match.group(1)
+    return {
+        'status': _exit_status(code) if code is not None else 'killed',
+        'summary': f'Shell {lines[-1][1:-1]}',
+        'ended_at': datetime.fromtimestamp(stat.st_mtime).isoformat(),
+    }
+
+
+def _exit_status(code: str) -> str:
+    return 'completed' if code == '0' else 'failed'
 
 
 def _rows(conn, sql: str, trace_ids) -> list:
