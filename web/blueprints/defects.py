@@ -25,12 +25,14 @@ from __future__ import annotations
 
 import json
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, Response, jsonify, request
 
 from lib.auth import require_auth, require_editor
+from lib.defects import images as defect_images
 from lib.defects import query as defect_query
 from lib.defects import store
 from lib.utils.pagination import clamp_page, clamp_size
+from web.blueprints.image_payload import decoded_image, wanted_idx
 
 defects_bp = Blueprint("defects", __name__)
 
@@ -42,7 +44,7 @@ SCOPE_FEATURE = defect_query.SCOPE_FEATURE
 SCOPE_FIX_ITEM = defect_query.SCOPE_FIX_ITEM
 
 
-def _view(row, feature_title, blamed_event_kind) -> dict:
+def _view(row, feature_title, blamed_event_kind, images=None) -> dict:
     return {
         "id": row.id, "feature_id": row.feature_id, "symptom": row.symptom,
         # The feature's own title, never a task's: the two answer different
@@ -60,6 +62,10 @@ def _view(row, feature_title, blamed_event_kind) -> dict:
         "fix_task_id": row.fix_task_id,
         "opened_at": row.opened_at, "updated_at": row.updated_at,
         "closed_at": row.closed_at,
+        # Metadata only — the bytes are a separate GET, so a page of 50
+        # reports does not carry a megabyte of base64.
+        "images": defect_images.list_for(row.id) if images is None
+        else images,
     }
 
 
@@ -131,8 +137,14 @@ def api_list_defects():
                            page=clamp_page(request.args.get("page")),
                            size=clamp_size(request.args.get("size")))
     body = result.to_envelope()
+    # One read for the page's images, not one per row: this is a BLOB table
+    # and a per-row call would be an N+1 against it.
+    by_defect = defect_images.summaries_for(
+        row.defect.id for row in result.items)
     body["items"] = [_view(row.defect, row.feature_title,
-                           row.blamed_event_kind) for row in result.items]
+                           row.blamed_event_kind,
+                           by_defect.get(row.defect.id, []))
+                     for row in result.items]
     # The scope and the sort are echoed because the controls above the list
     # have to be able to render what the server actually applied — a sort key
     # the server fell back on, shown as the one that was asked for, is a
@@ -235,3 +247,51 @@ def api_close_defect(defect_id: int):
 def api_reopen_defect(defect_id: int):
     """Record that we claimed this fixed and were wrong. This is the round."""
     return _write(defect_id, lambda: store.reopen(defect_id))
+
+
+# ── images ───────────────────────────────────────────────────
+
+@defects_bp.route("/api/defects/<int:defect_id>/images", methods=["POST"])
+@require_editor
+def api_attach_defect_image(defect_id: int):
+    """Attach one screenshot to a defect.
+
+    A refusal is a 400 with the reason, not a silent drop: the reporter is
+    watching a thumbnail that has to either appear or explain itself.
+    """
+    if _missing(defect_id):
+        return jsonify({"error": f"no defect {defect_id}"}), 404
+    try:
+        payload = request.get_json(silent=True)
+        data = decoded_image(payload)
+        return jsonify({"image": defect_images.attach(
+            defect_id, data, wanted_idx(payload))}), 201
+    except ValueError as exc:
+        return jsonify({"error": str(exc), "field": "data_b64"}), 400
+
+
+@defects_bp.route("/api/defects/<int:defect_id>/images/<int:idx>",
+                  methods=["DELETE"])
+@require_editor
+def api_remove_defect_image(defect_id: int, idx: int):
+    """Detach one screenshot. 404 when nothing is at that index."""
+    if not defect_images.remove(defect_id, idx):
+        return jsonify({"error": "unknown image"}), 404
+    return jsonify({"removed": True, "idx": idx})
+
+
+@defects_bp.route("/api/defects/<int:defect_id>/images/<int:idx>")
+@require_auth
+def api_get_defect_image(defect_id: int, idx: int):
+    """Serve one screenshot as raw bytes, for the thumbnail on the row."""
+    found = defect_images.get_bytes(defect_id, idx)
+    if found is None:
+        return jsonify({"error": "unknown image"}), 404
+    data, media_type = found
+    # A cached (defect, idx) pair, because the index is stable for as long as
+    # the image is. It is NOT stable across a delete of the HIGHEST index —
+    # that one is reissued (`ImageSet.remove`), so re-attaching after such a
+    # delete can serve the previous picture for the life of the cache. Defect
+    # #177.
+    return Response(data, mimetype=media_type,
+                    headers={"Cache-Control": "private, max-age=86400"})

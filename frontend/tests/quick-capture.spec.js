@@ -195,6 +195,52 @@ test.describe('quick idea capture', () => {
     await expect(row.getByTestId('task-image-count')).toHaveText('1 image')
   })
 
+  test('a paste into Details writes the reference the body needs to name it',
+    async ({ page }) => {
+      // The reported defect: the bytes attached and the prose had no way to
+      // say so. `![](image:N)` is unguessable, and a held image has no server
+      // index yet — the browser allocates one and asks for it at flush.
+      await gotoTasks(page)
+      await openByChord(page)
+      await page.locator('#quick-capture-body').fill('Before.')
+      await pasteInto(page, '#quick-capture-body')
+
+      await expect(page.getByTestId('task-image-strip')).toContainText('image:1')
+      // At the caret, which `fill` leaves at the end.
+      await expect(page.locator('#quick-capture-body'))
+        .toHaveValue('Before.\n![](image:1)\n')
+    })
+
+  test('a second capture does not attach its image to the first one',
+    async ({ page }) => {
+      // The composer is mounted for the life of the page, so the composable
+      // that flushed the first idea's images was still bound to that idea's
+      // id. A paste into the reopened bubble went straight onto the previous
+      // row, and the new idea was captured with no picture at all.
+      await gotoTasks(page)
+      await openByChord(page)
+      await pasteInto(page, '#quick-capture-body')
+      await page.locator('#quick-capture-title').fill(`first ${runMark()}`)
+      await markDraft(page)
+      await page.getByTestId('quick-capture-save').click()
+      await expect(page.getByTestId('quick-capture-form')).toBeHidden()
+
+      await openByChord(page)
+      // Still HELD, not posted: an immediate upload is what the stale owner id
+      // caused, and a held image is what a composer is supposed to have.
+      await pasteInto(page, '#quick-capture-body')
+      await expect(page.getByTestId('task-image-strip')).toContainText('image:1')
+
+      await page.locator('#quick-capture-title').fill(`second ${runMark()}`)
+      await markDraft(page)
+      await page.getByTestId('quick-capture-save').click()
+      await expect(page.getByTestId('quick-capture-form')).toBeHidden()
+
+      const rows = page.locator('.task-row')
+      await expect(rows.first().getByTestId('task-image-count')).toHaveText('1 image')
+      await expect(rows.nth(1).getByTestId('task-image-count')).toHaveText('1 image')
+    })
+
   test('a held Enter captures the idea once, not twice', async ({ page }) => {
     await gotoTasks(page)
     await expect(page.getByTestId('task-list')).toBeVisible()

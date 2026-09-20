@@ -22,13 +22,14 @@ from alembic import command
 
 from lib import db_migrate
 
-_TABLES = ("defects", "session_features", "features", "feature_events")
-_REVISION = "0029"
+_TABLES = ("defects", "defect_images", "session_features", "features",
+           "feature_events")
+_REVISION = "0033"
 #: Everything else the walk from 0017 creates or alters, dropped so the replay
 #: does not collide with what `schema.sql` already built.
 _REPLAYED = ("api_keys", "agent_tasks", "agent_task_runs", "agent_task_deps",
              "agent_task_images", "agent_task_links", "issue_cache",
-             "comments", "comment_threads")
+             "comments", "comment_threads", "feature_images")
 _SCHEMA_SQL = Path(__file__).resolve().parents[2] / "db" / "schema.sql"
 
 
@@ -71,7 +72,7 @@ def _shape(path) -> dict:
 
 @pytest.fixture
 def alembic_built(tmp_db):
-    """`tmp_db` (built from schema.sql) with the tables rebuilt by 0017-0028."""
+    """`tmp_db` (built from schema.sql) with the tables rebuilt by 0017-0033."""
     conn = sqlite3.connect(str(tmp_db))
     try:
         for index in ("idx_defects_feature", "uq_defects_session_symptom",
@@ -80,7 +81,8 @@ def alembic_built(tmp_db):
                       "idx_agent_task_images_task", "idx_agent_tasks_project",
                       "idx_agent_tasks_created",
                       "idx_agent_tasks_status_created",
-                      "idx_agent_tasks_priority", "idx_agent_tasks_feature"):
+                      "idx_agent_tasks_priority", "idx_agent_tasks_feature",
+                      "idx_feature_images_feature", "idx_defect_images_defect"):
             conn.execute(f"DROP INDEX IF EXISTS {index}")
         for table in _TABLES + _REPLAYED:
             conn.execute(f"DROP TABLE IF EXISTS {table}")

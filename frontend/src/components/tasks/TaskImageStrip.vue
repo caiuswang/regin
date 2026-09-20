@@ -1,10 +1,16 @@
 <script setup>
-// The thumbnails and the attach button, for both surfaces that edit a task's
-// images. Paste and drop are bound by the PARENT, on the form the operator is
-// actually typing in — a strip that is empty until the first image has nothing
-// to paste into.
+// The thumbnails and the attach button, for every surface that edits an
+// owning row's images. Paste and drop are bound by the PARENT, on the form the
+// operator is actually typing in — a strip that is empty until the first image
+// has nothing to paste into.
+//
+// A thumbnail is 4.5rem, which is enough to tell two screenshots apart and not
+// enough to read one, so clicking it opens the picture full size. The lightbox
+// lives here rather than in each parent: every surface that shows the strip
+// needs it, and a preview that exists on only some of them is the defect.
 import { ref } from 'vue'
 import Button from '../ui/Button.vue'
+import Dialog from '../ui/Dialog.vue'
 import Icon from '../ui/Icon.vue'
 
 defineProps({
@@ -15,6 +21,7 @@ defineProps({
 const emit = defineEmits(['pick', 'remove'])
 
 const fileEl = ref(null)
+const zoomed = ref(null)
 
 function onPick(e) {
   emit('pick', e.target)
@@ -26,11 +33,20 @@ function onPick(e) {
   <div class="task-images">
     <div v-if="items.length" class="task-image-strip" data-testid="task-image-strip">
       <span v-for="img in items" :key="img.key" class="task-image-chip">
-        <img :src="img.url" :alt="img.name" class="task-image-thumb">
+        <Button
+          variant="ghost"
+          class="task-image-zoom"
+          :aria-label="`Open ${img.name} full size`"
+          data-testid="task-image-thumb"
+          @click="zoomed = img"
+        >
+          <img :src="img.url" :alt="img.name" class="task-image-thumb">
+        </Button>
         <!-- The index is the name an `![](image:N)` reference uses, so the
-             hint that points at "each thumbnail" has to be true here. Absent
-             on a held file: a composer's images have no idx until the row
-             they hang off exists. -->
+             hint that points at "each thumbnail" has to be true here. A held
+             file carries one too: the composer writes the reference at the
+             moment of the paste, and the server is asked for that index when
+             the row it hangs off finally exists. -->
         <span
           v-if="img.idx !== null && img.idx !== undefined"
           class="task-image-idx"
@@ -72,6 +88,18 @@ function onPick(e) {
     <p v-if="error" class="task-image-error" role="alert" data-testid="task-image-error">
       {{ error }}
     </p>
+
+    <Dialog
+      v-if="zoomed"
+      :open="true"
+      :title="zoomed.name"
+      :description="zoomed.idx !== null && zoomed.idx !== undefined
+        ? `Embed it with ![](image:${zoomed.idx})` : 'Not attached yet.'"
+      data-testid="task-image-lightbox"
+      @update:open="v => !v && (zoomed = null)"
+    >
+      <img :src="zoomed.url" :alt="zoomed.name" class="task-image-full">
+    </Dialog>
   </div>
 </template>
 
@@ -112,11 +140,26 @@ function onPick(e) {
     background: var(--color-surface-2);
     overflow: hidden;
 }
+.task-image-zoom {
+    display: block;
+    height: auto;
+    padding: 0;
+    border: 0;
+    background: none;
+    cursor: zoom-in;
+}
 .task-image-thumb {
     display: block;
     width: 4.5rem;
     height: 4.5rem;
     object-fit: cover;
+}
+.task-image-full {
+    display: block;
+    max-width: 100%;
+    max-height: 70vh;
+    margin: 0 auto;
+    object-fit: contain;
 }
 .task-image-x {
     position: absolute;

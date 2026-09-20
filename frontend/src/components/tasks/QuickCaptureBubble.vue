@@ -22,6 +22,8 @@ import { TITLE_MAX } from '../../composables/useTasks.js'
 import { useFlash } from '../../composables/useFlash.js'
 import { useQuickCapture } from '../../composables/useQuickCapture.js'
 import { useAttachedImages } from '../../composables/useAttachedImages.js'
+import { caretTarget, withCaretInsert } from '../../utils/caret'
+import { imageRefBlock } from '../../utils/taskBodyImages'
 
 defineProps({
   // The phone blocker bar is `position: fixed` at the bottom of the viewport;
@@ -62,16 +64,29 @@ function focusTitle() {
   titleInput.value?.focus()
 }
 
+const bodyArea = ref(null)
+
+// Attaching is only half of it: the bytes are useless to a reader until the
+// prose names them, and `![](image:N)` is unguessable. The index a held file
+// carries is allocated in the browser and asked for at flush, so the reference
+// is writable at the moment of the paste rather than after the row exists.
+async function takeImages(source, event) {
+  const refs = imageRefBlock(await addImages(source))
+  if (!refs) return
+  draft.value.body = withCaretInsert(
+    caretTarget(event, bodyArea.value), draft.value.body, refs)
+}
+
 async function onPaste(e) {
   if (!imageFilesFrom(e.clipboardData).length) return
   e.preventDefault()
-  await addImages(e.clipboardData)
+  await takeImages(e.clipboardData, e)
 }
 
 async function onDrop(e) {
   if (!imageFilesFrom(e.dataTransfer).length) return
   e.preventDefault()
-  await addImages(e.dataTransfer)
+  await takeImages(e.dataTransfer, e)
 }
 
 async function submit() {
@@ -137,6 +152,7 @@ async function submit() {
         </label>
         <Textarea
           id="quick-capture-body"
+          ref="bodyArea"
           v-model="draft.body"
           :rows="3"
           aria-label="Idea details"
@@ -150,7 +166,7 @@ async function submit() {
           :items="images"
           :busy="imagesBusy"
           :error="imagesError"
-          @pick="addImages"
+          @pick="takeImages"
           @remove="removeImage"
         />
       </div>

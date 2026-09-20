@@ -176,17 +176,6 @@ async function undeclare(row) {
   await load()
 }
 
-// The idx of each image this gesture actually added, by difference: the
-// shared composable reports only whether it claimed the files, and the
-// reference written into the spec is made of the index.
-async function attachImages(source) {
-  const before = new Set(imageItems.value.map(img => img.idx))
-  await addImages(source)
-  return imageItems.value
-    .map(img => img.idx)
-    .filter(idx => idx !== null && idx !== undefined && !before.has(idx))
-}
-
 function onDeclared() {
   declaring.value = false
   load()
@@ -194,7 +183,7 @@ function onDeclared() {
 </script>
 
 <template>
-  <div class="mx-auto max-w-5xl space-y-4 p-4">
+  <div class="space-y-4 p-4">
     <router-link :to="backTo" class="back">
       <Icon name="chevron-left" :size="14" />Features
     </router-link>
@@ -249,7 +238,7 @@ function onDeclared() {
         :body="ledger.body"
         :images="imageItems"
         :can-write="canWrite"
-        :attach="attachImages"
+        :attach="addImages"
         @saved="ledger = $event"
       />
 

@@ -22,6 +22,8 @@ import Input from '../ui/Input.vue'
 import TaskImageStrip from '../tasks/TaskImageStrip.vue'
 import Textarea from '../ui/Textarea.vue'
 import { useAttachedImages } from '../../composables/useAttachedImages.js'
+import { caretTarget, withCaretInsert } from '../../utils/caret'
+import { imageRefBlock } from '../../utils/taskBodyImages'
 import { imageFilesFrom } from '../../utils/imageFiles'
 
 const open = defineModel('open', { type: Boolean, default: false })
@@ -60,16 +62,30 @@ watch(open, (isOpen) => {
   resetImages()
 })
 
+const bodyArea = ref(null)
+
+// Attaching is only half of it: a mockup the spec cannot name is a picture
+// beside the spec rather than a picture in it, and `![](image:N)` is
+// unguessable. The index a held file carries is allocated in the browser and
+// asked for at flush, so the reference is writable before the feature exists.
+
+async function takeImages(source, event) {
+  const refs = imageRefBlock(await addImages(source))
+  if (!refs) return
+  body.value = withCaretInsert(
+    caretTarget(event, bodyArea.value), body.value, refs)
+}
+
 async function onPaste(e) {
   if (!imageFilesFrom(e.clipboardData).length) return
   e.preventDefault()
-  await addImages(e.clipboardData)
+  await takeImages(e.clipboardData, e)
 }
 
 async function onDrop(e) {
   if (!imageFilesFrom(e.dataTransfer).length) return
   e.preventDefault()
-  await addImages(e.dataTransfer)
+  await takeImages(e.dataTransfer, e)
 }
 
 // The empty title and the unresolvable reference are both refused by the
@@ -152,6 +168,7 @@ async function declare() {
         <label class="nf-label" for="nf-body">Spec</label>
         <Textarea
           id="nf-body"
+          ref="bodyArea"
           v-model="body"
           data-testid="declare-body"
           :rows="8"
@@ -164,7 +181,7 @@ async function declare() {
         :items="images"
         :busy="imagesBusy"
         :error="imagesError"
-        @pick="addImages"
+        @pick="takeImages"
         @remove="removeImage"
       />
 

@@ -7,6 +7,7 @@
 // evidence a reader needs to decide which feature caused it.
 import Badge from '../Badge.vue'
 import DefectActions from './DefectActions.vue'
+import DefectImages from './DefectImages.vue'
 import { shortDate } from '../../utils/ledgerFormat'
 
 defineProps({
@@ -39,6 +40,11 @@ defineEmits(['changed'])
     </div>
 
     <p class="symptom">{{ defect.symptom }}</p>
+
+    <!-- Only when the row really carries evidence: binding costs one
+         authenticated fetch per picture, and a list of reports that mostly
+         have none should pay nothing for them. -->
+    <DefectImages v-if="defect.images?.length" :defect="defect" />
 
     <dl class="facts">
       <template v-if="defect.suspect_paths.length">

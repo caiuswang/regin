@@ -40,9 +40,6 @@ carrying a second lifecycle of their own.
 
 from __future__ import annotations
 
-import base64
-import binascii
-
 from flask import Blueprint, Response, g, jsonify, request
 from sqlmodel import func, select
 
@@ -60,6 +57,7 @@ from lib.tasks import (arm, capture, deps, images, query,
                        ratelimit, runs, store)
 from lib.tasks import integrations
 from lib.utils.pagination import clamp_size, keyset_page_stmt
+from web.blueprints.image_payload import decoded_image, wanted_idx
 
 tasks_bp = Blueprint('tasks', __name__)
 
@@ -384,22 +382,6 @@ def _unknown_task():
 
 # ── images ───────────────────────────────────────────────────
 
-def _decoded_image(payload) -> bytes:
-    """The bytes a composer sent, or ValueError with the reason.
-
-    Base64 in JSON rather than multipart because that is what the sibling
-    `bridge-attachments` ingest takes and what the SPA's api client can send
-    without a second transport.
-    """
-    raw = (payload or {}).get("data_b64")
-    if not isinstance(raw, str) or not raw:
-        raise ValueError("data_b64 required")
-    try:
-        return base64.b64decode(raw, validate=True)
-    except (ValueError, binascii.Error):
-        raise ValueError("data_b64 is not valid base64") from None
-
-
 @tasks_bp.route('/api/tasks/<int:task_id>/images', methods=['POST'])
 @require_editor
 def api_attach_task_image(task_id: int):
@@ -411,8 +393,10 @@ def api_attach_task_image(task_id: int):
     if store.get_task(task_id) is None:
         return _unknown_task()
     try:
-        data = _decoded_image(request.get_json(silent=True))
-        return jsonify({"image": images.attach(task_id, data)}), 201
+        payload = request.get_json(silent=True)
+        data = decoded_image(payload)
+        return jsonify({"image": images.attach(
+            task_id, data, wanted_idx(payload))}), 201
     except ValueError as exc:
         log.error("task_image_rejected", task_id=task_id, detail=str(exc))
         return jsonify({"error": str(exc), "field": "data_b64"}), 400
@@ -435,8 +419,11 @@ def api_get_task_image(task_id: int, idx: int):
     if found is None:
         return jsonify({"error": "unknown image"}), 404
     data, media_type = found
-    # `idx` is never reused once freed (`images.remove`), so a (task, idx) pair
-    # names the same bytes forever and can be cached hard.
+    # A cached (task, idx) pair, because the index is stable for as long as
+    # the image is. It is NOT stable across a delete of the HIGHEST index —
+    # that one is reissued (`ImageSet.remove`), so re-attaching after such a
+    # delete can serve the previous picture for the life of the cache. Defect
+    # #177.
     return Response(data, mimetype=media_type,
                     headers={"Cache-Control": "private, max-age=86400"})
 

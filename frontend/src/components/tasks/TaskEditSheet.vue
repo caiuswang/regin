@@ -18,6 +18,8 @@ import { PRIORITIES } from '../../utils/taskMeta.js'
 import { imageFilesFrom } from '../../utils/imageFiles'
 import { useProjects } from '../../composables/useProjects.js'
 import { useAttachedImages } from '../../composables/useAttachedImages.js'
+import { caretTarget, withCaretInsert } from '../../utils/caret'
+import { imageRefBlock } from '../../utils/taskBodyImages'
 import { useTaskEdit } from '../../composables/useTaskEdit.js'
 
 const props = defineProps({
@@ -39,16 +41,29 @@ onMounted(() => {
 
 // Paste and drop are bound on the form rather than on the strip: an operator
 // pastes into the field they are typing in, and the event bubbles to here.
+const bodyArea = ref(null)
+
+// Attaching is only half of it: the bytes are useless to a reader until the
+// prose names them, and `![](image:N)` is unguessable. The task is saved, so
+// the index here is the server's own from the moment the upload returns.
+
+async function takeImages(source, event) {
+  const refs = imageRefBlock(await addImages(source))
+  if (!refs) return
+  draft.value.body = withCaretInsert(
+    caretTarget(event, bodyArea.value), draft.value.body, refs)
+}
+
 async function onPaste(e) {
   if (!imageFilesFrom(e.clipboardData).length) return
   e.preventDefault()
-  await addImages(e.clipboardData)
+  await takeImages(e.clipboardData, e)
 }
 
 async function onDrop(e) {
   if (!imageFilesFrom(e.dataTransfer).length) return
   e.preventDefault()
-  await addImages(e.dataTransfer)
+  await takeImages(e.dataTransfer, e)
 }
 
 async function submit() {
@@ -85,6 +100,7 @@ async function submit() {
         <label class="field-label" for="task-edit-body">Details</label>
         <Textarea
           id="task-edit-body"
+          ref="bodyArea"
           v-model="draft.body"
           :rows="4"
           aria-label="Task details"
@@ -131,7 +147,7 @@ async function submit() {
           :items="imageItems"
           :busy="imageBusy"
           :error="imageError"
-          @pick="addImages"
+          @pick="takeImages"
           @remove="removeImage"
         />
       </div>

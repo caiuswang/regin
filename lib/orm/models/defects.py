@@ -22,7 +22,8 @@ from __future__ import annotations
 from typing import Optional
 
 from sqlmodel import (
-    Column, Field, ForeignKey, Index, Integer, Text, UniqueConstraint, text,
+    Column, Field, ForeignKey, Index, Integer, LargeBinary, String, Text,
+    UniqueConstraint, text,
 )
 
 from lib.orm.base import Base
@@ -107,3 +108,39 @@ class Defect(Base, table=True):
         default=None,
         sa_column=Column("blamed_event_id", Integer,
                          ForeignKey("feature_events.id", ondelete="SET NULL")))
+
+
+class DefectImage(Base, table=True):
+    """A screenshot attached to a defect report.
+
+    The third `ImageSet` owner, and the only one whose bytes are evidence
+    rather than input: a task's and a feature's images ride an agent's prompt,
+    while these are what the reporter saw. Nothing delivers them to a model —
+    the fix task cut from the defect carries its own.
+
+    A separate table for the reason the other two are separate: one owner per
+    column, so "whose image is this" is never a join away from ambiguous.
+    `idx` is a per-defect order, allocated by the writer and never reissued
+    once freed.
+    """
+
+    __tablename__ = "defect_images"
+    __table_args__ = (UniqueConstraint("defect_id", "idx",
+                                       name="uq_defect_images_idx"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    defect_id: int = Field(
+        sa_column=Column("defect_id", Integer,
+                         ForeignKey("defects.id", ondelete="CASCADE"),
+                         nullable=False, index=True))
+    idx: int = Field(sa_column=Column("idx", Integer, nullable=False))
+    media_type: str = Field(
+        sa_column=Column("media_type", String, nullable=False))
+    bytes_: bytes = Field(
+        sa_column=Column("bytes", LargeBinary, nullable=False))
+    byte_size: int = Field(
+        sa_column=Column("byte_size", Integer, nullable=False))
+    sha256: str = Field(sa_column=Column("sha256", String, nullable=False))
+    created_at: str = Field(
+        sa_column=Column("created_at", String, nullable=False,
+                         server_default=text("(datetime('now'))")))

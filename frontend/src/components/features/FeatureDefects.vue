@@ -23,6 +23,9 @@ import Card from '../Card.vue'
 import Icon from '../ui/Icon.vue'
 import Textarea from '../ui/Textarea.vue'
 import DefectRow from '../defects/DefectRow.vue'
+import TaskImageStrip from '../tasks/TaskImageStrip.vue'
+import { imageFilesFrom } from '../../utils/imageFiles'
+import { useAttachedImages } from '../../composables/useAttachedImages.js'
 
 const props = defineProps({
   feature: { type: Object, default: null },
@@ -31,6 +34,14 @@ const props = defineProps({
 
 const open = ref(false)
 const symptom = ref('')
+// Bound to no defect: the screenshot is pasted while the report is still being
+// typed, so it is held in the browser and flushed against the new id. Nothing
+// is staged server-side for a report that is abandoned mid-sentence, and there
+// is no orphan to sweep.
+const {
+  items: shots, busy: shotsBusy, error: shotsError,
+  add: addShots, remove: removeShot, flush: flushShots, reset: resetShots,
+} = useAttachedImages('defects')
 const busy = ref(false)
 const failed = ref('')
 const outcome = ref('')
@@ -73,6 +84,25 @@ async function load() {
   }
 }
 watch(() => props.feature?.id, load, { immediate: true })
+// The held blobs cannot survive a close: they belong to a report that was
+// never filed, and a thumbnail still there on the next open would be evidence
+// for a different bug.
+watch(open, (isOpen) => { if (!isOpen) resetShots() })
+
+// A screenshot is what the sentence is usually describing. Paste and drop are
+// bound on the form rather than on the strip: a reporter pastes into the field
+// they are typing in, and the event bubbles to here.
+async function onPaste(e) {
+  if (!imageFilesFrom(e.clipboardData).length) return
+  e.preventDefault()
+  await addShots(e.clipboardData)
+}
+
+async function onDrop(e) {
+  if (!imageFilesFrom(e.dataTransfer).length) return
+  e.preventDefault()
+  await addShots(e.dataTransfer)
+}
 
 // `opened` and `deduped` are two different facts and say so: the second means
 // the ledger already held this complaint, and reading it as a fresh report is
@@ -89,6 +119,11 @@ async function submit() {
     failed.value = body?.msg || 'the report was refused'
     return
   }
+  // The screenshots land BEFORE the list reloads, so the row renders already
+  // carrying them. A dedup gets them too: the second reporter's picture is
+  // evidence for the same bug, and dropping it would lose the only thing the
+  // duplicate added.
+  await flushShots(body.defect.id)
   outcome.value = body.outcome === 'deduped'
     ? `#${body.defect.id} already tracked this symptom — deduped, not reopened.`
     : `#${body.defect.id} opened against ${props.feature.title}.`
@@ -120,7 +155,10 @@ async function submit() {
       </Button>
     </div>
 
-    <form v-if="open" class="td-form" @submit.prevent="submit">
+    <form
+      v-if="open" class="td-form"
+      @submit.prevent="submit" @paste="onPaste" @dragover.prevent @drop="onDrop"
+    >
       <label class="td-label" :for="`rd-symptom-${feature.id}`">
         What went wrong — blamed on {{ feature.title }}
       </label>
@@ -129,6 +167,14 @@ async function submit() {
         v-model="symptom" :rows="2" :disabled="busy"
         placeholder="the symptom, in your words"
         data-testid="feature-defect-symptom"
+      />
+      <span class="td-label">Screenshots <span class="td-optional">(paste or drop)</span></span>
+      <TaskImageStrip
+        :items="shots"
+        :busy="shotsBusy"
+        :error="shotsError"
+        @pick="addShots"
+        @remove="removeShot"
       />
       <div class="td-actions">
         <Button
@@ -183,6 +229,7 @@ async function submit() {
 .td-spacer { flex: 1 1 auto; }
 .td-form { display: flex; flex-direction: column; gap: 0.35rem; }
 .td-label { font-size: 11.5px; color: var(--color-fg-muted); }
+.td-optional { color: var(--color-fg-faint); }
 .td-actions { display: flex; gap: 0.4rem; }
 .td-note {
     margin: 0.4rem 0 0; font-size: 11.5px; color: var(--color-fg-muted);

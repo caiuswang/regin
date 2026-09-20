@@ -38,7 +38,10 @@ const route = useRoute()
 const { byId, ensure: ensureProjects } = useProjects()
 const { confirm } = useConfirm()
 const { remove } = useTaskMutations()
-const { items: imageItems, bind: bindImages, add: addImages } = useAttachedImages()
+const {
+  items: imageItems, busy: imagesBusy, error: imagesError,
+  bind: bindImages, add: addImages, remove: removeImage,
+} = useAttachedImages()
 
 const task = ref(null)
 const loading = ref(true)
@@ -105,17 +108,6 @@ async function deleteTask() {
     + 'This cannot be undone — archive it instead to keep it.', true)
   if (!ok) return
   if (await remove(task.value)) router.push(backTo.value)
-}
-
-// The idx of each image this gesture actually added, by difference: the shared
-// composable reports only whether it claimed the files, and the reference
-// written into the body is made of the index.
-async function attachImages(source) {
-  const before = new Set(imageItems.value.map(img => img.idx))
-  await addImages(source)
-  return imageItems.value
-    .map(img => img.idx)
-    .filter(idx => idx !== null && idx !== undefined && !before.has(idx))
 }
 
 watch(id, load)
@@ -244,11 +236,18 @@ onMounted(() => { ensureProjects(); load() })
            text full of paths and fenced source, where every `*` and `#` is a
            literal a renderer would eat. -->
       <TaskBodyEditor
-        :task="task" :images="imageItems" :can-write="canWrite" :attach="attachImages"
+        :task="task" :images="imageItems" :can-write="canWrite" :attach="addImages"
         @saved="load"
       />
 
-      <TaskImageGallery :items="imageItems" />
+      <TaskImageGallery
+        :items="imageItems"
+        :busy="imagesBusy"
+        :error="imagesError"
+        :can-write="canWrite"
+        @pick="addImages"
+        @remove="removeImage"
+      />
 
       <TaskFeature
         :task-id="task.id" :feature="feature" :can-write="canWrite"

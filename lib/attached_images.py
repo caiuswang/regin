@@ -1,4 +1,4 @@
-"""Images hung off a row that outlives them — tasks, and features.
+"""Images hung off a row that outlives them — tasks, features, and defects.
 
 The composer's problem here is the mirror of the bridge's. `BridgeAttachment`
 holds bytes that have no prompt *yet* and are spent by the first one that
@@ -14,9 +14,13 @@ Validation is `attachments.sniff_media_type` — magic bytes, not the
 composer answers to, because these bytes end up in the same place: a model's
 context.
 
-One `ImageSet` per owning table. The two owners are separate tables rather than
-one with a nullable owner column, because a task's image is delivered with that
-task alone while a feature's is delivered with every slice cut from it.
+One `ImageSet` per owning table. The three owners are separate tables rather
+than one with a nullable owner column, because they differ in what the bytes
+are FOR: a task's image is delivered with that task alone, a feature's with
+every slice cut from it, and a defect's with nothing at all — it is evidence
+the reporter saw, read by whoever opens the row. Folding them together would
+put three owners on one column and make "whose image is this" a join away from
+ambiguous.
 """
 
 from __future__ import annotations
@@ -81,11 +85,21 @@ class ImageSet:
                 select(self.model.id)
                 .where(self._owner == owner_id)).scalars().all())
 
-    def attach(self, owner_id: int, data: bytes) -> dict:
+    def attach(self, owner_id: int, data: bytes,
+               want_idx: Optional[int] = None) -> dict:
         """Record `data` against `owner_id`. Raises ValueError with the
-        reason."""
+        reason.
+
+        `want_idx` is a *proposal*, and exists for the composer case: bytes
+        pasted before the row existed already have an `![](image:N)` reference
+        written into the body at the caret, so the upload that finally lands
+        them has to be able to ask for the N the text already names. A taken
+        index falls back to the next free one rather than refusing — the
+        allocator stays total, and a reference left pointing at nothing renders
+        as visible text rather than a broken picture.
+        """
         media_type = self._reject_unusable(owner_id, data)
-        row = self._insert_with_next_idx(owner_id, media_type, data)
+        row = self._insert_with_next_idx(owner_id, media_type, data, want_idx)
         self.log.write(f"{self.noun}_image_attached",
                        **{self.owner_field: owner_id}, idx=row["idx"],
                        byte_size=row["byte_size"], media_type=media_type)
@@ -97,21 +111,35 @@ class ImageSet:
         ).scalars().all()
         return (max(used) + 1) if used else 1
 
+    def _free_idx(self, session, owner_id: int,
+                  want_idx: Optional[int]) -> int:
+        if want_idx is None or want_idx < 1:
+            return self._next_idx(session, owner_id)
+        taken = session.execute(
+            select(self.model.id).where(self._owner == owner_id,
+                                        self.model.idx == want_idx)
+        ).scalars().first()
+        return self._next_idx(session, owner_id) if taken else want_idx
+
     def _insert_with_next_idx(self, owner_id: int, media_type: str,
-                              data: bytes) -> dict:
-        """Insert, taking the next free `idx` for this owner.
+                              data: bytes,
+                              want_idx: Optional[int] = None) -> dict:
+        """Insert, taking `want_idx` when it is free and the next free `idx`
+        otherwise.
 
         Reading the high-water mark and inserting are two statements and the
         edit sheet can be open in two tabs, so `UNIQUE(owner, idx)` is the real
         allocator — this just loses the race gracefully instead of turning a
-        second paste into a 500.
+        second paste into a 500. A proposal that loses that race is dropped on
+        the retry, not re-proposed, or a permanently taken index would spin.
         """
         digest = hashlib.sha256(data).hexdigest()
         for _ in range(_ALLOC_ATTEMPTS):
             with SessionLocal() as session:
+                idx = self._free_idx(session, owner_id, want_idx)
+                want_idx = None
                 row = self.model(
-                    **{self.owner_field: owner_id},
-                    idx=self._next_idx(session, owner_id),
+                    **{self.owner_field: owner_id}, idx=idx,
                     media_type=media_type, bytes_=data, byte_size=len(data),
                     sha256=digest)
                 session.add(row)
@@ -163,9 +191,16 @@ class ImageSet:
     def remove(self, owner_id: int, idx: int) -> bool:
         """Drop one image. False when there was nothing at that index.
 
-        The freed `idx` is not reused — `_next_idx` counts from the high-water
-        mark — so a thumbnail the operator is looking at cannot silently become
-        a different picture.
+        A freed `idx` BELOW the high-water mark is not reused: `_next_idx`
+        counts from `max(idx) + 1` over the surviving rows, so a gap punched in
+        the middle stays a gap and a reference that named it keeps reading as
+        detached.
+
+        The high-water index itself IS reissued, because nothing on the row
+        remembers it. Detach the last image, attach another, and an
+        `![](image:N)` already sitting in some prose resolves to a different
+        picture with nothing to say so. Closing that needs a per-owner counter
+        the three owning tables do not carry.
         """
         with SessionLocal() as session:
             result = session.execute(

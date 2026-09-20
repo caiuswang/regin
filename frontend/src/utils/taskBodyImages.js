@@ -20,6 +20,18 @@ export function imageRef(idx) {
 }
 
 /**
+ * The references for a set of freshly attached `idx`, each on its own line.
+ *
+ * One block for the whole gesture, never one insert per file: a caller reads
+ * the caret off the live textarea and Vue has not flushed the previous write
+ * by the next iteration, so a second insert lands at the ORIGINAL caret and a
+ * two-image paste comes out reversed.
+ */
+export function imageRefBlock(idxs) {
+  return (idxs || []).map(idx => `\n${imageRef(idx)}\n`).join('')
+}
+
+/**
  * `markdown` with every `image:N` reference pointing at a renderable URL.
  *
  * A reference to an image that is no longer attached becomes visible text

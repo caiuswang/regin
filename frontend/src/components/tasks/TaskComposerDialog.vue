@@ -21,6 +21,8 @@ import { TITLE_MAX, emptyDraft, useTaskMutations }
   from '../../composables/useTasks.js'
 import { imageFilesFrom } from '../../utils/imageFiles'
 import { useAttachedImages } from '../../composables/useAttachedImages.js'
+import { caretTarget, withCaretInsert } from '../../utils/caret'
+import { imageRefBlock } from '../../utils/taskBodyImages'
 
 const open = defineModel('open', { type: Boolean, default: false })
 defineProps({ projects: { type: Array, default: () => [] } })
@@ -48,16 +50,29 @@ watch(open, async (isOpen) => {
   titleInput.value?.focus()
 })
 
+const bodyArea = ref(null)
+
+// Attaching is only half of it: the bytes are useless to a reader until the
+// prose names them, and `![](image:N)` is unguessable. The index a held file
+// carries is allocated in the browser and asked for at flush, so the reference
+// is writable at the moment of the paste rather than after the row exists.
+async function takeImages(source, event) {
+  const refs = imageRefBlock(await addImages(source))
+  if (!refs) return
+  draft.value.body = withCaretInsert(
+    caretTarget(event, bodyArea.value), draft.value.body, refs)
+}
+
 async function onPaste(e) {
   if (!imageFilesFrom(e.clipboardData).length) return
   e.preventDefault()
-  await addImages(e.clipboardData)
+  await takeImages(e.clipboardData, e)
 }
 
 async function onDrop(e) {
   if (!imageFilesFrom(e.dataTransfer).length) return
   e.preventDefault()
-  await addImages(e.dataTransfer)
+  await takeImages(e.dataTransfer, e)
 }
 
 // The images are uploaded BEFORE the caller reloads, so the new row renders
@@ -105,7 +120,7 @@ function reset() {
         <label class="field-label" for="task-body">
           Details <span class="font-normal text-slate-400">(optional)</span>
         </label>
-        <Textarea id="task-body" v-model="draft.body" :rows="4" />
+        <Textarea id="task-body" ref="bodyArea" v-model="draft.body" :rows="4" />
       </div>
       <div class="tc-row">
         <div class="tc-col">
@@ -145,7 +160,7 @@ function reset() {
           :items="images"
           :busy="imagesBusy"
           :error="imagesError"
-          @pick="addImages"
+          @pick="takeImages"
           @remove="removeImage"
         />
       </div>

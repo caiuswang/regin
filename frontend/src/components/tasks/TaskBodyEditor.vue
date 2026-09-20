@@ -14,8 +14,9 @@ import Card from '../Card.vue'
 import Icon from '../ui/Icon.vue'
 import MarkdownContent from '../MarkdownContent.vue'
 import Textarea from '../ui/Textarea.vue'
+import { caretTarget, withCaretInsert } from '../../utils/caret'
 import { imageFilesFrom } from '../../utils/imageFiles'
-import { IMAGE_REF_HINT, imageRef, resolveImageRefs } from '../../utils/taskBodyImages'
+import { IMAGE_REF_HINT, imageRefBlock, resolveImageRefs } from '../../utils/taskBodyImages'
 
 const props = defineProps({
   task: { type: Object, required: true },
@@ -28,16 +29,23 @@ const props = defineProps({
 const emit = defineEmits(['saved'])
 
 const editing = ref(false)
+// Source is the editing mode, for the reason the file header states. Preview
+// is a READ of the draft, not a second editor: an `![](image:N)` reference is
+// a number until something resolves it, and checking that the number names the
+// picture you meant used to mean saving first.
+const previewing = ref(false)
 const draft = ref('')
 const saving = ref(false)
 const error = ref('')
 const area = ref(null)
 
 const rendered = computed(() => resolveImageRefs(props.task.body, props.images))
+const draftRendered = computed(() => resolveImageRefs(draft.value, props.images))
 
 function start() {
   draft.value = props.task.body || ''
   error.value = ''
+  previewing.value = false
   editing.value = true
 }
 
@@ -60,27 +68,27 @@ async function save() {
   emit('saved')
 }
 
-/** Put `text` where the caret is, so a pasted image lands where it was pasted. */
-function insertAtCaret(text) {
-  // `Textarea` is a component, so the caret lives on its root element.
-  const el = area.value?.$el ?? area.value
-  if (!el) { draft.value += text; return }
-  const at = el.selectionStart ?? draft.value.length
-  draft.value = draft.value.slice(0, at) + text + draft.value.slice(el.selectionEnd ?? at)
+// Attaching, then writing the reference: the syntax is otherwise unguessable,
+// and an attachment nobody can name is the defect this fixes.
+async function takeImages(source, event) {
+  const refs = imageRefBlock(await props.attach(source))
+  if (!refs) return
+  draft.value = withCaretInsert(caretTarget(event, area.value), draft.value, refs)
 }
 
-// Pasting attaches, then writes the reference: the syntax is otherwise
-// unguessable, and an attachment nobody can name is the defect this fixes.
 async function onPaste(e) {
   if (!imageFilesFrom(e.clipboardData).length) return
   e.preventDefault()
-  // One insert for the whole paste, not one per image: `insertAtCaret` reads
-  // the caret off the live textarea, and Vue has not flushed the previous
-  // write by the next iteration — so a second insert lands at the ORIGINAL
-  // caret and a two-image paste comes out reversed.
-  const refs = (await props.attach(e.clipboardData))
-    .map(idx => `\n${imageRef(idx)}\n`).join('')
-  if (refs) insertAtCaret(refs)
+  await takeImages(e.clipboardData, e)
+}
+
+// Drop is paste's neighbour and reaches the files a screenshot tool wrote to
+// disk rather than to the clipboard. It has no caret of its own, so the
+// reference lands at wherever the textarea was last left.
+async function onDrop(e) {
+  if (!imageFilesFrom(e.dataTransfer).length) return
+  e.preventDefault()
+  await takeImages(e.dataTransfer, e)
 }
 </script>
 
@@ -96,6 +104,13 @@ async function onPaste(e) {
       </div>
       <div v-else-if="editing" class="tbe-actions">
         <Button
+          variant="ghost" size="sm" :aria-pressed="previewing"
+          data-testid="task-body-preview" @click="previewing = !previewing"
+        >
+          <Icon :name="previewing ? 'pencil' : 'eye'" :size="13" />
+          <span>{{ previewing ? 'Source' : 'Preview' }}</span>
+        </Button>
+        <Button
           variant="primary" size="sm" :disabled="saving"
           data-testid="task-body-save" @click="save"
         >{{ saving ? 'Saving…' : 'Save' }}</Button>
@@ -106,7 +121,11 @@ async function onPaste(e) {
     </div>
 
     <template v-if="editing">
+      <!-- v-show, not v-if: the textarea has to keep its caret and its scroll
+           position across a preview, or toggling back drops the operator at
+           the top of a spec they were editing the middle of. -->
       <Textarea
+        v-show="!previewing"
         ref="area"
         v-model="draft"
         :rows="18"
@@ -115,8 +134,14 @@ async function onPaste(e) {
         aria-label="Task details markdown"
         data-testid="task-body-area"
         @paste="onPaste"
+        @dragover.prevent
+        @drop="onDrop"
       />
-      <p class="tbe-hint">Markdown. {{ IMAGE_REF_HINT }}</p>
+      <MarkdownContent
+        v-if="previewing" class="tbe-body" :markdown="draftRendered"
+        data-testid="task-body-preview-pane"
+      />
+      <p class="tbe-hint">Markdown. {{ IMAGE_REF_HINT }} Paste or drop an image here.</p>
       <p v-if="error" class="tbe-error" role="alert" data-testid="task-body-error">{{ error }}</p>
     </template>
 

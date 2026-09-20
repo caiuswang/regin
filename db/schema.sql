@@ -1165,6 +1165,27 @@ CREATE INDEX IF NOT EXISTS idx_defects_feature ON defects(feature_id);
 -- otherwise become a second row nobody notices.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_defects_session_symptom
     ON defects(reported_by_trace, symptom_key) WHERE feature_id IS NULL;
+
+
+-- The screenshot a defect was reported with. The third `ImageSet` owner and
+-- the only one whose bytes are evidence rather than model input: a task's and
+-- a feature's images ride an agent's prompt, these are what the reporter saw.
+-- ON DELETE CASCADE because a defect's evidence has no meaning without the
+-- report, unlike a feature's mockup, which outlives any one slice.
+CREATE TABLE IF NOT EXISTS defect_images (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    defect_id  INTEGER NOT NULL REFERENCES defects(id) ON DELETE CASCADE,
+    idx        INTEGER NOT NULL,
+    media_type TEXT NOT NULL,
+    bytes      BLOB NOT NULL,
+    byte_size  INTEGER NOT NULL,
+    sha256     TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    CONSTRAINT uq_defect_images_idx UNIQUE (defect_id, idx)
+);
+
+CREATE INDEX IF NOT EXISTS idx_defect_images_defect
+    ON defect_images(defect_id);
 CREATE INDEX IF NOT EXISTS idx_defects_fix_item ON defects(fix_task_id);
 
 -- Which feature a session was building. Mirrors session_repos; an

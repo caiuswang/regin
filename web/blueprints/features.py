@@ -20,9 +20,6 @@ appends to an append-only table. Native features have no such route at all.
 
 from __future__ import annotations
 
-import base64
-import binascii
-
 from flask import Blueprint, Response, jsonify, request
 from sqlmodel import text
 
@@ -37,6 +34,7 @@ from lib.orm import SessionLocal
 from lib.tasks.integrations import IntegrationError
 from lib.tasks.query import FilterRejected
 from lib.utils.pagination import clamp_page, clamp_size
+from web.blueprints.image_payload import decoded_image, wanted_idx
 
 features_bp = Blueprint("features", __name__)
 
@@ -272,22 +270,6 @@ def api_feature_refresh(feature_id):
 
 # ── images ───────────────────────────────────────────────────
 
-def _decoded_image(payload) -> bytes:
-    """The bytes a composer sent, or ValueError with the reason.
-
-    Base64 in JSON rather than multipart because that is what the sibling
-    task-image and `bridge-attachments` ingests take, and what the SPA's api
-    client can send without a second transport.
-    """
-    raw = (payload or {}).get("data_b64")
-    if not isinstance(raw, str) or not raw:
-        raise ValueError("data_b64 required")
-    try:
-        return base64.b64decode(raw, validate=True)
-    except (ValueError, binascii.Error):
-        raise ValueError("data_b64 is not valid base64") from None
-
-
 @features_bp.route("/api/features/<int:feature_id>/images", methods=["POST"])
 @require_editor
 def api_attach_feature_image(feature_id: int):
@@ -299,8 +281,10 @@ def api_attach_feature_image(feature_id: int):
     if feature_store.get(feature_id) is None:
         return jsonify({"error": f"no feature {feature_id}"}), 404
     try:
-        data = _decoded_image(request.get_json(silent=True))
-        return jsonify({"image": images_module.attach(feature_id, data)}), 201
+        payload = request.get_json(silent=True)
+        data = decoded_image(payload)
+        return jsonify({"image": images_module.attach(
+            feature_id, data, wanted_idx(payload))}), 201
     except ValueError as exc:
         return jsonify({"error": str(exc), "field": "data_b64"}), 400
 
@@ -323,7 +307,10 @@ def api_get_feature_image(feature_id: int, idx: int):
     if found is None:
         return jsonify({"error": "unknown image"}), 404
     data, media_type = found
-    # `idx` is never reissued once freed, so a (feature, idx) pair names the
-    # same bytes forever and can be cached hard.
+    # A cached (feature, idx) pair, because the index is stable for as long as
+    # the image is. It is NOT stable across a delete of the HIGHEST index —
+    # that one is reissued (`ImageSet.remove`), so re-attaching after such a
+    # delete can serve the previous picture for the life of the cache. Defect
+    # #177.
     return Response(data, mimetype=media_type,
                     headers={"Cache-Control": "private, max-age=86400"})

@@ -1186,7 +1186,7 @@ class Settings(BaseSettings):
             "hooks", "patterns", "sync", "web", "cli", "rules",
             "trace_ingest", "topics", "auth", "rebuild",
             "agent_messages", "agent_bridge", "agent_sdk", "live_session",
-            "notifications", "tasks", "defects",
+            "notifications", "tasks", "defects", "features",
             "memory", "grader",
             "goal", "gate", "prompts", "fulltext", "other",
         ]

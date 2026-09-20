@@ -11,7 +11,7 @@ from lib.orm.models.agent_messages import AgentMessage
 from lib.orm.models.agent_runs import AgentRun, AgentRunSession
 from lib.orm.models.api_keys import ApiKey
 from lib.orm.models.comments import Comment, CommentThread
-from lib.orm.models.defects import Defect
+from lib.orm.models.defects import Defect, DefectImage
 from lib.orm.models.features import SessionFeature
 from lib.orm.models.grades import SessionGrade
 from lib.orm.models.patterns import DocTag, PatternDeployment, PatternDoc, PatternEmbedding, Tag
@@ -47,6 +47,7 @@ __all__ = [
     "Comment",
     "CommentThread",
     "Defect",
+    "DefectImage",
     "Feature",
     "FeatureEvent",
     "SessionFeature",

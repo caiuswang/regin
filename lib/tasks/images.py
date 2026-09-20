@@ -22,8 +22,9 @@ __all__ = ["attach", "get_bytes", "list_for", "payload_for", "remove",
            "summaries_for", "summarize"]
 
 
-def attach(task_id: int, data: bytes) -> dict:
-    return _images.attach(task_id, data)
+def attach(task_id: int, data: bytes,
+           want_idx: Optional[int] = None) -> dict:
+    return _images.attach(task_id, data, want_idx)
 
 
 def list_for(task_id: int) -> list[dict]:

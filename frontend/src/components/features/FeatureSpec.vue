@@ -22,8 +22,9 @@ import Card from '../Card.vue'
 import Icon from '../ui/Icon.vue'
 import MarkdownContent from '../MarkdownContent.vue'
 import Textarea from '../ui/Textarea.vue'
+import { caretTarget, withCaretInsert } from '../../utils/caret'
 import { imageFilesFrom } from '../../utils/imageFiles'
-import { IMAGE_REF_HINT, imageRef, resolveImageRefs } from '../../utils/taskBodyImages'
+import { IMAGE_REF_HINT, imageRefBlock, resolveImageRefs } from '../../utils/taskBodyImages'
 
 const props = defineProps({
   featureId: { type: Number, required: true },
@@ -38,16 +39,23 @@ const props = defineProps({
 const emit = defineEmits(['saved'])
 
 const editing = ref(false)
+// Source is the editing mode, for the reason the file header states. Preview
+// is a READ of the draft, not a second editor: an `![](image:N)` reference is
+// a number until something resolves it, and checking that the number names the
+// mockup you meant used to mean saving first.
+const previewing = ref(false)
 const draft = ref('')
 const saving = ref(false)
 const error = ref('')
 const area = ref(null)
 
 const rendered = computed(() => resolveImageRefs(props.body, props.images))
+const draftRendered = computed(() => resolveImageRefs(draft.value, props.images))
 
 function start() {
   draft.value = props.body || ''
   error.value = ''
+  previewing.value = false
   editing.value = true
 }
 
@@ -67,25 +75,25 @@ async function save() {
   emit('saved', res)
 }
 
-/** Put `text` where the caret is, so a pasted image lands where it was pasted. */
-function insertAtCaret(text) {
-  // `Textarea` is a component, so the caret lives on its root element.
-  const el = area.value?.$el ?? area.value
-  if (!el) { draft.value += text; return }
-  const at = el.selectionStart ?? draft.value.length
-  draft.value = draft.value.slice(0, at) + text + draft.value.slice(el.selectionEnd ?? at)
+async function takeImages(source, event) {
+  const refs = imageRefBlock(await props.attach(source))
+  if (!refs) return
+  draft.value = withCaretInsert(caretTarget(event, area.value), draft.value, refs)
 }
 
 async function onPaste(e) {
   if (!props.attach || !imageFilesFrom(e.clipboardData).length) return
   e.preventDefault()
-  // One insert for the whole paste, not one per image: `insertAtCaret` reads
-  // the caret off the live textarea, and Vue has not flushed the previous
-  // write by the next iteration — so a second insert lands at the ORIGINAL
-  // caret and a two-image paste comes out reversed.
-  const refs = (await props.attach(e.clipboardData))
-    .map(idx => `\n${imageRef(idx)}\n`).join('')
-  if (refs) insertAtCaret(refs)
+  await takeImages(e.clipboardData, e)
+}
+
+// Drop is paste's neighbour and reaches the files a screenshot tool wrote to
+// disk rather than to the clipboard. It has no caret of its own, so the
+// reference lands at wherever the textarea was last left.
+async function onDrop(e) {
+  if (!props.attach || !imageFilesFrom(e.dataTransfer).length) return
+  e.preventDefault()
+  await takeImages(e.dataTransfer, e)
 }
 </script>
 
@@ -105,6 +113,13 @@ async function onPaste(e) {
       </Button>
       <div v-else-if="editing" class="fs-actions">
         <Button
+          variant="ghost" size="sm" :aria-pressed="previewing"
+          data-testid="feature-spec-preview" @click="previewing = !previewing"
+        >
+          <Icon :name="previewing ? 'pencil' : 'eye'" :size="13" />
+          <span>{{ previewing ? 'Source' : 'Preview' }}</span>
+        </Button>
+        <Button
           variant="primary" size="sm" :disabled="saving"
           data-testid="feature-spec-save" @click="save"
         >{{ saving ? 'Saving…' : 'Save' }}</Button>
@@ -117,12 +132,22 @@ async function onPaste(e) {
 
     <template v-if="editing">
       <Textarea
+        v-show="!previewing"
         ref="area"
         v-model="draft" :rows="14" class="fs-area" spellcheck="false"
         aria-label="Feature spec markdown" data-testid="feature-spec-input"
         @paste="onPaste"
+        @dragover.prevent
+        @drop="onDrop"
       />
-      <p class="fs-hint">Markdown. {{ IMAGE_REF_HINT }} Editing it appends no event.</p>
+      <MarkdownContent
+        v-if="previewing" class="fs-body" :markdown="draftRendered"
+        data-testid="feature-spec-preview-pane"
+      />
+      <p class="fs-hint">
+        Markdown. {{ IMAGE_REF_HINT }} Paste or drop an image here.
+        Editing it appends no event.
+      </p>
       <p v-if="error" class="fs-error" role="alert" data-testid="feature-spec-error">
         {{ error }}
       </p>
