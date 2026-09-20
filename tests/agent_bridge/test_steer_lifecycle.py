@@ -165,3 +165,38 @@ def test_the_path_strip_leaves_no_double_space():
     turn = "@/data/regin/pasted/t1/aa.png [Image #1] then the rest of it"
 
     assert sessions._delivered_key(turn) == "[Image #1] then the rest of it"
+
+
+def test_a_pasted_content_wrapped_turn_retires_its_chip():
+    # Claude Code turns every bracketed paste >= 20 trimmed chars into an
+    # inline block and logs THAT as the turn, so the body the bridge pasted
+    # is nowhere in the transcript verbatim (trace 58267d14).
+    from web.blueprints.trace import sessions
+    body = ("It has nothing related to the task status. Check if we could "
+            "detect the network failure retry when this session is a SDK "
+            "spot session. You could reference the paseo implementation.")
+    turn = f'\n\n<pasted_content id="6eed">\n{body}\n</pasted_content id="6eed">\n'
+    out, settled = _partition(body, {sessions._delivered_key(turn)})
+
+    assert out == []
+    assert settled == [1]
+
+
+def test_a_wrapped_block_keeps_the_text_around_it():
+    # A human types a lead-in and pastes after it; only the block unwraps.
+    from web.blueprints.trace import sessions
+    turn = ('check this session: \n\n<pasted_content id="6eed">\n'
+            '7e1f7817-6db1-4d52-bf8f-ef2f35535680\n'
+            '</pasted_content id="6eed">\n')
+
+    assert sessions._delivered_key(turn) == (
+        "check this session: 7e1f7817-6db1-4d52-bf8f-ef2f35535680")
+
+
+def test_a_malformed_pasted_content_tag_is_left_alone():
+    # Prose that merely quotes the tag must not be rewritten: the id is four
+    # lowercase hex digits and both tags must carry the same one.
+    from web.blueprints.trace import sessions
+    turn = '<pasted_content id="zz">\nx\n</pasted_content id="zz">'
+
+    assert sessions._delivered_key(turn) == ' '.join(turn.split())

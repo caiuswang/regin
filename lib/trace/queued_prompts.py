@@ -46,6 +46,8 @@ import re
 from collections import OrderedDict, defaultdict
 from typing import NamedTuple
 
+from lib.trace.pasted_content import unwrap_pasted_content
+
 # Single-pop removals: one item leaves the queue. `remove` is the legacy
 # operation name, `dequeue` the current one.
 _POP_ONE = {'dequeue', 'remove'}
@@ -222,8 +224,11 @@ def _replay_queue_ops(path: str) -> tuple[list, list]:
 
 def _norm(content) -> str:
     """Whitespace-collapsed body, matching sessions._steer_key so a bridge
-    steer's optimistic copy dedupes against its consumed transcript turn."""
-    return ' '.join(str(content or '').split())
+    steer's optimistic copy dedupes against its consumed transcript turn.
+
+    The `<pasted_content>` wrapper comes off first: the bridge pastes, so the
+    processed turn carries a wrapper the delivered body never had."""
+    return ' '.join(unwrap_pasted_content(content).split())
 
 
 def _turn_text(message) -> str:

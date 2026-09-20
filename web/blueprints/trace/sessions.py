@@ -24,6 +24,7 @@ from lib.orm.models import (
 )
 from lib.utils.pagination import clamp_size, keyset_page_stmt
 from lib.trace import trace_service
+from lib.trace.pasted_content import unwrap_pasted_content
 from lib.trace.alias import (
     ORIGIN_KEY, aliased_run_ids, strip_origin, trace_group,
 )
@@ -3139,8 +3140,10 @@ def _sdk_queue(trace_id: str) -> list | None:
 def _steer_key(content) -> str:
     """Normalized body for deduping a bridge steer against the transcript
     queue — whitespace-collapsed so a composer echo and the enqueued copy
-    match."""
-    return ' '.join(str(content or '').split())
+    match, and unwrapped so the `<pasted_content>` block Claude Code builds
+    around every bracketed paste >= 20 chars compares equal to the body the
+    bridge pasted."""
+    return ' '.join(unwrap_pasted_content(content).split())
 
 
 def _pending_bridge_steers(trace_id: str, queued: list) -> list:
