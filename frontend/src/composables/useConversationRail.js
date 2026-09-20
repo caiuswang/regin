@@ -9,7 +9,7 @@ const RAIL_MAX = 560
 const RAIL_KEY = 'regin_trace_rail_width'
 
 // Mini form: numbered chips only, no prompt previews.
-const RAIL_MINI_WIDTH = 62
+const RAIL_MINI_WIDTH = 44
 const COLLAPSED_KEY = 'regin_trace_rail_collapsed'
 
 // Below 1120px the viewport forces the mini form. Module-level rather than a

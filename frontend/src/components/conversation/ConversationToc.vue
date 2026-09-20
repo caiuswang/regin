@@ -200,7 +200,7 @@ function jumpToLive() {
       <Button
         variant="ghost"
         size="icon"
-        class="shrink-0 w-[26px] h-[26px] rounded-lg border border-slate-200 text-slate-400"
+        class="shrink-0 w-[26px] h-[26px] rounded-lg text-slate-400"
         :class="{ 'ml-auto': !railMini }"
         :disabled="autoFolded"
         :title="autoFolded ? 'Window too narrow for the full rail'
