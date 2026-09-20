@@ -2214,6 +2214,12 @@ details summary {
 .live-status-stale { background: var(--color-amber-500); }
 /* blocked on a human (permission / input): amber attention, steady. */
 .live-status-waiting { background: var(--color-amber-500); }
+/* the API call failed and the agent is waiting to retry: amber like the other
+   two stalls, but it keeps the pulse — the turn really is still open. */
+.live-status-retrying {
+    background: var(--color-amber-500);
+    animation: live-pulse 1.6s ease-in-out infinite;
+}
 @keyframes live-pulse { 50% { opacity: 0.35; } }
 .live-hd-conn {
     flex-shrink: 0;
@@ -3945,6 +3951,7 @@ button.live-qa-pick.live-qa-staged {
 
 @media (prefers-reduced-motion: reduce) {
     .live-status-running,
+    .live-status-retrying,
     .live-caret,
     .live-row-entering,
     .live-newchip,

@@ -1825,9 +1825,13 @@ INACTIVE_THRESHOLD_SEC = _AGENT_STALE_AFTER_SEC
 # `starting` and `stopping` are reachable only for a run regin owns — nothing
 # span-derived can see either — and rank beside `working` because both mean the
 # session is busy with something the operator cannot type into.
+# `retrying` ranks above `working` for the same reason the waiting- verdicts
+# do: it is the one a reader would act on. A rollup that let a subagent's
+# `working` mask it would hide the fact that the session is stalled on the
+# network behind a word that says it is fine.
 _PHASE_PRECEDENCE = (
-    'waiting-permission', 'waiting-input', 'working', 'starting', 'stopping',
-    'idle', 'inactive-stale', 'ended',
+    'waiting-permission', 'waiting-input', 'retrying', 'working', 'starting',
+    'stopping', 'idle', 'inactive-stale', 'ended',
 )
 
 

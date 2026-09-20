@@ -256,3 +256,34 @@ def test_the_final_retrys_attributes_state_what_the_screen_said_and_no_more():
     assert attrs['final'] is True
     assert attrs['retry_in'] == '8m'
     assert attrs['label'] == 'No response from the API after 16m 30s'
+
+
+def test_an_sdk_runs_retry_lands_as_the_same_durable_span():
+    """The tiers meet here. `_live_screen_state` prefers the SDK runner's own
+    `ScreenState` over a tmux read, and `_record_screen_retry` persists
+    whatever screen it is handed — so a run regin LAUNCHED gets the same
+    timeline row a terminal session does, from the CLI's `api_retry` frame
+    rather than from a banner scraped off a pane.
+    """
+    import asyncio
+
+    from lib.agent_sdk import runner as runner_mod
+
+    class _Frame:
+        subtype = 'api_retry'
+        data = {'type': 'system', 'subtype': 'api_retry', 'attempt': 4,
+                'max_retries': 10, 'retry_delay_ms': 30000,
+                'error': 'Connection error'}
+
+    trace_id = 'sess-retry-sdk'
+    anchor = _prompt_anchor(trace_id, span_id='prompt-sdk')
+    run = runner_mod.AgentRunner('sdk-tier')
+    run._open_turn()
+    asyncio.run(run._route(_Frame()))
+
+    record_retry([trace_id], run.live_state())
+
+    rows = _retry_rows(trace_id)
+    assert len(rows) == 1
+    assert rows[0]['span_id'] == f'{SPAN_ID_PREFIX}{anchor}-4'
+    assert rows[0]['parent_id'] == anchor

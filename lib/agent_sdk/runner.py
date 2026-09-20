@@ -200,6 +200,123 @@ class _TaskLedger:
         self._tracked.clear()
 
 
+@dataclass(frozen=True)
+class RetryState:
+    """One `api_retry` frame: the CLI could not reach the API and will try again.
+
+    Deliberately shaped as the retry fields a terminal session's status-line
+    banner already fills (`agent_bridge.screen_state`), because the two tiers
+    describe the same incident and the card renders whichever it is handed. A
+    field the frame did not carry stays None rather than defaulted, so "the CLI
+    said nothing" is distinguishable from a zero it did say.
+    """
+
+    label: str
+    wait: str
+    attempt: int | None
+    max_retries: int | None
+    no_response: bool
+
+
+def _retry_wait(ms) -> str:
+    """`retry_delay_ms` as the duration a status-line banner would print.
+
+    Matched to `screen_state`'s vocabulary (`8s`, `1m 20s`) rather than
+    invented, since both tiers feed `retry_in` and the card must not read
+    differently depending on which one is driving.
+    """
+    secs = max(0, round(int(ms or 0) / 1000))
+    if secs < 60:
+        return f"{secs}s"
+    minutes, rest = divmod(secs, 60)
+    return f"{minutes}m" if not rest else f"{minutes}m {rest}s"
+
+
+def _retry_state(data: dict) -> RetryState:
+    """One `system`/`api_retry` frame as the state the card renders.
+
+    `no_response` is the branch that matters here: the request got no answer at
+    all rather than an error the server sent back, which is what a degraded
+    network produces — and its wait lives under `no_response.retry_wait_ms`,
+    not in the top-level delay, which that branch leaves at the base backoff.
+    """
+    no_response = data.get("no_response")
+    quiet = isinstance(no_response, dict)
+    wait_ms = (no_response.get("retry_wait_ms") if quiet
+               else None) or data.get("retry_delay_ms")
+    attempt = data.get("attempt")
+    max_retries = data.get("max_retries")
+    status = data.get("error_status")
+    error = str(data.get("error") or "").strip()
+    return RetryState(
+        # The CLI's own words where it gave any; its banner uses the bare
+        # status code when the body carried no message, so the fallback keeps
+        # a bare frame from rendering a label-less banner.
+        label=error or (f"API error {status}" if status else "API error"),
+        wait=_retry_wait(wait_ms),
+        attempt=int(attempt) if isinstance(attempt, int) else None,
+        max_retries=int(max_retries) if isinstance(max_retries, int) else None,
+        no_response=quiet,
+    )
+
+
+def _retry_fields(retry: "RetryState | None") -> dict:
+    """A retry as the `ScreenState` fields a terminal banner would fill.
+
+    Shared shape rather than a second code path, so the card's retry strip
+    renders a run regin launched and a pane it merely watches identically.
+    `retry_final` is never set: it means "the screen named no attempt number",
+    and an `api_retry` frame always names one.
+    """
+    return {
+        'retry_label': retry.label if retry else None,
+        'retry_in': retry.wait if retry else None,
+        'retry_attempt': retry.attempt if retry else None,
+        'retry_max': retry.max_retries if retry else None,
+    }
+
+
+# Frames that prove the API answered. A `UserMessage` does not: a tool result
+# is produced locally and travels the stream whether or not the network is up,
+# so clearing on one would report a healthy session between the failed request
+# and the retry that has not been attempted yet.
+_API_ALIVE_FRAMES = frozenset({"AssistantMessage", "StreamEvent",
+                               "ResultMessage"})
+
+
+class _RetryLatch:
+    """Whether the CLI is currently between a failed API call and its retry.
+
+    Event-driven on both edges, which is what makes this honest where a
+    silence timer is not: the CLI announces the failure (`system/api_retry`)
+    and announces the recovery by simply speaking again. A stalled turn is
+    otherwise indistinguishable from a long tool call — both emit nothing —
+    and that ambiguity is why `turn_in_flight` alone reports `working` through
+    an outage.
+
+    Only the LATEST frame is held. The CLI re-emits `api_retry` per attempt
+    with a rising `attempt`, so the newest one is the whole story and a history
+    of superseded attempts would only have to be trimmed.
+    """
+
+    def __init__(self) -> None:
+        self._state: RetryState | None = None
+
+    def observe(self, message) -> None:
+        if getattr(message, "subtype", "") == "api_retry":
+            self._state = _retry_state(getattr(message, "data", None) or {})
+            return
+        if type(message).__name__ in _API_ALIVE_FRAMES:
+            self._state = None
+
+    def forget(self) -> None:
+        self._state = None
+
+    @property
+    def state(self) -> RetryState | None:
+        return self._state
+
+
 def _enrich_ask(span: dict | None, event) -> None:
     """Carry the question structure onto an ask's span.
 
@@ -386,6 +503,7 @@ class AgentRunner:
         # The turn in flight, if any. At most one: see `_open_frame_turn`.
         self._open: list[_Turn] = []
         self._tasks = _TaskLedger()
+        self._retries = _RetryLatch()
         # Set once the CLI will send nothing further — see `_stream_closed`.
         self._stream_dead = False
         # Frames seen over the life of the session. Only its movement is read
@@ -611,6 +729,7 @@ class AgentRunner:
         turns when the pump drops one in the gap.
         """
         self._tasks.observe(message)
+        self._retries.observe(message)
         events = from_sdk_message(self.trace_id, message)
         terminal = any(isinstance(e, (TurnCompleted, TurnFailed))
                        for e in events)
@@ -878,7 +997,8 @@ class AgentRunner:
                       detail=shadowed)
         self._client = client.new_client(
             cwd=self.cwd, can_use_tool=self._can_use_tool,
-            options=self.options, resume=self.resume)
+            options=self.options, resume=self.resume,
+            trace_id=self.trace_id)
         await self._client.connect()
         self._reader = asyncio.ensure_future(self._read_messages())
         registry.register_run(self.trace_id, self)
@@ -915,6 +1035,18 @@ class AgentRunner:
         """
         return any(not turn.sink for turn in self._open)
 
+    @property
+    def retrying(self) -> "RetryState | None":
+        """The failed API call this run is waiting to retry, if it is.
+
+        Scoped to a turn in flight: the latch clears on the CLI's next word,
+        and a result is one — but an ABANDONED turn (an interrupt the CLI
+        honoured silently) never sends that word, so an unscoped latch would
+        report a run parked at the prompt as reconnecting for the rest of its
+        life.
+        """
+        return self._retries.state if self.turn_in_flight else None
+
     def live_state(self):
         """This run's status now, in the shape the terminal tier reads off a
         pane (`agent_bridge.screen_state.ScreenState`).
@@ -938,6 +1070,11 @@ class AgentRunner:
         from lib.agent_bridge.screen_state import ScreenState
         turn = next((t for t in list(self._open) if not t.sink), None)
         tools = list(turn.tools.values()) if turn else []
+        # Read once, beside the turn it is scoped to, for the same reason every
+        # other field here is: `retrying` re-reads `turn_in_flight`, and a turn
+        # that ends between the two lookups yields a busy screen carrying a
+        # retry banner for a turn that is no longer running.
+        retry = self._retries.state if turn else None
         return ScreenState(
             busy=turn is not None,
             verb='Working' if turn else None,
@@ -947,6 +1084,7 @@ class AgentRunner:
             session_id=self._session_id,
             cwd=self.cwd,
             model=self._model,
+            **_retry_fields(retry),
         )
 
     @property

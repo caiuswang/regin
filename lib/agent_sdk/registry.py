@@ -674,8 +674,10 @@ def run_phase(trace_id: str) -> str | None:
     only thing a session regin merely traces has.
 
     Ordering is by what the operator most needs to see: a park outranks the
-    turn holding it open, and a stop already asked for outranks the turn it is
-    ending.
+    turn holding it open, a stop already asked for outranks the turn it is
+    ending, and a retry outranks the `working` it would otherwise be reported
+    as — the turn IS in flight, but nothing is moving and the reason is the
+    network, which is the one thing silence alone can never say.
     """
     trace_id = owning_run(trace_id)
     with _lock:
@@ -690,6 +692,8 @@ def run_phase(trace_id: str) -> str | None:
         return 'waiting-permission'
     if runner.stop_requested:
         return 'stopping'
+    if runner.retrying is not None:
+        return 'retrying'
     return 'working' if runner.turn_in_flight else 'idle'
 
 

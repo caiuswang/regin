@@ -143,6 +143,9 @@ const PHASE_STATUS = {
   'waiting-permission': { cls: 'live-status-waiting', label: phaseLabel('waiting-permission') },
   'waiting-input': { cls: 'live-status-waiting', label: phaseLabel('waiting-input') },
   working: { cls: 'live-status-running', label: phaseLabel('working') },
+  // Amber and pulsing: the turn is open, so `working` is what the header
+  // would otherwise say for a session that is in fact stalled on the network.
+  retrying: { cls: 'live-status-retrying', label: phaseLabel('retrying') },
   // Only a run regin owns reaches these: the server reads them off the live
   // runner, which knows things no span-derived heuristic can see.
   starting: { cls: 'live-status-running', label: phaseLabel('starting') },

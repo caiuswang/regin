@@ -167,6 +167,28 @@ def test_without_overrides_the_global_settings_still_decide(enabled,
     assert built.permission_mode == "acceptEdits"
 
 
+def test_the_childs_stderr_is_piped_and_attributed_to_its_run(enabled,
+                                                              monkeypatch):
+    """The SDK pipes stderr only when a callback is registered
+    (`subprocess_cli._connect`), so without one the child's diagnostics are
+    inherited by the Flask process and land attributed to no run — the one
+    place that says WHY a child died."""
+    reported: list[dict] = []
+
+    class _Log:
+        @staticmethod
+        def error(_event, **fields):
+            reported.append(fields)
+
+    monkeypatch.setattr(client, "log", _Log)
+    built = client.build_options(trace_id="sdk-err-1")
+    built.stderr("  API Error: 503  ")
+    built.stderr("   ")
+
+    assert [r["trace_id"] for r in reported] == ["sdk-err-1"]
+    assert reported[0]["detail"] == "API Error: 503"
+
+
 def test_two_concurrent_runs_do_not_read_each_others_env(enabled):
     """The shared loop runs every session in one thread, so a run's options
     must travel with the run — anything ambient would leak one run's

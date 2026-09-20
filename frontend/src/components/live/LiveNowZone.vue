@@ -148,6 +148,11 @@ const PHASE_STATE = {
   working: () => (['tool', 'prompt'].includes(pendingState.value)
     ? pendingState.value : 'response'),
 }
+// A retry is still the working turn — the zone shows whatever call it is on,
+// and the retry banner itself belongs to the live strip (SpineLiveNode reads
+// it off `live_screen`), not to this zone's state axis. Aliased rather than
+// copied so the two cannot drift.
+PHASE_STATE.retrying = PHASE_STATE.working
 
 const state = computed(() => {
   const resolve = PHASE_STATE[props.phase]

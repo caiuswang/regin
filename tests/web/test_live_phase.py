@@ -110,6 +110,36 @@ def test_rollup_ended_session_ignores_ghost_stale_subagent():
     assert phase == 'ended'
 
 
+def test_a_retrying_runner_outranks_a_subagent_still_working():
+    """A subagent's roster row says `running` right through an outage — it is
+    the parent's turn that is stalled, and the roster has no way to know. The
+    rollup must not let that vote paint the session green."""
+    roster = [{'agent_id': 'a1', 'status': 'running'}]
+    by_aid = {None: {'last_ts': datetime.now().isoformat()}}
+
+    phase, agent_phase = S._session_phase(by_aid, roster, ended=False,
+                                          main_override='retrying')
+
+    assert agent_phase['main'] == 'retrying'
+    assert agent_phase['a1'] == 'working'
+    assert phase == 'retrying'
+
+
+def test_a_parked_subagent_still_outranks_a_retry():
+    """A retry clears itself; a question does not. The one a human can act on
+    stays the one the rollup surfaces."""
+    roster = [{'agent_id': 'a1', 'status': 'waiting'}]
+    by_aid = {None: {'last_ts': datetime.now().isoformat()}}
+
+    phase, _ = S._session_phase(by_aid, roster, ended=False,
+                                main_override='retrying')
+
+    # `waiting-input` rather than `-permission` only because this roster row
+    # carries no activity to read a kind off; either one outranks the retry,
+    # which is what this pins.
+    assert phase == 'waiting-input'
+
+
 def test_phase_from_roster_mappings():
     assert S._phase_from_roster('finished', None) == 'ended'
     assert S._phase_from_roster('interrupted', None) == 'ended'

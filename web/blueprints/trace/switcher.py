@@ -73,7 +73,7 @@ ID_LOOKUP_LIMIT = 12
 # at the prompt is alive and attachable, where a starting one has nothing to
 # attach to yet.
 # `test_priority_covers_every_phase` pins the exhaustiveness half of that.
-_PRIORITY = ('waiting-permission', 'waiting-input',
+_PRIORITY = ('waiting-permission', 'waiting-input', 'retrying',
              'working', 'stopping', 'idle',
              'starting', 'inactive-stale', 'ended')
 

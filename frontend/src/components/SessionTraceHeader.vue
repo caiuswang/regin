@@ -144,6 +144,13 @@ const STATUS_PRESENTATION = {
     pill: 'border-emerald-200 bg-emerald-50 text-emerald-700',
     title: 'spans are still arriving',
   },
+  // Amber, still pulsing: the turn is open but the API call failed and the
+  // agent is waiting to retry — the one state a green dot misreports as fine.
+  retrying: {
+    dot: 'bg-amber-500 animate-pulse',
+    pill: 'border-amber-200 bg-amber-50 text-amber-700',
+    title: 'the API call failed — the agent is waiting to retry',
+  },
   // Same green as `working`, no pulse: equally alive, not mid-turn.
   idle: {
     dot: 'bg-emerald-500',

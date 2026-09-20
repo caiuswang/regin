@@ -8,7 +8,7 @@
 // `inactive`, and the server `inactive-stale`. Five words, one meaning, and a
 // reader who opened the palette from the list saw the status change under
 // them. So the words are keyed on MEANING, not on surface, and the two ways
-// regin decides what a session is doing both funnel into these six keys.
+// regin decides what a session is doing both funnel into these seven keys.
 //
 // The words track the server's own phase vocabulary (`_session_phase` in
 // web/blueprints/trace/sessions.py) wherever the server has a word, so UI copy
@@ -46,6 +46,23 @@ export const STATES = {
     glyph: '●',
     pulse: true,
     desc: 'Spans are still arriving.',
+  },
+  // The CLI could not reach the API and is waiting to try again. It shares
+  // amber with `awaiting` despite the scarcity rule above, because the rule
+  // protects amber for states that genuinely claim the reader — and this is
+  // the one case where the green pulse actively lies: the turn is open, so
+  // `working` is what every recency heuristic says, while nothing is moving
+  // and nothing will until the network comes back. Shape keeps the two apart
+  // where hue cannot: `◆` is a decision waiting on you, `◌` is a session
+  // waiting on something neither of you controls.
+  retrying: {
+    label: 'reconnecting',
+    dot: 'var(--color-warning)',
+    soft: 'var(--color-warning-soft)',
+    strong: 'var(--color-warning-strong)',
+    glyph: '◌',
+    pulse: true,
+    desc: 'The API call failed and the agent is waiting to retry.',
   },
   awaiting: {
     label: 'needs you',
@@ -121,6 +138,7 @@ export const STATES = {
 // `statusFromPhase`.
 const PHASE_STATUS = {
   working: 'working',
+  retrying: 'retrying',
   idle: 'idle',
   stopping: 'working',
   starting: 'starting',
@@ -170,6 +188,7 @@ export function statusLabel(status) {
 // deliberately folds away.
 export const PHASE_LABEL = {
   working: 'working',
+  retrying: 'reconnecting',
   idle: 'idle',
   starting: 'starting',
   stopping: 'stopping',
@@ -225,7 +244,7 @@ export function statusOfRow(row, liveness) {
 // beside them. Mirrors `_session_active_clause` in
 // web/blueprints/trace/sessions.py, which the `active=` filter and the
 // `active_count` facet share; the two must move together.
-const ACTIVE_STATUSES = new Set(['working', 'idle', 'awaiting'])
+const ACTIVE_STATUSES = new Set(['working', 'retrying', 'idle', 'awaiting'])
 
 export function isActiveRowStatus(row, liveness) {
   return ACTIVE_STATUSES.has(statusOfRow(row, liveness))

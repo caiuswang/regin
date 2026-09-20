@@ -28,7 +28,7 @@ export function stateMeta(row) {
 // sitting at the prompt, while `inactive` is only "silent past the stale
 // window" — a session abandoned nine hours ago carries that same phase as one
 // wedged a minute ago. Listing those as active drowns the ones that are.
-export const ACTIVE_STATES = new Set(['working', 'idle', 'awaiting'])
+export const ACTIVE_STATES = new Set(['working', 'retrying', 'idle', 'awaiting'])
 
 export function isActiveRow(row) {
   return ACTIVE_STATES.has(stateOf(row))
@@ -106,7 +106,8 @@ export function lastLine(row) {
 // at the last step: a session touched two seconds ago would outrank the one
 // parked on a question, on the one surface whose job is to surface it.
 const STATE_RANK = {
-  awaiting: 0, working: 1, idle: 2, starting: 3, inactive: 4, ended: 5, closed: 5,
+  awaiting: 0, retrying: 1, working: 2, idle: 3, starting: 4, inactive: 5,
+  ended: 6, closed: 6,
 }
 
 export function orderRows(rows) {

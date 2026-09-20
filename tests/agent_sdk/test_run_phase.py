@@ -23,9 +23,10 @@ from lib.agent_sdk import registry
 class _Runner:
     """Just the surface `run_phase` reads."""
 
-    def __init__(self, *, turn=False, stopping=False):
+    def __init__(self, *, turn=False, stopping=False, retrying=None):
         self.turn_in_flight = turn
         self.stop_requested = stopping
+        self.retrying = retrying
 
 
 _TRACE = "sdk-phase-1"
@@ -83,6 +84,34 @@ def test_a_stop_already_asked_for_outranks_the_turn_it_is_ending():
     registry.register_run(_TRACE, _Runner(turn=True, stopping=True))
 
     assert registry.run_phase(_TRACE) == 'stopping'
+
+
+def test_a_turn_stalled_on_a_retry_is_retrying_not_working():
+    """The reported defect. The turn IS in flight — that is exactly why
+    `working` was reported and why nothing aged it out — but the CLI is
+    sitting between a failed API call and the next attempt, and no amount of
+    span silence can say so."""
+    registry.register_run(_TRACE, _Runner(turn=True, retrying=object()))
+
+    assert registry.run_phase(_TRACE) == 'retrying'
+
+
+def test_a_stop_already_asked_for_outranks_a_retry():
+    """A stop is the operator's decision and ends the run either way; the
+    retry it interrupts is no longer what they need told."""
+    registry.register_run(_TRACE,
+                          _Runner(turn=True, stopping=True,
+                                  retrying=object()))
+
+    assert registry.run_phase(_TRACE) == 'stopping'
+
+
+def test_a_park_outranks_a_retry():
+    """Only one of the two can be cleared by a human, and it is the park."""
+    registry.register_run(_TRACE, _Runner(turn=True, retrying=object()))
+    _park('question')
+
+    assert registry.run_phase(_TRACE) == 'waiting-input'
 
 
 @pytest.mark.parametrize("kind,expected", [

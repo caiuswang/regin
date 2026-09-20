@@ -98,9 +98,32 @@ def resolve_cli_path() -> str:
     return found
 
 
+def _child_stderr(trace_id: str):
+    """Send one line of the child's stderr to regin's own log.
+
+    Without a callback the SDK does not even pipe the stream
+    (`subprocess_cli._connect`), so the child's diagnostics are inherited by
+    the Flask process and land wherever it was started from — nowhere a later
+    reader can find them, and attributed to no run. This is the only place
+    that says WHY a child died, and a run that ends with a bare `exited` is
+    the case it exists for.
+
+    `error` rather than a write: stderr is not regin's own ops history, it is
+    another process's failure report, and the level is what makes it visible
+    in a log the read/write split otherwise keeps at DEBUG.
+    """
+    def report(line: str) -> None:
+        text = (line or "").strip()
+        if text:
+            log.error("sdk_child_stderr", trace_id=trace_id, detail=text)
+
+    return report
+
+
 def build_options(*, cwd: str | None = None, can_use_tool=None,
                   resume: str | None = None,
-                  options: RunOptions | None = None):
+                  options: RunOptions | None = None,
+                  trace_id: str = ""):
     """`ClaudeAgentOptions` for a regin-launched session.
 
     `setting_sources` is explicit so the launched agent loads the same
@@ -131,6 +154,7 @@ def build_options(*, cwd: str | None = None, can_use_tool=None,
         "permission_mode": settings.agent_sdk.permission_mode or "default",
         "can_use_tool": can_use_tool,
         "fork_session": False,
+        "stderr": _child_stderr(trace_id),
     }
     if cwd:
         kwargs["cwd"] = cwd
