@@ -1,6 +1,8 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import NavIcon from './NavIcon.vue'
+import SidebarNav from './SidebarNav.vue'
+import SidebarPreview from './SidebarPreview.vue'
 import Button from './ui/Button.vue'
 import { useTheme } from '../composables/useTheme'
 import { useSidebarCollapsed } from '../composables/useSidebarCollapsed'
@@ -16,6 +18,12 @@ const emit = defineEmits(['navigate', 'open-palette', 'logout'])
 
 const { theme, toggleTheme } = useTheme()
 const { collapsed, toggleCollapsed } = useSidebarCollapsed()
+
+// An icon column is anonymous, so the collapsed rail previews the one row the
+// pointer (or keyboard focus) is on in a floating card beside it — the row
+// being read, not the whole nav. Null whenever the rail is expanded.
+const preview = ref(null)
+watch(collapsed, () => { preview.value = null })
 
 const themeLabel = computed(() => (theme.value === 'dark' ? 'Light mode' : 'Dark mode'))
 const themeAction = computed(() =>
@@ -93,44 +101,13 @@ function linkName(link) {
       </Button>
     </div>
 
-    <nav class="sb-nav">
-      <div
-        v-for="group in navGroups"
-        :key="group.label"
-        class="sb-group"
-        role="group"
-        :aria-label="group.label"
-      >
-        <div v-if="!collapsed" class="sb-section-label">{{ group.label }}</div>
-        <div v-else class="sb-section-rule" aria-hidden="true" />
-        <Button
-          v-for="link in group.links"
-          :key="link.to"
-          variant="ghost"
-          size="md"
-          class="sb-item sb-focus focus-visible:outline-2 focus-visible:outline-blue-500"
-          :class="{ 'is-active': isActiveLink(link) }"
-          :aria-label="linkName(link)"
-          :title="collapsed ? linkName(link) : undefined"
-          :aria-current="isActiveLink(link) ? 'page' : undefined"
-          @click="emit('navigate', link)"
-        >
-          <NavIcon :name="link.icon" />
-          <span v-if="!collapsed" class="sb-item-label">{{ link.label }}</span>
-          <span
-            v-if="!collapsed && link.badge?.()"
-            class="sb-badge"
-            :class="`sb-badge-${link.tone?.() || 'info'}`"
-          >{{ link.badge() }}</span>
-          <span
-            v-else-if="collapsed && link.badge?.()"
-            class="sb-badge-dot"
-            :class="`sb-badge-dot-${link.tone?.() || 'info'}`"
-            aria-hidden="true"
-          />
-        </Button>
-      </div>
-    </nav>
+    <SidebarNav
+      :nav-groups="navGroups"
+      :is-active-link="isActiveLink"
+      :icon-only="collapsed"
+      @navigate="emit('navigate', $event)"
+      @preview="preview = $event"
+    />
 
     <!-- Footer: theme + identity -->
     <div class="sb-user-wrap">
@@ -170,6 +147,8 @@ function linkName(link) {
         </template>
       </div>
     </div>
+
+    <SidebarPreview v-if="preview" v-bind="preview" />
   </aside>
 </template>
 
@@ -179,8 +158,7 @@ function linkName(link) {
    height/justify/gap/radius utilities — scoped rules are unlayered, so those are
    pinned explicitly below. The variant's focus RING is the one thing scoped
    geometry can't override by pinning geometry, since it paints via box-shadow:
-   `.sb-focus` resets that so the rail shows a single outline, not outline+ring.
-   `.sb-item.is-active` already carries its own box-shadow and so never rang. */
+   `.sb-focus` resets that so the rail shows a single outline, not outline+ring. */
 .sb-focus:focus-visible {
   outline: 2px solid var(--color-blue-500);
   outline-offset: 2px;
@@ -339,125 +317,6 @@ function linkName(link) {
   flex-shrink: 0;
 }
 
-.sb-nav {
-  flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: 0.25rem 0.75rem 0.5rem;
-}
-
-.is-collapsed .sb-nav { padding: 0.25rem 1rem 0.5rem; }
-
-.sb-section-label {
-  font-size: 0.59375rem;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  color: var(--color-slate-400);
-  font-weight: 700;
-  padding: 0 0.75rem;
-  margin: 1rem 0 0.375rem;
-  white-space: nowrap;
-}
-
-.sb-group:first-child .sb-section-label { margin-top: 0; }
-
-/* The collapsed rail has no room for a group heading; a hairline keeps the
-   grouping visible while role="group" + aria-label keeps it announced. */
-.sb-section-rule {
-  height: 1px;
-  background: var(--color-slate-200);
-  margin: 0.6875rem 0.5rem 0.5625rem;
-}
-
-.sb-group:first-child .sb-section-rule { margin-top: 0.125rem; }
-
-.sb-item {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 0.6875rem;
-  width: 100%;
-  height: auto;
-  min-height: 2.375rem;
-  padding: 0.5rem 0.625rem;
-  margin-bottom: 2px;
-  border: 0;
-  border-radius: 0.625rem;
-  font-size: 0.8125rem;
-  font-weight: 500;
-  color: var(--color-slate-600);
-  background: transparent;
-  cursor: pointer;
-  transition: background-color 150ms, color 150ms, box-shadow 150ms;
-  text-align: left;
-}
-
-.is-collapsed .sb-item { padding: 0.5rem 0; justify-content: center; }
-
-.sb-item:hover { background: var(--color-slate-100); color: var(--color-slate-900); }
-
-/* The glyph sits behind its label until the row is active or hovered, so a
-   column of icons doesn't compete with the one row that matters. */
-.sb-item :deep(.nav-icon) { opacity: 0.72; }
-.sb-item:hover :deep(.nav-icon),
-.sb-item.is-active :deep(.nav-icon) { opacity: 1; }
-
-.sb-item.is-active {
-  background: linear-gradient(135deg, var(--color-blue-800), var(--color-blue-500));
-  color: #fff;
-  font-weight: 600;
-  box-shadow: 0 4px 12px rgba(30, 64, 175, 0.25);
-}
-
-.sb-item.is-active:hover {
-  background: linear-gradient(135deg, var(--color-blue-800), var(--color-blue-500));
-  color: #fff;
-}
-
-.sb-item-label {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Tone, not decoration: red only while an agent is actually parked, so the
-   colour stays worth reacting to. */
-.sb-badge {
-  flex-shrink: 0;
-  margin-left: auto;
-  background: var(--color-blue-100);
-  color: var(--color-blue-800);
-  font-size: 0.625rem;
-  font-weight: 600;
-  padding: 0.0625rem 0.375rem;
-  border-radius: 0.625rem;
-  min-width: 1.125rem;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
-}
-
-.sb-badge-warning { background: var(--color-amber-100); color: var(--color-amber-800); }
-.sb-badge-danger { background: var(--color-red-100); color: var(--color-red-800); }
-
-.sb-item.is-active .sb-badge { background: rgba(255, 255, 255, 0.25); color: #fff; }
-
-.sb-badge-dot {
-  position: absolute;
-  top: 5px;
-  right: 5px;
-  width: 8px;
-  height: 8px;
-  border-radius: 9999px;
-  background: var(--color-blue-500);
-  border: 2px solid var(--color-surface);
-}
-
-.sb-badge-dot-warning { background: var(--color-amber-500); }
-.sb-badge-dot-danger { background: var(--color-red-500); }
-
 .sb-user-wrap {
   padding: 0.5rem 0.75rem 1rem;
   border-top: 1px solid var(--color-slate-100);
@@ -552,8 +411,4 @@ function linkName(link) {
 }
 
 .sb-user-logout:hover { color: var(--color-slate-900); background: var(--color-slate-200); }
-
-.sb-nav::-webkit-scrollbar { width: 8px; }
-.sb-nav::-webkit-scrollbar-thumb { background: var(--color-slate-300); border-radius: 4px; }
-.sb-nav::-webkit-scrollbar-thumb:hover { background: var(--color-slate-400); }
 </style>
