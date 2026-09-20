@@ -115,8 +115,21 @@ def api_agent_messages_blockers():
     """
     from lib.agent_messages import blockers
     include_tests = _bool_arg('include_tests')
-    return jsonify({'blockers': blockers.live_blockers(
-        include_tests=include_tests)})
+    cards = blockers.live_blockers(include_tests=include_tests,
+                                   include_dismissed=True)
+    return jsonify({
+        'blockers': [c for c in cards if not c['dismissed']],
+        # Every live park, dismissed cards included, as
+        # `{trace_id, since}` — one entry per id the park answers to, since an
+        # SDK run is traced twice and the sessions list shows the child's id.
+        # Dismissing silences the banner; it must not also erase the "awaiting
+        # decision" marker that is how an operator finds the session again and
+        # answers it there.
+        'parked': [{'trace_id': tid, 'since': c['created_at']}
+                   for c in cards
+                   for tid in [c['trace_id'], *(c['alias_trace_ids'] or [])]
+                   if tid],
+    })
 
 
 @trace_bp.route('/api/agent-messages/unread-count')

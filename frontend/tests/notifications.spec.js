@@ -86,6 +86,28 @@ print(store.dismiss_keyed(${JSON.stringify(traceId)}, ${JSON.stringify(key)}))
   return Number(out.trim().split('\n').pop())
 }
 
+// The other half of "answered in the terminal": PostToolUse lands the resolved
+// twin, which is what takes the park itself down. The card's dismissal alone
+// never did — since a dismissal is also how the operator SILENCES a live park,
+// and a silenced park must keep flagging its row.
+function retirePark(traceId) {
+  const script = `
+import sys
+sys.path.insert(0, ".")
+from lib.orm.engine import get_connection
+conn = get_connection()
+cur = conn.execute(
+    "UPDATE session_spans SET status_code = 'OK' "
+    " WHERE trace_id = ? AND status_code = 'PENDING' "
+    "   AND name = 'permission.request'", (${JSON.stringify(traceId)},))
+conn.commit()
+print(cur.rowcount)
+conn.close()
+`
+  return Number(execFileSync(PY, ['-c', script], { cwd: ROOT, encoding: 'utf8' })
+    .trim().split('\n').pop())
+}
+
 // Through the page, not `page.request`: the API is Bearer-authed from
 // localStorage, which an APIRequestContext does not carry — so the old form
 // 401'd silently, left every row it "cleaned" parked in the live DB, and only
@@ -114,10 +136,18 @@ function clearBlockers() {
 import sys
 sys.path.insert(0, ".")
 from lib.agent_messages import blockers, store
-for b in blockers.live_blockers():
+from lib.orm.engine import get_connection
+for b in blockers.live_blockers(include_dismissed=True):
     # A derived card has no row and so no id — nothing to dismiss.
     if b["id"] is not None:
         store.dismiss(b["id"])
+# The PARK, not just its card: dismissing only silences a live park now, so a
+# leftover one would go on flagging its session row for every later test.
+conn = get_connection()
+conn.execute("UPDATE session_spans SET status_code = 'OK' "
+             " WHERE status_code = 'PENDING' AND name = 'permission.request'")
+conn.commit()
+conn.close()
 print("ok")
 `
   execFileSync(PY, ['-c', script], { cwd: ROOT, encoding: 'utf8' })
@@ -377,6 +407,10 @@ test.describe('blocker banner', () => {
 
     // Answered in the terminal: the hook dismisses the keyed card out of
     // process, and both surfaces must settle with no interaction here.
+    // Park first, card second — PostToolUse's own order, and the one the
+    // feed's re-read depends on: a card retired ahead of its park is re-read
+    // as still waiting.
+    expect(retirePark(traceId)).toBe(1)
     expect(resolveKeyed(traceId, 'permission-pending')).toBe(1)
     await expect(page.locator('.blocker-banner')).toHaveCount(0, { timeout: 10_000 })
     await expect(page.locator('.srow--awaiting')).toHaveCount(0)
@@ -465,8 +499,11 @@ test.describe('hiding a blocker card is not answering it', () => {
       expect(status).toBe(200)
 
       await expect(page.locator('.blocker-banner')).toHaveCount(0, { timeout: 10_000 })
-      await expect(page.locator('.srow--awaiting')).toHaveCount(0)
-      // The agent was never un-parked, so nothing may say it resumed.
+      // The agent was never un-parked, so nothing may say it resumed — and the
+      // row must go on flagging it. Dismissing is "stop interrupting me", not
+      // "this is answered"; a park never expires, so a dismissal that also
+      // cleared this marker left no surface anywhere to answer from.
+      await expect(page.locator('.srow--awaiting')).toHaveCount(1)
       await expect(page.locator('.srow__resumed')).toHaveCount(0)
     })
 })

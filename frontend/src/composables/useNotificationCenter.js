@@ -54,6 +54,11 @@ const foldedIds = ref(new Set())
 // a single slot silently dropped all but the last — the banner pages through
 // this list instead. Oldest first: the longest-parked agent is next to answer.
 const blockers = shallowRef([])
+// Every session holding a live park, dismissed cards included — the banner's
+// list cannot answer this because dismissing removes a card from it. A park
+// never expires, so the "awaiting decision" marker on the sessions list is the
+// operator's way back to a question they silenced but still have to answer.
+const parkedTraceIds = shallowRef([])
 const blockerIndex = ref(0)
 const blockerFolded = ref(false)
 // The decision itself now lives in a pop-out; the banner is only the flag that
@@ -118,10 +123,28 @@ export const blocker = computed(() => blockers.value[blockerPos.value] || null)
 // paging to. Alias ids included: an SDK run's card carries the sdk- id, but
 // the sessions list shows its CLI child's row — the highlight must match
 // whichever id the visible row happens to carry.
-export const awaitingTraceIds = computed(() => new Set(
-  blockers.value
+export const awaitingTraceIds = computed(() => new Set([
+  ...blockers.value
     .flatMap(b => [b.trace_id, ...(b.alias_trace_ids || [])])
-    .filter(Boolean)))
+    .filter(Boolean),
+  ...parkedTraceIds.value,
+]))
+
+// `parked` is server truth about which sessions hold a live park, so it
+// REPLACES the set rather than merging — a park that has been answered has to
+// stop flagging its row. The `since` stamps ride into the same map the banner
+// uses, so a dismissed park still reports how long it has really waited.
+function applyParked(parked) {
+  const fresh = []
+  for (const p of parked) {
+    if (!p || !p.trace_id) continue
+    fresh.push(p.trace_id)
+    if (!parkedSince.has(p.trace_id)) {
+      parkedSince.set(p.trace_id, messageStamp({ created_at: p.since }))
+    }
+  }
+  parkedTraceIds.value = fresh
+}
 
 export const bannerVisible = computed(
   () => !!blocker.value && !blockerFolded.value && !suppressed.value)
@@ -337,6 +360,12 @@ function retire(payload) {
   for (const row of gone) {
     clearBlocker(row, { resumed: payload.reason === 'dismissed' })
   }
+  // The card is gone from THIS tab's list, but whether the agent is still
+  // parked is the server's to say: a dismissal silences a park that is still
+  // live, and a session can hold a second one the frame said nothing about.
+  // Re-read rather than infer, or the "awaiting decision" marker either
+  // outlives the park or vanishes while it waits.
+  if (gone.length) refreshBlockers()
 }
 
 // `resumed` is a claim about the agent, so only a real resolve may make it.
@@ -518,6 +547,7 @@ function reset() {
   // silent no-op in a production build and the previous user's question, its
   // session title and its live option buttons survived a 401.
   blockers.value = []
+  parkedTraceIds.value = []
   blockerIndex.value = 0
   // Anything still in flight resolved against the user who just went away.
   refreshGen += 1
@@ -552,6 +582,7 @@ async function refreshBlockers({ retries = 1 } = {}) {
   try {
     const data = await api.get('/agent-messages/blockers')
     rows = data.blockers || []
+    applyParked(data.parked || [])
   } catch {
     // The stream's own row stands — but a row raised off a frame is on screen
     // WITHOUT its options or its answer channel until an enrichment lands, and

@@ -230,6 +230,42 @@ def test_a_dismissed_card_suppresses_its_own_park(tmp_db):
     assert blockers.live_blockers() == []
 
 
+def test_a_dismissed_park_is_still_returned_when_asked_for(tmp_db):
+    """Dismissing says "stop interrupting me", not "this is answered". A park
+    never expires, so a feed that drops one for good left the operator with no
+    surface at all to answer a still-blocked agent from (feature #91)."""
+    _seed_session(tmp_db)
+    _seed_span(tmp_db, 'permreq-1', attrs=_ask_attrs('X', tool_use_id=_TU_A))
+    _seed_card(span_id=_TU_A)
+    store.dismiss_keyed(_TRACE, PERM_KEY)
+    rows = blockers.live_blockers(include_dismissed=True)
+    assert [r['trace_id'] for r in rows] == [_TRACE]
+    assert rows[0]['dismissed'] is True
+    assert rows[0]['question'] == 'pick'
+
+
+def test_a_live_park_is_not_marked_dismissed(tmp_db):
+    _seed_session(tmp_db)
+    _seed_span(tmp_db, 'permreq-1', attrs=_ASK_ATTRS)
+    _seed_card()
+    assert blockers.live_blockers(include_dismissed=True)[0]['dismissed'] is False
+
+
+def test_dismissed_cards_do_not_consume_the_banner_cap(tmp_db):
+    """They feed the "awaiting decision" markers, never the banner, so a
+    backlog of them must not crowd a live blocker out of the capped feed."""
+    _seed_session(tmp_db, 'sess-dismissed')
+    _seed_span(tmp_db, 'permreq-old', trace_id='sess-dismissed',
+               attrs=_ask_attrs('X', tool_use_id=_TU_A), start=_stamp(5))
+    _seed_card('sess-dismissed', span_id=_TU_A)
+    store.dismiss_keyed('sess-dismissed', PERM_KEY)
+    _seed_session(tmp_db)
+    _seed_span(tmp_db, 'permreq-new', attrs=_ASK_ATTRS, start=_stamp(1))
+    _seed_card()
+    rows = blockers.live_blockers(include_dismissed=True, limit=1)
+    assert [r['dismissed'] for r in rows] == [True, False]
+
+
 def test_an_old_dismissal_does_not_suppress_a_new_park(tmp_db):
     """"Never show again" is a promise about ONE decision. A new prompt under
     the same key must interrupt again."""
@@ -938,6 +974,30 @@ def test_endpoint_returns_the_feed(tmp_db, flask_client):
     _seed_card()
     data = flask_client.get('/api/agent-messages/blockers').get_json()
     assert [b['trace_id'] for b in data['blockers']] == [_TRACE]
+
+
+def test_endpoint_keeps_a_dismissed_park_out_of_the_banner_but_flags_it(
+        tmp_db, flask_client):
+    """The two halves of the wire: `blockers` stays silenced so the banner does
+    not re-interrupt, while `parked` still names the session so the list's
+    "awaiting decision" marker leads the operator back to answer it."""
+    _seed_session(tmp_db)
+    _seed_span(tmp_db, 'permreq-1', attrs=_ask_attrs('X', tool_use_id=_TU_A))
+    _seed_card(span_id=_TU_A)
+    store.dismiss_keyed(_TRACE, PERM_KEY)
+    data = flask_client.get('/api/agent-messages/blockers').get_json()
+    assert data['blockers'] == []
+    assert [p['trace_id'] for p in data['parked']] == [_TRACE]
+    assert data['parked'][0]['since']
+
+
+def test_endpoint_parked_names_every_id_a_park_answers_to(
+        tmp_db, flask_client, _sdk_ask):
+    """An SDK run is traced twice and the sessions list shows the CHILD's id,
+    so a marker keyed only on the `sdk-` id would never light up."""
+    _seed_sdk_link(tmp_db, 'sdk-run-1', 'cli-child')
+    data = flask_client.get('/api/agent-messages/blockers').get_json()
+    assert {p['trace_id'] for p in data['parked']} == {'sdk-run-1', 'cli-child'}
 
 
 def test_a_seeded_test_card_surfaces_for_the_harness(tmp_db):

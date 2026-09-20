@@ -128,16 +128,54 @@ def test_never_demote_a_human_blocker_that_is_the_newest_span():
 
 
 def test_human_blocker_still_demotes_once_the_session_moved_past_it():
-    """The exemption is anchored to being the session's NEWEST span. A later
-    span means the gate was answered and this row is genuinely stuck."""
+    """The exemption is anchored to being the newest span its own agent wrote.
+    A later span means the gate was answered and this row is genuinely stuck."""
     now = datetime(2026, 4, 18, 13, 0, 0)
     blocked = now - timedelta(seconds=1200)
-    rows = [_row('permreq-tu10', 'permission.request', {'tool_use_id': 'tu10'},
-                 status='PENDING', start=_iso(blocked), id=1)]
+    rows = [
+        _row('permreq-tu10', 'permission.request', {'tool_use_id': 'tu10'},
+             status='PENDING', start=_iso(blocked), id=1),
+        _row('tool-after', 'tool.Bash', {'tool_use_id': 'tuA'}, status='OK',
+             start=_iso(blocked + timedelta(seconds=30)), id=2),
+    ]
     served = _served(rows, session_activity={
         'status': 'active', 'now': now,
         'last_seen': _iso(blocked + timedelta(seconds=30))})
     assert served['permreq-tu10']['status_code'] == 'ERROR'
+
+
+def test_a_live_park_survives_a_last_seen_heartbeat():
+    """`sessions.last_seen` is a heartbeat every ingest writer bumps — a
+    transcript rescan, a backfill landing rows stamped in the past. Judging
+    newest-ness by it demoted a question the agent was still blocked on ~2
+    minutes after it was raised, and `/live` then offered no answer sheet for
+    an agent that had not moved (trace d8c59c0e, feature #91)."""
+    now = datetime(2026, 4, 18, 13, 0, 0)
+    blocked = now - timedelta(seconds=54000)
+    rows = [_row('pending-tu11', 'tool.AskUserQuestion',
+                 {'tool_use_id': 'tu11'},
+                 status='PENDING', start=_iso(blocked), id=1)]
+    served = _served(rows, session_activity={
+        'status': 'active', 'now': now,
+        'last_seen': _iso(blocked + timedelta(seconds=113))})
+    assert served['pending-tu11']['status_code'] == 'PENDING'
+    assert 'is_interrupt' not in served['pending-tu11']['attributes']
+
+
+def test_a_subagents_activity_does_not_demote_the_main_loops_park():
+    """A parallel subagent keeps writing spans while the main agent is parked;
+    its rows say nothing about the main loop's question."""
+    now = datetime(2026, 4, 18, 13, 0, 0)
+    blocked = now - timedelta(seconds=1200)
+    rows = [
+        _row('permreq-tu12', 'permission.request', {'tool_use_id': 'tu12'},
+             status='PENDING', start=_iso(blocked), id=1),
+        _row('sa-tool', 'tool.Bash', {'tool_use_id': 'tuS', 'agent_id': 'a1'},
+             status='OK', start=_iso(blocked + timedelta(seconds=60)), id=2),
+    ]
+    served = _served(rows, session_activity={
+        'status': 'active', 'now': now, 'last_seen': _iso(blocked)})
+    assert served['permreq-tu12']['status_code'] == 'PENDING'
 
 
 def test_human_blocker_demotes_on_an_ended_session():

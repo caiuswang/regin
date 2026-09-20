@@ -711,6 +711,25 @@ def _latest_move_on_ts(spans: list[dict]) -> dict:
     return out
 
 
+def _latest_span_ts(spans: list[dict]) -> dict:
+    """`(trace_id, agent_id) → latest start_time of ANY span` (naive local).
+
+    The evidence `_blocks_on_a_human` weighs newest-ness against. Same key as
+    `_latest_move_on_ts`, so a subagent running beside a parked main loop
+    never counts as the main loop having moved.
+    """
+    out: dict = {}
+    for s in spans:
+        ts = _merge_ts(s.get('start_time'))
+        if ts is None:
+            continue
+        key = (s.get('trace_id'), _attrs(s).get('agent_id'))
+        prev = out.get(key)
+        if prev is None or ts > prev:
+            out[key] = ts
+    return out
+
+
 def _moved_on_past_grace(pending: dict, move_on_ts: dict) -> bool:
     """True when a same-agent `assistant_response`/`prompt` started at least
     `_MOVED_ON_GRACE_SEC` after the pending — Claude demonstrably moved past the
@@ -737,22 +756,31 @@ def _session_is_inactive(session_activity: dict | None, now: datetime) -> bool:
     return (now - last_seen).total_seconds() > INACTIVE_THRESHOLD_SEC
 
 
-def _blocks_on_a_human(pending: dict, session_activity: dict | None) -> bool:
-    """True for an unresolved permission/ask/plan that is the session's NEWEST
-    span on a still-open session — the state rule (b)'s clock cannot see.
+def _blocks_on_a_human(pending: dict, session_activity: dict | None,
+                       latest_span_ts: dict) -> bool:
+    """True for an unresolved permission/ask/plan that is the newest thing its
+    own agent did on a still-open session — the state rule (b)'s clock cannot
+    see.
 
     Such a span is why the session went quiet, so its own age is not evidence
     it is stuck; it is the length of the wait. A stuck `tool.Bash` gets no such
-    exemption — nothing about it explains the silence. Newest-ness is read off
-    the session row's `last_seen` rather than the merge window, which may be a
-    scroll-up page that ends before the blocker."""
+    exemption — nothing about it explains the silence.
+
+    Newest-ness is read off the SPAN stream, never `sessions.last_seen`: that
+    column is a session heartbeat every ingest writer bumps — a transcript
+    rescan, a backfill landing rows stamped in the past — so it overtook a live
+    park within two minutes of it being raised and demoted a question the agent
+    was still blocked on to '⏹ interrupted', leaving `/live` with no answer
+    sheet for an agent that never moved.
+    """
     if not session_activity or session_activity.get('status') == 'ended':
         return False
     if not is_human_blocker(pending.get('name'), pending.get('span_id')):
         return False
     p_ts = _merge_ts(pending.get('start_time'))
-    last_seen = _merge_ts(session_activity.get('last_seen'))
-    return p_ts is not None and last_seen is not None and p_ts >= last_seen
+    newest = latest_span_ts.get(
+        (pending.get('trace_id'), _attrs(pending).get('agent_id')))
+    return p_ts is not None and (newest is None or p_ts >= newest)
 
 
 def _demote(pending: dict) -> dict:
@@ -801,11 +829,13 @@ def _demote_stale_pending(
     now = (session_activity or {}).get('now') or datetime.now()
     inactive = _session_is_inactive(session_activity, now)
     move_on_ts = _latest_move_on_ts(spans)
+    latest_span_ts = _latest_span_ts(spans)
 
     def demote(s: dict) -> bool:
         if _moved_on_past_grace(s, move_on_ts):
             return True
-        if not inactive or _blocks_on_a_human(s, session_activity):
+        if not inactive or _blocks_on_a_human(s, session_activity,
+                                              latest_span_ts):
             return False
         p_ts = _merge_ts(s.get('start_time'))
         return p_ts is not None and \

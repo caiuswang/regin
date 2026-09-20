@@ -882,11 +882,18 @@ def _heal_orphans(rows: dict, claimed_ids: set, parked_traces: set) -> None:
 
 
 def live_blockers(*, include_tests: bool = False,
+                  include_dismissed: bool = False,
                   limit: int = _MAX_BLOCKERS) -> list[dict]:
     """Every decision waiting on a human, oldest first.
 
     Oldest first because the banner pages through them and the longest-parked
     agent is the one to answer next.
+
+    `include_dismissed` keeps the parks whose card the operator dismissed,
+    each stamped `dismissed=True`. Dismissing is "stop interrupting me", and a
+    park never expires — so a feed that drops one leaves an agent blocked with
+    no surface left to answer it from. The banner still reads the default:
+    silencing it is the operator's call, finding the session again must not be.
     """
     live_traces = _live_hook_trace_ids()
     sdk_parks = _sdk_parked()
@@ -900,36 +907,58 @@ def live_blockers(*, include_tests: bool = False,
     parked = sdk_parks + _hook_parked(live_traces, rows)
     if include_tests:
         parked += _test_cards(rows)
-    titles = _session_titles({p['trace_id'] for p in parked})
-    out, claimed = [], set()
-    for park in sorted(parked, key=lambda p: p['parked_since']):
-        card = _card_for(park, rows, titles, claimed)
-        if card is not None:
-            out.append(card)
-        if len(out) >= limit:
-            break
+    claimed: set = set()
+    out = _cards_for(parked, rows, claimed, limit=limit,
+                     include_dismissed=include_dismissed)
     _heal_orphans(rows, claimed, {p['trace_id'] for p in parked})
     log.read("live_blockers_listed", count=len(out),
              sdk=sum(1 for p in parked if p.get('sdk')))
     return out
 
 
-def _card_for(park: dict, rows: dict, titles: dict,
-              claimed: set) -> dict | None:
-    """One park → its card, or None when the user dismissed this very ask."""
+def _cards_for(parked: list[dict], rows: dict, claimed: set, *, limit: int,
+               include_dismissed: bool) -> list[dict]:
+    """Parks → cards, oldest first, capped at `limit` UNDISMISSED cards.
+
+    Dismissed cards ride along outside the cap: they feed the "awaiting
+    decision" markers, never the banner, so letting a backlog of them consume
+    the limit would starve the surface the limit exists to bound.
+    """
+    titles = _session_titles({p['trace_id'] for p in parked})
+    out: list[dict] = []
+    live = 0
+    for park in sorted(parked, key=lambda p: p['parked_since']):
+        card = _card_for(park, rows, titles, claimed,
+                         include_dismissed=include_dismissed)
+        if card is None:
+            continue
+        out.append(card)
+        live += 0 if card['dismissed'] else 1
+        if live >= limit:
+            break
+    return out
+
+
+def _card_for(park: dict, rows: dict, titles: dict, claimed: set,
+              *, include_dismissed: bool = False) -> dict | None:
+    """One park → its card, stamped with whether the user dismissed this very
+    ask; None when they did and the caller did not ask for those."""
     from web.blueprints.trace.sessions import _bridge_reachability
     row = park.get('row') or rows.get((park['trace_id'], _key_for(park)))
+    dismissed = False
     if row is not None and row.get('dismissed_at') and 'row' not in park:
-        if _dismissed_for(row, span_id=park['span_id'],
-                          parked_since=park['parked_since']):
+        dismissed = _dismissed_for(row, span_id=park['span_id'],
+                                   parked_since=park['parked_since'])
+        if dismissed and not include_dismissed:
             return None
-        row = None
+        if not dismissed:
+            row = None
     if row is not None:
         claimed.add(row['id'])
     bridge = ({'bridge_reachable': True, 'bridge_pane': None,
                'sdk_owned': True} if park['sdk']
               else _bridge_reachability(park['trace_id']))
-    return _build(park, row, bridge, titles)
+    return {**_build(park, row, bridge, titles), 'dismissed': dismissed}
 
 
 def _sdk_row_traces(parked: list[dict]) -> set[str]:
