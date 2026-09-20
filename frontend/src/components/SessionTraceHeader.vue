@@ -375,7 +375,7 @@ function titleSourceTooltip(src) {
           :title="session.title || ''"
         >{{ sessionTitle }}<span
           v-if="session.title && session.title_source"
-          class="ml-2 align-middle inline-block rounded border border-slate-200 bg-slate-50 text-slate-500 text-[10px] font-medium px-1.5 py-0.5 uppercase tracking-wide"
+          class="ml-2 align-middle inline-block text-slate-400 text-[10px] font-medium px-1 uppercase tracking-wide"
           :title="titleSourceTooltip(session.title_source)"
         >{{ titleSourceLabel(session.title_source) }}</span></h1>
         <span
@@ -680,7 +680,7 @@ function titleSourceTooltip(src) {
         <Button
           variant="ghost"
           size="sm"
-          class="h-auto shrink-0 gap-1 border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-500 hover:border-slate-300 hover:bg-slate-100 hover:text-slate-700"
+          class="h-auto shrink-0 gap-1 px-2 py-1 text-[11px] font-semibold text-slate-500 hover:text-slate-700"
           :title="(collapsed ? 'Show session details' : 'Collapse header for more transcript') + ' (H)'"
           :aria-expanded="!collapsed"
           data-testid="header-details-toggle"
