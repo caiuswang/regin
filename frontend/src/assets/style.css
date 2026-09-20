@@ -3976,6 +3976,84 @@ button.live-qa-pick.live-qa-staged {
     .trace-fold-enter { animation: none; }
 }
 
+/* ── Trace header chips ───────────────────────────────────────────────────
+   One geometry for every peer fact in the session header. Global, not scoped:
+   the same chip renders inside sibling components (TraceProjectChip,
+   SessionHeaderFacts, SessionHeaderPivots) that a scoped rule cannot reach.
+   A tone variant changes colour only — four different paddings/radii for four
+   peer facts is what made a wrapping header row read as debris rather than a
+   list. */
+.hdr-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    min-width: 0;
+    max-width: 100%;
+    /* Geometry is the whole point of the class, so it also has to win against
+       the <Button> primitive's own sizing when a chip IS a button (the
+       click-to-copy trace id). Unlayered CSS beats Tailwind's @layer
+       utilities, but only for properties it actually declares — height and
+       min-height are the two Button sets that a span never does. */
+    height: auto;
+    min-height: 0;
+    border: 1px solid var(--color-border-subtle);
+    border-radius: 0.25rem;
+    background: var(--color-surface-2);
+    padding: 0.05rem 0.35rem;
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 11px;
+    line-height: 1.55;
+    color: var(--color-fg-muted);
+    white-space: nowrap;
+    text-decoration: none;
+}
+/* A chip's variable-length part — a plan filename, a workflow-run name, a
+   model id. Capped, because `white-space: nowrap` on the chip means an
+   uncapped one eats the whole row and pushes every sibling chip to a second
+   line, which is the ragged wrap this row exists to remove. */
+.hdr-chip-clip { overflow: hidden; text-overflow: ellipsis; max-width: 14rem; }
+/* Only the chips that DO something take a pointer — a hover state on an inert
+   fact chip promises a click that never lands. */
+a.hdr-chip, button.hdr-chip, .hdr-chip-action {
+    cursor: pointer;
+    user-select: none;
+}
+a.hdr-chip:hover, button.hdr-chip:hover, .hdr-chip-action:hover {
+    border-color: var(--color-border-strong);
+}
+/* The chip's `min-height: 0` beats <Button>'s `pointer-coarse:min-h-9`
+   (unlayered CSS outranks Tailwind's utility layer), which would otherwise
+   silently opt the clickable chips out of the touch-target floor. Put the
+   floor back for the interactive ones only — an inert fact chip needs no hit
+   area, and giving it one would make the whole row 36px tall on a phone. */
+@media (pointer: coarse) {
+    a.hdr-chip, button.hdr-chip, .hdr-chip-action { min-height: 2.25rem; }
+}
+.hdr-chip:focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 1px;
+}
+.hdr-chip-info {
+    border-color: var(--color-info-soft);
+    background: var(--color-info-soft);
+    color: var(--color-info-strong);
+}
+.hdr-chip-success {
+    border-color: var(--color-success-soft);
+    background: var(--color-success-soft);
+    color: var(--color-success-strong);
+}
+.hdr-chip-agent {
+    border-color: var(--color-agent-line);
+    background: var(--color-agent-soft);
+    color: var(--color-agent);
+}
+.hdr-chip-warning {
+    border-color: var(--color-warning-soft);
+    background: var(--color-warning-soft);
+    color: var(--color-warning-strong);
+}
+
 /* ── Trace agent scope (desktop companion pane) ───────────────────────────
    Shared across SessionTraceView + TraceAgentPane + SubagentCard, so global
    (scoped SFC styles don't reach children). Canonical stacking tokens exposed

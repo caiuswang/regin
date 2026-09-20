@@ -67,7 +67,10 @@ function onDeclared() {
     </span>
 
     <span v-for="row in rows" :key="row.feature_id" class="attr-item">
-      <router-link class="attr-key" :to="`/features/${row.feature_id}`"
+      <router-link
+        class="attr-key"
+        :to="`/features/${row.feature_id}`"
+        :title="row.title || `#${row.feature_id}`"
       >{{ row.title || `#${row.feature_id}` }}</router-link>
       <!-- The tag is the reason this session is counted, so the task-lane one
            names the task it came from — a provenance nobody can open is a
@@ -126,10 +129,17 @@ function onDeclared() {
     font-style: italic; color: var(--color-fg-subtle);
     border-bottom: 1px dashed var(--color-border-strong); padding-bottom: 1px;
 }
-.attr-item { display: inline-flex; align-items: center; gap: 0.3rem; }
+.attr-item { display: inline-flex; align-items: center; gap: 0.3rem;
+    min-width: 0; max-width: 100%; }
+/* Capped, not free-running: a feature title is prose of any length, and one
+   long one wrapped this row to three lines — label, title, Declare — which is
+   most of the header's height spent on its least-consulted fact. The full
+   title rides the tooltip and the link still opens the feature. */
 .attr-key {
     font-family: var(--font-mono, monospace); font-weight: 600;
     color: var(--color-primary); text-decoration: none;
+    min-width: 0; max-width: 20rem; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap;
 }
 .attr-key:hover { text-decoration: underline; }
 .attr-key:focus-visible { outline: 2px solid var(--color-blue-500); }

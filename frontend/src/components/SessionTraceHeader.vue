@@ -24,9 +24,9 @@
 // (`reload`, `jump-to-task`, `update:viewMode`) back to the parent, which
 // still owns the data model.
 import { ref, computed } from 'vue'
-import { fmtTokens } from '../utils/traceFormatters.js'
 import SessionAttribution from './trace/SessionAttribution.vue'
-import { badgeScopeOf, badgeTasks, countTasks, taskAgentSections } from '../utils/taskScope.js'
+import SessionHeaderFacts from './trace/SessionHeaderFacts.vue'
+import SessionHeaderPivots from './trace/SessionHeaderPivots.vue'
 import { sessionLivenessWithClock } from '../utils/sessionActivity.js'
 import { statusOfRow, statusLabel as labelOf } from '../utils/sessionStatus.js'
 import { MODE_OPTIONS } from '../composables/useViewMode.js'
@@ -40,15 +40,6 @@ import TraceDetailControl from './trace/TraceDetailControl.vue'
 // imported: traceFormatters exposes a differently-behaved `fmtTime` (HH:MM), so
 // importing it would silently change how the snapshot time, plan dates, and the
 // "updated" clock render here. Unifying the siblings is a separate follow-up.
-function fmtTime(iso) {
-  if (!iso) return '-'
-  const d = new Date(iso)
-  return d.toLocaleTimeString() + '.' + String(d.getMilliseconds()).padStart(3, '0')
-}
-function fmtDate(iso) {
-  if (!iso) return '-'
-  return new Date(iso).toLocaleString()
-}
 function fmtLocalClock(iso) {
   if (!iso) return ''
   const d = new Date(iso)
@@ -86,9 +77,6 @@ defineEmits(['update:viewMode', 'reload', 'jump-to-task', 'toggle-collapse'])
 
 // Presentational toggle state — lives with the header, not the data model.
 const sessionTitleExpanded = ref(false)
-const plansExpanded = ref(false)
-const workflowRunsExpanded = ref(false)
-const tasksExpanded = ref(false)
 
 // Long titles wrap the h1 — keep the visible string under control so the
 // page header stays compact. Tooltip on the h1 shows the full text.
@@ -180,76 +168,6 @@ const status = computed(() => {
   const l = labelOf(statusKey.value)
   return { ...p, label: l.charAt(0).toUpperCase() + l.slice(1) }
 })
-const startedClock = computed(() => fmtLocalClock(props.session?.started_at))
-
-// Pre-compaction high-water mark. The headline ctx% is the *live* peak
-// (since the last /compact); when the session compacted, the all-time
-// main peak sat higher — surface it as a muted "peaked X%" chip so the
-// drop is legible rather than looking like lost data. Null when no
-// compaction reclaimed context (peaks coincide).
-const contextPeakPct = computed(() => {
-  const s = props.session
-  const win = s?.context_window_tokens
-  const peak = s?.peak_main_context_tokens ?? s?.peak_context_tokens
-  const live = s?.live_context_tokens
-  if (!win || win <= 0 || !Number.isFinite(peak) || !Number.isFinite(live)) return null
-  // Only flag a genuine compaction reset: the peak must sit meaningfully above
-  // the live context (same 1%-of-window bar as the +sub chip). An exact `> 0`
-  // test let peak≈live jitter toggle this chip null↔value on every live poll —
-  // on mobile that added/removed a wrapped header line and jerked the whole
-  // page (scroll up/down) each reload cycle.
-  if (peak - live <= win * 0.01) return null
-  return Math.round(peak * 1000.0 / win) / 10
-})
-
-// "+sub" chip: the all-inclusive peak exceeds the main peak because an
-// advisor / server-side sub-call rolled its tokens into a parent turn's
-// usage. Compare the two all-time peaks directly (>1% of window) — NOT
-// the headline ctx%, which now tracks the post-compaction live peak and
-// would otherwise make every compacted session look like advisor spill.
-const contextSubDiverges = computed(() => {
-  const s = props.session
-  const win = s?.context_window_tokens
-  const full = s?.peak_context_tokens
-  const main = s?.peak_main_context_tokens
-  if (!win || win <= 0 || !Number.isFinite(full) || !Number.isFinite(main)) return false
-  return (full - main) > win * 0.01
-})
-
-// Tasks summary for the header badge: counts of every status across the list
-// the badge speaks for — the main agent's, not the session-wide roll-up
-// (taskScope.js). A `deleted` task was taken off the list by the model, so it
-// counts nowhere: reporting it as "open" would claim work that is no longer
-// planned, and would disagree with the per-span TASK LIST cards in the
-// conversation feed, which drop it.
-const taskSummary = computed(() => {
-  const tasks = badgeTasks(props.session?.task_list?.final)
-  if (!tasks.length) return null
-  const c = countTasks(tasks)
-  return {
-    total: c.total, completed: c.done, inProgress: c.inProgress, pending: c.open,
-    pct: Math.round((c.done / c.total) * 100) + '%',
-  }
-})
-
-// The expanded list keeps EVERY agent's tasks — the badge counts one agent, so
-// the sections (each with its own count) are what make that number explicable
-// instead of a silent disagreement with the list it opens.
-const taskSections = computed(
-  () => taskAgentSections(props.session?.task_list?.final, props.session?.agent_roster))
-
-// Only worth saying once a second agent kept a list; the wording has to stay
-// honest about a session whose main agent never wrote one.
-const TASK_SCOPE_NOTE = { main: " (main agent's list)", all: ' (all agents)' }
-const taskBadgeScope = computed(() => badgeScopeOf(taskSections.value))
-const taskBadgeTitle = computed(() => {
-  const s = taskSummary.value
-  if (!s) return ''
-  const note = TASK_SCOPE_NOTE[taskBadgeScope.value] || ''
-  return `session task list${note} — ${s.completed} done · ${s.inProgress} in progress`
-    + ` · ${s.pending} open. Click to expand.`
-})
-
 function titleSourceLabel(src) {
   if (src === 'claude_ai_title') return 'auto'
   if (src === 'user_rename') return 'renamed'
@@ -369,9 +287,17 @@ function titleSourceTooltip(src) {
            `mt-1` — it centres the pill on the title's FIRST line, which is
            what a wrapping title needs. `session-header-live-pill.spec.js`
            pins the result. -->
-      <div class="flex items-start gap-3">
+      <div class="flex items-start gap-2.5">
+        <!-- The h1 is `min-w-0` but NOT `flex-1`: grow made the title box span
+             the whole column whatever the title's length, so the shrink-0 pill
+             right-aligned to the column edge and floated ~160px clear of the
+             text it labels (measured at 1680px). Basis-auto sizes the h1 to its
+             content up to the available width, so the pill hugs the title on a
+             short one and still lands at the end of the first line on a long
+             one. `session-header-live-pill.spec.js` pins the vertical half of
+             this. -->
         <h1
-          class="text-2xl font-semibold text-slate-900 leading-tight m-0 break-words min-w-0 flex-1"
+          class="text-2xl font-semibold text-slate-900 leading-tight m-0 break-words min-w-0"
           :title="session.title || ''"
         >{{ sessionTitle }}<span
           v-if="session.title && session.title_source"
@@ -402,246 +328,20 @@ function titleSourceTooltip(src) {
           {{ sessionTitleExpanded ? 'Collapse title' : 'Show full title' }}
         </Button>
       </div>
-      <p class="mt-1.5 flex items-center flex-wrap gap-x-2 gap-y-1 text-xs text-slate-500 m-0">
-        <!-- Leads the row on purpose: a terminal statusline answers "where am
-             I" before anything else, and the trace id answers a question the
-             reader only asks once they already know that. -->
-        <TraceProjectChip :session="session" />
-        <code class="font-mono text-[11px] text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded">{{ session.trace_id }}</code>
-        <!-- Stale-snapshot badge: the run resumed past the manifest snapshot,
-             which the runtime only flushes at pause/completion — so phases
-             and counts here are frozen and can't refresh live. -->
-        <span
-          v-if="snapshotStaleAt"
-          class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-amber-300 bg-amber-50 text-[11px] font-semibold text-amber-700"
-          :title="`This run resumed and is still in flight. The Workflow runtime writes its progress snapshot only at pause/completion, so the phases and agent counts shown are frozen as of ${fmtTime(snapshotStaleAt)} and can't be refreshed live from disk. Pause the run (or let it finish) to update.`"
-        >⏸ snapshot as of {{ fmtTime(snapshotStaleAt) }} · pause to refresh</span>
-        <!-- No ⚙ workflow-name chip here: the session title already *is*
-             the workflow name (title_source=workflow_name), so a chip
-             repeating it would be redundant. The backlink below stays. -->
-        <router-link
-          v-if="workflowParentTo"
-          :to="workflowParentTo"
-          class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-slate-300 bg-white text-[11px] font-medium text-slate-600 hover:bg-slate-50 no-underline focus-visible:outline-2 focus-visible:outline-blue-500"
-          title="Open the Claude Code session that launched this workflow run"
-        >↑ launched from session</router-link>
-        <template v-if="session.model">
-          <span class="text-slate-300">·</span>
-          <span class="font-mono">{{ session.model }}</span>
-        </template>
-        <template v-if="startedClock">
-          <span class="text-slate-300">·</span>
-          <span>started <span class="font-mono">{{ startedClock }}</span></span>
-        </template>
-        <template v-if="session.context_pct != null">
-          <!-- The headline ctx% now lives in the vitals strip; only the two
-               divergence markers stay here, because each says something the
-               single gauge cannot. -->
-          <!-- Pre-compaction high-water mark, shown only when a /compact
-               freed context so the headline drop reads as a reset, not
-               missing data. -->
-          <span
-            v-if="contextPeakPct != null"
-            class="inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] font-medium border-slate-200 bg-slate-50 text-slate-500"
-            :title="`peaked at ${(session.peak_main_context_tokens || session.peak_context_tokens || 0).toLocaleString()} tokens (${contextPeakPct}% of window) before /compact; the headline ctx% tracks the live context since the most recent compaction.`"
-          >peaked {{ contextPeakPct }}%</span>
-          <!-- All-inclusive peak only when it diverges (advisor turns).
-               Shown as an absolute token count, not a % of window: it
-               can exceed the window (server-side sub-call tokens are
-               summed into one turn's bill), so a percentage reads as
-               broken. -->
-          <span
-            v-if="contextSubDiverges"
-            class="inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[10px] font-medium border-slate-200 bg-slate-50 text-slate-500"
-            :title="`all-inclusive peak turn: ${(session.peak_context_tokens || 0).toLocaleString()} tokens (vs ${(session.context_window_tokens || 0).toLocaleString()} window). Includes advisor/server-side sub-call tokens that Anthropic rolls into the parent turn's usage, so it can exceed the window — the headline ctx% excludes these.`"
-          >+sub <span class="opacity-75 font-mono">{{ fmtTokens(session.peak_context_tokens) }}</span></span>
-        </template>
-        <!-- Cache read/write is NOT dropped: it moved to the Overview panel's
-             session bill, which shows it against a dollar figure — the reading
-             that actually matters, since cache dominates tokens but not cost. -->
-        <!-- Plan chips: each PlanSession row this session authored or
-             edited (from `plan_sessions`) lets the reader pivot
-             session → plan from the header. N=1 renders inline as a
-             direct link; N≥2 collapses to a `plans N` chip with
-             click-to-expand, matching the tasks summary just above
-             so the two summaries look and behave the same. -->
-        <template v-if="plans.length === 1">
-          <span class="text-slate-300">·</span>
-          <router-link
-            :to="`/plans/${encodeURIComponent(plans[0].plan_filename)}`"
-            class="inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[11px] font-medium border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 no-underline focus-visible:outline-2 focus-visible:outline-blue-500"
-            :title="`plan: ${plans[0].plan_filename}`"
-          >plan
-            <span class="font-mono opacity-80 truncate max-w-[14rem]">{{ plans[0].plan_filename }}</span>
-          </router-link>
-        </template>
-        <template v-else-if="plans.length > 1">
-          <span class="text-slate-300">·</span>
-          <span
-            class="inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[11px] font-medium ml-0 cursor-pointer select-none border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100"
-            :title="'plan files this session authored or edited — click to expand'"
-            @click="plansExpanded = !plansExpanded"
-          >plans {{ plans.length }}
-            <span class="opacity-60 ml-0.5">{{ plansExpanded ? '▾' : '▸' }}</span>
-          </span>
-        </template>
-        <!-- Workflow run chips: dynamic-workflow runs this session
-             launched, so the reader can pivot session → run from the
-             header. Mirrors the plan chips: N=1 inlines as `⚙ <name>`;
-             N≥2 collapses to `workflows N` with click-to-expand. -->
-        <template v-if="workflowRuns.length === 1">
-          <span class="text-slate-300">·</span>
-          <router-link
-            :to="`/trace/sessions/${workflowRuns[0].run_id}`"
-            class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[11px] font-medium border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 no-underline focus-visible:outline-2 focus-visible:outline-emerald-500"
-            :title="`workflow run: ${workflowRuns[0].name || workflowRuns[0].run_id}`"
-          >⚙ <span class="truncate max-w-[14rem]">{{ workflowRuns[0].name || 'workflow run' }}</span></router-link>
-        </template>
-        <template v-else-if="workflowRuns.length > 1">
-          <span class="text-slate-300">·</span>
-          <span
-            class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[11px] font-medium cursor-pointer select-none border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-            :title="'dynamic-workflow runs launched from this session — click to expand'"
-            @click="workflowRunsExpanded = !workflowRunsExpanded"
-          >⚙ workflows {{ workflowRuns.length }}
-            <span class="opacity-60 ml-0.5">{{ workflowRunsExpanded ? '▾' : '▸' }}</span>
-          </span>
-        </template>
-        <!-- Tasks summary badge: shows the final task-list state
-             across the whole session so the reader doesn't have to
-             scroll the spine to find it. Click to expand the full
-             list inline. -->
-        <template v-if="taskSummary">
-          <span
-            class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded border text-[11px] font-medium ml-1 cursor-pointer select-none border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
-            data-testid="trace-tasks-badge"
-            :title="taskBadgeTitle"
-            @click="tasksExpanded = !tasksExpanded"
-          >tasks
-            <span class="font-mono tabular-nums">{{ taskSummary.completed }}<span class="opacity-50">/</span>{{ taskSummary.total }}</span>
-            <span class="inline-block h-1 w-[34px] overflow-hidden rounded-full bg-indigo-200">
-              <span class="block h-full rounded-full bg-indigo-500" :style="{ width: taskSummary.pct }"></span>
-            </span>
-            <span class="opacity-60">{{ tasksExpanded ? '▾' : '▸' }}</span>
-          </span>
-        </template>
-      </p>
-      <!-- What this session built. Full state only: the collapsed header is
-           identity and digest, and attribution is not something anyone
-           consults while scrolling spans.
-
-           `via task #N` and the `tasks` badge two lines up mean different
-           things, which is why the label is never dropped — the tag itself is
-           not renamed, because wording that forks by surface is the
-           disagreement the ledger keeps refusing. -->
+      <SessionHeaderFacts :session="session" />
+      <SessionHeaderPivots
+        :session="session"
+        :plans="plans"
+        :workflow-runs="workflowRuns"
+        :snapshot-stale-at="snapshotStaleAt"
+        :workflow-parent-to="workflowParentTo"
+        @jump-to-task="$emit('jump-to-task', $event)"
+      />
       <SessionAttribution
         v-if="session.trace_id"
         class="mt-1.5"
         :trace-id="session.trace_id"
       />
-      <!-- Expanded plans list (mirrors the tasks pattern below).
-           Each row is a router-link to /plans/<filename>, so the
-           reader can pivot to any of the session's plan files
-           without scrolling or hunting in the spine. -->
-      <div
-        v-if="plans.length > 1 && plansExpanded"
-        class="mt-2 rounded-md border border-blue-200 bg-blue-50/50 px-3 py-2 max-w-2xl"
-      >
-        <ul class="text-[13px] text-slate-800 leading-snug">
-          <li
-            v-for="p in plans"
-            :key="p.id"
-            class="flex items-baseline gap-2 py-0.5"
-          >
-            <router-link
-              :to="`/plans/${encodeURIComponent(p.plan_filename)}`"
-              class="font-mono text-[12px] text-blue-700 hover:text-blue-900 hover:underline focus-visible:outline-2 focus-visible:outline-blue-500 break-all"
-              :title="p.plan_filename"
-            >{{ p.plan_filename }}</router-link>
-            <span class="text-slate-400 text-[11px] font-mono shrink-0">
-              {{ fmtDate(p.started_at) }}<span v-if="p.ended_at"> – {{ fmtDate(p.ended_at) }}</span>
-            </span>
-          </li>
-        </ul>
-      </div>
-      <!-- Expanded workflow runs list (mirrors the plans list). Each
-           row links to the run's captured trace. -->
-      <div
-        v-if="workflowRuns.length > 1 && workflowRunsExpanded"
-        class="mt-2 rounded-md border border-emerald-200 bg-emerald-50/50 px-3 py-2 max-w-2xl"
-      >
-        <ul class="text-[13px] text-slate-800 leading-snug">
-          <li
-            v-for="r in workflowRuns"
-            :key="r.run_id"
-            class="flex items-baseline gap-2 py-0.5"
-          >
-            <router-link
-              :to="`/trace/sessions/${r.run_id}`"
-              class="text-emerald-700 hover:text-emerald-900 hover:underline focus-visible:outline-2 focus-visible:outline-emerald-500 break-all"
-              :title="r.run_id"
-            >⚙ {{ r.name || r.run_id }}</router-link>
-            <span
-              v-if="r.agent_count"
-              class="text-slate-500 text-[11px] font-mono shrink-0"
-            >{{ r.agent_count }} agent<span v-if="r.agent_count !== 1">s</span><template v-if="r.phase_count"> · {{ r.phase_count }} phase<span v-if="r.phase_count !== 1">s</span></template><template v-if="r.tokens"> · {{ fmtTokens(r.tokens) }} tok</template></span>
-            <span class="text-slate-400 text-[11px] font-mono shrink-0">{{ r.run_id }}</span>
-          </li>
-        </ul>
-      </div>
-      <!-- Expanded task list (final state across the session), sectioned by
-           owning agent — the badge counts the main agent's section only, and a
-           heading per agent is what keeps that number explicable. Headings
-           appear only once a subagent kept its own list; a single-agent session
-           reads as one plain list.
-           Each row is clickable: jumps the spine to that task's
-           TaskCreate span and selects it, so the user can click a
-           task in the summary and land on the moment it was opened
-           without scrolling through hundreds of spans. -->
-      <div
-        v-if="taskSummary && tasksExpanded"
-        class="mt-2 rounded-md border border-indigo-200 bg-indigo-50/50 px-3 py-2 max-w-2xl"
-        data-testid="trace-task-list"
-      >
-        <!-- With no main-agent list the badge counts the union, which is no
-             single agent's section — say the total outright rather than leave
-             the number matching nothing on screen. -->
-        <p
-          v-if="taskBadgeScope === 'all'"
-          class="flex items-baseline gap-2 text-[11px] font-medium text-indigo-700 mb-1"
-          data-testid="trace-task-total"
-        >
-          <span>all agents</span>
-          <span class="font-mono tabular-nums text-slate-500">{{ taskSummary.completed }}/{{ taskSummary.total }}</span>
-          <span class="text-slate-400 font-normal">counted in the badge</span>
-        </p>
-        <template v-for="s in taskSections" :key="s.agent_id">
-        <p
-          v-if="taskSections.length > 1"
-          class="flex items-baseline gap-2 text-[11px] font-medium text-indigo-700 mt-1.5 first:mt-0"
-          data-testid="trace-task-section"
-        >
-          <span class="truncate">{{ s.label }}</span>
-          <span class="font-mono tabular-nums text-slate-500">{{ s.summary.done }}/{{ s.summary.total }}</span>
-          <span v-if="s.isMain" class="text-slate-400 font-normal">counted in the badge</span>
-        </p>
-        <ul class="text-[13px] text-slate-800 leading-snug">
-          <li
-            v-for="t in s.tasks"
-            :key="t.task_id"
-            tabindex="0"
-            class="flex items-baseline gap-2 rounded px-1 -mx-1 py-0.5 cursor-pointer hover:bg-indigo-100 focus-visible:outline-2 focus-visible:outline-indigo-400"
-            :title="(t.current_span_id || t.created_span_id) ? `jump to the ${t.status === 'pending' ? 'creation' : t.status === 'in_progress' ? 'in-progress moment' : 'completion'} of this task` : ''"
-            @click="$emit('jump-to-task', t)"
-            @keydown.enter.prevent="$emit('jump-to-task', t)"
-          >
-            <span class="font-mono text-[12px]" :class="t.status === 'completed' ? 'text-emerald-600' : t.status === 'in_progress' ? 'text-amber-600' : 'text-slate-400'">{{ t.status === 'completed' ? '☑' : t.status === 'in_progress' ? '◐' : '☐' }}</span>
-            <span class="font-mono text-[11px] text-slate-400 shrink-0">#{{ t.task_id }}</span>
-            <span class="break-words flex-1 min-w-0" :class="t.status === 'completed' ? 'text-slate-500 line-through decoration-slate-300' : ''">{{ t.subject || '(no subject)' }}</span>
-          </li>
-        </ul>
-        </template>
-      </div>
       </template>
     </div>
     <!-- Below lg this column wraps to the full width of the header, so

@@ -7,6 +7,7 @@
 // "in" emphasized. `compact` is the same fact reduced to the folder name for
 // the collapsed header row, which has no room for a path.
 import { computed } from 'vue'
+import Icon from './ui/Icon.vue'
 
 // Takes the whole session rather than the two fields it reads, matching its
 // sibling strips (TraceVitalsStrip, TraceOverviewStrip) — the header threads
@@ -52,13 +53,13 @@ const title = computed(() => {
   >{{ name }}</span>
   <span
     v-else-if="name"
-    class="inline-flex max-w-full items-baseline gap-1 rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 font-mono text-[11px] text-slate-600"
+    class="hdr-chip"
     data-testid="trace-header-project"
     :title="title"
   >
-    <span aria-hidden="true">📁</span>
-    <span v-if="parent" class="hidden truncate text-slate-400 sm:inline">{{ parent }}/</span>
-    <span class="font-semibold text-slate-700">{{ name }}</span>
-    <span v-if="repoAlias" class="text-slate-400">· {{ repoAlias }}</span>
+    <Icon name="folder" :size="10" class="shrink-0 opacity-60" />
+    <span v-if="parent" class="hidden hdr-chip-clip text-fg-faint sm:inline">{{ parent }}/</span>
+    <span class="font-semibold text-fg">{{ name }}</span>
+    <span v-if="repoAlias" class="text-fg-faint">· {{ repoAlias }}</span>
   </span>
 </template>
