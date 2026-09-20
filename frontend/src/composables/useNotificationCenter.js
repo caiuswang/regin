@@ -314,8 +314,7 @@ function unfold(predicate) {
 
 // A toast that times out folds into the badge — it is still unread, so the
 // count must not drop. Dismissing (✕) and opening it are the same promise:
-// hide the card, keep the row unread, and keep it counted in the fold pill —
-// otherwise "N more folded" claims less than the badge is actually holding.
+// hide the card, keep the row unread, and keep it counted in the Inbox badge.
 function fold(id) {
   disarmFold(id)
   if (!toasts.value.some(t => t.id === id)) return

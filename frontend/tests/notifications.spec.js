@@ -211,6 +211,26 @@ test.describe('notification tiers', () => {
     await cleanup(page, ids)
   })
 
+  test('overflowing the toast cap folds quietly, with no "N more" pill', async ({ page }) => {
+    const ids = []
+    const prefix = `Stack ${randomUUID().slice(0, 8)}`
+    await page.goto('/trace/sessions')
+    await streamReady(page)
+
+    // maxToasts defaults to 3; a 4th tier-2 message folds the oldest one away.
+    for (let i = 0; i < 4; i++) {
+      ids.push(record({
+        type: 'warning', title: `${prefix} ${i}`, body: 'Context at 89% of the window.',
+        traceId: `e2e-${randomUUID()}`,
+      }))
+    }
+
+    await expect(page.getByText(`${prefix} 3`)).toBeVisible({ timeout: 10_000 })
+    await expect(page.locator('.toast-folded')).toHaveCount(0)
+    await expect(page.getByText(/folded into the Inbox badge/)).toHaveCount(0)
+    await cleanup(page, ids)
+  })
+
   test('a test row reaches no surface at all', async ({ page }) => {
     const ids = []
     const title = `Synthetic ${randomUUID().slice(0, 8)}`

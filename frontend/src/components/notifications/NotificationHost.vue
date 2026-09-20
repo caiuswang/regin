@@ -9,15 +9,15 @@ import { useNotificationCenter } from '../../composables/useNotificationCenter'
 // content pane belongs to the tier-1 banner), one sheet under the status bar
 // on a phone (a column of cards there would bury the page).
 // `fold`, not `drop`, for ✕ and Open: neither marks the message read, so it
-// stays counted in the badge and in the "N more folded" pill. `drop` is for
-// messages that are no longer unread.
-const { toasts, folded, fold, markRead, onOpen } = useNotificationCenter()
+// stays counted in the Inbox badge. `drop` is for messages that are no longer
+// unread.
+const { toasts, fold, markRead, onOpen } = useNotificationCenter()
 const router = useRouter()
 // Matches the shell's own `max-width: 767px` mobile branch in AppLayout.
 const { isMdUp } = useBreakpoint()
 const isMobile = computed(() => !isMdUp.value)
 
-// A phone shows one at a time; the rest are already counted in `folded`.
+// A phone shows one at a time; the rest are already counted in the badge.
 const visible = computed(() => (isMobile.value ? toasts.value.slice(0, 1) : toasts.value))
 
 function open(message) {
@@ -31,11 +31,6 @@ onOpen(open)
 
 <template>
   <div class="toast-host" :class="{ 'toast-host-mobile': isMobile }" aria-live="polite">
-    <div v-if="folded && !isMobile" class="toast-folded">
-      <span class="toast-folded-dot" aria-hidden="true" />
-      <span>{{ folded }} more folded into the Inbox badge</span>
-    </div>
-
     <NotificationToast
       v-for="message in visible"
       :key="message.id"
@@ -79,27 +74,5 @@ onOpen(open)
   /* Top-anchored: nothing to clear up here. */
   bottom: auto;
   width: auto;
-}
-
-.toast-folded {
-  pointer-events: auto;
-  align-self: flex-end;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.35rem 0.75rem;
-  border-radius: 999px;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  box-shadow: 0 2px 6px rgb(15 23 42 / 6%);
-  font-size: 0.72rem;
-  color: var(--color-fg-muted);
-}
-
-.toast-folded-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--color-primary);
 }
 </style>
