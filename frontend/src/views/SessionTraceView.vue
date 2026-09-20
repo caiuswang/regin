@@ -1926,15 +1926,15 @@ watch(turnsSidebarShown, (shown) => {
       <Button
         v-if="isLgUp && viewMode === 'conversation' && selectedSpan && !detailRailOpen"
         variant="ghost"
-        class="sticky self-start shrink-0 z-10 gap-1 px-2 py-1.5 h-auto rounded-md border border-slate-200 bg-white text-[11px] font-medium text-slate-500 hover:text-slate-700 hover:border-slate-300 transition-colors"
+        class="sticky self-start shrink-0 z-10 h-7 w-7 p-0 rounded-md border border-slate-200 bg-white text-slate-500 hover:text-slate-700 hover:border-slate-300 transition-colors"
         :style="{ top: stickyHeaderHeight ? `calc(${stickyHeaderHeight}px - 1rem)` : '5rem' }"
+        title="Show span details"
         aria-label="Show span details"
         @click="detailRailOpen = true"
       >
         <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <polyline points="15 18 9 12 15 6" />
         </svg>
-        Details
       </Button>
       <!-- ≥lg only: below lg span details render as the bottom sheet at the
            end of this template instead of a stacked-below-the-feed aside
