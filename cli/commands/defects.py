@@ -26,7 +26,7 @@ from typing import Optional
 
 import typer
 
-from lib.defects import store
+from lib.defects import fix_items, store
 from lib.features import attribution, events
 from lib.features import store as feature_store
 
@@ -388,37 +388,4 @@ def _write_fix_item(defect_id: int, task, create, clear):
         return store.clear_fix_item(defect_id)
     if task:
         return store.set_fix_item(defect_id, task)
-    return _create_fix_item(defect_id)
-
-
-def _create_fix_item(defect_id: int):
-    """Capture the task, then attach it — and never touch it again.
-
-    Title is the symptom verbatim: the reporter's wording is stored verbatim
-    for exactly this reason, and paraphrasing would make the board and the
-    ledger describe the same bug differently. No label, assignee or priority —
-    those are fields with human writers.
-    """
-    from lib.tasks import store as task_store  # noqa: PLC0415
-
-    row = store.get(defect_id)
-    if row.feature_id is None:
-        raise store.DefectError(
-            f"#{row.id} is unattributed, so there is no feature to file "
-            f"under — `regin defects attribute {row.id} <ID>` first")
-    view, _created = task_store.capture_task(
-        title=row.symptom[:200], body=_back_pointer(row), source="defect",
-        feature_id=row.feature_id)
-    return store.set_fix_item(row.id, view["id"])
-
-
-def _back_pointer(row) -> str:
-    """What regin writes into the new task's body, and all it writes."""
-    import json  # noqa: PLC0415
-    paths = json.loads(row.suspect_paths_json or "[]")
-    lines = [f"regin defect #{row.id}"]
-    if row.reported_by_trace:
-        lines.append(f"reported in session {row.reported_by_trace}")
-    if paths:
-        lines.append("suspect paths: " + ", ".join(paths))
-    return "\n".join(lines)
+    return fix_items.create_for(defect_id)

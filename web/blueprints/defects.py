@@ -28,6 +28,7 @@ import json
 from flask import Blueprint, Response, jsonify, request
 
 from lib.auth import require_auth, require_editor
+from lib.defects import fix_items
 from lib.defects import images as defect_images
 from lib.defects import query as defect_query
 from lib.defects import store
@@ -240,6 +241,48 @@ def api_close_defect(defect_id: int):
                                  "that would have caught it"}), 400
     return _write(defect_id,
                   lambda: store.close(defect_id, missing_check=missing_check))
+
+
+def _fix_item_problem(payload, task_id, create):
+    """Why this body cannot be a fix-item write, or None.
+
+    `task_id` and `create` are two different assertions — *that* item is the
+    fix, versus write me one from the symptom — so a body naming both has no
+    single answer and one naming neither is a no-op the caller would read as
+    a write.
+    """
+    if not isinstance(payload, dict):
+        return "the body must name exactly one of task_id or create"
+    if create is not True and create is not False:
+        return "create is a flag: send true, or leave it out"
+    if (task_id is None) == (not create):
+        return "name exactly one of task_id or create"
+    # `isinstance(True, int)` — and a bool reaching the foreign key would
+    # point the defect at task 1.
+    if not create and (isinstance(task_id, bool)
+                       or not isinstance(task_id, int) or task_id < 1):
+        return "task_id must be a positive whole number"
+    return None
+
+
+@defects_bp.route("/api/defects/<int:defect_id>/fix-item", methods=["POST"])
+@require_editor
+def api_set_fix_item(defect_id: int):
+    """Point a defect at the task that will close it, or author that task.
+
+    There is no `clear` here. The pointer is last-writer-wins, so a browser
+    that mis-pointed re-points; unpointing a defect entirely is a correction
+    of the ledger, and `regin defects fix-item --clear` is where it lives.
+    """
+    payload = request.get_json(silent=True)
+    body = payload if isinstance(payload, dict) else {}
+    task_id, create = body.get("task_id"), body.get("create", False)
+    problem = _fix_item_problem(payload, task_id, create)
+    if problem:
+        return jsonify({"error": problem}), 400
+    if create:
+        return _write(defect_id, lambda: fix_items.create_for(defect_id))
+    return _write(defect_id, lambda: store.set_fix_item(defect_id, task_id))
 
 
 @defects_bp.route("/api/defects/<int:defect_id>/reopen", methods=["POST"])

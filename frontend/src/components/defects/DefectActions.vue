@@ -32,6 +32,10 @@ const form = ref('')
 const value = ref('')
 const busy = ref(false)
 const refusal = ref('')
+// Raised by a close on this page, never by arriving at an already-closed
+// defect: the offer is the answer to "you just named a check — who writes
+// it", and a row closed weeks ago is being read, not decided.
+const offered = ref(false)
 
 const FORMS = {
   attribute: {
@@ -43,6 +47,7 @@ const FORMS = {
     invalid: (raw) => (/^\d+$/.test(raw.trim()) && Number(raw) > 0
       ? '' : 'A feature id is a positive whole number.'),
     hint: 'The feature that CAUSED this, which is not necessarily the one the reporting session was working on. Naming a different one re-points the blame at that feature\u2019s current last event, so the escape verdict follows the blame.',
+    done: 'attributed',
   },
   close: {
     label: 'Close', placeholder: 'the test that would have caught this',
@@ -53,6 +58,15 @@ const FORMS = {
     invalid: (raw) => (raw.trim()
       ? '' : 'Name the check that would have caught this. It is the only field here that changes future behaviour.'),
     hint: 'Name a test, then write it. This is the only field here that changes future behaviour.',
+    done: 'closed',
+  },
+  'fix-item': {
+    label: 'Fix task', placeholder: 'task id, e.g. 142',
+    field: 'task_id', numeric: true,
+    invalid: (raw) => (/^\d+$/.test(raw.trim()) && Number(raw) > 0
+      ? '' : 'A task id is a positive whole number.'),
+    hint: 'An item that already exists. Last writer wins — re-pointing is how a wrong one is corrected, and nothing is counted from this pointer.',
+    done: 'pointed at its fix task',
   },
 }
 
@@ -88,8 +102,33 @@ async function submit() {
     refusal.value = body.msg || 'the ledger refused, without saying why'
     return
   }
+  const which = form.value
   form.value = ''
-  emit('changed', `#${props.defect.id} ${spec.label.toLowerCase()}d.`)
+  // Only a close raises the offer, and only when nothing is pointed at yet:
+  // the pointer is last-writer-wins, but silently proposing a SECOND task for
+  // a defect that already has one is how the board grows duplicates.
+  offered.value = which === 'close' && !props.defect.fix_task_id
+  emit('changed', `#${props.defect.id} ${spec.done}.`)
+}
+
+// The other half of the close: the check just named is a test somebody has to
+// write, and this is the only moment anyone is looking at the defect knowing
+// that. The task carries the symptom verbatim as its title and the named
+// check in its body — regin authors it, so no field here is pre-filled for a
+// human to rubber-stamp.
+async function createFixTask() {
+  busy.value = true
+  refusal.value = ''
+  const body = await api.post(`/defects/${props.defect.id}/fix-item`,
+                              { create: true })
+  busy.value = false
+  if (body?.ok === false) {
+    refusal.value = body.msg || 'the ledger refused, without saying why'
+    return
+  }
+  offered.value = false
+  emit('changed',
+       `#${props.defect.id} will be fixed by task #${body.defect.fix_task_id}.`)
 }
 
 // Reopening is not undo. It records that we claimed this fixed and were
@@ -139,6 +178,11 @@ async function reopen() {
         variant="secondary" size="sm" :disabled="busy"
         @click="reopen"
       >Reopen</Button>
+      <Button
+        variant="secondary" size="sm"
+        :aria-expanded="form === 'fix-item'"
+        @click="reveal('fix-item')"
+      >{{ defect.fix_task_id ? 'Re-point fix task' : 'Fix task' }}</Button>
       <span v-if="defect.feature_id" class="note">
         blamed on <b>{{ defect.feature_title || `#${defect.feature_id}` }}</b>
       </span>
@@ -170,6 +214,18 @@ async function reopen() {
          :data-testid="`defect-${form}-problem-${defect.id}`">{{ problem }}</p>
     </form>
 
+    <div v-if="offered" class="offer" role="status"
+         :data-testid="`defect-fix-offer-${defect.id}`">
+      <span>Closed. <b>{{ defect.missing_check }}</b> still has to be written — file the task?</span>
+      <Button
+        variant="secondary" size="sm" :disabled="busy"
+        :data-testid="`defect-fix-create-${defect.id}`"
+        @click="createFixTask"
+      >Create fix task</Button>
+      <Button variant="ghost" size="sm" :disabled="busy"
+              @click="offered = false">Not now</Button>
+    </div>
+
     <p v-if="refusal" class="refusal" role="alert">{{ refusal }}</p>
   </div>
 </template>
@@ -185,6 +241,13 @@ async function reopen() {
     max-width: 44rem;
 }
 .hint { flex-basis: 100%; font-size: 11px; color: var(--color-fg-faint); }
+.offer {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem;
+    border-radius: var(--radius-lg); background: var(--color-surface-2);
+    padding: 0.35rem 0.6rem; font-size: 11.5px; color: var(--color-fg-muted);
+    max-width: 44rem;
+}
+.offer b { color: var(--color-fg); font-family: var(--font-mono, monospace); }
 .refusal {
     border-radius: var(--radius-lg); background: var(--color-red-50);
     padding: 0.35rem 0.6rem; font-size: 11.5px; color: var(--color-red-700);

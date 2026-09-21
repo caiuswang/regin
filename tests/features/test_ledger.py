@@ -189,9 +189,11 @@ def test_feature_ledger_json_groups_each_gap_under_its_figure(
     """Flattened they read as noise: a reader cannot tell which number
     `no_usage_captured` qualifies.
 
-    `defects` carries no `gaps` any more, and that is the point: its two —
-    `state_unknown` and `unknown_vocabulary` — described the readings a cached
-    state *string* could have, and a pointer at an append-only row has none.
+    `defects` carries the three readings a named check can fail on. Its two
+    former gaps — `state_unknown` and
+    `unknown_vocabulary` — are gone for good, because they described the
+    readings a cached state *string* could have and a pointer at an
+    append-only row has none.
     """
     feature = _feature()
     session_row("t-nousage", cost=None)
@@ -205,5 +207,7 @@ def test_feature_ledger_json_groups_each_gap_under_its_figure(
     assert payload["cost"]["gaps"]["no_usage_captured"] == 1
     assert payload["work_time"]["gaps"]["zero_duration"] == 1
     assert "traceless_runs" in payload["sessions"]["gaps"]
-    assert "gaps" not in payload["defects"]
+    assert set(payload["defects"]["gaps"]) == {
+        "check_not_yet_written", "check_name_unverified", "no_check_named"}
+    assert "state_unknown" not in payload["defects"]["gaps"]
     assert "gaps" not in payload
