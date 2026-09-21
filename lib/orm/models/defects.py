@@ -31,6 +31,11 @@ from lib.orm.base import Base
 STATUS_OPEN = "open"
 STATUS_CLOSED = "closed"
 
+#: Still in the triage queue is the ABSENCE of a verdict, never a word — so a
+#: defect opened before triage existed is in the queue without a backfill.
+TRIAGE_DECLINED = "declined"
+TRIAGE_SNOOZED = "snoozed"
+
 SYMPTOM_MAX = 4000
 
 
@@ -108,6 +113,26 @@ class Defect(Base, table=True):
         default=None,
         sa_column=Column("blamed_event_id", Integer,
                          ForeignKey("feature_events.id", ondelete="SET NULL")))
+    # The triage queue's verdict, and a second axis on purpose: `status` asks
+    # whether the bug is still real, `triage_state` whether anyone has routed
+    # it. A declined defect and a fixed defect are both closed, and only one
+    # of them was ever looked at — one column could not say which.
+    triage_state: Optional[str] = Field(
+        default=None, sa_column=Column("triage_state", Text, index=True))
+    triage_reason: Optional[str] = Field(
+        default=None, sa_column=Column("triage_reason", Text))
+    # `activity_seq` at the instant of a snooze. The snooze ends when the two
+    # differ — an event, never a deadline.
+    snooze_watermark: Optional[int] = Field(
+        default=None, sa_column=Column("snooze_watermark", Integer))
+    # Writes to this row, counted. `updated_at` cannot serve as the activity
+    # marker: it has second resolution, so two writes inside one second are
+    # indistinguishable and "did anything happen" would answer no while
+    # something had.
+    activity_seq: int = Field(
+        default=0,
+        sa_column=Column("activity_seq", Integer, nullable=False,
+                         server_default=text("0")))
 
 
 class DefectImage(Base, table=True):

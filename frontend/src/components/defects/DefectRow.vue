@@ -30,6 +30,11 @@ defineEmits(['changed'])
       <Badge :color="defect.status === 'open' ? 'amber' : 'green'"
              :label="defect.status" />
       <span class="round">round {{ defect.round }}</span>
+      <!-- How it left triage, and only when it did. Separate from `status`
+           because a declined report and a fixed bug are both closed, and only
+           one of them was ever looked at. -->
+      <Badge v-if="defect.triage_state" color="gray" :label="defect.triage_state"
+             :data-testid="`defect-triage-${defect.id}`" />
       <router-link v-if="defect.feature_id" class="key"
                    :to="`/features/${defect.feature_id}`">
         {{ defect.feature_title || `#${defect.feature_id}` }}
@@ -54,6 +59,14 @@ defineEmits(['changed'])
       <template v-if="defect.missing_check">
         <dt>missing check</dt>
         <dd>{{ defect.missing_check }}</dd>
+      </template>
+      <template v-if="defect.triage_reason">
+        <dt>declined because</dt>
+        <dd>{{ defect.triage_reason }}</dd>
+      </template>
+      <template v-if="defect.fix_state">
+        <dt>fix state</dt>
+        <dd class="mono">{{ defect.fix_state }}</dd>
       </template>
       <template v-if="defect.fix_task_id">
         <dt>fix item</dt>

@@ -28,7 +28,8 @@ from lib.activity_log import get_activity_logger
 from lib.defects import query as defect_query
 from lib.orm import SessionLocal
 from lib.orm.models.defects import (
-    STATUS_CLOSED, STATUS_OPEN, SYMPTOM_MAX, Defect,
+    STATUS_CLOSED, STATUS_OPEN, SYMPTOM_MAX, TRIAGE_DECLINED, TRIAGE_SNOOZED,
+    Defect,
 )
 from lib.tasks.query import like_pattern
 from lib.utils.pagination import (
@@ -64,6 +65,22 @@ def _check_symptom(symptom: str) -> None:
         raise DefectError(
             f"a symptom is at most {SYMPTOM_MAX} characters; this one is "
             f"{len(symptom.strip())}")
+
+
+def _touch(row: Defect) -> None:
+    """Mark that something happened to this row.
+
+    Two writes, because they answer two questions: `updated_at` is what a
+    reader sorts and renders, and `activity_seq` is what the triage queue
+    compares a snooze watermark against. The timestamp cannot do the second
+    job — it has second resolution, so two writes inside one second look like
+    none, and a snoozed defect would stay snoozed through a merge.
+
+    Every verb in this module calls this instead of setting `updated_at`
+    itself, so a verb added later cannot forget half of it.
+    """
+    row.updated_at = _now()
+    row.activity_seq = (row.activity_seq or 0) + 1
 
 
 def _get(session, defect_id: int) -> Defect:
@@ -198,7 +215,7 @@ def _dedup_hit(session, found: Defect, paths: list[str]) -> Defect:
             f"`regin defects reopen {found.id}` if it is back. Re-reporting "
             "must not move the round by itself.")
     found.suspect_paths_json = _union_paths(found, paths)
-    found.updated_at = _now()
+    _touch(found)
     session.add(found)
     session.commit()
     session.refresh(found)
@@ -235,7 +252,13 @@ def reopen(defect_id: int) -> Defect:
         row.status = STATUS_OPEN
         row.closed_at = None
         row.missing_check = None
-        row.updated_at = _now()
+        # Reopening a DECLINED defect is the operator saying the decline was
+        # wrong, so it goes back into the queue rather than reappearing as an
+        # open defect nobody will ever be shown again.
+        row.triage_state = None
+        row.triage_reason = None
+        row.snooze_watermark = None
+        _touch(row)
         session.add(row)
         session.commit()
         session.refresh(row)
@@ -262,11 +285,72 @@ def close(defect_id: int, *, missing_check: str) -> Defect:
         row.status = STATUS_CLOSED
         row.missing_check = missing_check.strip()
         row.closed_at = _now()
-        row.updated_at = _now()
+        _touch(row)
         session.add(row)
         session.commit()
         session.refresh(row)
         log.write("defect_closed", defect_id=row.id)
+        return row
+
+
+def decline(defect_id: int, *, reason: Optional[str] = None) -> Defect:
+    """Route a defect out of triage as not-a-defect, without naming a feature.
+
+    The third terminal verb, and the one `close` cannot stand in for: `close`
+    demands the check that would have caught the bug, and a report that was
+    never a bug has no such check to name. Writing "not a defect" into that
+    field would put an answer into the ledger's only behaviour-changing
+    column, so the reason lives on `triage_reason` and `missing_check` stays
+    NULL — which is what `triage_state` is then read to explain.
+
+    `feature_id` is untouched, so it stays NULL. Declining is the operator
+    saying nobody caused this, and inferring a parent on the way out would be
+    the exact attribution the queue refuses to guess.
+    """
+    with SessionLocal() as session:
+        row = _get(session, defect_id)
+        if row.status == STATUS_CLOSED:
+            raise DefectError(
+                f"#{row.id} is already closed — declining is a way OUT of "
+                "triage, and this one has already left")
+        row.status = STATUS_CLOSED
+        row.triage_state = TRIAGE_DECLINED
+        row.triage_reason = (reason or "").strip() or None
+        row.closed_at = _now()
+        _touch(row)
+        session.add(row)
+        session.commit()
+        session.refresh(row)
+        log.write("defect_declined", defect_id=row.id)
+        return row
+
+
+def snooze(defect_id: int) -> Defect:
+    """Hold a defect out of the queue until something happens to it.
+
+    The watermark is the row's **own `activity_seq` as it stands right now**,
+    and the counter is deliberately not bumped: a snooze is not activity on
+    the defect, and bumping it would return the row to the queue in the same
+    breath that removed it. Every other verb in this module goes through
+    `_touch`, so any of them is the event that ends the snooze — there is no
+    timer, no window and nothing to poll.
+    """
+    with SessionLocal() as session:
+        row = _get(session, defect_id)
+        if row.status == STATUS_CLOSED:
+            raise DefectError(
+                f"#{row.id} is closed — a closed defect is not in the queue "
+                "to be held out of it")
+        if row.feature_id is not None:
+            raise DefectError(
+                f"#{row.id} is already blamed on feature {row.feature_id} — "
+                "it left the queue when it was attributed")
+        row.triage_state = TRIAGE_SNOOZED
+        row.snooze_watermark = row.activity_seq or 0
+        session.add(row)
+        session.commit()
+        session.refresh(row)
+        log.write("defect_snoozed", defect_id=row.id)
         return row
 
 
@@ -298,8 +382,14 @@ def attribute(defect_id: int, feature_id: int) -> Defect:
         if row.feature_id is not None and row.feature_id != feature_id:
             row.blamed_event_id = None
         row.feature_id = feature_id
+        # Accepting is the first of the queue's four exits, and the verdict
+        # column describes a row's place IN the queue — a defect that left by
+        # being blamed keeps no opinion about being snoozed or declined.
+        row.triage_state = None
+        row.triage_reason = None
+        row.snooze_watermark = None
         _bind_blame(row)
-        row.updated_at = _now()
+        _touch(row)
         session.add(row)
         session.commit()
         session.refresh(row)
@@ -336,7 +426,7 @@ def merge(duplicate_id: int, *, into: int) -> Defect:
         keeper.suspect_paths_json = _union_paths(keeper, _paths(dup))
         if not keeper.fix_task_id and dup.fix_task_id:
             keeper.fix_task_id = dup.fix_task_id
-        keeper.updated_at = _now()
+        _touch(keeper)
         session.delete(dup)
         session.add(keeper)
         session.commit()
@@ -367,7 +457,7 @@ def set_fix_item(defect_id: int, task_id: int) -> Defect:
         if session.get(AgentTask, task_id) is None:
             raise DefectError(f"no task {task_id}")
         row.fix_task_id = task_id
-        row.updated_at = _now()
+        _touch(row)
         session.add(row)
         session.commit()
         session.refresh(row)
@@ -380,7 +470,7 @@ def clear_fix_item(defect_id: int) -> Defect:
     with SessionLocal() as session:
         row = _get(session, defect_id)
         row.fix_task_id = None
-        row.updated_at = _now()
+        _touch(row)
         session.add(row)
         session.commit()
         session.refresh(row)
@@ -539,6 +629,29 @@ def _by_project(stmt, query):
     return stmt
 
 
+def in_queue():
+    """The triage queue's one predicate: waiting to be routed.
+
+    Every surface that counts the queue and every surface that renders it call
+    this, so the badge cannot disagree with the rows under it. Both halves run
+    inside one `listing()` session, which is the other half of that guarantee.
+
+    The snooze term compares the watermark to the row's own `activity_seq`
+    for INEQUALITY. Nothing here reads the clock: a snoozed defect comes back
+    when a write touches it, which is an event, and stays out indefinitely
+    when nothing does.
+    """
+    from sqlalchemy import and_, or_  # noqa: PLC0415
+
+    return and_(
+        Defect.feature_id.is_(None),
+        Defect.status == STATUS_OPEN,
+        or_(Defect.triage_state.is_(None),
+            and_(Defect.triage_state == TRIAGE_SNOOZED,
+                 Defect.snooze_watermark.is_distinct_from(
+                     Defect.activity_seq))))
+
+
 def _narrowed(stmt, query):
     if query.fix_task_id is not None:
         stmt = stmt.where(Defect.fix_task_id == query.fix_task_id)
@@ -546,6 +659,8 @@ def _narrowed(stmt, query):
         stmt = stmt.where(Defect.feature_id == query.feature_id)
     if query.unattributed:
         stmt = stmt.where(Defect.feature_id.is_(None))
+    if query.triage:
+        stmt = stmt.where(in_queue())
     if query.status:
         stmt = stmt.where(Defect.status == query.status)
     if query.q:

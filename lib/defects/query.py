@@ -27,13 +27,18 @@ from lib.tasks.query import Q_MAX
 
 SCOPE_ALL = "all"
 SCOPE_UNATTRIBUTED = "unattributed"
+SCOPE_TRIAGE = "triage"
 SCOPE_FEATURE = "feature"
 SCOPE_FIX_ITEM = "fix-item"
 
-#: The two scopes a reader can *ask* for. `feature` and `fix-item` are scopes
+#: The three scopes a reader can *ask* for. `feature` and `fix-item` are scopes
 #: you arrive in by following a key, so they are named by their parameter
 #: rather than chosen by name.
-ASKABLE_SCOPES = (SCOPE_ALL, SCOPE_UNATTRIBUTED)
+#:
+#: `triage` is narrower than `unattributed` and deliberately not a filter on
+#: top of it: the queue is what is still *waiting to be routed*, so a declined
+#: or snoozed defect has left it while remaining unattributed forever.
+ASKABLE_SCOPES = (SCOPE_ALL, SCOPE_UNATTRIBUTED, SCOPE_TRIAGE)
 
 STATUSES = (STATUS_OPEN, STATUS_CLOSED)
 STATUS_ANY = "all"
@@ -75,6 +80,7 @@ class DefectQuery:
     feature_id: Optional[int] = None
     fix_task_id: Optional[int] = None
     unattributed: bool = False
+    triage: bool = False
     status: Optional[str] = None
     q: str = ""
     project_id: Optional[int] = None
@@ -90,6 +96,8 @@ class DefectQuery:
             return SCOPE_FIX_ITEM
         if self.feature_id is not None:
             return SCOPE_FEATURE
+        if self.triage:
+            return SCOPE_TRIAGE
         return SCOPE_UNATTRIBUTED if self.unattributed else SCOPE_ALL
 
 
@@ -151,6 +159,8 @@ def from_args(args) -> DefectQuery:
         # an empty list is a worse answer than the one the link asked for.
         unattributed=(scope == SCOPE_UNATTRIBUTED
                       and feature_id is None and fix_task_id is None),
+        triage=(scope == SCOPE_TRIAGE
+                and feature_id is None and fix_task_id is None),
         status=parse_status(args.get("status")),
         q=(args.get("q") or "").strip()[:Q_MAX],
         project_id=project_id,

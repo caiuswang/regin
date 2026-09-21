@@ -41,11 +41,15 @@ _FIELDS = {"symptom", "feature_id", "suspect_paths"}
 
 SCOPE_ALL = defect_query.SCOPE_ALL
 SCOPE_UNATTRIBUTED = defect_query.SCOPE_UNATTRIBUTED
+SCOPE_TRIAGE = defect_query.SCOPE_TRIAGE
 SCOPE_FEATURE = defect_query.SCOPE_FEATURE
 SCOPE_FIX_ITEM = defect_query.SCOPE_FIX_ITEM
 
+_TRUE = {"1", "true", "yes", "on"}
 
-def _view(row, feature_title, blamed_event_kind, images=None) -> dict:
+
+def _view(row, feature_title, blamed_event_kind, images=None,
+          fix_state=None) -> dict:
     return {
         "id": row.id, "feature_id": row.feature_id, "symptom": row.symptom,
         # The feature's own title, never a task's: the two answer different
@@ -61,6 +65,16 @@ def _view(row, feature_title, blamed_event_kind, images=None) -> dict:
         "suspect_paths": json.loads(row.suspect_paths_json)
         if row.suspect_paths_json else [],
         "fix_task_id": row.fix_task_id,
+        # The fix task's CURRENT status, and only when asked for: it costs a
+        # second read, and a list that always carried it would pay for a
+        # column most readers never open. `regin defects list --with-fix-state`
+        # is the same read under the same name.
+        "fix_state": fix_state,
+        # How this defect left the triage queue, or None while it is still in
+        # it. Separate from `status` because a declined report and a fixed bug
+        # are both closed, and only one of them was ever looked at.
+        "triage_state": row.triage_state,
+        "triage_reason": row.triage_reason,
         "opened_at": row.opened_at, "updated_at": row.updated_at,
         "closed_at": row.closed_at,
         # Metadata only — the bytes are a separate GET, so a page of 50
@@ -119,8 +133,8 @@ def _bad_request(payload: dict):
 def api_list_defects():
     """One bounded page of the ledger, under one narrowing and one order.
 
-    The four scopes are four predicates over the same read now, not four
-    readers — which is what retires the reported bug. `all` came back
+    Every scope is a predicate over the same read, not a reader of its own —
+    which is what retires the reported bug. `all` came back
     `id DESC` and every other scope `id ASC`, so pressing a scope pill
     silently reversed the list; direction is a property of the sort, the sort
     is a parameter, and no scope holds a private opinion about it.
@@ -142,9 +156,15 @@ def api_list_defects():
     # and a per-row call would be an N+1 against it.
     by_defect = defect_images.summaries_for(
         row.defect.id for row in result.items)
+    # One read for the whole page's fix tasks, for the same reason — and only
+    # when asked, so the default list costs exactly what it did before.
+    states = (store.fix_states([row.defect for row in result.items])
+              if (request.args.get("with_fix_state") or "").lower() in _TRUE
+              else {})
     body["items"] = [_view(row.defect, row.feature_title,
                            row.blamed_event_kind,
-                           by_defect.get(row.defect.id, []))
+                           by_defect.get(row.defect.id, []),
+                           states.get(row.defect.id))
                      for row in result.items]
     # The scope and the sort are echoed because the controls above the list
     # have to be able to render what the server actually applied — a sort key
@@ -283,6 +303,58 @@ def api_set_fix_item(defect_id: int):
     if create:
         return _write(defect_id, lambda: fix_items.create_for(defect_id))
     return _write(defect_id, lambda: store.set_fix_item(defect_id, task_id))
+
+
+@defects_bp.route("/api/defects/<int:defect_id>/merge", methods=["POST"])
+@require_editor
+def api_merge_defect(defect_id: int):
+    """Fold this defect into the one the body names, and keep the other.
+
+    The remedy this module's own docstring has named as a 409 case since it
+    was written, with no route that could produce it: `attribute` refuses a
+    symptom already reported against that feature and points at `merge`, so an
+    operator following that sentence in the browser reached a dead end.
+
+    The keeper is what comes back, because the duplicate no longer exists —
+    the store deletes it rather than closing it, so a caller holding the
+    duplicate's id must be handed the row that absorbed it.
+    """
+    payload = request.get_json(silent=True) or {}
+    into = payload.get("into")
+    # `isinstance(True, int)` — and a bool here would merge into defect 1.
+    if isinstance(into, bool) or not isinstance(into, int) or into < 1:
+        return jsonify({"error": "name the defect to keep as `into`"}), 400
+    if _missing(into):
+        return jsonify({"error": f"no defect {into}"}), 404
+    return _write(defect_id, lambda: store.merge(defect_id, into=into))
+
+
+@defects_bp.route("/api/defects/<int:defect_id>/decline", methods=["POST"])
+@require_editor
+def api_decline_defect(defect_id: int):
+    """Route a report out of triage without naming a feature.
+
+    The reason is optional and `missing_check` stays NULL: a report that was
+    never a bug has no check that would have caught it, and `close` is the
+    route for the ones that do.
+    """
+    payload = request.get_json(silent=True) or {}
+    reason = payload.get("reason")
+    if reason is not None and not isinstance(reason, str):
+        return jsonify({"error": "reason is text, or leave it out"}), 400
+    return _write(defect_id, lambda: store.decline(defect_id, reason=reason))
+
+
+@defects_bp.route("/api/defects/<int:defect_id>/snooze", methods=["POST"])
+@require_editor
+def api_snooze_defect(defect_id: int):
+    """Hold a defect out of the queue until something writes to it.
+
+    No body: there is nothing to say. The return condition is an event on the
+    row, not a date the caller could name — a snooze-until would make the
+    queue's contents a function of the clock.
+    """
+    return _write(defect_id, lambda: store.snooze(defect_id))
 
 
 @defects_bp.route("/api/defects/<int:defect_id>/reopen", methods=["POST"])

@@ -13,15 +13,21 @@ import { computed, ref, watch } from 'vue'
 import { usePipelineHeaderPublisher } from '../composables/usePipelineHeader'
 import { useDefectsQuery } from '../composables/useDefectsQuery'
 import { useFlash } from '../composables/useFlash'
+import { invalidatePipelineCounts } from '../composables/usePipelineCounts'
 import api from '../api'
 import Icon from '../components/ui/Icon.vue'
 import PageControls from '../components/PageControls.vue'
 import DefectRow from '../components/defects/DefectRow.vue'
+import DefectTriageQueue from '../components/defects/DefectTriageQueue.vue'
 import DefectsToolbar from '../components/defects/DefectsToolbar.vue'
 import DefectsScopeBanner from '../components/defects/DefectsScopeBanner.vue'
 
 const publish = usePipelineHeaderPublisher()
 const { state, apiQuery, sortKey, sortDir, patch, reset, narrowed } = useDefectsQuery()
+// The queue is a different reading of the ledger, not a filter over it: it
+// owns its own read, its own count and its own keyboard flow. Rendering it in
+// place of the list keeps one predicate behind what is on screen.
+const triaging = computed(() => state.value.scope === 'triage')
 const { flash } = useFlash()
 
 const page = ref(null)
@@ -56,6 +62,7 @@ const pageCount = computed(
 const EMPTY = {
   all: 'The ledger is empty. Nothing has been reported yet.',
   unattributed: 'Nothing is unblamed. Every defect regin holds names the feature that caused it.',
+  triage: 'The queue is clear. Nothing is waiting on a routing decision.',
   feature: 'This feature has no defects recorded.',
   'fix-item': 'Nothing points at this item.',
 }
@@ -63,6 +70,7 @@ const EMPTY = {
 const LEAD = {
   all: 'Every defect regin holds, newest first — attributed or not.',
   unattributed: 'Defects blamed on no feature. Attribution is a human naming the feature that CAUSED the bug — regin never guesses one from a path, a session or a cost.',
+  triage: 'The routing queue: unattributed reports nobody has decided on yet. Accept, mark duplicate, decline or snooze — one key each, and no feature is ever preselected.',
   feature: 'Every defect blamed on this feature.',
   'fix-item': 'Every defect this one tracker item is meant to close.',
 }
@@ -86,6 +94,11 @@ const emptyText = computed(() => {
 // count, which is the page asserting something it had just disproved. The
 // predicate is the server's, and re-reading is how it stays the server's.
 async function load() {
+  if (triaging.value) {
+    publish({ subtitle: LEAD.triage })
+    loading.value = false
+    return
+  }
   const mine = ++issued
   busy.value = true
   loadError.value = ''
@@ -111,6 +124,9 @@ watch(apiQuery, load, { immediate: true })
 // operator just acted on stays where they left it.
 function onChanged(message) {
   if (message) flash(message)
+  // A merge deletes a row, so the count in the tab strip above really did
+  // move. The shell cannot see this write, so it is told about it.
+  invalidatePipelineCounts()
   load()
 }
 </script>
@@ -137,14 +153,16 @@ function onChanged(message) {
       />
     </header>
 
-    <p v-if="loading" class="text-sm text-slate-500">Loading…</p>
+    <DefectTriageQueue v-if="triaging" @changed="onChanged" />
+
+    <p v-else-if="loading" class="text-sm text-slate-500">Loading…</p>
     <p
       v-else-if="loadError"
       class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700"
       role="alert"
     >{{ loadError }}</p>
 
-    <template v-else-if="page">
+    <template v-else-if="page && !triaging">
       <p v-if="page.scope === 'unattributed' && total" class="count">
         <Icon name="alert-triangle" :size="11" />
         {{ total }} {{ total === 1 ? 'defect' : 'defects' }} blamed on no feature

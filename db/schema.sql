@@ -1156,6 +1156,19 @@ CREATE TABLE IF NOT EXISTS defects (
     -- `blamed_event.kind = 'shipped'` — a pointer at an immutable row, so it
     -- cannot go stale and has no "we never looked" reading to count as a gap.
     blamed_event_id    INTEGER REFERENCES feature_events(id) ON DELETE SET NULL,
+    -- The triage queue's verdict, orthogonal to `status`: that column asks
+    -- whether the bug is still real, this one whether anyone has routed it.
+    -- NULL = still in the queue. 'declined' and 'snoozed' are the two ways
+    -- out that are not an attribution or a merge.
+    triage_state       TEXT,
+    triage_reason      TEXT,
+    -- `activity_seq` at the instant of a snooze. A snooze ends when the two
+    -- differ, which is an event and not a deadline — no clock is read.
+    snooze_watermark   INTEGER,
+    -- Writes to this row, counted. `updated_at` cannot serve as the activity
+    -- marker: it has second resolution, so two writes inside one second are
+    -- indistinguishable and "did anything happen" would answer no.
+    activity_seq       INTEGER NOT NULL DEFAULT 0,
     CONSTRAINT uq_defects_feature_symptom UNIQUE (feature_id, symptom_key)
 );
 
@@ -1187,6 +1200,7 @@ CREATE TABLE IF NOT EXISTS defect_images (
 CREATE INDEX IF NOT EXISTS idx_defect_images_defect
     ON defect_images(defect_id);
 CREATE INDEX IF NOT EXISTS idx_defects_fix_item ON defects(fix_task_id);
+CREATE INDEX IF NOT EXISTS idx_defects_triage ON defects(triage_state);
 
 -- Which feature a session was building. Mirrors session_repos; an
 -- unattributed session is the ABSENCE of a row, never a sentinel.

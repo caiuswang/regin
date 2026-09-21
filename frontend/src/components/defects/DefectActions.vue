@@ -1,5 +1,5 @@
 <script setup>
-// The three writes the ledger owns, one defect at a time.
+// The writes the ledger owns, one defect at a time.
 //
 // There is no bulk control anywhere on this page. Attribution is a human
 // asserting which feature CAUSED a bug, and a checkbox column is how eight
@@ -60,6 +60,14 @@ const FORMS = {
     hint: 'Name a test, then write it. This is the only field here that changes future behaviour.',
     done: 'closed',
   },
+  merge: {
+    label: 'Merge', placeholder: 'the defect to KEEP, e.g. 17',
+    field: 'into', numeric: true,
+    invalid: (raw) => (/^\d+$/.test(raw.trim()) && Number(raw) > 0
+      ? '' : 'A defect id is a positive whole number.'),
+    hint: 'This defect folds into that one and is deleted; the keeper takes the union of both suspect paths. The remedy `attribute` names when it refuses a symptom already reported against the feature.',
+    done: 'folded into the keeper',
+  },
   'fix-item': {
     label: 'Fix task', placeholder: 'task id, e.g. 142',
     field: 'task_id', numeric: true,
@@ -104,6 +112,13 @@ async function submit() {
   }
   const which = form.value
   form.value = ''
+  if (which === 'merge') {
+    // The row the operator was looking at no longer exists — the store
+    // deletes the duplicate — and the response carries the keeper. Naming the
+    // survivor is the only honest sentence here.
+    emit('changed', `#${props.defect.id} folded into #${body.defect.id}.`)
+    return
+  }
   // Only a close raises the offer, and only when nothing is pointed at yet:
   // the pointer is last-writer-wins, but silently proposing a SECOND task for
   // a defect that already has one is how the board grows duplicates.
@@ -183,6 +198,14 @@ async function reopen() {
         :aria-expanded="form === 'fix-item'"
         @click="reveal('fix-item')"
       >{{ defect.fix_task_id ? 'Re-point fix task' : 'Fix task' }}</Button>
+      <!-- The merge remedy, which `attribute`'s own refusal has named since
+           it was written and no control could reach. -->
+      <Button
+        variant="secondary" size="sm"
+        :aria-expanded="form === 'merge'"
+        data-testid="defect-merge-reveal"
+        @click="reveal('merge')"
+      >Merge</Button>
       <span v-if="defect.feature_id" class="note">
         blamed on <b>{{ defect.feature_title || `#${defect.feature_id}` }}</b>
       </span>

@@ -13,6 +13,10 @@ import { scopeParam } from './usePipelineScope'
 export const SCOPES = [
   { value: 'all', label: 'All' },
   { value: 'unattributed', label: 'Unattributed' },
+  // Narrower than `unattributed`, and not a filter on top of it: the queue is
+  // what is still WAITING to be routed, so a declined or snoozed defect has
+  // left it while staying unattributed forever.
+  { value: 'triage', label: 'Triage' },
 ]
 
 export const STATUSES = [

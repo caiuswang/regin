@@ -1,6 +1,18 @@
 import { ref } from 'vue'
 import api from '../api'
 
+// Module-level, because the writer and the reader are two different
+// components: a tab writes a defect, the shell above it renders the count.
+// Bumping this is a declared event — "something that changes a count just
+// landed" — and the shell watches it. Plane #8473 is the counter-example: an
+// intake count that did not move after accept, decline or duplicate, because
+// nothing told it one had happened.
+const revision = ref(0)
+
+export function invalidatePipelineCounts() {
+  revision.value += 1
+}
+
 /**
  * usePipelineCounts — all three tab counts, from one request.
  *
@@ -28,5 +40,5 @@ export function usePipelineCounts() {
     }
   }
 
-  return { counts, error, loading, load }
+  return { counts, error, loading, load, revision }
 }

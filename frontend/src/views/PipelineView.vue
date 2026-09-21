@@ -39,7 +39,8 @@ const CACHED_TABS = ['TasksView', 'FeaturesView', 'DefectsView']
 
 const header = usePipelineHeader(() => route.path)
 const { scope, setScope, restoreStored } = usePipelineScope()
-const { counts, error: countsError, load: loadCounts } = usePipelineCounts()
+const { counts, error: countsError, load: loadCounts, revision: countsRevision }
+  = usePipelineCounts()
 const { queryFor } = usePipelineTabState(p => TABS.some(t => t.path === p))
 const { items: projects, ensure: ensureProjects, error: projectsError } = useProjects()
 
@@ -74,6 +75,10 @@ onMounted(() => {
   restoreStored(v => v === SCOPE_NONE || /^\d+$/.test(v))
 })
 watch(scope, s => loadCounts(s), { immediate: true })
+// A tab writing a row is what makes its own count wrong, and the tab has no
+// way to reach this header. It bumps a revision instead, and the numbers are
+// re-read in the same turn the write landed.
+watch(countsRevision, () => loadCounts(scope.value))
 </script>
 
 <template>
