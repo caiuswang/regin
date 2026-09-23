@@ -7,13 +7,13 @@
 // The child URLs are unchanged (`/tasks`, `/features`, `/defects`): the routes
 // are absolute children of this shell, so every existing link, bookmark and
 // CLI-printed URL still lands where it always did.
-import { computed, onMounted, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import Select from '../components/ui/Select.vue'
 import { usePipelineHeader } from '../composables/usePipelineHeader'
 import { usePipelineCounts } from '../composables/usePipelineCounts'
 import { usePipelineTabState } from '../composables/usePipelineTabState'
-import { usePipelineScope, scopeQuery, SCOPE_ALL, SCOPE_NONE }
+import { usePipelineScope, scopeQuery, storedScope, SCOPE_ALL, SCOPE_NONE }
   from '../composables/usePipelineScope'
 import { useProjects } from '../composables/useProjects'
 
@@ -26,6 +26,10 @@ const TABS = [
     blurb: 'Every feature regin knows. Declaring one is the only way in.' },
   { path: '/defects', key: 'defects', label: 'Defects',
     blurb: 'Every defect regin holds, newest first — attributed or not.' },
+  // Last, and unscoped: the list IS every project, and a panel is one scope
+  // on its own, so the selector above the strip has nothing to narrow here.
+  { path: '/projects', key: 'projects', label: 'Projects', scoped: false,
+    blurb: 'Every project, with progress read off the stages of its features.' },
 ]
 
 function isActive(tab) {
@@ -35,7 +39,7 @@ function isActive(tab) {
 const active = computed(() => TABS.find(isActive) || null)
 // A detail route is a page of its own, not a tab: it keeps the strip above it
 // but must never be cached, or two ids would share one mount.
-const CACHED_TABS = ['TasksView', 'FeaturesView', 'DefectsView']
+const CACHED_TABS = ['TasksView', 'FeaturesView', 'DefectsView', 'ProjectsView']
 
 const header = usePipelineHeader(() => route.path)
 const { scope, setScope, restoreStored } = usePipelineScope()
@@ -56,8 +60,25 @@ const unknownScope = computed(() =>
   scope.value !== SCOPE_ALL && scope.value !== SCOPE_NONE
   && !projects.value.some(p => String(p.id) === scope.value))
 
+const scoped = computed(() => active.value?.scoped !== false)
+// An unscoped tab has no `?project=` of its own, so the strip beside it
+// carries one: a panel's own project, else the scope a scoped tab was last
+// left under in this visit (which a URL-only scope never persists), else the
+// stored one. Passing through Projects must not reset the other three.
+const isLegalScope = v => v === SCOPE_NONE || /^\d+$/.test(v)
+const lastScoped = ref(null)
+watch([scoped, scope], ([isScoped, value]) => { if (isScoped) lastScoped.value = value },
+  { immediate: true })
+const carried = computed(() => {
+  if (scoped.value) return scope.value
+  const panel = route.path.startsWith('/projects/') ? String(route.params.id ?? '') : ''
+  const candidate = panel || lastScoped.value || storedScope()
+  return isLegalScope(candidate) ? candidate : SCOPE_ALL
+})
+
 function tabTo(tab) {
-  return { path: tab.path, query: queryFor(tab.path, scopeQuery(scope.value)) }
+  if (tab.scoped === false) return { path: tab.path }
+  return { path: tab.path, query: queryFor(tab.path, scopeQuery(carried.value)) }
 }
 
 function tabCount(tab) {
@@ -72,13 +93,13 @@ const subtitle = computed(() => header.value?.subtitle || active.value?.blurb ||
 
 onMounted(() => {
   ensureProjects()
-  restoreStored(v => v === SCOPE_NONE || /^\d+$/.test(v))
+  if (scoped.value) restoreStored(isLegalScope)
 })
-watch(scope, s => loadCounts(s), { immediate: true })
+watch(carried, s => loadCounts(s), { immediate: true })
 // A tab writing a row is what makes its own count wrong, and the tab has no
 // way to reach this header. It bumps a revision instead, and the numbers are
 // re-read in the same turn the write landed.
-watch(countsRevision, () => loadCounts(scope.value))
+watch(countsRevision, () => loadCounts(carried.value))
 </script>
 
 <template>
@@ -98,7 +119,7 @@ watch(countsRevision, () => loadCounts(scope.value))
 
     <!-- Above the strip, not inside it: the project is the one axis that
          carries from tab to tab, so it cannot belong to any one of them. -->
-    <div class="pl-scope">
+    <div v-if="scoped" class="pl-scope">
       <Select
         :model-value="scope"
         :options="projectOptions"

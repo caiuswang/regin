@@ -37,6 +37,8 @@ const LoginView = () => import('./views/LoginView.vue')
 const AuditView = () => import('./views/AuditView.vue')
 const UsersView = () => import('./views/UsersView.vue')
 const TasksView = () => import('./views/TasksView.vue')
+const ProjectsView = () => import('./views/ProjectsView.vue')
+const ProjectPanelView = () => import('./views/ProjectPanelView.vue')
 const TaskDetailView = () => import('./views/TaskDetailView.vue')
 const SchemaDriftView = () => import('./views/SchemaDriftView.vue')
 const PayloadLogView = () => import('./views/PayloadLogView.vue')
@@ -91,6 +93,8 @@ const routes = [
       // following a row's id must not make the tab strip that framed it
       // disappear.
       { path: '/defects/:id', name: 'defect-detail', component: DefectDetailView },
+      { path: '/projects', name: 'projects', component: ProjectsView },
+      { path: '/projects/:id', name: 'project-panel', component: ProjectPanelView },
     ],
   },
   { path: '/skills/:id', name: 'skill-detail', component: SkillDetailView },

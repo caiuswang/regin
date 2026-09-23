@@ -35,6 +35,15 @@ export function scopeParam(raw) {
   return value && value !== SCOPE_ALL ? value : ''
 }
 
+/** The remembered scope, or `all`. */
+export function storedScope() {
+  try {
+    return localStorage.getItem(STORAGE_KEY) || SCOPE_ALL
+  } catch {
+    return SCOPE_ALL
+  }
+}
+
 /**
  * Remember a scope as the one a bare path restores to. Exported because the
  * Tasks toolbar writes `?project=` too, and a second copy of this key is how

@@ -69,6 +69,8 @@ const STATIC_ROUTES = [
   '/rules',
   '/plans',
   '/tasks',
+  '/projects',
+  '/projects/none',
   '/settings',
   '/settings?section=api-keys',
   '/account',

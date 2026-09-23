@@ -437,3 +437,20 @@ def _population_total() -> int:
         population = session.exec(
             text(f"SELECT COUNT(*) FROM {ROW_SOURCE}")).first()
     return population[0] if population else 0
+
+
+def stage_counts_by_project() -> dict[Optional[int], dict[str, int]]:
+    """`{project_id: {stage: n}}` over every feature, from the page's own CTEs.
+
+    The same `rows` the index lists from, grouped rather than paged: a project
+    rollup that computed stage a second way would disagree with the stage
+    chips the Features tab renders under the same scope.
+    """
+    with SessionLocal() as session:
+        records = session.exec(text(
+            f"{_CTES} SELECT project_id, stage, COUNT(*) FROM rows"
+            " GROUP BY project_id, stage")).all()
+    out: dict[Optional[int], dict[str, int]] = {}
+    for project_id, stage_name, n in records:
+        out.setdefault(project_id, {})[stage_name] = int(n)
+    return out

@@ -11,6 +11,7 @@ from flask import Blueprint, jsonify, request
 
 from lib.auth import require_auth
 from lib.pipeline import counts as counts_module
+from lib.pipeline import projects as projects_module
 
 pipeline_bp = Blueprint("pipeline", __name__)
 
@@ -26,3 +27,25 @@ def api_pipeline_counts():
         "counts": counts_module.counts(scope),
         "project": request.args.get("project") or counts_module.SCOPE_ALL,
     })
+
+
+@pipeline_bp.route("/api/pipeline/projects", methods=["GET"])
+@require_auth
+def api_pipeline_projects():
+    items = projects_module.summaries()
+    return jsonify({"items": items, "total": len(items)})
+
+
+@pipeline_bp.route("/api/pipeline/projects/<scope>", methods=["GET"])
+@require_auth
+def api_pipeline_project(scope: str):
+    try:
+        parsed = counts_module.parse_scope(scope)
+    except counts_module.ScopeError as exc:
+        return jsonify({"error": str(exc)}), 400
+    if parsed == counts_module.SCOPE_ALL:
+        return jsonify({"error": "a project panel is one scope, not 'all'"}), 400
+    try:
+        return jsonify(projects_module.overview(parsed))
+    except projects_module.ProjectNotFound as exc:
+        return jsonify({"error": str(exc)}), 404

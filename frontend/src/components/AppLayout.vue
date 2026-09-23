@@ -132,7 +132,7 @@ const navGroups = computed(() => [
       // switcher is the tab strip in PipelineView. No role conditional: the
       // ledger reads are authenticated-any-role.
       { to: '/tasks', label: 'Pipeline', icon: 'pipeline',
-        match: ['/tasks', '/features', '/defects'] },
+        match: ['/tasks', '/features', '/defects', '/projects'] },
       { to: '/rules', label: 'Rules', exact: true, icon: 'rules' },
       { to: '/plans', label: 'Plans', icon: 'plans' },
     ],

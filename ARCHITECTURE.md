@@ -478,6 +478,7 @@ One number justifies this subsystem: **rounds-to-done** per feature, meaning one
 |---|---|
 | `lib/features/` | the `features` row (the population), the append-only `feature_events` log, attribution, cost, the ledger, remote sync |
 | `lib/defects/` | `defects` rows, escape blame, the missing-check answer on close |
+| `lib/pipeline/` | the `/pipeline` shell's reads: tab counts under one scope, and per-project rollups (status and progress derived from feature stages, nothing stored) |
 | `lib/tasks/slicing.py`, `slice_table.py`, `tail.py`, `commands.py`, `transcribe.py`, `deps.py`, `runs.py`, `verify.py` | spec → slice table → tasks + DAG → runs → settle |
 | `lib/trace/span_gates.py` `PIPELINE` | `regin gate pipeline-ran`: counts `feature.stage` / `defect.declared` spans |
 
