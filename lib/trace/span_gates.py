@@ -131,7 +131,7 @@ TASK_RECALL = SpanGate(
 # same measurement interactively. Prefer extending those over reviving a
 # tool-presence proxy.
 
-# The feature pipeline (`docs/feature-pipeline.md`) is a skill, so nothing
+# The feature pipeline (*Feature pipeline* in `ARCHITECTURE.md`) is a skill, so nothing
 # outside the agent enforces it. Both spans below come from regin CLI commands
 # — `regin feature stage` and `regin defects open|close` — so a count of 0 is a
 # genuine skip rather than a missing instrument.

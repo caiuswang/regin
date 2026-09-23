@@ -12,7 +12,7 @@ front of them.
 
 **`attribute` is the only writer of an attribution.** Nothing infers one —
 not a cwd, not a branch name (regin captures no branch anywhere), not a clock.
-See `docs/feature-pipeline.md`.
+See *Feature pipeline* in `ARCHITECTURE.md`.
 """
 
 from __future__ import annotations

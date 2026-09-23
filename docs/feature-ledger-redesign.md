@@ -307,8 +307,8 @@ ship-then-restart 的先后取决于时钟精度。
 不读属性值,所以属性改名不影响它 —— 但属性是 `regin feature stage` 的输出契约,
 仍需同步。
 
-**两份文档必须同改,它们是一对镜像:**[`docs/feature-pipeline.md`](feature-pipeline.md)
-与 `~/.claude/skills/feature-pipeline/SKILL.md`。两边都写着 `<KEY>` 形式的命令;
+**两份文档必须同改,它们是一对镜像:**[`ARCHITECTURE.md`](../ARCHITECTURE.md) 的
+*Feature pipeline* 一节与 `~/.claude/skills/feature-pipeline/SKILL.md`。两边都写着命令的形状;
 只改一边,技能会教下一个会话去执行一条不存在的命令。
 
 ## Acceptance

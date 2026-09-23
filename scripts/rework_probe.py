@@ -1,8 +1,9 @@
 """Measure how much of a repo's history is rework: fixes to code we just shipped.
 
 Read-only over `git log`; no regin DB, no capture required. This is the
-coarse repo-level gauge referenced by docs/feature-pipeline.md: it shows
-the shape of rework in aggregate, but names no feature, bug, or missing check.
+coarse repo-level gauge beside the per-feature one (*Feature pipeline* in
+ARCHITECTURE.md): it shows the shape of rework in aggregate, but names no
+feature, bug, or missing check.
 
     .venv/bin/python scripts/rework_probe.py --since "120 days ago"
 """

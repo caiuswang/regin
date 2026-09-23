@@ -468,6 +468,63 @@ The two payload shapes never cross. An **answer** (which options were picked) re
 
 The tier as a whole is gated off by default (`settings.agent_sdk.enabled = False` — the single switch an operator turns on; `proposal_sdk_runner` above only decides whether drafting rides it once it is), and the SDK is an optional extra (`pip install -e ".[agent-sdk]"`) since observing sessions needs nothing from it.
 
+## Feature pipeline (features, defects, slices)
+
+One number justifies this subsystem: **rounds-to-done** per feature, meaning one build plus each time the work was called done and then walked back. The pipeline is worth keeping only if that number falls for features that go through it compared with features that don't. `lib/experiments.py` is the tool for that comparison. If the number doesn't move, delete the pipeline rather than tune it. The procedure lives in the `feature-pipeline` skill, and the ledger's data model, invariants and acceptance tests are in [`docs/feature-ledger-redesign.md`](docs/feature-ledger-redesign.md).
+
+**Only declarations feed it.** Nothing is inferred from prose, a branch name, a cwd or a clock. An earlier version pulled bug reports out of `prompt` spans with regexes and was deleted because an inferred row makes the metric measure the inference. Unattributed is a first-class state: it's the absence of a row, never a guessed parent.
+
+| Module | Owns |
+|---|---|
+| `lib/features/` | the `features` row (the population), the append-only `feature_events` log, attribution, cost, the ledger, remote sync |
+| `lib/defects/` | `defects` rows, escape blame, the missing-check answer on close |
+| `lib/tasks/slicing.py`, `slice_table.py`, `tail.py`, `commands.py`, `transcribe.py`, `deps.py`, `runs.py`, `verify.py` | spec → slice table → tasks + DAG → runs → settle |
+| `lib/trace/span_gates.py` `PIPELINE` | `regin gate pipeline-ran`: counts `feature.stage` / `defect.declared` spans |
+
+**Where each artifact lives.** One writer per field; nothing is mirrored from one home into another.
+
+| Artifact | Home | Why |
+|---|---|---|
+| spec prose | `features.body` (`feature new --spec`, `feature spec <ID> --file -`), or the tracker issue for a remote feature | churns hourly and isn't part of the shipped code. A `docs/` copy is a third copy nothing re-reads |
+| acceptance items | tests in the repo: red before the build, green at ship, green in CI afterwards | a test checks behaviour; an anchor or a paragraph doesn't |
+| lifecycle | `feature_events` (`specced`, `build_started`, `shipped`, `restarted`, `abandoned`), ordered by `id` and never updated | stage, rounds, claim time and the escape verdict are all queries over it, so no counter can drift |
+| defects | `defects`, addressed by `features.id` (`--feature <ID>`, or `--ref CAI-274` resolved to that row) | open/closed and blame are lifecycle axes a memory has no column for |
+| post-ship narrative | the owning subsystem's topic wiki | anchors are drift-watched once the code exists. They can't be authored at spec time |
+
+A spec names no files, because at spec time nobody knows which ones will change, and it is never a topic node. A native feature's spec is replaced in place and keeps **no revision history**, so the revision-count signal the original design counted on doesn't exist for native features.
+
+**Rounds and stage come only from the event log.** `events.rounds` = `1 + count(restarted)`. `stage` is the last event's kind, and `shipped` splits into `shipped` / `escaped` on whether any defect is blamed on it. Nothing on this path reads a tracker, so there is no `unknown` stage and no exit code for an unreachable one.
+
+| Writer | Event it appends |
+|---|---|
+| operator: `feature new` / `ship` / `abandon` | `specced` / `shipped` / `abandoned` |
+| a run of a task under the feature starting (`runs.py` → `events.on_run_start`, `declared_by=run:<id>`) | `spec`→`build_started`, `building`→nothing, `shipped`/`escaped`→`restarted`, `abandoned`→`build_started` |
+| `feature new --ref` adopting a tracker issue (`specced`, then its current state), or `feature refresh` on a remote feature (`sync.py` → `events.on_sync`) | the tracker's state category mapped to a kind; appends only when the kind differs from the last event. An unknown word is `sync_error`, never guessed |
+
+A run *settling* never writes `shipped`: a finished session is not a done-claim. `lib/defects/rounds.py` (counting completions later vacated in a tracker's state history) is **not** on the rounds path. It survives only to fill the `rounds` field of a Linear issue snapshot (`lib/tasks/integrations/linear.py`). `Defect.round` counts fix attempts on one defect. It is never summed to a feature, because it is a separate axis from rounds-to-done.
+
+**Escapes are counted by a blame pointer, not by comparing clocks.** When a defect's feature is first set, the row records the feature's current last event, and an escape is `blamed_event.kind == 'shipped'` (`lib/defects/escapes.py`). Filing a defect never walks the feature back. Escapes are reported beside rounds and never folded into them. Closing a defect requires `--check`: the test that would have caught the bug. Summed across a subsystem, those answers rank the missing gates.
+
+**Attribution (`lib/features/attribution.py`) has three provenances**, decided by identity:
+
+| Provenance | How the row arises |
+|---|---|
+| `declared` | `regin feature attribute <ID>` naming the caller's own trace |
+| `recalled` | attributing another trace, or declaring from a shell with no trace |
+| `run` | not stored. It is read live through `run.trace_id → run.task_id → task.feature_id`, collapsing a run and the conversation it drove to one session |
+
+Cost is the sum of attributed sessions' `cost_usd`. It is permanently an **upper bound**, because attribution binds whole sessions. Every figure carries its gap counters as counts of sessions, never as a substituted zero. `lib/features/metrics.py` counts human prompts: a session counts as human exactly when no `agent_task_runs` row produced it.
+
+**From spec to runs.** The slice table in `features.body` is the plan: no draft entity, no approval record.
+
+| Step | Command | Rule |
+|---|---|---|
+| slice | `regin task slice-check` | refuses a spec with no falsifiable acceptance item, and a schema change split across two slices |
+| tail | `regin task tail` | appends integrate → migrate → verify rows rendered from `.regin/commands.json`. A null command renders its stated reason |
+| transcribe | `regin task transcribe` | table → `agent_tasks` + `agent_task_deps`, keyed `(feature_id, "S<n>")`. Refuses ambiguous rows rather than guessing. Returns proposed arm params but never arms |
+| run | arm (a human act) → `runs.py` | a dependency firing is event-driven: the completion that could unblock a task recomputes its dependents. `requires` waits for success, `after` for any settle. Cycles are refused on insert |
+| settle | `verify.py` | the attempt's `verify_cmd` exit code decides. The agent's own `task finish` status is consulted only when there's no command |
+
 ## Agent Memory (cross-session experience)
 
 `lib/memory/` learns from past sessions and surfaces that experience into future ones — lifecycle **capture → consolidate (`reflect`) → recall → reinforce**; `send_to_user(type=lesson)` is one capture endpoint (see *Agent Messages* above), not the system itself. It lives in its **own self-initializing SQLite DB** (`db/regin_memory.db`, see *Agent memory database* above): `lib/memory/models.py` declares its **own** `MetaData` — load-bearing, so `create_all` / `regin init` / Alembic never build regin's schema into the memory file and accumulated experience survives `rebuild`. The engine depends on four Protocols in `lib/memory/ports.py` (`EmbeddingProvider`, `LLMProvider`, `MemoryStore`, `MemorySink`), each **degrading gracefully** (no embedder → FTS-only recall; no LLM → no contradiction judging / synthesis / distill — the LLM *is* the abstraction step; no sink → no export); concrete adapters live in `lib/memory/adapters.py` and are injected at the edge, so swapping one is a zero-diff change to the engine.

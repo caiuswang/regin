@@ -1,13 +1,16 @@
-"""Rounds-to-done, read from declared state transitions (CAI-210).
+"""Rounds, counted from a remote tracker's state history (CAI-210).
 
 **rounds = 1 + every completion that was later walked back** — one build, plus
 each time the work was called done and then reopened.
 
-Every input here is a fact somebody recorded: a tracker state the work occupied
-and the moment it left. Nothing is inferred from prose, no clock is consulted,
-and no proximity is assumed. That matters because rounds-to-done is the metric
-the whole feature pipeline is judged against (`docs/feature-pipeline.md`), and
-a metric fed by inference measures the inference as much as the work.
+This is not the feature pipeline's rounds-to-done: that is `events.rounds`,
+read from the feature's own event log with no tracker on the path (*Feature
+pipeline* in `ARCHITECTURE.md`). What survives here fills the `rounds` field of
+a Linear issue snapshot (`lib/tasks/integrations/linear.py`).
+
+Every input is a fact somebody recorded: a tracker state the work occupied and
+the moment it left. Nothing is inferred from prose, no clock is consulted, and
+no proximity is assumed.
 
 A completion that was *left* is the signal, not the completion itself. This is
 also why the current row cannot be used: reopening an issue clears its

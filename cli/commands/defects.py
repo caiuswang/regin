@@ -17,7 +17,7 @@ refuses rather than creating one.
 
 Rounds-to-done lives on `regin defects rounds <ID>`, counted from the feature's
 own event log. `Defect.round` is a different number — fix attempts on one
-defect — and is never aggregated to a feature. See `docs/feature-pipeline.md`.
+defect — and is never aggregated to a feature. See *Feature pipeline* in `ARCHITECTURE.md`.
 """
 
 from __future__ import annotations
