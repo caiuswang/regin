@@ -49,6 +49,7 @@ const loading = ref(true)
 const loadError = ref('')
 const refreshing = ref(false)
 const refreshFailed = ref('')
+const tasksCard = ref(null)
 const declaring = ref(false)
 const writeFailed = ref('')
 const { busyAction, startBusy, stopBusy } = useBusyAction()
@@ -252,11 +253,13 @@ function onDeclared() {
       />
 
       <FeatureTasks
+        ref="tasksCard"
         :feature-id="ledger.id" :can-write="canWrite"
         :project-id="ledger.project_id"
       />
 
-      <FeatureDefects :feature="ledger" :can-write="canWrite" />
+      <FeatureDefects :feature="ledger" :can-write="canWrite"
+                      @changed="tasksCard?.load()" />
 
       <section class="card">
         <header class="mb-2 flex items-center justify-between gap-3">

@@ -63,7 +63,7 @@ test('closing a defect offers the fix task, and accepting links it',
     // The row carries the link now, without a reload: a pointer the operator
     // has to go looking for is one they cannot tell landed.
     await expect(offer).toHaveCount(0)
-    await expect(row.getByRole('link', { name: 'task #142' })).toBeVisible()
+    await expect(row.locator('dl').getByRole('link', { name: 'task #142' })).toBeVisible()
   })
 
 test('arriving at an already-closed defect raises no offer', async ({ page }) => {
@@ -121,7 +121,7 @@ test('a defect can be pointed at a task that already exists', async ({ page }) =
   // A number, not a string: the route reads `task_id` straight off the body
   // and a string there would reach the foreign key as one.
   expect(posted[0]).toEqual({ task_id: 99 })
-  await expect(row.getByRole('link', { name: 'task #99' })).toBeVisible()
+  await expect(row.locator('dl').getByRole('link', { name: 'task #99' })).toBeVisible()
 })
 
 test('an open, attributed defect files its fix task in one click',
@@ -140,7 +140,8 @@ test('an open, attributed defect files its fix task in one click',
     await row.getByTestId('defect-fix-create-row-7').click()
 
     expect(posted).toEqual([{ create: true }])
-    await expect(row.getByRole('link', { name: 'task #143' })).toBeVisible()
+    await expect(row.locator('dl').getByRole('link', { name: 'task #143' })).toBeVisible()
+    await expect(row.getByTestId('defect-fix-created-7')).toContainText('task #143')
     await expect(row.getByTestId('defect-fix-create-row-7')).toHaveCount(0)
   })
 

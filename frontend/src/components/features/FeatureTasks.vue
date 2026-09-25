@@ -113,6 +113,7 @@ async function load() {
   }
 }
 watch(() => props.featureId, load, { immediate: true })
+defineExpose({ load })
 
 // Re-read rather than splice the new row in: the list is ordered and filtered
 // by the server, and a row placed here by hand would sit wherever the client
@@ -240,6 +241,11 @@ async function submit() {
           <span class="ft-id">#{{ task.id }}</span>
           <span class="ft-name">{{ task.title }}</span>
         </router-link>
+        <router-link
+          v-for="d in task.fixes_defects || []" :key="d"
+          class="ft-fixes" :to="`/defects/${d}`"
+          :data-testid="`feature-task-fixes-${task.id}-${d}`"
+        >fixes #{{ d }}</router-link>
         <span v-if="task.run_count" class="ft-runs">{{ task.run_count }} runs</span>
       </li>
     </ul>
@@ -258,6 +264,11 @@ async function submit() {
 .ft-form { display: flex; flex-direction: column; gap: 0.35rem; }
 .ft-label { font-size: 11.5px; color: var(--color-fg-muted); }
 .ft-actions { display: flex; gap: 0.4rem; }
+.ft-fixes {
+    flex: none; font-family: var(--font-mono, monospace); font-size: 11px;
+    color: var(--color-primary); text-decoration: none;
+}
+.ft-fixes:hover { text-decoration: underline; }
 .ft-note { margin: 0.4rem 0 0; font-size: 11.5px; color: var(--color-fg-muted); }
 .ft-fail {
     margin: 0.4rem 0 0; font-size: 11.5px; color: var(--color-amber-800);

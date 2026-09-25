@@ -42,7 +42,8 @@ async function load() {
     loading.value = false
   }
 }
-watch(() => route.params.id, load, { immediate: true })
+watch(() => route.params.id, () => { defect.value = null; load() },
+      { immediate: true })
 
 // A write here re-reads this one row rather than the list it came from: the
 // address is the id, so nothing about the page's identity can change under it.
@@ -58,7 +59,9 @@ function onChanged(message) {
       <router-link :to="backTo">&larr; every defect</router-link>
     </p>
 
-    <p v-if="loading" class="text-sm text-slate-500">Loading…</p>
+    <!-- Only before the first row lands: a re-read after a write keeps the row
+         mounted, so what the row just told the operator is not wiped. -->
+    <p v-if="loading && !defect" class="text-sm text-slate-500">Loading…</p>
     <p
       v-else-if="loadError"
       class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700"
@@ -67,7 +70,8 @@ function onChanged(message) {
     >{{ loadError }}</p>
 
     <ul v-else-if="defect" class="list" data-testid="defect-detail">
-      <DefectRow :defect="defect" :can-write="canWrite" @changed="onChanged" />
+      <DefectRow :key="defect.id" :defect="defect" :can-write="canWrite"
+                 @changed="onChanged" />
     </ul>
   </div>
 </template>

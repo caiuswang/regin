@@ -31,6 +31,9 @@ const props = defineProps({
   feature: { type: Object, default: null },
   canWrite: { type: Boolean, default: false },
 })
+// A row's write can file a task under this feature, so the page's task list
+// is stale the moment one lands — it re-reads on this.
+const emit = defineEmits(['changed'])
 
 const open = ref(false)
 const symptom = ref('')
@@ -83,7 +86,10 @@ async function load() {
     loading.value = false
   }
 }
-watch(() => props.feature?.id, load, { immediate: true })
+// A different feature's rows are not this one's, so they go before the read
+// rather than lingering under the new title until it lands.
+watch(() => props.feature?.id, () => { items.value = []; load() },
+      { immediate: true })
 // The held blobs cannot survive a close: they belong to a report that was
 // never filed, and a thumbnail still there on the next open would be evidence
 // for a different bug.
@@ -132,6 +138,11 @@ async function submit() {
   await load()
 }
 
+async function onRowChanged(message) {
+  if (message) outcome.value = message
+  await load()
+  emit('changed')
+}
 </script>
 
 <template>
@@ -199,7 +210,9 @@ async function submit() {
       {{ failed }}
     </p>
 
-    <p v-if="loading" class="td-note">Loading…</p>
+    <!-- Only before the first read: a re-read after a row's write keeps the
+         rows mounted, so the task a row just filed stays named on it. -->
+    <p v-if="loading && !items.length" class="td-note">Loading…</p>
     <p v-else-if="loadError" class="td-fail" role="alert">{{ loadError }}</p>
     <p v-else-if="!items.length" class="td-note" data-testid="feature-defects-empty">
       No defects are blamed on this feature.
@@ -210,7 +223,7 @@ async function submit() {
         :key="defect.id"
         :defect="defect"
         :can-write="canWrite"
-        @changed="load()"
+        @changed="onRowChanged"
       />
     </ul>
     <p v-if="truncated" class="td-note" data-testid="feature-defects-truncated">

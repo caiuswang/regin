@@ -304,3 +304,31 @@ def test_create_refuses_to_override_a_pointer_it_did_not_write(
     assert answer.status_code == 409
     assert "re-point" in answer.get_json()["error"]
     assert store.get(row.id).fix_task_id == other
+
+
+def test_the_fix_task_names_the_defect_it_closes(flask_client, feature_row):
+    """The pointer lives on the defect; a task read from the feature page or
+    its own address must still say which defect it closes, or the operator
+    who just filed it cannot tell it apart from the feature's other steps."""
+    feature = feature_row()
+    row = store.record("it broke", feature_id=feature.id)
+    other = store.record("unrelated", feature_id=feature.id)
+    task_id = flask_client.post(
+        f"/api/defects/{row.id}/fix-item", json={"create": True},
+        headers=EDITOR).get_json()["defect"]["fix_task_id"]
+
+    listed = flask_client.get(f"/api/tasks?feature_id={feature.id}",
+                              headers=EDITOR).get_json()["items"]
+    detail = flask_client.get(f"/api/tasks/{task_id}",
+                              headers=EDITOR).get_json()["task"]
+
+    assert {t["id"]: t["fixes_defects"] for t in listed} == {task_id: [row.id]}
+    assert detail["fixes_defects"] == [row.id]
+    assert other.id not in detail["fixes_defects"]
+
+
+def test_a_task_no_defect_points_at_fixes_nothing(flask_client, native_task):
+    task_id = native_task()
+    detail = flask_client.get(f"/api/tasks/{task_id}",
+                              headers=EDITOR).get_json()["task"]
+    assert detail["fixes_defects"] == []

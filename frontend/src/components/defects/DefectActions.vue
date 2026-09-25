@@ -36,6 +36,10 @@ const refusal = ref('')
 // defect: the offer is the answer to "you just named a check — who writes
 // it", and a row closed weeks ago is being read, not decided.
 const offered = ref(false)
+// The task this page just filed. Held here rather than read off the row
+// because a flash fades, and the row's "fix item" fact reads as a pointer that
+// was always there — neither says "this is the task you just created".
+const created = ref(null)
 
 // A task no feature owns is an orphan, so the store refuses the create; the
 // disabled button says so before the round trip does.
@@ -146,6 +150,7 @@ async function createFixTask() {
     return
   }
   offered.value = false
+  created.value = body.defect.fix_task_id
   emit('changed',
        `#${props.defect.id} will be fixed by task #${body.defect.fix_task_id}.`)
 }
@@ -266,6 +271,14 @@ async function reopen() {
               @click="offered = false">Not now</Button>
     </div>
 
+    <p v-if="created && created === defect.fix_task_id" class="created" role="status"
+       :data-testid="`defect-fix-created-${defect.id}`">
+      Created
+      <router-link :to="`/tasks/${created}`"><b>task #{{ created }}</b></router-link>
+      to fix #{{ defect.id }} — listed under
+      <router-link :to="`/features/${defect.feature_id}`">{{ defect.feature_title || `feature #${defect.feature_id}` }}</router-link>'s tasks.
+    </p>
+
     <p v-if="refusal" class="refusal" role="alert">{{ refusal }}</p>
   </div>
 </template>
@@ -288,6 +301,12 @@ async function reopen() {
     max-width: 44rem;
 }
 .offer b { color: var(--color-fg); font-family: var(--font-mono, monospace); }
+.created {
+    border-radius: var(--radius-lg); background: var(--color-surface-2);
+    padding: 0.35rem 0.6rem; font-size: 11.5px; color: var(--color-fg-muted);
+    max-width: 44rem;
+}
+.created a { color: var(--color-primary); }
 .refusal {
     border-radius: var(--radius-lg); background: var(--color-red-50);
     padding: 0.35rem 0.6rem; font-size: 11.5px; color: var(--color-red-700);

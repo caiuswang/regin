@@ -48,6 +48,7 @@ from lib.comments import store as comments
 from lib.auth import get_current_user, require_auth, require_editor, require_scope
 from lib.orm import SessionLocal
 from lib.orm.models.api_keys import SCOPE_TASK_CAPTURE
+from lib.orm.models.defects import Defect
 from lib.orm.models.features import Feature
 from lib.agent_sdk import worktree
 from lib.orm.models.tasks import (
@@ -130,8 +131,28 @@ def _with_feature_titles(tasks: list[dict]) -> list[dict]:
     return tasks
 
 
+def _with_fix_defects(tasks: list[dict]) -> list[dict]:
+    """`fixes_defects`: the defects pointing at each task, one query.
+
+    The pointer lives on the defect (`defects.fix_task_id`), so without this
+    a task created from a defect cannot name the defect it closes.
+    """
+    ids = [t["id"] for t in tasks]
+    by_task: dict[int, list[int]] = {}
+    if ids:
+        with SessionLocal() as session:
+            for defect_id, task_id in session.exec(
+                    select(Defect.id, Defect.fix_task_id)
+                    .where(Defect.fix_task_id.in_(ids))
+                    .order_by(Defect.id)).all():
+                by_task.setdefault(task_id, []).append(defect_id)
+    for task in tasks:
+        task["fixes_defects"] = by_task.get(task["id"], [])
+    return tasks
+
+
 def _one_with_images(task: dict) -> dict:
-    return _with_feature_titles(_with_images([task]))[0]
+    return _with_fix_defects(_with_feature_titles(_with_images([task])))[0]
 
 
 def _parse_web_capture(payload):
@@ -210,6 +231,7 @@ def api_list_tasks():
     envelope = page.to_envelope()
     _with_images(envelope["items"])
     _with_feature_titles(envelope["items"])
+    _with_fix_defects(envelope["items"])
     _with_run_counts(envelope["items"])
     envelope["status_filter"] = filters["status"]
     if totals is not None:

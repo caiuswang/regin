@@ -229,6 +229,14 @@ onMounted(() => { ensureProjects(); load() })
               <span v-else class="td-none">No project</span>
             </dd>
           </div>
+          <div v-if="task.fixes_defects?.length" class="td-fact">
+            <dt>Fixes</dt>
+            <dd class="td-tags" data-testid="task-fixes-defects">
+              <router-link v-for="d in task.fixes_defects" :key="d"
+                           class="td-defect" :to="`/defects/${d}`"
+              >defect #{{ d }}</router-link>
+            </dd>
+          </div>
           <div class="td-fact">
             <dt>Source</dt>
             <dd>{{ task.source }}</dd>
@@ -369,6 +377,7 @@ onMounted(() => { ensureProjects(); load() })
 .td-priority { display: flex; align-items: center; gap: 0.375rem; }
 .td-tags { display: flex; flex-wrap: wrap; gap: 0.25rem; }
 .td-none { color: var(--color-fg-faint); }
+.td-defect { font-family: var(--font-mono, monospace); color: var(--color-primary); }
 .td-params {
     font-size: 0.75rem;
     font-family: var(--font-mono, ui-monospace, monospace);
