@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import api from '../api'
 import CursorControls from '../components/CursorControls.vue'
 import NewSessionButton from '../components/live/NewSessionButton.vue'
+import { terminalRoute } from '../utils/launchTarget.js'
 import SessionActiveFilters from '../components/sessions/SessionActiveFilters.vue'
 import SessionCard from '../components/sessions/SessionCard.vue'
 import SessionListRow from '../components/sessions/SessionListRow.vue'
@@ -50,8 +51,8 @@ const repoOptions = ref([])
 // AskUserQuestion, the first follow-up — is answered there.
 const router = useRouter()
 
-function onLaunched({ traceId }) {
-  if (traceId) router.push(`/live/${traceId}`)
+function onLaunched(launched) {
+  if (launched.traceId) router.push(terminalRoute(launched) || `/live/${launched.traceId}`)
 }
 
 // Resolved the same way each row's own chip is, so the group header and the

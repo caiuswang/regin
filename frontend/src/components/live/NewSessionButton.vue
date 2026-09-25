@@ -41,7 +41,7 @@ function onLaunched(payload) {
   <Dialog
     v-model:open="open"
     title="New agent session"
-    description="Starts a claude session regin owns — optionally in a fresh git worktree."
+    description="Starts a claude session regin owns — an SDK run, or an interactive claude in the browser terminal — optionally in a fresh git worktree."
   >
     <template #trigger>
       <Button size="sm" :variant="variant" data-testid="new-session-open">

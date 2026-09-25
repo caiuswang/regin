@@ -3481,6 +3481,12 @@ button.live-qa-pick.live-qa-staged {
     line-height: 1.45;
     color: var(--color-danger);
 }
+.live-launch-kind-note {
+    margin: 6px 0 0;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--color-fg-muted);
+}
 .live-launch-go { margin-top: 12px; width: 100%; }
 .live-launch-pick {
     justify-content: flex-start;

@@ -165,19 +165,25 @@ def release(trace_id: str) -> bool:
     still holds the session — which is exactly what makes taking over
     reversible, and what makes this safe to call while cleaning up a failure.
     """
-    killed = _tmux("kill-session", "-t", _session_name(trace_id)).returncode == 0
+    return release_session(_session_name(trace_id), trace_id)
+
+
+def release_session(name: str, trace_id: str) -> bool:
+    """Kill regin's tmux session `name` and retire `trace_id`'s pane row."""
+    killed = _tmux("kill-session", "-t", name).returncode == 0
     conn = get_connection()
     try:
         conn.execute(_RETIRE_SQL, (trace_id,))
         conn.commit()
     finally:
         conn.close()
-    log.write("bridge_attach_released", trace_id=trace_id, killed=killed)
+    log.write("bridge_attach_released", trace_id=trace_id, session=name,
+              killed=killed)
     return killed
 
 
 def _record(trace_id: str, pane_id: str, server_pid: int,
-            pane_pid: int) -> None:
+            pane_pid: int, cwd: str | None = None) -> None:
     """Claim the pane in `bridge_panes` on the session's behalf.
 
     The second writer of this table, and the only one that is not a hook. The
@@ -189,7 +195,7 @@ def _record(trace_id: str, pane_id: str, server_pid: int,
 
     conn = get_connection()
     try:
-        cwd = roots.session_cwd(trace_id)
+        cwd = cwd or roots.session_cwd(trace_id)
         conn.execute(_UPSERT_SQL, (trace_id, pane_id, server_pid, pane_pid,
                                    _socket_path(), str(cwd) if cwd else None))
         conn.commit()

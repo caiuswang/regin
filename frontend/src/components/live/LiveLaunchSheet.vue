@@ -18,6 +18,7 @@ import Button from '../ui/Button.vue'
 import Checkbox from '../ui/Checkbox.vue'
 import Icon from '../ui/Icon.vue'
 import Input from '../ui/Input.vue'
+import LaunchKindField from './LaunchKindField.vue'
 import LaunchWorktreeFields from './LaunchWorktreeFields.vue'
 import LiveResumePicker from './LiveResumePicker.vue'
 import Select from '../ui/Select.vue'
@@ -59,7 +60,7 @@ const held = ref(null)
 // reopening should land on the form the draft describes, not back inside the
 // picker the operator was leaving.
 const {
-  prompt, cwd, model, modelCustom, effort, mode, oneShot, resume, beforePick,
+  kind, prompt, cwd, model, modelCustom, effort, mode, oneShot, resume, beforePick,
   useWorktree, worktreeBranch, worktreeBase, resetDraft,
 } = useLaunchDraft(props.scope || props.resumeFrom)
 const picking = ref(false)
@@ -168,8 +169,9 @@ function clearResume() {
 // Only worth saying when something is actually gated — otherwise "this mode
 // skips the permission callback" warns about the loss of a control the install
 // never turned on.
+const isTerminal = computed(() => kind.value === 'terminal')
 const shadowWarning = computed(() => (
-  opts.value?.gating_active && ['acceptEdits', 'bypassPermissions'].includes(mode.value)
+  !isTerminal.value && opts.value?.gating_active && ['acceptEdits', 'bypassPermissions'].includes(mode.value)
     ? `${mode.value} skips the permission callback — nothing will be held for approval.`
     : null
 ))
@@ -183,7 +185,8 @@ const shadowWarning = computed(() => (
 // here as well as at the server so the reason is legible before the click: a
 // run that ends with its first turn, given no turn, would connect and
 // immediately disconnect.
-const oneShotNeedsPrompt = computed(() => oneShot.value && !prompt.value.trim())
+const oneShotNeedsPrompt = computed(() => (
+  !isTerminal.value && oneShot.value && !prompt.value.trim()))
 // Picking `custom…` and typing nothing is the one way to ask for a model and
 // get the install's default instead: the body would carry no `model` key at
 // all, so the run starts on something the operator did not choose and nothing
@@ -194,7 +197,10 @@ const customModelIsBlank = computed(() => (
 // A resume outranks the worktree toggle rather than clearing it: the operator
 // may drop the pick again, and a checkbox that silently unticked itself
 // meanwhile would launch in the repo when they asked for a tree.
-const worktreeActive = computed(() => useWorktree.value && !resume.value)
+// A terminal launch sends no resume, so a pick parked in the draft does not
+// block its worktree.
+const resumeApplies = computed(() => !!resume.value && !isTerminal.value)
+const worktreeActive = computed(() => useWorktree.value && !resumeApplies.value)
 // The same test the fields' own warning uses, not a blank check: a name of
 // pure punctuation is non-blank and slugifies to nothing, so the two readings
 // disagreed — the warning appeared under a Launch button that was still live,
@@ -211,6 +217,7 @@ onMounted(async () => {
   if (props.initialCwd && !cwd.value) cwd.value = props.initialCwd
   try {
     opts.value = await api.get('/agent-runs/launch-options')
+    settleKind()
   } catch (e) {
     error.value = e?.message || 'Failed to load launch options.'
   } finally {
@@ -218,18 +225,30 @@ onMounted(async () => {
   }
 })
 
+// A draft kind this install cannot serve (terminal switched off since, or an
+// SDK-less install) moves to the one it can, rather than leaving Launch aimed
+// at a disabled option.
+function settleKind() {
+  const ok = { sdk: !!opts.value.enabled, terminal: !!opts.value.terminal_available }
+  if (ok[kind.value]) return
+  const other = kind.value === 'terminal' ? 'sdk' : 'terminal'
+  if (ok[other]) kind.value = other
+}
+
 const chosenModel = computed(() => (
   model.value === CUSTOM_MODEL ? modelCustom.value.trim() : model.value))
 
 function launchBody() {
+  const sdk = !isTerminal.value
   return {
+    kind: sdk ? undefined : 'terminal',
     prompt: prompt.value.trim(),
     cwd: cwd.value || undefined,
     model: chosenModel.value || undefined,
     effort: effort.value || undefined,
     permission_mode: mode.value || undefined,
-    one_shot: oneShot.value || undefined,
-    resume: resume.value?.session_id || undefined,
+    one_shot: (sdk && oneShot.value) || undefined,
+    resume: (sdk && resume.value?.session_id) || undefined,
     worktree: worktreeActive.value
       ? { branch: worktreeBranch.value.trim(), base: worktreeBase.value }
       : undefined,
@@ -250,9 +269,10 @@ async function launch() {
     // the card is open on when that is the child's — same session, different
     // name for it, so the caller must not navigate away. The picked row is
     // matched on both of its ids for that reason.
-    const picked = resume.value
+    const picked = resumeApplies.value ? resume.value : null
     const launched = {
       traceId: data.trace_id,
+      kind: data.kind || 'sdk',
       sameSession: !!picked && !!props.resumeFrom
         && (picked.session_id === props.resumeFrom
           || picked.run_trace_id === props.resumeFrom),
@@ -278,9 +298,14 @@ async function launch() {
   <div class="live-launch">
     <div v-if="error" class="live-empty" data-testid="live-launch-error">{{ error }}</div>
     <div v-else-if="loading" class="live-empty">loading…</div>
-    <div v-else-if="!opts.enabled" class="live-empty" data-testid="live-launch-disabled">
+    <div
+      v-else-if="!opts.enabled && !opts.terminal_available"
+      class="live-empty"
+      data-testid="live-launch-disabled"
+    >
       The agent SDK tier is off. Enable <code>agent_sdk.enabled</code> in settings to
-      launch sessions from here.
+      launch sessions from here, or turn on the bridge terminal
+      ({{ opts.terminal_detail }}).
     </div>
     <template v-else-if="held">
       <p class="live-launch-warn" data-testid="live-launch-held">{{ held.warning }}</p>
@@ -302,6 +327,7 @@ async function launch() {
     />
 
     <template v-else>
+      <LaunchKindField v-model="kind" :opts="opts" />
       <Textarea
         v-model="prompt"
         class="live-launch-prompt"
@@ -328,7 +354,7 @@ async function launch() {
         v-model:branch="worktreeBranch"
         v-model:base="worktreeBase"
         :cwd="cwd"
-        :disabled="!!resume"
+        :disabled="resumeApplies"
       />
 
       <label class="live-launch-lbl" for="live-launch-mode">permission mode</label>
@@ -381,9 +407,13 @@ async function launch() {
       />
 
       <label class="live-launch-check">
-        <Checkbox v-model="oneShot" data-testid="live-launch-oneshot" />
+        <Checkbox v-model="oneShot" :disabled="isTerminal" data-testid="live-launch-oneshot" />
         <span>end after the first turn</span>
       </label>
+      <p v-if="isTerminal" class="live-launch-kind-note" data-testid="live-launch-terminal-note">
+        a terminal session stays open until you exit claude — one-shot and
+        continuing a session are SDK-run options.
+      </p>
       <p
         v-if="oneShotNeedsPrompt"
         class="live-launch-warn"
@@ -392,29 +422,31 @@ async function launch() {
         a one-shot run needs a prompt — it ends with its first turn.
       </p>
 
-      <label class="live-launch-lbl">continue a session</label>
-      <div v-if="resume" class="live-launch-resumed" data-testid="live-launch-resumed">
-        <span class="live-launch-resumed-txt" data-testid="live-launch-resume-label">
-          <span class="live-launch-resumed-title">{{ resumeTitle }}</span>
-          <span class="live-launch-resumed-kind">{{ resumeKind }}</span>
-        </span>
+      <template v-if="!isTerminal">
+        <label class="live-launch-lbl">continue a session</label>
+        <div v-if="resume" class="live-launch-resumed" data-testid="live-launch-resumed">
+          <span class="live-launch-resumed-txt" data-testid="live-launch-resume-label">
+            <span class="live-launch-resumed-title">{{ resumeTitle }}</span>
+            <span class="live-launch-resumed-kind">{{ resumeKind }}</span>
+          </span>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Start a fresh session instead"
+            data-testid="live-launch-resume-clear"
+            @click="clearResume"
+          >
+            <Icon name="x" :size="13" />
+          </Button>
+        </div>
         <Button
+          v-else
           variant="ghost"
-          size="icon"
-          aria-label="Start a fresh session instead"
-          data-testid="live-launch-resume-clear"
-          @click="clearResume"
-        >
-          <Icon name="x" :size="13" />
-        </Button>
-      </div>
-      <Button
-        v-else
-        variant="ghost"
-        class="live-launch-pick"
-        data-testid="live-launch-resume-open"
-        @click="picking = true"
-      >Pick a session to continue…</Button>
+          class="live-launch-pick"
+          data-testid="live-launch-resume-open"
+          @click="picking = true"
+        >Pick a session to continue…</Button>
+      </template>
 
       <p v-if="refusal" class="live-launch-warn" data-testid="live-launch-refusal">
         {{ refusal }}

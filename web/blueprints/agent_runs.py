@@ -15,7 +15,8 @@ from __future__ import annotations
 
 from flask import Blueprint, request, jsonify
 
-from lib.auth import require_editor
+from lib.auth import get_current_user, require_editor
+from lib.agent_bridge import launch as terminal_launch
 from lib.agent_sdk import client, resumable, store, supervisor, worktree
 from lib.settings import settings
 
@@ -212,6 +213,7 @@ def api_launch_options():
     client guessing either would drift from the install it is driving.
     """
     cfg = settings.agent_sdk
+    terminal_reason = terminal_launch.unavailable_reason(_caller_role())
     return jsonify({
         "enabled": bool(cfg.enabled),
         # `repo_paths` are `Path`s, which jsonify cannot serialize.
@@ -223,6 +225,8 @@ def api_launch_options():
         "efforts": list(client.EFFORT_LEVELS),
         "default_effort": cfg.effort or "",
         "gating_active": bool(cfg.gate_plan or cfg.gated_tools),
+        "terminal_available": not terminal_reason,
+        "terminal_detail": terminal_reason,
     })
 
 
@@ -265,6 +269,50 @@ def api_resumable_sessions():
     return jsonify({"sessions": resumable.list_resumable(query, limit)})
 
 
+def _caller_role() -> str | None:
+    user = get_current_user()
+    return user.get("role") if user else None
+
+
+def _refuse_sdk_only_fields(payload: dict) -> None:
+    """An interactive TUI has no one-shot mode, and `--resume` in a pane is a
+    follow-up this kind does not yet offer — refused rather than ignored, so a
+    launch never quietly means less than the form asked for."""
+    if isinstance(payload.get("resume"), str) and payload["resume"].strip():
+        raise _BadRequest("resume is not supported for terminal sessions")
+    if payload.get("one_shot"):
+        raise _BadRequest("one_shot is not supported for terminal sessions")
+
+
+def _launch_terminal(payload: dict, prompt: str):
+    """The `kind: "terminal"` arm: an interactive claude on a regin-owned pane.
+
+    Gated by the bridge and terminal switches plus the admin role, not by
+    `agent_sdk.enabled` — the two kinds share a form, not a capability. The
+    availability refusal comes before any field is looked at, so a disabled
+    install creates no worktree either.
+    """
+    reason = terminal_launch.unavailable_reason(_caller_role())
+    if reason:
+        return jsonify({"launched": False, "detail": reason})
+    try:
+        _refuse_sdk_only_fields(payload)
+        params = _launch_params(payload)
+        created_worktree = _worktree_cwd(_worktree_spec(payload), params)
+    except (_BadRequest, worktree.WorktreeRefused) as exc:
+        return jsonify({"error": str(exc)}), 400
+    made = {"worktree": created_worktree} if created_worktree else {}
+    try:
+        launched = terminal_launch.launch_terminal(
+            role=_caller_role(), cwd=params["cwd"], model=params["model"],
+            effort=params["effort"], permission_mode=params["permission_mode"],
+            prompt=prompt.strip()[:_PROMPT_MAX])
+    except terminal_launch.TerminalLaunchRefused as exc:
+        return jsonify({"launched": False, "detail": str(exc), **made})
+    return jsonify({"launched": True, "trace_id": launched.trace_id,
+                    "kind": "terminal", **made})
+
+
 @agent_runs_bp.route('/api/agent-runs', methods=['POST'])
 @require_editor
 def api_launch_agent_run():
@@ -273,11 +321,21 @@ def api_launch_agent_run():
     Returns as soon as the run is scheduled, so the caller can open `/live` and
     watch it — including answering the questions it asks.
     """
-    if not settings.agent_sdk.enabled:
-        return jsonify({"launched": False, "detail": "agent_sdk disabled"})
-    payload = request.get_json(silent=True) or {}
+    payload = request.get_json(silent=True)
+    payload = payload if isinstance(payload, dict) else {}
+    kind = payload.get("kind") or "sdk"
+    if kind not in ("sdk", "terminal"):
+        return jsonify({"error": f"unknown kind {kind!r}"}), 400
     prompt = payload.get("prompt")
     prompt = prompt if isinstance(prompt, str) else ""
+    if kind == "terminal":
+        return _launch_terminal(payload, prompt)
+    return _launch_sdk(payload, prompt)
+
+
+def _launch_sdk(payload: dict, prompt: str):
+    if not settings.agent_sdk.enabled:
+        return jsonify({"launched": False, "detail": "agent_sdk disabled"})
     try:
         params = _launch_params(payload)
         _require_prompt_only_for_one_shot(prompt, params)

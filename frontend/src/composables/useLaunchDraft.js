@@ -13,6 +13,8 @@ import { reactive, toRefs } from 'vue'
 // and one draft per browser tab is what an operator expects from a form they
 // reopen.
 const blank = () => ({
+  // 'sdk' | 'terminal' — which kind of session Launch starts.
+  kind: 'sdk',
   prompt: '',
   cwd: '',
   // The menu pick. `CUSTOM_MODEL` means "the id typed into `modelCustom`" —

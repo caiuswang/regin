@@ -17,6 +17,7 @@ import LiveQueuedChips from '../components/live/LiveQueuedChips.vue'
 import LiveSheet from '../components/live/LiveSheet.vue'
 import LiveSessionPicker from '../components/live/LiveSessionPicker.vue'
 import LiveLaunchSheet from '../components/live/LiveLaunchSheet.vue'
+import { terminalRoute } from '../utils/launchTarget.js'
 import LiveQaSheet from '../components/live/LiveQaSheet.vue'
 import LiveAgentSheet from '../components/live/LiveAgentSheet.vue'
 import LiveAgentDetail from '../components/live/LiveAgentDetail.vue'
@@ -359,10 +360,13 @@ function onPickSession(row) {
 // `sameSession` rather than an id comparison because a merged run answers to
 // two ids — the card is usually open on the child's while the run relaunches
 // under its own — and both render the same trace.
-function onLaunched({ traceId, sameSession }) {
+function onLaunched(launched) {
+  const { traceId, sameSession } = launched
   closeSheet()
   if (!traceId) return
-  if (sameSession || traceId === route.params.id) init()
+  const terminal = terminalRoute(launched)
+  if (terminal) router.push(terminal)
+  else if (sameSession || traceId === route.params.id) init()
   else goTo(traceId)
 }
 

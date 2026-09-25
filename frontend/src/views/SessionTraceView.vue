@@ -5,6 +5,7 @@ import api from '../api'
 import Card from '../components/Card.vue'
 import Button from '../components/ui/Button.vue'
 import NewSessionButton from '../components/live/NewSessionButton.vue'
+import { terminalRoute } from '../utils/launchTarget.js'
 import SessionMessagesView from '../components/SessionMessagesView.vue'
 import SessionTerminalLog from '../components/SessionTerminalLog.vue'
 import SessionTerminalPane from '../components/trace/SessionTerminalPane.vue'
@@ -594,8 +595,12 @@ const resumeMeta = computed(() => {
 // asked for a trace, and the run is readable here immediately because the
 // launch posts its prompt span before the request returns (see
 // `_announce_prompt` in lib/agent_sdk/supervisor.py).
-function onSessionLaunched({ traceId }) {
-  if (traceId && traceId !== route.params.id) router.push(`/trace/sessions/${traceId}`)
+function onSessionLaunched(launched) {
+  const { traceId } = launched
+  if (!traceId) return
+  const terminal = terminalRoute(launched)
+  if (terminal) router.push(terminal)
+  else if (traceId !== route.params.id) router.push(`/trace/sessions/${traceId}`)
 }
 
 // …but the id it lands on is the run's own `sdk-…`, the only one that exists
