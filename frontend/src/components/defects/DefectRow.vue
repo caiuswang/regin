@@ -5,7 +5,6 @@
 // no ellipsis. `regin defects list` truncates at 88 characters because a
 // terminal line is finite; a page is not, and the wording is the whole
 // evidence a reader needs to decide which feature caused it.
-import Badge from '../Badge.vue'
 import DefectActions from './DefectActions.vue'
 import DefectImages from './DefectImages.vue'
 import { shortDate } from '../../utils/ledgerFormat'
@@ -13,33 +12,42 @@ import { shortDate } from '../../utils/ledgerFormat'
 defineProps({
   defect: { type: Object, required: true },
   canWrite: { type: Boolean, default: false },
+  // Set where the list is already scoped to one feature: every row would
+  // otherwise repeat the title the page is headed by.
+  hideFeature: { type: Boolean, default: false },
+  // A row in a list of rows (the feature page's ledger grammar) rather than
+  // a free-standing card.
+  flat: { type: Boolean, default: false },
 })
 defineEmits(['changed'])
 </script>
 
 <template>
-  <li class="card">
+  <li :class="flat ? 'ledger-row defect-flat' : 'card'">
     <div class="head">
       <!-- The id is the row's address. A list is a predicate plus a page
            position, and neither survives being sent to someone else; a
            defect that cannot be linked to can only be pointed at by
            describing it. -->
-      <router-link class="id" :to="`/defects/${defect.id}`"
+      <router-link class="ledger-id id" :to="`/defects/${defect.id}`"
                    :data-testid="`defect-permalink-${defect.id}`"
       >#{{ defect.id }}</router-link>
-      <Badge :color="defect.status === 'open' ? 'amber' : 'green'"
-             :label="defect.status" />
-      <span class="round">round {{ defect.round }}</span>
+      <span class="ledger-tag"
+            :class="defect.status === 'open' ? 'ledger-tag-amber' : 'ledger-tag-green'"
+      >{{ defect.status }}</span>
+      <span class="ledger-tag">round {{ defect.round }}</span>
       <!-- How it left triage, and only when it did. Separate from `status`
            because a declined report and a fixed bug are both closed, and only
            one of them was ever looked at. -->
-      <Badge v-if="defect.triage_state" color="gray" :label="defect.triage_state"
-             :data-testid="`defect-triage-${defect.id}`" />
-      <router-link v-if="defect.feature_id" class="key"
-                   :to="`/features/${defect.feature_id}`">
-        {{ defect.feature_title || `#${defect.feature_id}` }}
-      </router-link>
-      <span v-else class="unblamed">unattributed</span>
+      <span v-if="defect.triage_state" class="ledger-tag"
+            :data-testid="`defect-triage-${defect.id}`">{{ defect.triage_state }}</span>
+      <template v-if="!hideFeature">
+        <router-link v-if="defect.feature_id" class="key"
+                     :to="`/features/${defect.feature_id}`">
+          {{ defect.feature_title || `#${defect.feature_id}` }}
+        </router-link>
+        <span v-else class="unblamed">unattributed</span>
+      </template>
       <span class="spacer" />
       <span class="when" :title="defect.opened_at">{{ shortDate(defect.opened_at) }}</span>
     </div>
@@ -95,16 +103,12 @@ defineEmits(['changed'])
     border: 1px solid var(--color-border); border-radius: var(--radius-xl);
     background: var(--color-surface-1); padding: 0.7rem 0.9rem;
 }
+.defect-flat { display: flex; flex-direction: column; gap: 0.35rem; }
 .head {
     display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem;
     font-size: 11.5px; color: var(--color-fg-faint);
 }
-.id {
-    font-family: var(--font-mono, monospace); font-weight: 600;
-    color: var(--color-fg); text-decoration: none;
-}
-.id:hover { text-decoration: underline; }
-.round { font-variant-numeric: tabular-nums; }
+.card .id { font-weight: 600; color: var(--color-fg); }
 .key {
     font-family: var(--font-mono, monospace); font-weight: 600;
     color: var(--color-primary); text-decoration: none;

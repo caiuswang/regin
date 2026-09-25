@@ -152,7 +152,7 @@ async function onRowChanged(message) {
       <router-link
         v-if="items.length"
         class="td-key" :to="scopeHref" data-testid="feature-defects-scope"
-      >{{ feature.title }}</router-link>
+      >open in the defects ledger</router-link>
       <span class="td-spacer" />
       <Button
         v-if="canWrite && !open"
@@ -217,12 +217,14 @@ async function onRowChanged(message) {
     <p v-else-if="!items.length" class="td-note" data-testid="feature-defects-empty">
       No defects are blamed on this feature.
     </p>
-    <ul v-else class="td-list" data-testid="feature-defects-list">
+    <ul v-else class="ledger-list" data-testid="feature-defects-list">
       <DefectRow
         v-for="defect in items"
         :key="defect.id"
         :defect="defect"
         :can-write="canWrite"
+        hide-feature
+        flat
         @changed="onRowChanged"
       />
     </ul>
@@ -256,9 +258,5 @@ async function onRowChanged(message) {
     margin: 0.4rem 0 0; font-size: 11.5px; color: var(--color-amber-800);
     background: var(--color-amber-50); border-radius: 0.4rem;
     padding: 0.25rem 0.45rem;
-}
-.td-list {
-    display: flex; flex-direction: column; gap: 0.6rem;
-    margin: 0.6rem 0 0; padding: 0; list-style: none;
 }
 </style>

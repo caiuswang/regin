@@ -1,7 +1,7 @@
 <script setup>
 // Dropdown/kebab menu on Reka: roving-focus keyboard nav, click-outside,
 // Escape, and proper role=menu/menuitem semantics for free. Pass `items`
-// as { label, onSelect, danger, disabled } or { separator: true }.
+// as { label, onSelect, danger, disabled, title, testid } or { separator: true }.
 import { DropdownMenuRoot, DropdownMenuTrigger, DropdownMenuPortal, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from 'reka-ui'
 
 defineProps({
@@ -24,6 +24,8 @@ defineProps({
             class="ds-menu-item"
             :class="{ 'ds-menu-item-danger': item.danger }"
             :disabled="item.disabled"
+            :title="item.title || undefined"
+            :data-testid="item.testid"
             @select="item.onSelect && item.onSelect()"
           >
             {{ item.label }}

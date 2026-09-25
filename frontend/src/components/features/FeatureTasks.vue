@@ -233,17 +233,17 @@ async function submit() {
       No task is placed under this feature. It can still be shipped and blamed —
       it simply has nothing for an agent to run.
     </p>
-    <ul v-else class="ft-list" data-testid="feature-tasks-list">
-      <li v-for="task in ordered" :key="task.id" class="ft-row">
+    <ul v-else class="ledger-list" data-testid="feature-tasks-list">
+      <li v-for="task in ordered" :key="task.id" class="ledger-row ft-row">
         <router-link class="ft-link" :to="`/tasks/${task.id}`">
           <TaskStatusIcon :status="task.status" :size="13" />
           <TaskKindChip :kind="task.kind" />
-          <span class="ft-id">#{{ task.id }}</span>
+          <span class="ledger-id">#{{ task.id }}</span>
           <span class="ft-name">{{ task.title }}</span>
         </router-link>
         <router-link
           v-for="d in task.fixes_defects || []" :key="d"
-          class="ft-fixes" :to="`/defects/${d}`"
+          class="ledger-tag" :to="`/defects/${d}`"
           :data-testid="`feature-task-fixes-${task.id}-${d}`"
         >fixes #{{ d }}</router-link>
         <span v-if="task.run_count" class="ft-runs">{{ task.run_count }} runs</span>
@@ -264,33 +264,18 @@ async function submit() {
 .ft-form { display: flex; flex-direction: column; gap: 0.35rem; }
 .ft-label { font-size: 11.5px; color: var(--color-fg-muted); }
 .ft-actions { display: flex; gap: 0.4rem; }
-.ft-fixes {
-    flex: none; font-family: var(--font-mono, monospace); font-size: 11px;
-    color: var(--color-primary); text-decoration: none;
-}
-.ft-fixes:hover { text-decoration: underline; }
 .ft-note { margin: 0.4rem 0 0; font-size: 11.5px; color: var(--color-fg-muted); }
 .ft-fail {
     margin: 0.4rem 0 0; font-size: 11.5px; color: var(--color-amber-800);
     background: var(--color-amber-50); border-radius: 0.4rem;
     padding: 0.25rem 0.45rem;
 }
-.ft-list {
-    display: flex; flex-direction: column; gap: 0.15rem;
-    margin: 0.6rem 0 0; padding: 0; list-style: none;
-}
 .ft-row { display: flex; align-items: center; gap: 0.5rem; }
 .ft-link {
     display: flex; align-items: center; gap: 0.5rem; min-width: 0; flex: 1 1 auto;
-    padding: 0.3rem 0.4rem; border-radius: 0.4rem;
     text-decoration: none; color: var(--color-fg);
 }
-.ft-link:hover { background: var(--color-surface-muted, rgb(0 0 0 / 4%)); }
 .ft-link:focus-visible { outline: 2px solid var(--color-blue-500); }
-.ft-id {
-    font-family: var(--font-mono, monospace); font-size: 11.5px;
-    color: var(--color-fg-subtle); flex: none;
-}
 .ft-name {
     font-size: 0.8125rem; min-width: 0; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap;

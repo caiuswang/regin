@@ -54,6 +54,7 @@ test('filing a fix task from the feature page lists it, linked both ways',
     await page.goto('/features/242')
     await expect(page.getByTestId('feature-tasks-empty')).toBeVisible()
 
+    await page.getByTestId('defect-more-7').click()
     await page.getByTestId('defect-fix-create-row-7').click()
 
     const created = page.getByTestId('defect-fix-created-7')

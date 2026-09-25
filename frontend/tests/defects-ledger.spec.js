@@ -117,7 +117,8 @@ test('an already-blamed defect offers re-attribution', async ({ page }) => {
 
   await page.goto('/defects')
   const row = page.locator('li.card', { hasText: 'the rail clips' })
-  await row.getByRole('button', { name: 'Re-attribute' }).click()
+  await row.getByTestId('defect-more-2').click()
+  await page.getByRole('menuitem', { name: 'Re-attribute' }).click()
   await row.getByPlaceholder('feature id').fill('274')
   await row.getByRole('button', { name: /Re-attribute #2|Attribute #2/ }).click()
 
@@ -151,7 +152,8 @@ test('attributing on the unattributed scope drops the row and the count',
     await expect(page.getByText('1 defect blamed on no feature')).toBeVisible()
 
     const row = page.locator('li.card', { hasText: 'the gutter folds' })
-    await row.getByRole('button', { name: 'Attribute' }).click()
+    await row.getByTestId('defect-more-1').click()
+    await page.getByRole('menuitem', { name: 'Attribute' }).click()
     await row.getByPlaceholder('feature id').fill('274')
     await row.getByRole('button', { name: 'Attribute #1' }).click()
 

@@ -4451,3 +4451,42 @@ mark[data-search-hit] {
 @media (max-width: 767px) {
   :root { --corner-fab-inset: 1rem; }
 }
+
+/* ── Ledger rows: one row grammar for the Tasks / Defects / Sessions lists ──
+   Global, not scoped: the rows are rendered by several child components
+   (FeatureTasks, DefectRow, FeatureEvidence), and a scoped rule does not
+   cross a component boundary. */
+.ledger-list {
+    display: flex; flex-direction: column;
+    margin: 0.6rem 0 0; padding: 0; list-style: none;
+}
+.ledger-row {
+    padding: 0.45rem 0.5rem;
+    border-bottom: 1px solid var(--color-border-subtle);
+    border-radius: 0;
+    font-size: 13px;
+}
+.ledger-row:last-child { border-bottom: 0; }
+.ledger-row:not(.ledger-row-static):hover { background: var(--color-surface-2); }
+.ledger-id {
+    flex: none; font-family: var(--font-mono, monospace); font-size: 11.5px;
+    color: var(--color-fg-subtle); text-decoration: none;
+}
+a.ledger-id:hover { text-decoration: underline; }
+.ledger-tag {
+    flex: none; display: inline-flex; align-items: center;
+    border-radius: 999px; background: var(--color-slate-100);
+    color: var(--color-slate-600); padding: 0.05rem 0.45rem;
+    font-size: 10.5px; line-height: 1.5; white-space: nowrap;
+    text-decoration: none;
+}
+a.ledger-tag { color: var(--color-primary); }
+a.ledger-tag:hover { text-decoration: underline; }
+.ledger-tag-amber { background: var(--color-warning-soft); color: var(--color-warning-strong); }
+.ledger-tag-green { background: var(--color-success-soft); color: var(--color-success-strong); }
+/* Secondary actions surface on row hover or focus, never on a device that
+   cannot hover: a control a touch user must first discover is one they lose. */
+.ledger-row .ledger-reveal { opacity: 0.35; transition: opacity 150ms; }
+.ledger-row:hover .ledger-reveal, .ledger-row:focus-within .ledger-reveal,
+.ledger-reveal[data-state='open'] { opacity: 1; }
+@media (hover: none) { .ledger-row .ledger-reveal { opacity: 1; } }

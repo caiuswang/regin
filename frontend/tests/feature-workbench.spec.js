@@ -291,3 +291,132 @@ test('the defects head centres its title against its controls',
     // and made the row taller than its tallest control.
     expect(h.height).toBeLessThanOrEqual(Math.max(t.height, b.height) + 1)
   })
+
+// ── the defect row's actions ──────────────────────────────────
+
+/** The row's un-nested buttons, excluding the overflow trigger. */
+function primaries(row) {
+  return row.locator('.acts > .row > button:not([data-testid^="defect-more-"])')
+}
+
+test('a defect row shows one primary action, not five', async ({ page }) => {
+  await stub(page, {
+    defects: [defect(), defect({ id: 150, status: 'closed', round: 1,
+                                 missing_check: 'test_x', fix_task_id: 205 })],
+  })
+  await page.goto('/features/242')
+
+  const open = page.getByTestId('feature-defects-list').locator('li', { hasText: '#149' })
+  await expect(primaries(open)).toHaveCount(1)
+  await expect(primaries(open)).toHaveText('Close')
+  await expect(open.getByTestId('defect-more-149')).toBeVisible()
+
+  const closed = page.getByTestId('feature-defects-list').locator('li', { hasText: '#150' })
+  await expect(primaries(closed)).toHaveCount(1)
+  await expect(primaries(closed)).toHaveText('Reopen')
+})
+
+test('every secondary action is still reachable from the row menu',
+  async ({ page }) => {
+    const posted = []
+    await stub(page, { defects: [defect()] })
+    await page.route('**/api/defects/149/*', async (route) => {
+      posted.push([new URL(route.request().url()).pathname,
+                   route.request().postDataJSON()])
+      await route.fulfill({ json: { defect: defect({ fix_task_id: 300 }) } })
+    })
+    await page.goto('/features/242')
+    const row = page.getByTestId('feature-defects-list').locator('li', { hasText: '#149' })
+    const more = row.getByTestId('defect-more-149')
+
+    for (const [label, which, field, value] of [
+      ['Re-attribute', 'attribute', 'feature_id', 81],
+      ['Link existing task', 'fix-item', 'task_id', 12],
+      ['Merge', 'merge', 'into', 17],
+    ]) {
+      await more.click()
+      await page.getByRole('menuitem', { name: label }).click()
+      await row.locator(`#f-149`).fill(String(value))
+      await row.getByTestId(`defect-${which}-submit-149`).click()
+      await expect.poll(() => posted.length).toBeGreaterThan(0)
+      expect(posted.pop()).toEqual([`/api/defects/149/${which}`, { [field]: value }])
+    }
+
+    await more.click()
+    await page.getByRole('menuitem', { name: 'Create fix task' }).click()
+    await expect.poll(() => posted.length).toBe(1)
+    expect(posted[0]).toEqual(['/api/defects/149/fix-item', { create: true }])
+  })
+
+test('a defect that already has a fix task is not offered a second',
+  async ({ page }) => {
+    await stub(page, { defects: [defect({ fix_task_id: 205 })] })
+    await page.goto('/features/242')
+    await page.getByTestId('defect-more-149').click()
+
+    await expect(page.getByRole('menuitem', { name: 'Re-point fix task' })).toBeVisible()
+    await expect(page.getByRole('menuitem', { name: 'Create fix task' })).toHaveCount(0)
+  })
+
+test('a defect row on its own feature page does not repeat the feature title',
+  async ({ page }) => {
+    await stub(page, { defects: [defect()] })
+    await page.goto('/features/242')
+
+    const list = page.getByTestId('feature-defects-list')
+    await expect(list).toContainText('the spec is write-only from the browser')
+    await expect(list).not.toContainText('Feature workbench')
+    await expect(page.getByTestId('feature-defects-scope'))
+      .not.toContainText('Feature workbench')
+  })
+
+test('tasks, defects and sessions rows share one row grammar', async ({ page }) => {
+  await stub(page, {
+    body: ledger({ sessions: { rows: [{
+      trace_id: 'abcdef0123456789', short_trace: 'abcdef01', date: '2026-09-25',
+      title: '/goal-verified-treenav', is_primary: true, provenance: 'run',
+      task_id: 205, round: 1, cost_usd: 1.55,
+    }], gaps: {} } }),
+    tasks: [task({ fixes_defects: [149] })],
+    defects: [defect()],
+  })
+  await page.goto('/features/242')
+
+  const metrics = (loc) => loc.evaluate((el) => {
+    const s = getComputedStyle(el)
+    return [s.paddingTop, s.paddingLeft, s.borderBottomWidth,
+            s.borderTopLeftRadius, s.fontSize]
+  })
+  const taskRow = page.getByTestId('feature-tasks-list').locator('li').first()
+  const defectRow = page.getByTestId('feature-defects-list').locator('li').first()
+  const sessionRow = page.locator('#feature-sessions li').first()
+  // Each list's last row drops its divider, so compare them as last rows.
+  const want = await metrics(taskRow)
+  expect(await metrics(defectRow)).toEqual(want)
+  expect(await metrics(sessionRow)).toEqual(want)
+
+  const tag = (loc) => loc.evaluate((el) => {
+    const s = getComputedStyle(el)
+    return [s.fontSize, s.borderTopLeftRadius, s.paddingLeft, s.paddingTop]
+  })
+  const taskTag = taskRow.getByTestId('feature-task-fixes-71-149')
+  const defectTag = defectRow.getByText('round 1', { exact: true })
+  const sessionTag = sessionRow.getByRole('link', { name: 'task #205' })
+  const tagWant = await tag(taskTag)
+  expect(await tag(defectTag)).toEqual(tagWant)
+  expect(await tag(sessionTag)).toEqual(tagWant)
+})
+
+test('a row\'s secondary action waits for hover; its primary does not',
+  async ({ page }) => {
+    await stub(page, { defects: [defect()] })
+    await page.goto('/features/242')
+    const row = page.getByTestId('feature-defects-list').locator('li').first()
+    const opacity = (loc) => loc.evaluate((el) => getComputedStyle(el).opacity)
+
+    await page.mouse.move(0, 0)
+    await expect.poll(() => opacity(row.getByTestId('defect-more-149'))).toBe('0.35')
+    expect(await opacity(row.getByRole('button', { name: 'Close' }))).toBe('1')
+    await row.hover()
+    await expect.poll(() => opacity(row.getByTestId('defect-more-149'))).toBe('1')
+  })

@@ -50,8 +50,8 @@ const ghosts = computed(() => gapTotal(props.gaps) > props.rows.length)
       </p>
     </div>
 
-    <ul v-else class="ev-list">
-      <li v-for="r in rows" :key="r.trace_id" class="ev-row">
+    <ul v-else class="ledger-list ev-list">
+      <li v-for="r in rows" :key="r.trace_id" class="ledger-row ev-row">
         <span class="ev-date">{{ r.date }}</span>
         <component
           :is="canOpenTrace ? 'router-link' : 'span'"
@@ -62,16 +62,16 @@ const ghosts = computed(() => gapTotal(props.gaps) > props.rows.length)
         >{{ r.short_trace }}</component>
         <span class="ev-title" :title="r.title">{{ r.title || '—' }}</span>
 
-        <span v-if="!r.is_primary" class="ev-tag ev-tag-shared">shared</span>
+        <span v-if="!r.is_primary" class="ledger-tag ledger-tag-amber">shared</span>
         <!-- The tag is the reason this session is counted, so a `run` one
              that names no task is a provenance nobody can audit. -->
         <router-link
           v-else-if="r.provenance === 'run' && r.task_id"
-          class="ev-tag ev-tag-link"
+          class="ledger-tag"
           :to="`/tasks/${r.task_id}`"
         >task #{{ r.task_id }}</router-link>
-        <span v-else-if="r.provenance !== 'declared'" class="ev-tag">{{ r.provenance }}</span>
-        <span v-if="r.round" class="ev-tag">round {{ r.round }}</span>
+        <span v-else-if="r.provenance !== 'declared'" class="ledger-tag">{{ r.provenance }}</span>
+        <span v-if="r.round" class="ledger-tag">round {{ r.round }}</span>
 
         <span
           class="ev-cost"
@@ -88,7 +88,7 @@ const ghosts = computed(() => gapTotal(props.gaps) > props.rows.length)
              the assertion can actually be withdrawn. -->
         <Button
           v-if="canUndeclare && r.provenance !== 'run'"
-          class="ev-undeclare"
+          class="ev-undeclare ledger-reveal"
           variant="ghost" size="sm"
           :aria-label="`Un-declare ${r.short_trace} from this feature`"
           :title="`Un-declare ${r.short_trace}`"
@@ -97,7 +97,7 @@ const ghosts = computed(() => gapTotal(props.gaps) > props.rows.length)
       </li>
 
       <template v-if="ghosts">
-        <li v-for="g in gaps" :key="g.name" class="ev-ghost">
+        <li v-for="g in gaps" :key="g.name" class="ledger-row ledger-row-static ev-ghost">
           <span class="ev-date">—</span>
           <span class="ev-id">×{{ g.count }}</span>
           <span class="ev-title">{{ g.label }} — {{ g.blurb }}</span>
@@ -116,14 +116,8 @@ const ghosts = computed(() => gapTotal(props.gaps) > props.rows.length)
 </template>
 
 <style scoped>
-.ev-list { display: flex; flex-direction: column; }
-.ev-row, .ev-ghost {
-    display: flex; align-items: center; gap: 0.65rem;
-    padding: 0.4rem 0.15rem;
-    border-bottom: 1px solid var(--color-border-subtle);
-    font-size: 13px;
-}
-.ev-row:hover { background: var(--color-slate-50); }
+.ev-list { margin-top: 0; }
+.ev-row, .ev-ghost { display: flex; align-items: center; gap: 0.65rem; }
 .ev-ghost {
     color: var(--color-fg-faint);
     background: repeating-linear-gradient(
@@ -152,16 +146,7 @@ const ghosts = computed(() => gapTotal(props.gaps) > props.rows.length)
 }
 .ev-cost.is-gap { color: var(--color-amber-700); font-style: italic; }
 .ev-cost.is-elsewhere { color: var(--color-fg-faint); font-style: italic; }
-.ev-tag {
-    flex: none; border-radius: 999px; background: var(--color-slate-100);
-    color: var(--color-slate-600); padding: 0.05rem 0.4rem; font-size: 10px;
-    white-space: nowrap;
-}
-.ev-tag-shared { background: var(--color-amber-50); color: var(--color-amber-700); }
-.ev-tag-link { color: var(--color-primary); text-decoration: none; }
-.ev-tag-link:hover { text-decoration: underline; }
-.ev-undeclare { flex: none; opacity: 0.3; transition: opacity 150ms; }
-.ev-row:hover .ev-undeclare, .ev-undeclare:focus-visible { opacity: 1; }
+.ev-undeclare { flex: none; }
 .ev-undeclare:hover {
     background: var(--color-danger-soft); color: var(--color-danger);
 }

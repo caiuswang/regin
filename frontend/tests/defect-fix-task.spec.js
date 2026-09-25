@@ -114,7 +114,8 @@ test('a defect can be pointed at a task that already exists', async ({ page }) =
 
   await page.goto('/defects')
   const row = page.locator('li.card', { hasText: 'the gutter folds' })
-  await row.getByRole('button', { name: 'Link existing task' }).click()
+  await row.getByTestId('defect-more-7').click()
+  await page.getByRole('menuitem', { name: 'Link existing task' }).click()
   await row.getByPlaceholder('task id').fill('99')
   await row.getByTestId('defect-fix-item-submit-7').click()
 
@@ -137,12 +138,16 @@ test('an open, attributed defect files its fix task in one click',
 
     await page.goto('/defects')
     const row = page.locator('li.card', { hasText: 'the gutter folds' })
-    await row.getByTestId('defect-fix-create-row-7').click()
+    await row.getByTestId('defect-more-7').click()
+    await page.getByTestId('defect-fix-create-row-7').click()
 
     expect(posted).toEqual([{ create: true }])
     await expect(row.locator('dl').getByRole('link', { name: 'task #143' })).toBeVisible()
     await expect(row.getByTestId('defect-fix-created-7')).toContainText('task #143')
-    await expect(row.getByTestId('defect-fix-create-row-7')).toHaveCount(0)
+    // A task is pointed at now, so the menu stops offering a second one.
+    await row.getByTestId('defect-more-7').click()
+    await expect(page.getByRole('menuitem', { name: 'Re-point fix task' })).toBeVisible()
+    await expect(page.getByTestId('defect-fix-create-row-7')).toHaveCount(0)
   })
 
 test('an unattributed defect cannot file one, and says why', async ({ page }) => {
@@ -150,7 +155,19 @@ test('an unattributed defect cannot file one, and says why', async ({ page }) =>
 
   await page.goto('/defects')
   const row = page.locator('li.card', { hasText: 'the gutter folds' })
-  await expect(row.getByTestId('defect-fix-create-row-7')).toBeDisabled()
+  await row.getByTestId('defect-more-7').click()
+  await expect(page.getByTestId('defect-fix-create-row-7'))
+    .toHaveAttribute('aria-disabled', 'true')
   await expect(row.getByTestId('defect-fix-create-blocked-7'))
     .toContainText('Attribute it to a feature')
 })
+
+test('the row menu is fully visible on the defects ledger, outside a feature row',
+  async ({ page }) => {
+    await stubList(page, { row: OPEN })
+    await page.goto('/defects')
+    const more = page.locator('li.card', { hasText: 'the gutter folds' })
+      .getByTestId('defect-more-7')
+    await page.mouse.move(0, 0)
+    expect(await more.evaluate((el) => getComputedStyle(el).opacity)).toBe('1')
+  })
