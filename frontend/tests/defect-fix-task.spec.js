@@ -114,7 +114,7 @@ test('a defect can be pointed at a task that already exists', async ({ page }) =
 
   await page.goto('/defects')
   const row = page.locator('li.card', { hasText: 'the gutter folds' })
-  await row.getByRole('button', { name: 'Fix task', exact: true }).click()
+  await row.getByRole('button', { name: 'Link existing task' }).click()
   await row.getByPlaceholder('task id').fill('99')
   await row.getByTestId('defect-fix-item-submit-7').click()
 
@@ -122,4 +122,34 @@ test('a defect can be pointed at a task that already exists', async ({ page }) =
   // and a string there would reach the foreign key as one.
   expect(posted[0]).toEqual({ task_id: 99 })
   await expect(row.getByRole('link', { name: 'task #99' })).toBeVisible()
+})
+
+test('an open, attributed defect files its fix task in one click',
+  async ({ page }) => {
+    const state = { row: OPEN }
+    const posted = []
+    await stubList(page, state)
+    await page.route('**/api/defects/*/fix-item', async (route) => {
+      posted.push(route.request().postDataJSON())
+      state.row = { ...OPEN, fix_task_id: 143 }
+      await route.fulfill({ json: { defect: state.row } })
+    })
+
+    await page.goto('/defects')
+    const row = page.locator('li.card', { hasText: 'the gutter folds' })
+    await row.getByTestId('defect-fix-create-row-7').click()
+
+    expect(posted).toEqual([{ create: true }])
+    await expect(row.getByRole('link', { name: 'task #143' })).toBeVisible()
+    await expect(row.getByTestId('defect-fix-create-row-7')).toHaveCount(0)
+  })
+
+test('an unattributed defect cannot file one, and says why', async ({ page }) => {
+  await stubList(page, { row: { ...OPEN, feature_id: null, feature_title: null } })
+
+  await page.goto('/defects')
+  const row = page.locator('li.card', { hasText: 'the gutter folds' })
+  await expect(row.getByTestId('defect-fix-create-row-7')).toBeDisabled()
+  await expect(row.getByTestId('defect-fix-create-blocked-7'))
+    .toContainText('Attribute it to a feature')
 })

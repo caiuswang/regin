@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from lib.prompts.surfaces import (  # noqa: F401  (import side effect: registration)
     authoring_standards,
+    defects,
     drafting,
     grader,
     memory,
@@ -19,4 +20,4 @@ from lib.prompts.surfaces import (  # noqa: F401  (import side effect: registrat
     triage,
 )
 
-__all__ = ["authoring_standards", "drafting", "grader", "memory", "regenerate", "review", "tasks", "topics", "triage"]
+__all__ = ["authoring_standards", "defects", "drafting", "grader", "memory", "regenerate", "review", "tasks", "topics", "triage"]

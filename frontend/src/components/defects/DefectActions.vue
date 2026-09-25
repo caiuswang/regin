@@ -37,6 +37,10 @@ const refusal = ref('')
 // it", and a row closed weeks ago is being read, not decided.
 const offered = ref(false)
 
+// A task no feature owns is an orphan, so the store refuses the create; the
+// disabled button says so before the round trip does.
+const ATTRIBUTE_FIRST = 'Attribute it to a feature to create its fix task.'
+
 const FORMS = {
   attribute: {
     label: 'Attribute', placeholder: 'feature id, e.g. 81',
@@ -69,7 +73,7 @@ const FORMS = {
     done: 'folded into the keeper',
   },
   'fix-item': {
-    label: 'Fix task', placeholder: 'task id, e.g. 142',
+    label: 'Link task', placeholder: 'task id, e.g. 142',
     field: 'task_id', numeric: true,
     invalid: (raw) => (/^\d+$/.test(raw.trim()) && Number(raw) > 0
       ? '' : 'A task id is a positive whole number.'),
@@ -193,11 +197,21 @@ async function reopen() {
         variant="secondary" size="sm" :disabled="busy"
         @click="reopen"
       >Reopen</Button>
+      <!-- The one-click path. Hidden while the post-close offer stands, so
+           the same verb is not asked for twice on one row. -->
+      <Button
+        v-if="!defect.fix_task_id && !offered"
+        variant="secondary" size="sm"
+        :disabled="busy || !defect.feature_id"
+        :title="defect.feature_id ? '' : ATTRIBUTE_FIRST"
+        :data-testid="`defect-fix-create-row-${defect.id}`"
+        @click="createFixTask"
+      >Create fix task</Button>
       <Button
         variant="secondary" size="sm"
         :aria-expanded="form === 'fix-item'"
         @click="reveal('fix-item')"
-      >{{ defect.fix_task_id ? 'Re-point fix task' : 'Fix task' }}</Button>
+      >{{ defect.fix_task_id ? 'Re-point fix task' : 'Link existing task' }}</Button>
       <!-- The merge remedy, which `attribute`'s own refusal has named since
            it was written and no control could reach. -->
       <Button
@@ -209,6 +223,8 @@ async function reopen() {
       <span v-if="defect.feature_id" class="note">
         blamed on <b>{{ defect.feature_title || `#${defect.feature_id}` }}</b>
       </span>
+      <span v-else-if="!defect.fix_task_id" class="note"
+            :data-testid="`defect-fix-create-blocked-${defect.id}`">{{ ATTRIBUTE_FIRST }}</span>
     </div>
 
     <form v-if="form" class="form" @submit.prevent="submit">
@@ -241,7 +257,8 @@ async function reopen() {
          :data-testid="`defect-fix-offer-${defect.id}`">
       <span>Closed. <b>{{ defect.missing_check }}</b> still has to be written — file the task?</span>
       <Button
-        variant="secondary" size="sm" :disabled="busy"
+        variant="secondary" size="sm" :disabled="busy || !defect.feature_id"
+        :title="defect.feature_id ? '' : ATTRIBUTE_FIRST"
         :data-testid="`defect-fix-create-${defect.id}`"
         @click="createFixTask"
       >Create fix task</Button>

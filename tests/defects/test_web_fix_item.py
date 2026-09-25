@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import pathlib
 
+from sqlmodel import select
+
 from lib.auth import create_token
 from lib.defects import store
 from lib.orm import SessionLocal
@@ -195,3 +197,110 @@ def test_the_offer_is_raised_by_a_close_and_by_nothing_else():
         in source, "only a close raises it, and never over an existing pointer"
     assert "const offered = ref(false)" in source, \
         "arriving at an already-closed defect must not raise the offer"
+
+
+def _create(flask_client, defect_id):
+    return flask_client.post(f"/api/defects/{defect_id}/fix-item",
+                             json={"create": True}, headers=EDITOR)
+
+
+def _fix_task(defect_id):
+    with SessionLocal() as session:
+        return session.get(AgentTask, store.get(defect_id).fix_task_id)
+
+
+def test_creating_twice_resolves_to_the_same_task(flask_client, feature_row):
+    """A double click or a second tab must not file a second task for one bug:
+    the defect id is the task's external id, so the replay finds the first."""
+    feature = feature_row()
+    row = store.record("it broke", feature_id=feature.id)
+
+    first = _create(flask_client, row.id).get_json()["defect"]["fix_task_id"]
+    second = _create(flask_client, row.id).get_json()["defect"]["fix_task_id"]
+
+    assert first == second
+    with SessionLocal() as session:
+        rows = session.exec(select(AgentTask).where(
+            AgentTask.source == "defect",
+            AgentTask.external_id == f"defect:{row.id}")).all()
+    assert len(rows) == 1
+
+
+def test_the_body_carries_the_symptom_and_the_feature(flask_client,
+                                                      feature_row):
+    """The body is what a run is launched with, so without the symptom in it
+    the fixing agent is never told what the bug is."""
+    feature = feature_row("the gutter")
+    row = store.record("the gutter folds the newest span",
+                       feature_id=feature.id, session_id="t-7",
+                       suspect_paths=["lib/trace/merge.py"])
+
+    _create(flask_client, row.id)
+
+    body = _fix_task(row.id).body
+    assert "the gutter folds the newest span" in body
+    assert f"#{feature.id} (the gutter)" in body
+    assert "reported in session t-7" in body
+    assert "suspect paths: lib/trace/merge.py" in body
+    assert "{{" not in body
+
+
+def test_an_edited_surface_reaches_the_next_fix_task(flask_client,
+                                                     feature_row):
+    from lib.prompt_templates import (  # noqa: PLC0415
+        seed_builtin_skeletons, update_template)
+    from lib.prompts.surfaces.defects import (  # noqa: PLC0415
+        FIX_TASK_SURFACE_ID)
+
+    seed_builtin_skeletons()
+    update_template(FIX_TASK_SURFACE_ID,
+                    {"body": "REPRO FIRST #{{defect_id}}: {{symptom}}"})
+    feature = feature_row()
+    row = store.record("it broke", feature_id=feature.id)
+
+    _create(flask_client, row.id)
+
+    assert _fix_task(row.id).body == f"REPRO FIRST #{row.id}: it broke"
+
+
+def test_the_defect_screenshots_ride_the_fix_task(flask_client, feature_row):
+    """A defect's images reach no model; a task's are delivered to its runs.
+    Copied once, at the index the symptom's prose may already name."""
+    from lib.defects import images as defect_images  # noqa: PLC0415
+    from lib.tasks import images as task_images  # noqa: PLC0415
+
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+    feature = feature_row()
+    row = store.record("see ![](image:2)", feature_id=feature.id)
+    defect_images.attach(row.id, png, want_idx=2)
+
+    _create(flask_client, row.id)
+    _create(flask_client, row.id)
+
+    task_id = store.get(row.id).fix_task_id
+    assert [i["idx"] for i in task_images.list_for(task_id)] == [2]
+    assert task_images.get_bytes(task_id, 2)[0] == png
+
+
+def test_the_surface_is_listed_for_editing():
+    from lib.prompts import list_surfaces  # noqa: PLC0415
+
+    surface = next(s for s in list_surfaces() if s.id == "defect-fix-task")
+    assert surface.area == "defect"
+    assert {"defect_id", "symptom", "details"} <= set(surface.variable_names())
+
+
+def test_create_refuses_to_override_a_pointer_it_did_not_write(
+        flask_client, feature_row, native_task):
+    """Re-pointing is the operator's correction; a create must not undo it."""
+    feature = feature_row()
+    row = store.record("it broke", feature_id=feature.id)
+    _create(flask_client, row.id)
+    other = native_task(title="the real fix")
+    store.set_fix_item(row.id, other)
+
+    answer = _create(flask_client, row.id)
+
+    assert answer.status_code == 409
+    assert "re-point" in answer.get_json()["error"]
+    assert store.get(row.id).fix_task_id == other
