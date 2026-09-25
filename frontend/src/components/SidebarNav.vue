@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, onMounted, onUnmounted } from 'vue'
 import NavIcon from './NavIcon.vue'
 import Button from './ui/Button.vue'
 
@@ -60,9 +60,28 @@ function previewFor(el) {
 
 // Crossing the 2px gutter between two rows must not destroy the card — it has
 // to survive to slide. Only leaving the nav entirely closes it.
+//
+// Touch/pen never fire a real hover-out: a tap synthesizes `pointerover` with
+// no matching `pointerleave` until some *later, unrelated* tap happens to
+// cross the nav's edge, which read as "the tooltip won't go away until you
+// click something". Opening only for `pointerType === 'mouse'` keeps the
+// preview a mouse-hover affordance; tap already activates the row directly.
 function openPreview(e) {
   if (!props.iconOnly) return
+  if (e.pointerType && e.pointerType !== 'mouse') return
   previewFor(e.target.closest?.('[data-nav-index]'))
+}
+
+// A tap focuses its button the same way a keyboard Tab would, so `focusin`
+// alone can't tell them apart. Remember the pointer type behind the most
+// recent focus and let a real key press (Tab included) reclaim it — that's
+// the same "what is the user driving with right now" signal a hybrid
+// touch+keyboard device needs, without a timer standing in for it.
+let focusFromTouch = false
+
+function openPreviewFromFocus(e) {
+  if (focusFromTouch) return
+  openPreview(e)
 }
 
 function closePreview() {
@@ -70,12 +89,20 @@ function closePreview() {
   emit('preview', null)
 }
 
-// `previewHandlers` is bound as one v-on object: `mouseover`/`focusin` bubble
-// (mouseenter/focus do not), so the nav can own every row's preview.
+function onDocumentKeydown() {
+  focusFromTouch = false
+}
+
+onMounted(() => document.addEventListener('keydown', onDocumentKeydown))
+onUnmounted(() => document.removeEventListener('keydown', onDocumentKeydown))
+
+// `previewHandlers` is bound as one v-on object: `pointerover`/`focusin` bubble
+// (pointerenter/focus do not), so the nav can own every row's preview.
 const previewHandlers = {
-  mouseover: openPreview,
-  focusin: openPreview,
-  mouseleave: closePreview,
+  pointerover: openPreview,
+  pointerdown: (e) => { focusFromTouch = e.pointerType !== 'mouse' },
+  focusin: openPreviewFromFocus,
+  pointerleave: closePreview,
   focusout: (e) => {
     if (!e.currentTarget.contains(e.relatedTarget)) closePreview()
   },
