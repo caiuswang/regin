@@ -1,5 +1,6 @@
-// A terminal-kind launch lands on the browser terminal attached to its pane,
-// wherever the form was opened from: the TUI is only reachable there.
-export function terminalRoute({ traceId, kind }) {
-  return kind === 'terminal' && traceId ? `/terminal/${traceId}` : null
+// A terminal-kind launch lands on the session's detail page, wherever the form
+// was opened from: the pane is reachable from there, and the trace is what the
+// operator asked to follow.
+export function terminalLaunchRoute({ traceId, kind }) {
+  return kind === 'terminal' && traceId ? `/trace/sessions/${traceId}` : null
 }

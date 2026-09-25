@@ -5,7 +5,7 @@ import api from '../api'
 import Card from '../components/Card.vue'
 import Button from '../components/ui/Button.vue'
 import NewSessionButton from '../components/live/NewSessionButton.vue'
-import { terminalRoute } from '../utils/launchTarget.js'
+import { terminalLaunchRoute } from '../utils/launchTarget.js'
 import SessionMessagesView from '../components/SessionMessagesView.vue'
 import SessionTerminalLog from '../components/SessionTerminalLog.vue'
 import SessionTerminalPane from '../components/trace/SessionTerminalPane.vue'
@@ -598,7 +598,7 @@ const resumeMeta = computed(() => {
 function onSessionLaunched(launched) {
   const { traceId } = launched
   if (!traceId) return
-  const terminal = terminalRoute(launched)
+  const terminal = terminalLaunchRoute(launched)
   if (terminal) router.push(terminal)
   else if (traceId !== route.params.id) router.push(`/trace/sessions/${traceId}`)
 }

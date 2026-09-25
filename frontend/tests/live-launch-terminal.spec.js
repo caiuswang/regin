@@ -5,7 +5,7 @@
  * Browser-side contract only: the kind toggle's availability comes from
  * launch-options, a terminal launch posts `kind: "terminal"` without
  * `one_shot` (and with `resume` when a session was picked), and lands on
- * `/terminal/<id>`. The server side is owned by
+ * `/trace/sessions/<id>`. The server side is owned by
  * tests/agent_bridge/test_terminal_launch.py.
  */
 import { test, expect } from './auth-fixture.js'
@@ -33,7 +33,7 @@ async function openDialog(page, overrides = {}) {
   await settle(page)
 }
 
-test('a terminal launch posts kind terminal and opens the browser terminal', async ({ page }) => {
+test('a terminal launch posts kind terminal and opens the session detail page', async ({ page }) => {
   await openDialog(page)
   let body = null
   await page.route('**/api/agent-runs', async (route) => {
@@ -48,7 +48,7 @@ test('a terminal launch posts kind terminal and opens the browser terminal', asy
   await page.getByTestId('live-launch-prompt').fill('hi')
   await page.getByTestId('live-launch-go').click()
 
-  await expect(page).toHaveURL(/\/terminal\/abcd1234-0000-4000-8000-000000000000$/)
+  await expect(page).toHaveURL(/\/trace\/sessions\/abcd1234-0000-4000-8000-000000000000$/)
   expect(body.kind).toBe('terminal')
   expect(body.prompt).toBe('hi')
   expect(body.one_shot).toBeUndefined()
@@ -99,7 +99,7 @@ test('a terminal launch can continue a picked session in a pane', async ({ page 
   await expect(page.getByTestId('live-launch-resume-label')).toContainText('terminal session · keeps its trace')
   await page.getByTestId('live-launch-go').click()
 
-  await expect(page).toHaveURL(new RegExp(`/terminal/${child}$`))
+  await expect(page).toHaveURL(new RegExp(`/trace/sessions/${child}$`))
   expect(body.kind).toBe('terminal')
   expect(body.resume).toBe(child)
   expect(body.cwd).toBe('/Users/dev/repo-a')

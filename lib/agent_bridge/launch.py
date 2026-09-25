@@ -3,13 +3,13 @@
 The SDK launch (`lib/agent_sdk/supervisor.launch`) holds the session's input
 stream, which is exactly what an interactive TUI cannot offer: slash commands,
 `/` menus and native permission prompts only exist in the terminal. So this
-kind starts the TUI itself on regin's own tmux server and hands the operator
-the browser terminal (`/terminal/<id>`) attached to it.
+kind starts the TUI itself on regin's own tmux server; the operator lands on
+the session's page, whose browser terminal attaches to that pane.
 
 Identity is decided here, not discovered: regin picks the uuid and passes it as
 `--session-id`, so the trace id in the reply is the id the process's own hooks
 will report. The `bridge_panes` row is written before replying, so the terminal
-route can attach the moment the client navigates — nothing waits for the hook.
+route can attach the moment the client opens it — nothing waits for the hook.
 """
 
 from __future__ import annotations
