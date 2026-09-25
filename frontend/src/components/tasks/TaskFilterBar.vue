@@ -123,12 +123,12 @@ const runs = computed(() => props.state.runs === '1')
       variant="ghost"
       size="sm"
       :aria-pressed="runs"
-      :aria-label="runs ? 'List features only' : 'List runs beside features'"
+      :aria-label="runs ? 'Hide feature steps' : 'List feature steps beside top-level tasks'"
       data-testid="task-runs-toggle"
       @click="emit('patch', { runs: runs ? '' : '1' })"
     >
       <Icon name="list" :size="13" />
-      <span>{{ runs ? 'Hide runs' : 'Show runs' }}</span>
+      <span>{{ runs ? 'Hide feature steps' : 'Show feature steps' }}</span>
     </Button>
 
     <Button

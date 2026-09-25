@@ -42,7 +42,7 @@ from lib.orm import SessionLocal
 from lib.orm.models.sync import Repo
 from lib.orm.models.comments import (
     AUTHOR_AGENT, RESOLUTION_OPEN, RESOLUTION_RESOLVED, SUBJECT_TASK)
-from lib.orm.models.tasks import TASK_PRIORITIES
+from lib.orm.models.tasks import TASK_KIND_TASK, TASK_KINDS, TASK_PRIORITIES
 from lib.tasks import store
 from lib.tasks.commands import (
     DRAFT_EXIT, CommandsAbsent, CommandsRejected, load_project_commands,
@@ -112,12 +112,19 @@ def cmd_add(
     priority: Optional[str] = typer.Option(
         None, "--priority",
         help=f"One of: {', '.join(TASK_PRIORITIES)}."),
+    kind: str = typer.Option(
+        TASK_KIND_TASK, "--kind",
+        help=f"What the step is. One of: {', '.join(TASK_KINDS)}."),
     json: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ) -> None:
+    if kind not in TASK_KINDS:
+        print(f"unknown kind {kind!r}. One of: {', '.join(TASK_KINDS)}")
+        raise typer.Exit(code=1)
     task, _ = store.capture_task(title=title[:200], body=(body or None),
                                  source="cli", tags=list(tag),
                                  project_id=_project_id(project),
-                                 priority=_checked_priority(priority))
+                                 priority=_checked_priority(priority),
+                                 kind=kind)
     _emit(task, json, lambda t: print(f"#{t['id']}  {t['title']}"))
 
 

@@ -39,6 +39,14 @@ TASK_STATUSES: tuple[str, ...] = (
     TASK_STATUS_ARCHIVED,
 )
 
+TASK_KIND_SPEC = "spec"
+TASK_KIND_BUILD = "build"
+TASK_KIND_FIX = "fix"
+TASK_KIND_TASK = "task"
+TASK_KINDS: tuple[str, ...] = (
+    TASK_KIND_SPEC, TASK_KIND_BUILD, TASK_KIND_FIX, TASK_KIND_TASK,
+)
+
 # An attempt that has been parameterised but not launched. The `armed` state
 # used to live on the task as a status word plus three hidden columns; here it
 # is the pending attempt itself, so "what will Run spend" is a row you can read.
@@ -149,6 +157,12 @@ class AgentTask(Base, table=True):
     # about themselves, and capture is reachable by a machine key.
     assignee: Optional[int] = Field(
         default=None, sa_column=Column("assignee", Integer))
+    # What the step is, orthogonal to `status` (where its runs are). Only ever
+    # declared, never inferred from a title — legacy rows stay `task`.
+    kind: str = Field(
+        default=TASK_KIND_TASK,
+        sa_column=Column("kind", String, nullable=False,
+                         server_default=text("'task'")))
 
 
 class AgentTaskRun(Base, table=True):

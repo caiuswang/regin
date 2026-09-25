@@ -499,8 +499,10 @@ A spec names no files, because at spec time nobody knows which ones will change,
 | Writer | Event it appends |
 |---|---|
 | operator: `feature new` / `ship` / `abandon` | `specced` / `shipped` / `abandoned` |
-| a run of a task under the feature starting (`runs.py` → `events.on_run_start`, `declared_by=run:<id>`) | `spec`→`build_started`, `building`→nothing, `shipped`/`escaped`→`restarted`, `abandoned`→`build_started` |
+| a run of a `build`, `fix` or `task` step under the feature starting (`runs.py` → `events.on_run_start`, `declared_by=run:<id>`) | `spec`→`build_started`, `building`→nothing, `shipped`/`escaped`→`restarted`, `abandoned`→`build_started`. A `spec` step's run appends nothing at any stage |
 | `feature new --ref` adopting a tracker issue (`specced`, then its current state), or `feature refresh` on a remote feature (`sync.py` → `events.on_sync`) | the tracker's state category mapped to a kind; appends only when the kind differs from the last event. An unknown word is `sync_error`, never guessed |
+
+**A task declares its kind** (`agent_tasks.kind`: `spec` | `build` | `fix` | `task`), orthogonal to `status`. It is only ever declared — by the feature verbs (`POST /api/features/<id>/steps`, `lib/features/steps.py`), `task add --kind`, the defect fix path (`fix`) or `task transcribe` (`build`) — never inferred from a title, and legacy rows stay `task`. The verbs create at most one `spec` and one `build` step per feature (`external_id=feature:<id>:<kind>`, title `Spec · <feature title>`); a second attempt is another run of that row. Only a `spec` step's launch prompt carries the `task-run-spec` block.
 
 A run *settling* never writes `shipped`: a finished session is not a done-claim. `lib/defects/rounds.py` (counting completions later vacated in a tracker's state history) is **not** on the rounds path. It survives only to fill the `rounds` field of a Linear issue snapshot (`lib/tasks/integrations/linear.py`). `Defect.round` counts fix attempts on one defect. It is never summed to a feature, because it is a separate axis from rounds-to-done.
 

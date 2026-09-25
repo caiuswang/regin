@@ -16,6 +16,7 @@ import Badge from '../Badge.vue'
 import Button from '../ui/Button.vue'
 import Checkbox from '../ui/Checkbox.vue'
 import Icon from '../ui/Icon.vue'
+import TaskKindChip from './TaskKindChip.vue'
 import TaskPriorityIcon from './TaskPriorityIcon.vue'
 import TaskRefusal from './TaskRefusal.vue'
 import TaskRunControls from './TaskRunControls.vue'
@@ -81,7 +82,21 @@ const runCount = computed(() => props.task.run_count || 0)
       {{ ref_ }}
     </router-link>
 
-    <router-link class="task-title" :to="`/tasks/${task.id}`">
+    <TaskKindChip :kind="task.kind" />
+
+    <!-- A feature step reads as the feature first: the feature title says what
+         is being delivered, the task title only which step of it this is. -->
+    <router-link
+      v-if="task.feature_id"
+      class="task-title task-title-stacked"
+      :to="`/tasks/${task.id}`"
+    >
+      <span class="task-feature-line" data-testid="task-feature-line"
+      >#{{ task.feature_id }} {{ task.feature_title }}</span>
+      <span class="task-title-secondary" data-testid="task-title-secondary"
+      >{{ task.title }}</span>
+    </router-link>
+    <router-link v-else class="task-title" :to="`/tasks/${task.id}`">
       {{ task.title }}
     </router-link>
 
@@ -249,6 +264,23 @@ const runCount = computed(() => props.task.run_count || 0)
     white-space: nowrap;
 }
 .task-title:hover { color: var(--color-primary); }
+.task-title-stacked {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.25;
+}
+.task-feature-line,
+.task-title-secondary {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.task-title-secondary {
+    font-size: 0.6875rem;
+    font-weight: 400;
+    color: var(--color-fg-muted);
+}
 
 .task-facts {
     display: flex;

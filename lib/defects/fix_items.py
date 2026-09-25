@@ -17,6 +17,7 @@ import json
 
 from lib.activity_log import get_activity_logger
 from lib.defects import store
+from lib.orm.models.tasks import TASK_KIND_FIX
 
 log = get_activity_logger("defects")
 
@@ -48,7 +49,8 @@ def create_for(defect_id: int):
     # it is relinked rather than filed again, one task per defect for good.
     view, created = task_store.capture_task(
         title=row.symptom[:200], body=task_body(row), source="defect",
-        external_id=f"defect:{row.id}", feature_id=row.feature_id)
+        external_id=f"defect:{row.id}", feature_id=row.feature_id,
+        kind=TASK_KIND_FIX)
     pointed = store.set_fix_item(row.id, view["id"])
     if created:
         _copy_images(row.id, view["id"])

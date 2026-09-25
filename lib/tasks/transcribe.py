@@ -27,7 +27,8 @@ from sqlmodel import select
 from lib.activity_log import get_activity_logger
 from lib.orm import SessionLocal
 from lib.orm.models.tasks import (
-    AgentTask, TASK_STATUS_ARMED, TASK_STATUS_DONE, TASK_STATUS_FAILED,
+    AgentTask, TASK_KIND_BUILD, TASK_STATUS_ARMED, TASK_STATUS_DONE,
+    TASK_STATUS_FAILED,
     TASK_STATUS_IDEA, TASK_STATUS_QUEUED, TASK_STATUS_RUNNING,
 )
 from lib.tasks import deps as deps_module
@@ -203,7 +204,7 @@ def _write_one(row: SliceRow, existing: Optional[AgentTask], *,
     if existing is None:
         view, _ = store.capture_task(
             title=title, source=TRANSCRIBE_SOURCE, body=body,
-            feature_id=feature_id,
+            feature_id=feature_id, kind=TASK_KIND_BUILD,
             external_id=slice_key(feature_id, row.n))
         return SliceOutcome(row.n, "created", view["id"], view["status"],
                             arm=arm)

@@ -19,6 +19,7 @@ import TaskImageGallery from '../components/tasks/TaskImageGallery.vue'
 import TaskDepsEditor from '../components/tasks/TaskDepsEditor.vue'
 import TaskEditSheet from '../components/tasks/TaskEditSheet.vue'
 import TaskFeature from '../components/tasks/TaskFeature.vue'
+import TaskKindChip from '../components/tasks/TaskKindChip.vue'
 import TaskPriorityIcon from '../components/tasks/TaskPriorityIcon.vue'
 import TaskRefusal from '../components/tasks/TaskRefusal.vue'
 import FeatureDefects from '../components/features/FeatureDefects.vue'
@@ -67,6 +68,19 @@ const canWrite = computed(() => user?.role !== 'viewer')
 // own title — the authority for what is being delivered. A task's title says
 // what this step does, and the two diverge.
 const feature = ref(null)
+const featureTitle = computed(() => feature.value?.title || task.value?.feature_title || '')
+
+// What a step with no written instructions is for — its kind says it, and an
+// empty body would otherwise read as a step with nothing to do.
+const DELIVERABLE = {
+  spec: fid => 'Deliverable: the feature\'s spec, written onto the feature with '
+    + `regin feature spec ${fid} --file -. No code changes; the run ends by `
+    + 'finishing so the operator can approve.',
+  build: () => 'Deliverable: code that makes the feature spec\'s acceptance items green.',
+  fix: () => 'Deliverable: the linked defect closed.',
+}
+const deliverable = computed(
+  () => DELIVERABLE[task.value?.kind]?.(task.value.feature_id) || '')
 
 // The parameters the NEXT attempt will spend. They used to be three columns on
 // the task; an attempt is what spends them, so they live on an `armed` run row
@@ -128,6 +142,13 @@ onMounted(() => { ensureProjects(); load() })
           <span class="td-ref">{{ taskRef({ id }) }}</span>
           {{ task?.title || '…' }}
         </h1>
+        <div v-if="task && (task.feature_id || deliverable)" class="td-kind">
+          <TaskKindChip :kind="task.kind" />
+          <router-link
+            v-if="task.feature_id" class="td-feature" :to="`/features/${task.feature_id}`"
+            data-testid="task-detail-feature"
+          >#{{ task.feature_id }} {{ featureTitle }}</router-link>
+        </div>
       </div>
       <div v-if="task" class="td-actions">
         <TaskRunControls
@@ -237,7 +258,7 @@ onMounted(() => { ensureProjects(); load() })
            literal a renderer would eat. -->
       <TaskBodyEditor
         :task="task" :images="imageItems" :can-write="canWrite" :attach="addImages"
-        @saved="load"
+        :empty-text="deliverable" @saved="load"
       />
 
       <TaskImageGallery
@@ -310,6 +331,22 @@ onMounted(() => { ensureProjects(); load() })
     color: var(--color-fg-faint);
     margin-right: 0.375rem;
 }
+.td-kind {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    margin-top: 0.25rem;
+    min-width: 0;
+}
+.td-feature {
+    font-size: 0.8125rem;
+    color: var(--color-fg-muted);
+    text-decoration: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.td-feature:hover { color: var(--color-primary); }
 .td-actions { display: flex; flex-wrap: wrap; gap: 0.375rem; }
 .td-danger { color: var(--color-danger); }
 .td-facts {

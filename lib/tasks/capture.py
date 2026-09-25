@@ -13,7 +13,8 @@ import re
 from typing import Optional
 
 from lib.orm.models.tasks import (
-    BODY_MAX, EXTERNAL_ID_MAX, SOURCE_MAX, TASK_PRIORITIES, TITLE_MAX,
+    BODY_MAX, EXTERNAL_ID_MAX, SOURCE_MAX, TASK_KINDS, TASK_PRIORITIES,
+    TITLE_MAX,
 )
 
 # The capture surface keeps the old bound. It is third-party intake reachable
@@ -38,7 +39,8 @@ ALLOWED_FIELDS = frozenset({
 # identity of the row, and rewriting them would let one task impersonate
 # another's redelivery.
 UPDATE_FIELDS = frozenset({"title", "body", "tags", "status",
-                           "project_id", "priority", "feature_id", "assignee"})
+                           "project_id", "priority", "feature_id", "assignee",
+                           "kind"})
 
 STATUS_MAX = 40
 
@@ -198,6 +200,14 @@ def _optional_id(payload: dict, key: str) -> Optional[int]:
     return value
 
 
+def _kind(payload: dict) -> str:
+    value = payload.get("kind")
+    if value not in TASK_KINDS:
+        raise CaptureRejected(
+            f"kind must be one of {', '.join(TASK_KINDS)}", "kind")
+    return value
+
+
 def parse_update(payload) -> dict:
     """Normalized edit fields — only the keys the request actually carried.
 
@@ -218,6 +228,7 @@ def parse_update(payload) -> dict:
         "feature_id": lambda p: _optional_id(p, "feature_id"),
         "assignee": lambda p: _optional_id(p, "assignee"),
         "priority": _priority,
+        "kind": _kind,
     }
     return {key: read(payload) for key, read in readers.items()
             if key in payload}

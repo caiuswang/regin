@@ -30,13 +30,23 @@ FINISH_ORDER_LINKED_SURFACE_ID = "task-run-finish-order-linked"
 FINISH_ORDER_NATIVE_SURFACE_ID = "task-run-finish-order-native"
 FINISH_BASE_UNNAMED_SURFACE_ID = "task-run-finish-base-unnamed"
 FOLLOWUP_OMITTED_SURFACE_ID = "task-run-followup-omitted"
+SPEC_SURFACE_ID = "task-run-spec"
 
 # NOTE: tests/prompts/test_task_run_parity.py asserts `runs._prompt` == a
 # frozen reference builder, so the port stays provable against the f-strings it
 # replaced. Edit the wording here and that reference together.
 _LAUNCH_BODY = (
-    "{{invocation}}{{body}}{{tracker}}{{followup}}{{feature}}{{finish}}"
+    "{{invocation}}{{body}}{{tracker}}{{followup}}{{feature}}{{spec}}"
+    "{{finish}}"
 )
+
+_SPEC_BODY = """<spec>
+This run is the spec step of feature {{feature_named}}. Its deliverable is the feature's spec, written onto the feature row — nothing else:
+
+  {{spec_cmd}}
+
+Change no code, and do not start the build: read what you need, write the spec (intent, shape, rules, acceptance items that can be checked), and finish. The operator approves the spec before any build step runs, so end by running the finish command below rather than going on to implement it.
+</spec>"""
 
 _TRACKER_BODY = """<tracker>
 This work is tracked as {{tracker_name}} {{external_ref}}. The issue — and its comments, which can revise or reverse the description — is the source of truth for what is being asked; regin's copy of the title and details is a snapshot and may already be stale.
@@ -108,6 +118,7 @@ register_surface(
         PromptVariable("tracker", "Rendered `task-run-tracker` block. Empty for a native feature.", required=False),
         PromptVariable("followup", "Rendered `task-run-followup` block. Empty when no thread is open.", required=False),
         PromptVariable("feature", "Rendered `task-run-feature` block. Empty for a task under no feature.", required=False),
+        PromptVariable("spec", "Rendered `task-run-spec` block. Present only when the task is a feature's spec step.", required=False),
         PromptVariable("finish", "Rendered `task-run-finish` block. Always present."),
     ),
 )
@@ -161,6 +172,23 @@ register_surface(
     variables=(
         PromptVariable("feature_named", "The feature as the prompt names it.", example="#80 (Agent SDK runs)"),
         PromptVariable("feature_id", "The feature's numeric id.", example="80"),
+        PromptVariable("spec_cmd", "The literal `regin feature spec` command, with this feature's id filled in."),
+    ),
+)
+
+register_surface(
+    SPEC_SURFACE_ID,
+    label="Task run — spec step block",
+    area="task-run",
+    default_body=_SPEC_BODY,
+    description=(
+        "Told only to a run of a feature's spec step (kind=spec): the "
+        "deliverable is the spec on the feature row, no code changes, and the "
+        "run ends by finishing so the operator can approve it."
+    ),
+    applies_to=("external-agent",),
+    variables=(
+        PromptVariable("feature_named", "The feature as the prompt names it.", example="#80 (Agent SDK runs)"),
         PromptVariable("spec_cmd", "The literal `regin feature spec` command, with this feature's id filled in."),
     ),
 )
@@ -255,3 +283,7 @@ register_retired_default(
 register_retired_default(
     FINISH_SURFACE_ID,
     sha256="2b4848c1013bcebd4d7d731c4d83989c08996f39515faa4da90762b9c223b2fa")
+# The envelope before it carried the spec step's block.
+register_retired_default(
+    LAUNCH_SURFACE_ID,
+    sha256="6e8b6bae19adb35e5d14bfb4486d84eb3b40d593b8812a7f62a724140040388a")

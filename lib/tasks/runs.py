@@ -56,7 +56,7 @@ from lib.orm.models.tasks import (
     AgentTask, AgentTaskRun, RUN_STATUS_ARMED, RUN_STATUS_DONE,
     RUN_STATUS_FAILED, RUN_STATUS_RUNNING, RUN_STATUS_STARTING,
     TASK_STATUS_ARMED, TASK_STATUS_DONE, TASK_STATUS_FAILED,
-    TASK_STATUS_QUEUED,
+    TASK_KIND_SPEC, TASK_STATUS_QUEUED,
     TASK_STATUS_RUNNING,
 )
 from lib.settings import settings
@@ -541,6 +541,27 @@ def _feature_block(task: dict) -> str:
                                  "--file", "-")})
 
 
+def _spec_block(task: dict) -> str:
+    """The `<spec>` instruction, for a feature's spec step only.
+
+    Keyed on the declared `kind`, never on the title: "write the spec and do
+    not build" used to be typed into titles by hand.
+    """
+    feature_id = task.get("feature_id")
+    if task.get("kind") != TASK_KIND_SPEC or feature_id is None:
+        return ""
+    from lib.features import store as feature_store  # noqa: PLC0415
+    from lib.prompts import render_surface  # noqa: PLC0415
+    from lib.prompts.surfaces.tasks import SPEC_SURFACE_ID  # noqa: PLC0415
+
+    feature = feature_store.get(feature_id)
+    named = f"#{feature_id}" + (f" ({feature.title})" if feature else "")
+    return "\n\n" + render_surface(SPEC_SURFACE_ID, {
+        "feature_named": named,
+        "spec_cmd": _cli_command("feature", "spec", str(feature_id),
+                                 "--file", "-")})
+
+
 def _prompt(task: dict, run_id: int, params: Optional[dict] = None) -> str:
     """The sentence a run is launched with, plus how to report it finished.
 
@@ -587,6 +608,7 @@ def _prompt(task: dict, run_id: int, params: Optional[dict] = None) -> str:
         "tracker": _tracker_block(feature),
         "followup": _followup_block(task["id"]),
         "feature": _feature_block(task),
+        "spec": _spec_block(task),
         "finish": finish})
     # An envelope edited to drop `{{finish}}` renders fine — a *missing*
     # placeholder is not a render error, so `render_surface` never falls back —
@@ -766,8 +788,10 @@ def start_run(task_id: int) -> Optional[dict]:
     # Work beginning again over a claimed-done feature is exactly what a round
     # is. The decision reads the feature's last event alone, so a second
     # attempt inside one round appends nothing and the same run reported twice
-    # costs nothing either.
-    if task.get("feature_id") is not None:
+    # costs nothing either. A spec step writes the spec, not code, so its run
+    # is not a round and leaves the feature's log untouched.
+    if (task.get("feature_id") is not None
+            and task.get("kind") != TASK_KIND_SPEC):
         from lib.features import events as feature_events  # noqa: PLC0415
         feature_events.on_run_start(task["feature_id"], row["id"],
                                     trace_id=handle.trace_id)

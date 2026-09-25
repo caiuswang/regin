@@ -1,0 +1,178 @@
+"""A task declares what kind of step it is, and a spec step is not a round.
+
+One test per acceptance scenario of feature #102.
+"""
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+import pytest
+from sqlmodel import select
+from typer.testing import CliRunner
+
+from cli.commands.defects import defects_app
+from cli.commands.tasks import tasks_app
+from lib.defects import store as defect_store
+from lib.features import events, steps, store as feature_store
+from lib.orm import SessionLocal
+from lib.orm.models.tasks import AgentTask
+from lib.tasks import runs, store as task_store
+
+runner = CliRunner()
+
+
+@pytest.fixture
+def launcher(monkeypatch):
+    state = SimpleNamespace(calls=[])
+
+    def _fake(prompt, **kwargs):
+        state.calls.append(prompt)
+        return SimpleNamespace(trace_id=f"sdk-fake{len(state.calls)}",
+                               add_done_callback=lambda callback: None)
+
+    monkeypatch.setattr(runs.supervisor, "launch_run", _fake)
+    return state
+
+
+def _post_step(client, feature_id, kind, body=None):
+    return client.post(f"/api/features/{feature_id}/steps",
+                       json={"kind": kind, "body": body})
+
+
+def _run(client, launcher, task_id) -> str:
+    assert client.post(f"/api/tasks/{task_id}/arm", json={}).status_code == 200
+    resp = client.post(f"/api/tasks/{task_id}/run")
+    assert resp.status_code == 201, resp.get_json()
+    return launcher.calls[-1]
+
+
+def _kinds(feature_id):
+    return [e.kind for e in events.history(feature_id)]
+
+
+def test_a_spec_run_does_not_start_the_build(flask_client, launcher):
+    feature = feature_store.create("spec me")
+    spec = _post_step(flask_client, feature.id, "spec").get_json()["task"]
+
+    _run(flask_client, launcher, spec["id"])
+
+    assert _kinds(feature.id) == [events.SPECCED]
+    assert events.rounds(feature.id) == 1
+
+
+def test_the_build_after_a_spec_starts_the_lifecycle(flask_client, launcher):
+    feature = feature_store.create("spec then build")
+    spec = _post_step(flask_client, feature.id, "spec").get_json()["task"]
+    _run(flask_client, launcher, spec["id"])
+    build = _post_step(flask_client, feature.id, "build").get_json()["task"]
+
+    _run(flask_client, launcher, build["id"])
+
+    last = events.last(feature.id)
+    assert last.kind == events.BUILD_STARTED
+    assert last.declared_by.startswith("run:")
+
+
+def test_the_verb_is_idempotent(flask_client):
+    feature = feature_store.create("once only")
+
+    first = _post_step(flask_client, feature.id, "spec", "focus on X")
+    second = _post_step(flask_client, feature.id, "spec")
+
+    assert (first.status_code, second.status_code) == (201, 200)
+    assert first.get_json()["task"]["id"] == second.get_json()["task"]["id"]
+    with SessionLocal() as session:
+        rows = session.exec(select(AgentTask).where(
+            AgentTask.external_id == f"feature:{feature.id}:spec")).all()
+    assert len(rows) == 1
+    assert rows[0].title == "Spec · once only"
+    assert rows[0].kind == "spec"
+    assert rows[0].body == "focus on X"
+    assert first.get_json()["task"]["feature_title"] == "once only"
+
+
+def test_the_verb_refuses_other_kinds_and_unknown_features(flask_client):
+    feature = feature_store.create("strict")
+
+    assert _post_step(flask_client, feature.id, "fix").status_code == 400
+    assert _post_step(flask_client, 99999, "build").status_code == 404
+
+
+def test_rerunning_rather_than_recreating(flask_client, launcher):
+    feature = feature_store.create("shipped once")
+    build = _post_step(flask_client, feature.id, "build").get_json()["task"]
+    _run(flask_client, launcher, build["id"])
+    task_store.update_task(build["id"], {"status": "done"})
+    feature_store.ship(feature.id)
+
+    again = _post_step(flask_client, feature.id, "build")
+    assert again.status_code == 200
+    assert again.get_json()["task"]["id"] == build["id"]
+    _run(flask_client, launcher, build["id"])
+
+    assert events.last(feature.id).kind == events.RESTARTED
+
+
+def test_the_board_carries_the_feature_title(flask_client):
+    feature = feature_store.create("the named feature")
+    resp = flask_client.post("/api/tasks", json={
+        "title": "Enrich the feature", "feature_id": feature.id})
+    task_id = resp.get_json()["task"]["id"]
+
+    listed = flask_client.get(
+        f"/api/tasks?feature_id={feature.id}&root_only=").get_json()["items"]
+    detail = flask_client.get(f"/api/tasks/{task_id}").get_json()["task"]
+
+    assert [t["feature_title"] for t in listed] == ["the named feature"]
+    assert detail["feature_title"] == "the named feature"
+    assert detail["kind"] == "task"
+
+
+def test_the_spec_prompt_block_is_kind_scoped(flask_client, launcher):
+    feature = feature_store.create("prompted")
+    spec = _post_step(flask_client, feature.id, "spec").get_json()["task"]
+    build = _post_step(flask_client, feature.id, "build").get_json()["task"]
+
+    spec_prompt = _run(flask_client, launcher, spec["id"])
+    build_prompt = _run(flask_client, launcher, build["id"])
+
+    assert "<spec>" in spec_prompt
+    assert f"feature spec {feature.id} --file -" in spec_prompt
+    assert "<spec>" not in build_prompt
+
+
+def test_a_title_never_decides_the_kind(flask_client):
+    resp = flask_client.post("/api/tasks", json={"title": "Write the spec"})
+
+    assert resp.get_json()["task"]["kind"] == "task"
+
+
+def test_fix_tasks_carry_their_kind():
+    feature = feature_store.create("buggy")
+    row = defect_store.record("it breaks", feature_id=feature.id,
+                              session_id="t-1")
+
+    result = runner.invoke(defects_app, ["fix-item", str(row.id), "--create"])
+
+    assert result.exit_code == 0, result.output
+    with SessionLocal() as session:
+        task = session.get(AgentTask, defect_store.get(row.id).fix_task_id)
+    assert task.kind == "fix"
+
+
+def test_kind_is_declared_on_the_cli_and_editable(flask_client):
+    result = runner.invoke(tasks_app, ["add", "a step", "--kind", "build",
+                                       "--json"])
+    assert result.exit_code == 0, result.output
+    task_id = int(result.output.split('"id": ')[1].split(",")[0])
+    assert task_store.get_task(task_id)["kind"] == "build"
+
+    resp = flask_client.patch(f"/api/tasks/{task_id}", json={"kind": "spec"})
+    assert resp.get_json()["task"]["kind"] == "spec"
+    bad = flask_client.patch(f"/api/tasks/{task_id}", json={"kind": "nope"})
+    assert bad.status_code == 400
+
+
+def test_steps_key_is_stable():
+    assert steps.external_id(7, "build") == "feature:7:build"

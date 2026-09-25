@@ -25,6 +25,7 @@ const props = defineProps({
   // Returns the `idx` of every image it attached, which is what the reference
   // written back into the text is made of.
   attach: { type: Function, required: true },
+  emptyText: { type: String, default: '' },
 })
 const emit = defineEmits(['saved'])
 
@@ -146,7 +147,9 @@ async function onDrop(e) {
     </template>
 
     <MarkdownContent v-else-if="task.body" class="tbe-body" :markdown="rendered" />
-    <p v-else class="tbe-empty">No details yet.</p>
+    <p v-else class="tbe-empty" data-testid="task-body-empty">
+      {{ emptyText || 'No details yet.' }}
+    </p>
   </Card>
 </template>
 

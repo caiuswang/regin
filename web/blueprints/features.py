@@ -28,9 +28,11 @@ from lib.features import attribution, images as images_module
 from lib.features import index as index_module
 from lib.features import ledger as ledger_module
 from lib.features import spans
+from lib.features import steps as steps_module
 from lib.features import store as feature_store
 from lib.features import sync as sync_module
 from lib.orm import SessionLocal
+from lib.orm.models.tasks import BODY_MAX
 from lib.tasks.integrations import IntegrationError
 from lib.tasks.query import FilterRejected
 from lib.utils.pagination import clamp_page, clamp_size
@@ -317,3 +319,29 @@ def api_get_feature_image(feature_id: int, idx: int):
     # #177.
     return Response(data, mimetype=media_type,
                     headers={"Cache-Control": "private, max-age=86400"})
+
+
+@features_bp.route("/api/features/<int:feature_id>/steps", methods=["POST"])
+@require_editor
+def api_feature_step(feature_id: int):
+    """Open the feature's spec or build step, creating it on first use.
+
+    201 when this call created it, 200 when it returned the existing row — a
+    second attempt is another run of that row, not another task.
+    """
+    payload = _payload()
+    body = payload.get("body")
+    if body is not None and (not isinstance(body, str)
+                             or len(body) > BODY_MAX):
+        return jsonify({"error": f"body must be text of at most {BODY_MAX} "
+                                 "characters", "field": "body"}), 400
+    try:
+        task, created = steps_module.open_step(
+            feature_id, payload.get("kind"), body)
+    except steps_module.StepRejected as exc:
+        return jsonify({"error": str(exc), "field": exc.field}), 400
+    except feature_store.FeatureError as exc:
+        return jsonify({"error": str(exc)}), 404
+    feature = feature_store.require(feature_id)
+    task["feature_title"] = feature.title
+    return jsonify({"task": task, "created": created}), 201 if created else 200

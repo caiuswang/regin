@@ -48,6 +48,7 @@ from lib.comments import store as comments
 from lib.auth import get_current_user, require_auth, require_editor, require_scope
 from lib.orm import SessionLocal
 from lib.orm.models.api_keys import SCOPE_TASK_CAPTURE
+from lib.orm.models.features import Feature
 from lib.agent_sdk import worktree
 from lib.orm.models.tasks import (
     AgentTask, AgentTaskRun, RUN_STATUS_ARMED,
@@ -111,8 +112,26 @@ def _with_images(tasks: list[dict]) -> list[dict]:
     return tasks
 
 
+def _with_feature_titles(tasks: list[dict]) -> list[dict]:
+    """`feature_title` beside `feature_id`, one query for the page.
+
+    Resolved, never stored on the task: `features.title` is the one home of
+    that name, so a rename shows on every step at once.
+    """
+    ids = {t["feature_id"] for t in tasks if t.get("feature_id") is not None}
+    titles = {}
+    if ids:
+        with SessionLocal() as session:
+            titles = dict(session.exec(
+                select(Feature.id, Feature.title)
+                .where(Feature.id.in_(ids))).all())
+    for task in tasks:
+        task["feature_title"] = titles.get(task.get("feature_id"))
+    return tasks
+
+
 def _one_with_images(task: dict) -> dict:
-    return _with_images([task])[0]
+    return _with_feature_titles(_with_images([task]))[0]
 
 
 def _parse_web_capture(payload):
@@ -182,6 +201,7 @@ def api_list_tasks():
         totals = None if cursor else query.counts(session, filters)
     envelope = page.to_envelope()
     _with_images(envelope["items"])
+    _with_feature_titles(envelope["items"])
     _with_run_counts(envelope["items"])
     envelope["status_filter"] = filters["status"]
     if totals is not None:

@@ -1034,6 +1034,9 @@ CREATE TABLE IF NOT EXISTS agent_tasks (
     -- users.id, claimed by an authenticated human about themselves. No FK: the
     -- serializer resolves an unknown id to null rather than cascading.
     assignee      INTEGER,
+    -- What the step is (spec | build | fix | task), orthogonal to status.
+    -- Declared at create, never inferred from the title.
+    kind          TEXT NOT NULL DEFAULT 'task',
     CONSTRAINT uq_agent_tasks_source_external UNIQUE (source, external_id)
 );
 

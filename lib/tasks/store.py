@@ -29,7 +29,7 @@ from lib.orm.models.tasks import (
     AgentTask, AgentTaskDep, AgentTaskImage, AgentTaskRun,
     PRIORITY_ORDER, TASK_PRIORITY_NONE, TASK_STATUS_ARCHIVED,
     TASK_STATUS_ARMED, TASK_STATUS_DONE, TASK_STATUS_FAILED, TASK_STATUS_IDEA,
-    TASK_STATUS_RUNNING,
+    TASK_KIND_TASK, TASK_STATUS_RUNNING,
 )
 
 log = get_activity_logger("tasks")
@@ -133,6 +133,7 @@ def serialize(task: AgentTask) -> dict:
         # so "two features" is not a shape a reader has to defend against.
         "feature_id": task.feature_id,
         "assignee": task.assignee,
+        "kind": task.kind or TASK_KIND_TASK,
         # Resolved beside the id, never in place of it: `assignee` carries no
         # foreign key, so an id pointing at a deleted user is a real state and
         # the client renders the gap rather than a name regin invented.
@@ -247,7 +248,8 @@ def capture_task(*, title: str, source: str, body: Optional[str] = None,
                  created_by: Optional[int] = None,
                  project_id=FROM_FEATURE,
                  feature_id: Optional[int] = None,
-                 priority: str = TASK_PRIORITY_NONE) -> tuple[dict, bool]:
+                 priority: str = TASK_PRIORITY_NONE,
+                 kind: str = TASK_KIND_TASK) -> tuple[dict, bool]:
     """Insert an idea, or resolve a replay. Returns `(task, created)`.
 
     `status` is `idea` unconditionally — no caller can set it.
@@ -267,6 +269,7 @@ def capture_task(*, title: str, source: str, body: Optional[str] = None,
             project_id=_created_project(session, project_id, feature_id),
             feature_id=feature_id,
             priority=priority, priority_rank=PRIORITY_ORDER[priority],
+            kind=kind,
         )
         session.add(row)
         try:
@@ -369,6 +372,8 @@ def _apply_fields(session, row: AgentTask, fields: dict) -> None:
         row.project_id = _resolved_project(session, fields["project_id"])
     if "assignee" in fields:
         row.assignee = fields["assignee"]
+    if "kind" in fields:
+        row.kind = fields["kind"]
 
 
 def _apply_feature(task_id: int, feature_id) -> Optional[dict]:

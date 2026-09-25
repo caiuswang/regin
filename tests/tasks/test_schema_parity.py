@@ -20,7 +20,7 @@ from lib import db_migrate
 _TABLES = ("api_keys", "agent_tasks", "agent_task_runs", "agent_task_deps",
            "agent_task_images", "feature_images")
 _SCHEMA_SQL = Path(__file__).resolve().parents[2] / "db" / "schema.sql"
-_LAST_TASK_REVISION = "0032"
+_LAST_TASK_REVISION = "0035"
 #: Tables the revisions between 0021 and the last one create from scratch. They
 #: are dropped with the task tables so the replay does not collide with what
 #: `schema.sql` already built. `agent_task_links` and `issue_cache` are in the
@@ -28,7 +28,7 @@ _LAST_TASK_REVISION = "0032"
 #: and 0024 and drops them at 0028, so the walk passes through both.
 _REPLAYED = ("defects", "session_features", "issue_cache", "comments",
              "comment_threads", "agent_task_links", "features",
-             "feature_events")
+             "feature_events", "defect_images")
 
 
 def _columns(conn, table: str) -> list[tuple]:
@@ -81,7 +81,8 @@ def alembic_built(tmp_db, tmp_path):
                       "idx_agent_tasks_priority",
                       "idx_agent_tasks_feature",
                       "idx_feature_events_feature",
-                      "idx_feature_images_feature"):
+                      "idx_feature_images_feature",
+                      "idx_defect_images_defect", "idx_defects_triage"):
             conn.execute(f"DROP INDEX IF EXISTS {index}")
         for table in _TABLES + _REPLAYED:
             conn.execute(f"DROP TABLE IF EXISTS {table}")
