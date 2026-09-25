@@ -101,15 +101,17 @@ def test_unattributed_defects_is_a_counter_never_a_row(defect_row):
 
 def test_ordering_is_most_recent_activity_descending(session_row, task_lane,
                                                      feature_row):
-    old, new = feature_row("old"), feature_row("new")
-    session_row("t-old", started="2026-01-01 10:00:00")
-    session_row("t-new", started="2026-06-01 10:00:00")
-    task_lane(860, old.id, [("t-old", "done")])
-    task_lane(861, new.id, [("t-new", "done")])
+    # Declared in the opposite order to their activity, so the default
+    # `created:desc` would rank them the other way round.
+    recent, stale = feature_row("recent"), feature_row("stale")
+    session_row("t-recent", started="2099-06-01 10:00:00")
+    session_row("t-stale", started="2099-01-01 10:00:00")
+    task_lane(860, recent.id, [("t-recent", "done")])
+    task_lane(861, stale.id, [("t-stale", "done")])
 
-    ids = _ids(index_module.page())
+    ids = _ids(index_module.page(filters={"sort": "activity:desc"}))
 
-    assert ids.index(new.id) < ids.index(old.id)
+    assert ids.index(recent.id) < ids.index(stale.id)
 
 
 def test_a_same_day_defect_outranks_an_earlier_session(session_row, task_lane,

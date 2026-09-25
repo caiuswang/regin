@@ -46,7 +46,7 @@ const SORT_OPTIONS = [
   { value: 'stage', label: 'Stage' },
   { value: 'created', label: 'Created' },
 ]
-const DEFAULT_SORT = 'activity:desc'
+const DEFAULT_SORT = 'created:desc'
 
 // `lib/features/events.py::STAGES`. An unknown value is a 400 from the server,
 // not a silently dropped filter, so this list and that tuple must agree.
@@ -62,7 +62,7 @@ const STAGE_OPTIONS = [
 const q = computed(() => String(route.query.q || ''))
 const stage = computed(() => String(route.query.stage || ''))
 const sort = computed(() => String(route.query.sort || DEFAULT_SORT))
-const sortKey = computed(() => sort.value.split(':')[0] || 'activity')
+const sortKey = computed(() => sort.value.split(':')[0] || 'created')
 const sortDir = computed(() => (sort.value.split(':')[1] === 'asc' ? 'asc' : 'desc'))
 
 const {

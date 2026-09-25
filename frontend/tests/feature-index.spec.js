@@ -162,9 +162,12 @@ test('a column header is a sort button carrying aria-sort', async ({ page }) => 
   const seen = await stub(page, index())
   await page.goto('/features')
 
-  // The default order, announced rather than merely rendered.
+  // The default order is newest-created first, announced by the toolbar
+  // (no column carries `created`), so no header claims it.
+  await expect.poll(() => last(seen)?.get('sort')).toBe('created:desc')
+  await expect(page.getByLabel('Sort by')).toContainText('Created')
   const activity = page.locator('th', { has: page.getByTestId('sort-activity') })
-  await expect(activity).toHaveAttribute('aria-sort', 'descending')
+  await expect(activity).toHaveAttribute('aria-sort', 'none')
   // A column that cannot be sorted wears no affordance at all.
   const feature = page.locator('thead th').first()
   await expect(feature).toHaveAttribute('aria-sort', 'none')

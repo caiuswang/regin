@@ -246,13 +246,28 @@ def test_a_null_cost_sorts_last_in_both_directions(session_row, task_lane,
         assert [row.id for row in page.items] == [priced.id, gap.id], direction
 
 
-def test_activity_is_the_default_and_keeps_gaps_last(feature_row):
-    """The existing `_ORDER` survives the rewrite: it is what the page shows
-    when nothing asks for anything else."""
-    default = index_module.page()
-    named = index_module.page(filters={"sort": "activity:desc"})
+def test_created_is_the_default_so_a_new_feature_leads(session_row, task_lane,
+                                                       feature_row):
+    """Defect #179: under a last-activity default, a feature declared a moment
+    ago sank below every older feature that had run a session since."""
+    busy = feature_row("older, with a session")
+    session_row("t-busy-1", cost=1.0, started="2099-01-01T00:00:00")
+    task_lane(911, busy.id, [("t-busy-1", "done")])
+    fresh = feature_row("just declared")
 
+    default = index_module.page()
+    named = index_module.page(filters={"sort": "created:desc"})
+
+    assert default.items[0].id == fresh.id
     assert [row.id for row in default.items] == [row.id for row in named.items]
+
+
+def test_same_second_features_list_newest_id_first(feature_row):
+    """`created_at` has second resolution; the tiebreak must not undo the
+    newest-first promise for two features declared in one tick."""
+    made = [feature_row(f"f{n}").id for n in range(3)]
+
+    assert [row.id for row in index_module.page().items] == list(reversed(made))
 
 
 # ── the new facets ───────────────────────────────────────────

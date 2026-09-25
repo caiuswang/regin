@@ -1,0 +1,15 @@
+{
+  "aliases": [],
+  "blurb": "Feature pipeline: features + event ledger, defects & escapes, spec slices → task runs, /pipeline project rollups — enter when changing how work is specced, built, shipped or walked back. Code: lib/features/, lib/defects/, lib/tasks/, lib/pipeline/",
+  "commands": [],
+  "edges": [],
+  "exclude_globs": [],
+  "include_globs": [],
+  "intent": "Feature pipeline: features + event ledger, defects & escapes, spec slices → task runs, /pipeline project rollups — enter when changing how work is specced, built, shipped or walked back. Code: lib/features/, lib/defects/, lib/tasks/, lib/pipeline/",
+  "kind": "bucket",
+  "label": "Feature pipeline",
+  "parent_id": null,
+  "refs": [],
+  "source": "manual-taxonomy",
+  "status": "active"
+}

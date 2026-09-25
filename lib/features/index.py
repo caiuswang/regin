@@ -259,7 +259,7 @@ SORT_KEYS: dict[str, tuple[str, str]] = {
     "created": ("created_at", "DESC"),
 }
 
-DEFAULT_SORT_KEY = "activity"
+DEFAULT_SORT_KEY = "created"
 
 #: Keys whose column has a gap reading, sorted last in BOTH directions rather
 #: than as a value. A NULL cost is `none declared`, not the cheapest — an
@@ -268,7 +268,10 @@ DEFAULT_SORT_KEY = "activity"
 _GAPPED = ("activity", "cost")
 
 #: Appended to every order, so the ordering is total: without it two rows
-#: sharing a key can land on two pages or on neither as the offset moves.
+#: sharing a key can land on two pages or on neither as the offset moves. It
+#: runs in the key's direction because `created_at` has second resolution: a
+#: fixed `id ASC` put the older of two same-second features first under
+#: `created:desc`, the default.
 _TIEBREAK = "id"
 
 
@@ -292,7 +295,7 @@ def parse_sort(raw: str) -> tuple[str, str]:
 def _order_by(key: str, direction: str) -> str:
     column = SORT_KEYS[key][0]
     gaps_last = f"{column} IS NULL, " if key in _GAPPED else ""
-    return f" ORDER BY {gaps_last}{column} {direction}, {_TIEBREAK}"
+    return f" ORDER BY {gaps_last}{column} {direction}, {_TIEBREAK} {direction}"
 
 
 #: What `page()` reads when a caller names no filters.
