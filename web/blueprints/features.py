@@ -90,15 +90,18 @@ def api_feature_create():
     """
     payload = _payload()
     ref = (payload.get("ref") or "").strip()
+    project_id = payload.get("project_id")
     try:
         if ref:
             row = sync_module.adopt(ref, provider_id=(
-                payload.get("provider") or "").strip())
+                payload.get("provider") or "").strip(), project_id=project_id)
         else:
             row = feature_store.create((payload.get("title") or ""),
-                                       body=payload.get("body"))
+                                       body=payload.get("body"),
+                                       project_id=project_id)
     except (feature_store.FeatureError, IntegrationError) as exc:
-        return jsonify({"error": str(exc)}), 400
+        return jsonify({"error": str(exc),
+                        "field": getattr(exc, "field", None)}), 400
     return jsonify(ledger_module.build(row.id).to_dict()), 201
 
 

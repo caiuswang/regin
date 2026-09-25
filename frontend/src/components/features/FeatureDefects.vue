@@ -168,6 +168,10 @@ async function submit() {
         placeholder="the symptom, in your words"
         data-testid="feature-defect-symptom"
       />
+      <p class="td-project" data-testid="feature-defect-project">
+        Project: {{ feature.project_name || 'No project' }}
+        <span class="td-optional">(the feature's — a defect has none of its own)</span>
+      </p>
       <span class="td-label">Screenshots <span class="td-optional">(paste or drop)</span></span>
       <TaskImageStrip
         :items="shots"
@@ -230,6 +234,7 @@ async function submit() {
 .td-form { display: flex; flex-direction: column; gap: 0.35rem; }
 .td-label { font-size: 11.5px; color: var(--color-fg-muted); }
 .td-optional { color: var(--color-fg-faint); }
+.td-project { margin: 0; font-size: 11.5px; color: var(--color-fg-muted); }
 .td-actions { display: flex; gap: 0.4rem; }
 .td-note {
     margin: 0.4rem 0 0; font-size: 11.5px; color: var(--color-fg-muted);

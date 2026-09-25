@@ -293,6 +293,8 @@ def _detail(task: dict, task_id: int) -> dict:
             "feature": None if feature is None else {
                 "id": feature.id, "title": feature.title,
                 "origin": feature.origin,
+                "project_id": feature.project_id,
+                "project_name": feature_store.project_name(feature.project_id),
                 "external_ref": feature.external_ref,
                 "stage": feature_events.stage(feature.id)}}
 

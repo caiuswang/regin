@@ -14,6 +14,7 @@ const items = ref([])
 const loading = ref(false)
 const error = ref('')
 let loaded = false
+let inflight = null
 
 /**
  * useProjects — the registered repos a task can be filed under.
@@ -23,22 +24,30 @@ let loaded = false
  * `load()` is the explicit refetch.
  */
 export function useProjects() {
-  async function load() {
+  async function fetchRepos() {
     loading.value = true
     error.value = ''
     try {
       const data = await api.get('/repos')
-      items.value = (data.repos || []).map(r => ({ id: r.id, name: r.name }))
+      items.value = (data.repos || []).map(r => ({ id: r.id, name: r.name, path: r.path }))
       loaded = true
     } catch (e) {
       error.value = e.message || String(e)
     } finally {
       loading.value = false
+      inflight = null
     }
   }
 
+  function load() {
+    inflight = inflight || fetchRepos()
+    return inflight
+  }
+
+  // Awaits a load already in flight rather than returning early: a form that
+  // pre-selects a project from this list must not read it while it is empty.
   async function ensure() {
-    if (loaded || loading.value) return
+    if (loaded) return
     await load()
   }
 
@@ -48,4 +57,24 @@ export function useProjects() {
   }
 
   return { items, loading, error, load, ensure, byId }
+}
+
+/**
+ * The select value a creation form starts at, carried from a known endpoint.
+ *
+ * `raw` is a repo id (a number, or a scope string such as `?project=3`); any
+ * other value — `all`, `none`, empty — or an id no listed repo answers to
+ * starts at "No project" (`''`), so a dropped repo is never sent.
+ */
+export function carriedProject(raw, projects) {
+  if (raw == null || raw === '') return ''
+  const id = Number(raw)
+  if (!Number.isInteger(id)) return ''
+  return (projects || []).some(p => p.id === id) ? String(id) : ''
+}
+
+/** Select options for a project picker: "No project", then every repo. */
+export function projectOptions(projects) {
+  return [{ value: '', label: 'No project' },
+          ...(projects || []).map(p => ({ value: String(p.id), label: p.name }))]
 }

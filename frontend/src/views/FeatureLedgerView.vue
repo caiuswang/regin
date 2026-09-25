@@ -251,7 +251,10 @@ function onDeclared() {
         @remove="removeImage"
       />
 
-      <FeatureTasks :feature-id="ledger.id" :can-write="canWrite" />
+      <FeatureTasks
+        :feature-id="ledger.id" :can-write="canWrite"
+        :project-id="ledger.project_id"
+      />
 
       <FeatureDefects :feature="ledger" :can-write="canWrite" />
 

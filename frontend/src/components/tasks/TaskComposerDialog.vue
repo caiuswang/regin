@@ -23,9 +23,14 @@ import { imageFilesFrom } from '../../utils/imageFiles'
 import { useAttachedImages } from '../../composables/useAttachedImages.js'
 import { caretTarget, withCaretInsert } from '../../utils/caret'
 import { imageRefBlock } from '../../utils/taskBodyImages'
+import { carriedProject, projectOptions } from '../../composables/useProjects.js'
 
 const open = defineModel('open', { type: Boolean, default: false })
-defineProps({ projects: { type: Array, default: () => [] } })
+const props = defineProps({
+  projects: { type: Array, default: () => [] },
+  // The Tasks toolbar's project — a repo id, `none`, or `''` for every one.
+  project: { type: String, default: '' },
+})
 const emit = defineEmits(['created'])
 
 const { saving, formError, create } = useTaskMutations()
@@ -45,6 +50,11 @@ watch(open, async (isOpen) => {
   if (!isOpen) {
     resetImages()
     return
+  }
+  // A starting value, and only on a fresh draft: a half-typed idea reopened
+  // keeps the project the operator already picked for it.
+  if (!draft.value.title && !draft.value.body) {
+    draft.value.project_id = carriedProject(props.project, props.projects)
   }
   await nextTick()
   titleInput.value?.focus()
@@ -144,9 +154,7 @@ function reset() {
           <Select
             v-model="draft.project_id"
             block
-            :options="[{ value: '', label: 'No project' },
-                       ...projects.map(p => ({ value: String(p.id),
-                                               label: p.name }))]"
+            :options="projectOptions(projects)"
             aria-label="Project"
             data-testid="task-composer-project"
           />

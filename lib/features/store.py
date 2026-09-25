@@ -66,7 +66,8 @@ def create(title: str, *, body: Optional[str] = None,
            external_url: Optional[str] = None,
            sync_error: Optional[str] = None,
            declared_by: str = OPERATOR,
-           trace_id: Optional[str] = None) -> Feature:
+           trace_id: Optional[str] = None,
+           project_id: Optional[int] = None) -> Feature:
     """A feature row and its `specced` event, in one transaction."""
     name = (title or "").strip()
     if not name:
@@ -77,10 +78,11 @@ def create(title: str, *, body: Optional[str] = None,
         raise FeatureError(
             f"a spec is at most {DESCRIPTION_MAX} characters; this one is "
             f"{len(body)}")
+    check_project(project_id)
     with SessionLocal() as session:
         row = Feature(title=name, body=body, origin=origin,
                       external_ref=external_ref, external_url=external_url,
-                      sync_error=sync_error)
+                      sync_error=sync_error, project_id=project_id)
         session.add(row)
         session.flush()
         session.add(FeatureEvent(feature_id=row.id,
@@ -162,6 +164,17 @@ def set_body(feature_id: int, body: Optional[str]) -> Feature:
     return row
 
 
+def check_project(project_id) -> None:
+    """Refuse a `project_id` that is neither `None` nor a registered repo id."""
+    if project_id is None:
+        return
+    if not isinstance(project_id, int) or isinstance(project_id, bool):
+        raise ProjectRejected("project_id must be an integer or null")
+    with SessionLocal() as session:
+        if session.get(Repo, project_id) is None:
+            raise ProjectRejected(f"unknown project: {project_id}")
+
+
 def set_project(feature_id: int, project_id: Optional[int]) -> Feature:
     """File the feature under a registered repo, or unfile it with `None`.
 
@@ -173,15 +186,11 @@ def set_project(feature_id: int, project_id: Optional[int]) -> Feature:
     Appends no event. A project is where a feature lives, not a step in its
     life, and putting it in the append-only log would make `rounds` count it.
     """
-    if project_id is not None:
-        if not isinstance(project_id, int) or isinstance(project_id, bool):
-            raise ProjectRejected("project_id must be an integer or null")
+    check_project(project_id)
     with SessionLocal() as session:
         row = session.get(Feature, feature_id)
         if row is None:
             raise FeatureError(f"no feature {feature_id}")
-        if project_id is not None and session.get(Repo, project_id) is None:
-            raise ProjectRejected(f"unknown project: {project_id}")
         row.project_id = project_id
         session.add(row)
         session.commit()

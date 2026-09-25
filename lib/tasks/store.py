@@ -23,6 +23,7 @@ from sqlmodel import delete, select
 
 from lib.activity_log import get_activity_logger
 from lib.orm import SessionLocal
+from lib.orm.models.features import Feature
 from lib.orm.models.sync import Repo
 from lib.orm.models.tasks import (
     AgentTask, AgentTaskDep, AgentTaskImage, AgentTaskRun,
@@ -178,6 +179,26 @@ def _resolved_project(session, project_id: Optional[int]) -> Optional[int]:
     return project_id
 
 
+#: `capture_task`'s default for `project_id`: the request did not state one.
+#: Distinct from `None`, which is a stated "No project" and is stored as such.
+FROM_FEATURE = object()
+
+
+def _created_project(session, project_id, feature_id: Optional[int]):
+    """The project a new task is filed under.
+
+    A stated project, `None` included, wins; only an unstated one is carried
+    from the feature. Copied once, here: a feature's project changing later
+    does not retarget tasks that already exist.
+    """
+    if project_id is not FROM_FEATURE:
+        return _resolved_project(session, project_id)
+    if feature_id is None:
+        return None
+    feature = session.get(Feature, feature_id)
+    return feature.project_id if feature is not None else None
+
+
 class BulkFieldRejected(ValueError):
     """A field a bulk edit does not own — a 400 naming that field.
 
@@ -224,7 +245,7 @@ def _touch(session, row: AgentTask) -> dict:
 def capture_task(*, title: str, source: str, body: Optional[str] = None,
                  external_id: Optional[str] = None, tags=None, links=None,
                  created_by: Optional[int] = None,
-                 project_id: Optional[int] = None,
+                 project_id=FROM_FEATURE,
                  feature_id: Optional[int] = None,
                  priority: str = TASK_PRIORITY_NONE) -> tuple[dict, bool]:
     """Insert an idea, or resolve a replay. Returns `(task, created)`.
@@ -243,7 +264,7 @@ def capture_task(*, title: str, source: str, body: Optional[str] = None,
             title=title, body=body, status=TASK_STATUS_IDEA, source=source,
             external_id=external_id, tags_json=_encode(tags),
             links_json=_encode(links), created_by=created_by,
-            project_id=_resolved_project(session, project_id),
+            project_id=_created_project(session, project_id, feature_id),
             feature_id=feature_id,
             priority=priority, priority_rank=PRIORITY_ORDER[priority],
         )

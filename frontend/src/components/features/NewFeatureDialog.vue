@@ -19,21 +19,29 @@ import api from '../../api'
 import Button from '../ui/Button.vue'
 import Dialog from '../ui/Dialog.vue'
 import Input from '../ui/Input.vue'
+import Select from '../ui/Select.vue'
 import TaskImageStrip from '../tasks/TaskImageStrip.vue'
 import Textarea from '../ui/Textarea.vue'
 import { useAttachedImages } from '../../composables/useAttachedImages.js'
+import { carriedProject, projectOptions, useProjects }
+  from '../../composables/useProjects.js'
 import { caretTarget, withCaretInsert } from '../../utils/caret'
 import { imageRefBlock } from '../../utils/taskBodyImages'
 import { imageFilesFrom } from '../../utils/imageFiles'
 
 const open = defineModel('open', { type: Boolean, default: false })
+// The Pipeline shell's `?project=` — a repo id, `none` or `all`. Only a repo
+// id pre-selects; the other two mean nothing is known, so nothing is guessed.
+const props = defineProps({ scope: { type: String, default: '' } })
 const emit = defineEmits(['declared'])
+const { items: projects, ensure: ensureProjects } = useProjects()
 
 const mode = ref('declare')
 const title = ref('')
 const body = ref('')
 const reference = ref('')
 const provider = ref('')
+const projectId = ref('')
 const saving = ref(false)
 const failed = ref('')
 // Bound to no feature: the mockup is pasted before the row exists, so it is
@@ -51,7 +59,7 @@ const description = computed(() => (adopting.value
   : 'What is being delivered. The spec is thin prose — no file paths, which at'
     + ' this point would specify an implementation that does not exist yet.'))
 
-watch(open, (isOpen) => {
+watch(open, async (isOpen) => {
   if (!isOpen) return
   mode.value = 'declare'
   title.value = ''
@@ -60,6 +68,9 @@ watch(open, (isOpen) => {
   provider.value = ''
   failed.value = ''
   resetImages()
+  projectId.value = ''
+  await ensureProjects()
+  projectId.value = carriedProject(props.scope, projects.value)
 })
 
 const bodyArea = ref(null)
@@ -97,6 +108,7 @@ async function declare() {
   const payload = adopting.value
     ? { ref: reference.value.trim(), provider: provider.value.trim() }
     : { title: title.value, body: body.value }
+  payload.project_id = projectId.value ? Number(projectId.value) : null
   const ledger = await api.post('/features', payload)
   saving.value = false
   if (ledger?.ok === false) {
@@ -175,6 +187,15 @@ async function declare() {
           placeholder="Intent, non-goals, and the acceptance items — as test names"
         />
       </template>
+
+      <span class="nf-label">Project</span>
+      <Select
+        v-model="projectId"
+        block
+        :options="projectOptions(projects)"
+        aria-label="Project"
+        data-testid="declare-project"
+      />
 
       <span class="nf-label">Images <span class="nf-optional">(optional)</span></span>
       <TaskImageStrip

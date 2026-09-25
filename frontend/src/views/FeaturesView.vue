@@ -209,7 +209,11 @@ function declared(ledger) {
       </div>
     </Teleport>
 
-    <NewFeatureDialog v-model:open="declaring" @declared="declared" />
+    <NewFeatureDialog
+      v-model:open="declaring"
+      :scope="scopeParam(route.query.project)"
+      @declared="declared"
+    />
 
     <div v-if="cov" class="counters">
       <span>

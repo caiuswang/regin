@@ -314,6 +314,7 @@ defineExpose({ openComposer: () => { composerOpen.value = true } })
     <TaskComposerDialog
       v-model:open="composerOpen"
       :projects="projects"
+      :project="query.project.value"
       @created="reload"
     />
     <TaskArmSheet

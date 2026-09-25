@@ -82,6 +82,9 @@ export function seededArmDraft(task) {
   if (!stored) return { draft, recalled: false }
   let recalled = false
   for (const field of REMEMBERED) {
+    // A filed task's directory is its project's repo (`projectCwd`), never the
+    // last task's: that is how a task filed under repo B came to run in A.
+    if (field === 'cwd' && task?.project_id != null) continue
     const value = stored[field]
     // The sentinel names a slot in the form, not a model — refuse it on the way
     // in as well as on the way out, so a store written before `rememberArm`
@@ -100,6 +103,29 @@ export function seededArmDraft(task) {
     }
   }
   return { draft, recalled }
+}
+
+/** The working directory a task's project seeds, or null to leave it alone.
+ *
+ * `null` for a task with no project — the recalled cwd stands. A project whose
+ * repo is not listed seeds `''` (the server working directory) rather than
+ * the recall, which would be a guess about a different task's repo.
+ */
+export function projectCwd(task, projects) {
+  if (task?.project_id == null) return null
+  const repo = (projects || []).find(p => p.id === task.project_id)
+  return repo?.path || ''
+}
+
+function trimSlash(path) {
+  return String(path || '').replace(/\/+$/, '')
+}
+
+/** Is `cwd` the repo at `root`, or somewhere inside it? */
+export function cwdWithin(cwd, root) {
+  const dir = trimSlash(cwd)
+  const base = trimSlash(root)
+  return !!dir && !!base && (dir === base || dir.startsWith(`${base}/`))
 }
 
 /** Reset a recalled draft back to what a first-ever arm would have shown. */

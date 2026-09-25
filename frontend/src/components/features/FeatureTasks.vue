@@ -19,12 +19,17 @@ import Button from '../ui/Button.vue'
 import Card from '../Card.vue'
 import Icon from '../ui/Icon.vue'
 import Input from '../ui/Input.vue'
+import Select from '../ui/Select.vue'
 import TaskStatusIcon from '../tasks/TaskStatusIcon.vue'
+import { carriedProject, projectOptions, useProjects }
+  from '../../composables/useProjects.js'
 
 const props = defineProps({
   featureId: { type: Number, required: true },
   canWrite: { type: Boolean, default: false },
+  projectId: { type: Number, default: null },
 })
+const { items: projects, ensure: ensureProjects } = useProjects()
 
 const items = ref([])
 const loading = ref(true)
@@ -33,6 +38,16 @@ const open = ref(false)
 const title = ref('')
 const busy = ref(false)
 const failed = ref('')
+const projectId = ref('')
+
+// The feature's project is the starting value, not a rule: a feature that
+// spans repos files each step under its own, so the pick stays editable and
+// is always sent — "No project" included.
+async function startNew() {
+  open.value = true
+  await ensureProjects()
+  projectId.value = carriedProject(props.projectId, projects.value)
+}
 
 async function load() {
   loading.value = true
@@ -56,7 +71,10 @@ async function submit() {
   if (!name || busy.value) return
   busy.value = true
   failed.value = ''
-  const res = await api.post('/tasks', { title: name, feature_id: props.featureId })
+  const res = await api.post('/tasks', {
+    title: name, feature_id: props.featureId,
+    project_id: projectId.value ? Number(projectId.value) : null,
+  })
   busy.value = false
   if (res?.ok === false || !res?.task) {
     failed.value = res?.msg || 'the task was refused'
@@ -78,7 +96,7 @@ async function submit() {
       <Button
         v-if="canWrite && !open"
         variant="ghost" size="sm" data-testid="feature-new-task"
-        @click="open = true"
+        @click="startNew"
       >
         <Icon name="plus" :size="12" />
         New task
@@ -94,6 +112,13 @@ async function submit() {
         v-model="title" :disabled="busy"
         placeholder="a step of this feature"
         data-testid="feature-task-title"
+      />
+      <span class="ft-label">Project</span>
+      <Select
+        v-model="projectId" block :disabled="busy"
+        :options="projectOptions(projects)"
+        aria-label="Project"
+        data-testid="feature-task-project"
       />
       <div class="ft-actions">
         <Button

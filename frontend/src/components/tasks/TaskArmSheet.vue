@@ -3,7 +3,7 @@
 // that may write a task's execution parameters, and its fields are exactly the
 // arm allowlist. The menus are served, not hardcoded — models, permission
 // modes, efforts and repos describe the install this page is driving.
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import Button from '../ui/Button.vue'
 import Checkbox from '../ui/Checkbox.vue'
 import Dialog from '../ui/Dialog.vue'
@@ -12,8 +12,10 @@ import LaunchWorktreeFields from '../live/LaunchWorktreeFields.vue'
 import Select from '../ui/Select.vue'
 import { CUSTOM_MODEL, CUSTOM_SKILL, useTaskArm } from '../../composables/useTaskArm.js'
 import {
-  blankArmDraft, forgetArm, hasRecalledValues, rememberArm, seededArmDraft,
+  blankArmDraft, cwdWithin, forgetArm, hasRecalledValues, projectCwd,
+  rememberArm, seededArmDraft,
 } from '../../composables/useArmPrefs.js'
+import { useProjects } from '../../composables/useProjects.js'
 
 const props = defineProps({
   task: { type: Object, required: true },
@@ -26,6 +28,8 @@ const {
   loadOptions, adoptUnlisted, pruneUnlisted, arm,
 } = useTaskArm()
 
+const { items: projects, ensure: ensureProjects, byId } = useProjects()
+
 const seeded = seededArmDraft(props.task)
 const draft = reactive(seeded.draft)
 // Surfaced, never silent. Arming is the one browser write that sets execution
@@ -34,12 +38,21 @@ const draft = reactive(seeded.draft)
 // it by pressing the button they always press.
 const recalled = ref(seeded.recalled)
 
+// Seeded after the recall banner is settled: a cwd that came from the task's
+// own project is not a carry-over from another task, and must not raise it.
+function seedProjectCwd() {
+  if (props.task?.armed?.params) return
+  const cwd = projectCwd(props.task, projects.value)
+  if (cwd !== null) draft.cwd = cwd
+}
+
 onMounted(async () => {
-  await loadOptions()
+  await Promise.all([loadOptions(), ensureProjects()])
   if (recalled.value) {
     pruneUnlisted(draft)
     recalled.value = hasRecalledValues(draft)
   }
+  seedProjectCwd()
   adoptUnlisted(draft)
 })
 
@@ -47,7 +60,28 @@ function resetDraft() {
   Object.assign(draft, blankArmDraft(props.task))
   forgetArm()
   recalled.value = false
+  seedProjectCwd()
 }
+
+const projectRepo = computed(() => byId(props.task?.project_id))
+
+// Offered even when `repo_paths` does not list them: a Select whose value is
+// not among its options renders blank, and hides where the run will go.
+const cwdChoices = computed(() => {
+  const listed = new Set(cwdOptions.value.map(o => o.value))
+  const extra = [...new Set([draft.cwd, projectRepo.value?.path])]
+    .filter(path => path && !listed.has(path))
+  return [...cwdOptions.value, ...extra.map(path => ({ value: path, label: path }))]
+})
+
+// A note, never a refusal: one run has one directory, and a step of a
+// multi-repo feature may legitimately run somewhere its filing does not say.
+const cwdMismatch = computed(() => {
+  const repo = projectRepo.value
+  if (!repo?.path || cwdWithin(draft.cwd, repo.path)) return ''
+  return `Filed under ${repo.name} but will run in `
+    + `${draft.cwd || 'the server working directory'}.`
+})
 
 async function submit() {
   if (!await arm(props.task, draft)) return
@@ -80,10 +114,13 @@ async function submit() {
         id="task-arm-cwd"
         v-model="draft.cwd"
         block
-        :options="cwdOptions"
+        :options="cwdChoices"
         data-testid="task-arm-cwd"
         aria-label="Working directory"
       />
+      <p v-if="cwdMismatch" class="task-arm-note" role="status" data-testid="task-arm-cwd-mismatch">
+        {{ cwdMismatch }}
+      </p>
 
       <LaunchWorktreeFields
         v-model:enabled="draft.useWorktree"

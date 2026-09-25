@@ -165,7 +165,7 @@ def parse_capture(payload) -> dict:
     if not isinstance(payload, dict):
         raise CaptureRejected("body must be a JSON object")
     _reject_unknown_fields(payload)
-    return {
+    fields = {
         "title": _string(payload, "title", TITLE_MAX, required=True),
         "body": _string(payload, "body", CAPTURE_BODY_MAX, required=False),
         "source": _source(payload),
@@ -173,10 +173,14 @@ def parse_capture(payload) -> dict:
                                required=False),
         "tags": _tags(payload),
         "links": _links(payload),
-        "project_id": _project_id(payload),
         "feature_id": _optional_id(payload, "feature_id"),
         "priority": _priority(payload),
     }
+    # Only a stated project is passed on: an absent key is what lets the store
+    # carry the feature's project, and `None` would read as "No project".
+    if "project_id" in payload:
+        fields["project_id"] = _project_id(payload)
+    return fields
 
 
 def _optional_id(payload: dict, key: str) -> Optional[int]:
