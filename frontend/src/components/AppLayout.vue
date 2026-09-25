@@ -317,9 +317,13 @@ const navGroups = computed(() => [
      block for. Static, it clipped nothing absolutely positioned: a Tailwind
      `.sr-only` input deep in the scroller resolved against the initial
      containing block, escaped the clip, and grew the document past 100vh —
-     the window then scrolled to a blank slab below the shell. */
+     the window then scrolled to a blank slab below the shell.
+     `clip`, not `hidden`: a hidden box is still a scroll container, so any
+     `scrollIntoView` whose target `.content-scroll` could not bring far
+     enough scrolled this box instead and shoved the shell up off its own
+     bottom edge, with no scrollbar to bring it back. */
   position: relative;
-  overflow: hidden;
+  overflow: clip;
 }
 
 @media (max-width: 767px) {

@@ -111,6 +111,27 @@ test('the sessions figure moves the page to the sessions', async ({ page }) => {
   await expect(page).toHaveURL(/#feature-sessions$/)
 })
 
+// A short list at the foot of the page cannot reach the top of the pane, so
+// `scrollIntoView` asks the next ancestor for the rest — and `main.content`,
+// clipped but still a scroll container, used to give it, shoving the whole
+// shell up off a blank slab it could not scroll back from.
+test('revealing the sessions scrolls the pane and nothing around it',
+  async ({ page }) => {
+    const short = ledger()
+    short.sessions.rows = short.sessions.rows.slice(0, 2)
+    await stubLedger(page, short)
+    await page.goto('/features/242#feature-sessions')
+
+    const pane = page.locator('.content-scroll')
+    await expect.poll(() => pane.evaluate((el) => el.scrollTop)).toBeGreaterThan(0)
+    const moved = await page.evaluate(() => ({
+      shell: document.querySelector('main.content').scrollTop,
+      window: window.scrollY,
+    }))
+    expect(moved).toEqual({ shell: 0, window: 0 })
+    await expect(page.locator('#feature-sessions')).toBeInViewport({ ratio: 1 })
+  })
+
 test('a feature reached by its sessions count opens ON its sessions',
   async ({ page }) => {
     await stubLedger(page, ledger())
