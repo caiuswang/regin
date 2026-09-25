@@ -650,3 +650,65 @@ def test_a_zero_buffer_defers_to_the_sdk(enabled, monkeypatch):
     client.build_options()
 
     assert "max_buffer_size" not in seen
+
+
+@pytest.fixture
+def posted_images(monkeypatch):
+    import lib.hook_plugin as hook_plugin
+
+    events: list = []
+
+    def _post_event(endpoint, data, agent_type=None):
+        events.append((endpoint, data))
+        return True
+
+    monkeypatch.setattr(hook_plugin, "post_event", _post_event)
+    return events
+
+
+_PNG_B64 = "iVBORw0KGgo="
+
+
+def test_launch_images_render_on_the_announced_prompt(posted_spans,
+                                                      posted_images):
+    """A task's images reach the model as content blocks beside the prompt,
+    and the trace must show them too — not the bare `![](image:1)` the body
+    carries. The announced span says which images it has, and their bytes
+    land in `prompt_images` under that same span, in delivery order."""
+    images = [{"media_type": "image/png", "data_b64": _PNG_B64},
+              {"media_type": "image/jpeg", "data_b64": _PNG_B64}]
+
+    assert supervisor._announce_prompt("sdk-imgs", "fix it ![](image:1)",
+                                       images) is True
+
+    [span] = _prompt_spans(posted_spans)
+    assert span["attributes"]["image_indices"] == [1, 2]
+    [(endpoint, rows)] = posted_images
+    assert endpoint == "prompt_images"
+    assert [(r["trace_id"], r["prompt_span_id"], r["idx"], r["media_type"])
+            for r in rows] == [("sdk-imgs", span["span_id"], 1, "image/png"),
+                               ("sdk-imgs", span["span_id"], 2, "image/jpeg")]
+    assert all(r["data_b64"] == _PNG_B64 for r in rows)
+
+
+def test_a_launch_without_images_posts_no_image_rows(posted_spans,
+                                                     posted_images):
+    supervisor._announce_prompt("sdk-plain", "draft it")
+
+    [span] = _prompt_spans(posted_spans)
+    assert "image_indices" not in span["attributes"]
+    assert posted_images == []
+
+
+def test_launch_run_hands_its_images_to_the_announcement(fake_client,
+                                                         posted_spans,
+                                                         posted_images):
+    images = [{"media_type": "image/png", "data_b64": _PNG_B64}]
+
+    supervisor.launch_run("look ![](image:1)", one_shot=True,
+                          images=images).wait(timeout=10)
+
+    assert [s["attributes"].get("image_indices")
+            for s in _prompt_spans(posted_spans)] == [[1]]
+    assert [len(rows) for endpoint, rows in posted_images
+            if endpoint == "prompt_images"] == [1]

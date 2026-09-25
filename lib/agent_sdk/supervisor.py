@@ -183,7 +183,8 @@ class RunHandle:
                           row.get("detail") or "")
 
 
-def _announce_prompt(trace_id: str, prompt: str) -> bool:
+def _announce_prompt(trace_id: str, prompt: str,
+                     images: list | None = None) -> bool:
     """Post the launch prompt's span before the run is scheduled.
 
     A launch prompt's row would otherwise be written by `_run_turn`, which the
@@ -196,22 +197,37 @@ def _announce_prompt(trace_id: str, prompt: str) -> bool:
     Returns whether the runner should skip its own emission for that prompt. A
     failed post returns False, which leaves the row to `_run_turn` exactly as
     before — a late prompt row is a far better outcome than none.
+
+    `images` are recorded against this span too, numbered 1..n in delivery
+    order. Nothing else would: the launch images carry no `[Image #N]` marker
+    for the ingest to bind, and an SDK run has no transcript anchor to pick
+    them up from, so without this the trace shows only the body's
+    `![](image:N)` text while the model saw the picture.
     """
     if not prompt.strip():
         return False
     from lib.agent_events.from_sdk import prompt_event
     from lib.agent_events.spans import to_span
-    from lib.hook_plugin import post_span
+    from lib.hook_plugin import post_event, post_span
 
     span = to_span(prompt_event(trace_id, prompt))
     if not span:
         return False
+    if images:
+        span['attributes'] = {**span['attributes'],
+                              'image_indices': list(range(1, len(images) + 1))}
     try:
         post_span(**span)
     except Exception as exc:  # noqa: BLE001 — the run must launch regardless
         log.error("sdk_prompt_announce_failed", trace_id=trace_id,
                   detail=repr(exc))
         return False
+    if images:
+        post_event('prompt_images', [
+            {'trace_id': span['trace_id'], 'prompt_span_id': span['span_id'],
+             'idx': idx, 'media_type': img['media_type'],
+             'data_b64': img['data_b64']}
+            for idx, img in enumerate(images, start=1)])
     return True
 
 
@@ -287,7 +303,7 @@ def launch_run(prompt: str, *, cwd: str | None = None,
         # refuse work — otherwise the card would show a session holding a
         # prompt no run was ever scheduled for.
         loop = _ensure_loop()
-        announced = _announce_prompt(trace_id, prompt)
+        announced = _announce_prompt(trace_id, prompt, images)
         options = client.RunOptions(env=dict(env or {}),
                                     permission_mode=permission_mode,
                                     model=model, effort=effort)
