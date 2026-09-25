@@ -319,6 +319,10 @@ def cmd_finish(
             result = _json.loads(response.read() or b"{}")
     except urllib.error.HTTPError as exc:
         detail = (exc.read() or b"").decode(errors="replace")
+        try:
+            detail = _json.loads(detail).get("error") or detail
+        except (ValueError, AttributeError):
+            pass
         typer.echo(f"task finish: server refused ({exc.code}): {detail}",
                    err=True)
         raise typer.Exit(code=1)

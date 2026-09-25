@@ -370,8 +370,48 @@ def _cli_command(*parts: str) -> str:
     return " ".join(shlex.quote(part) for part in argv)
 
 
+def _open_fix_defects(task_id: int) -> list[int]:
+    """Open defects that name this task as the work that closes them."""
+    from lib.defects import store as defect_store  # noqa: PLC0415
+    from lib.orm.models.defects import STATUS_OPEN  # noqa: PLC0415
+
+    return sorted(row.id for row in defect_store.by_fix_item(task_id)
+                  if row.status == STATUS_OPEN)
+
+
+def _close_defect_command(defect_id: int) -> str:
+    return (_cli_command("defects", "close", str(defect_id), "--check")
+            + " '<the check that would have caught it>'")
+
+
+def _defects_named(ids: list[int]) -> str:
+    refs = ", ".join(f"#{i}" for i in ids)
+    return f"defect {refs}" if len(ids) == 1 else f"defects {refs}"
+
+
+def _defects_order(task_id: Optional[int]) -> str:
+    """The close step a fix task's run must take before it finishes.
+
+    Closing is the agent's act, not a side effect of the finish: `close`
+    demands the check that would have caught the bug, which no status
+    transition can supply. So the run is handed the exact command, and
+    `finish_run` refuses a done report while the defect is still open.
+    """
+    from lib.prompts import render_surface  # noqa: PLC0415
+    from lib.prompts.surfaces.tasks import (  # noqa: PLC0415
+        FINISH_ORDER_DEFECTS_SURFACE_ID)
+
+    ids = _open_fix_defects(task_id) if task_id is not None else []
+    if not ids:
+        return ""
+    return "\n" + render_surface(FINISH_ORDER_DEFECTS_SURFACE_ID, {
+        "defects": _defects_named(ids),
+        "close_cmds": "\n".join(f"   {_close_defect_command(i)}"
+                                for i in ids)})
+
+
 def _finish_block(run_id: int, linked: bool = False,
-                  base: str = "") -> str:
+                  base: str = "", task_id: Optional[int] = None) -> str:
     """The `<finish>` instruction appended to a run's launch prompt.
 
     The command is written out literally, not left to an env var, so a session
@@ -401,6 +441,7 @@ def _finish_block(run_id: int, linked: bool = False,
                   else render_surface(FINISH_BASE_UNNAMED_SURFACE_ID, {}))
         order = render_surface(FINISH_ORDER_NATIVE_SURFACE_ID,
                                {"target": target})
+    order += _defects_order(task_id)
     return "\n\n" + render_surface(
         FINISH_SURFACE_ID,
         {"order": order, "finish_cmd": _finish_command(run_id)})
@@ -601,7 +642,8 @@ def _prompt(task: dict, run_id: int, params: Optional[dict] = None) -> str:
     from lib.prompts import render_surface  # noqa: PLC0415
     from lib.prompts.surfaces.tasks import LAUNCH_SURFACE_ID  # noqa: PLC0415
 
-    finish = _finish_block(run_id, linked=remote, base=_armed_base(params))
+    finish = _finish_block(run_id, linked=remote, base=_armed_base(params),
+                           task_id=task["id"])
     prompt = render_surface(LAUNCH_SURFACE_ID, {
         "invocation": _invocation(params or {}),
         "body": text[:PROMPT_MAX],
@@ -1328,6 +1370,26 @@ def _post_agent_report(task_id: int, run_id: int, status: str,
               status=status, thread_id=thread["id"])
 
 
+def _refuse_with_open_defects(task_id: int, run_id: int) -> None:
+    """A fix task reported done over a defect still open is refused.
+
+    Otherwise the board says fixed and the ledger says open, and nothing
+    reconciles them: regin never writes one side from the other. Refused
+    before the report is posted, so a retry after closing is the only report.
+    """
+    ids = _open_fix_defects(task_id)
+    if not ids:
+        return
+    log.warn("task_run_finish_refused", run_id=run_id, task_id=task_id,
+             open_defects=ids)
+    cmds = "\n".join(f"  {_close_defect_command(i)}" for i in ids)
+    raise RunRefused(
+        f"task #{task_id} is the fix for {_defects_named(ids)}, still open. "
+        f"Close each once the fix is verified, then finish again:\n{cmds}\n"
+        f"If it is not fixed, finish with --status failed instead.",
+        blocking=ids)
+
+
 def finish_run(run_id: int, *, status: str = RUN_STATUS_DONE,
                reason: str = "") -> dict:
     """The agent's own report, from inside its run, that the work is done.
@@ -1357,6 +1419,8 @@ def finish_run(run_id: int, *, status: str = RUN_STATUS_DONE,
     if task_id is None:
         return {"run_id": run_id, "task_id": None, "settled": False,
                 "verifying": False, "fired": []}
+    if status == RUN_STATUS_DONE:
+        _refuse_with_open_defects(task_id, run_id)
     # Before the default is substituted: only what the AGENT actually wrote is
     # a report. "agent signalled finish" is regin talking to itself.
     if reason.strip():

@@ -192,7 +192,7 @@ def test_launch_envelope_parity(monkeypatch):
     monkeypatch.setattr(runs, "_followup_block", lambda task_id: "<U>")
     monkeypatch.setattr(runs, "_feature_block", lambda task: "<F>")
     monkeypatch.setattr(runs, "_finish_block",
-                        lambda run_id, linked=False, base="": "<D>")
+                        lambda run_id, linked=False, base="", task_id=None: "<D>")
     task = {"id": 1, "title": "t", "body": "the idea", "feature_id": None}
     params = {"skill": {"name": "goal-verified", "args": "go"}}
     assert (runs._prompt(task, 7, params)
@@ -204,7 +204,7 @@ def test_launch_envelope_parity_empty_blocks(monkeypatch):
     monkeypatch.setattr(runs, "_followup_block", lambda task_id: "")
     monkeypatch.setattr(runs, "_feature_block", lambda task: "")
     monkeypatch.setattr(runs, "_finish_block",
-                        lambda run_id, linked=False, base="": "<D>")
+                        lambda run_id, linked=False, base="", task_id=None: "<D>")
     task = {"id": 1, "title": "shelf label", "body": "", "feature_id": None}
     assert runs._prompt(task, 7, None) == "shelf label<D>"
 
@@ -216,7 +216,7 @@ def test_task_body_braces_are_not_re_rendered(monkeypatch):
     monkeypatch.setattr(runs, "_followup_block", lambda task_id: "")
     monkeypatch.setattr(runs, "_feature_block", lambda task: "")
     monkeypatch.setattr(runs, "_finish_block",
-                        lambda run_id, linked=False, base="": "")
+                        lambda run_id, linked=False, base="", task_id=None: "")
     task = {"id": 1, "title": "t", "body": "use {{finish}} and {literal}",
             "feature_id": None}
     assert runs._prompt(task, 7, None) == "use {{finish}} and {literal}"

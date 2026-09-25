@@ -587,8 +587,11 @@ def api_finish_task_run(run_id: int):
         return jsonify({"error": f"status must be one of "
                                  f"{sorted(_FINISH_STATUSES)}",
                         "field": "status"}), 400
-    result = runs.finish_run(run_id, status=_FINISH_STATUSES[wanted],
-                             reason=str(payload.get("reason") or ""))
+    try:
+        result = runs.finish_run(run_id, status=_FINISH_STATUSES[wanted],
+                                 reason=str(payload.get("reason") or ""))
+    except runs.RunRefused as exc:
+        return jsonify({"error": str(exc), "open_defects": exc.blocking}), 409
     if result["task_id"] is None:
         return jsonify({"error": f"no run #{run_id}"}), 404
     return jsonify(result)

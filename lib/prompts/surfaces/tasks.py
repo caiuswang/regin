@@ -29,6 +29,7 @@ FINISH_SURFACE_ID = "task-run-finish"
 FINISH_ORDER_LINKED_SURFACE_ID = "task-run-finish-order-linked"
 FINISH_ORDER_NATIVE_SURFACE_ID = "task-run-finish-order-native"
 FINISH_BASE_UNNAMED_SURFACE_ID = "task-run-finish-base-unnamed"
+FINISH_ORDER_DEFECTS_SURFACE_ID = "task-run-finish-order-defects"
 FOLLOWUP_OMITTED_SURFACE_ID = "task-run-followup-omitted"
 SPEC_SURFACE_ID = "task-run-spec"
 
@@ -192,6 +193,13 @@ register_surface(
         PromptVariable("spec_cmd", "The literal `regin feature spec` command, with this feature's id filled in."),
     ),
 )
+_FINISH_ORDER_DEFECTS_BODY = (
+    "This task was cut to fix {{defects}}. Finishing the task does not "
+    "close a defect, and `task finish` is refused as done while one it fixes "
+    "is still open. Once the fix is verified, close each, naming the check "
+    "that would have caught it:\n{{close_cmds}}\nIf it is not fixed, leave "
+    "it open and finish with `--status failed` instead."
+)
 
 register_surface(
     FINISH_SURFACE_ID,
@@ -265,6 +273,23 @@ register_surface(
     applies_to=("external-agent",),
     variables=(
         PromptVariable("target", "The base branch named, or a generic phrase when the run was armed with none.", example="`master`"),
+    ),
+)
+
+register_surface(
+    FINISH_ORDER_DEFECTS_SURFACE_ID,
+    label="Task run — finish precondition (open defects)",
+    area="task-run",
+    default_body=_FINISH_ORDER_DEFECTS_BODY,
+    description=(
+        "Appended to the `{{order}}` line when open defects point at the "
+        "task as their fix item: close each before finishing, because a done "
+        "finish is refused while any is still open."
+    ),
+    applies_to=("external-agent",),
+    variables=(
+        PromptVariable("defects", "The open defects, as `defect #N` / `defects #N, #M`.", example="defect #179"),
+        PromptVariable("close_cmds", "One literal `regin defects close <id> --check …` command per defect, indented, one per line."),
     ),
 )
 
