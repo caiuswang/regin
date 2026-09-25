@@ -1015,7 +1015,9 @@ def _emit(
     status_code: str = "UNSET",
     status_message: str | None = None,
 ) -> None:
-    now = utc_now()
+    # Local naive, the basis hook-ingested spans use: `sessions.last_seen` is
+    # ordered as text, so a UTC `...Z` stamp sorts this run hours out of place.
+    now = datetime.now().isoformat()
     span_id = f"{name}-{time.time_ns()}"
     attrs = {"agent_type": "topic-proposal-agent", **attributes}
     trace_service.ingest_session_spans([({
@@ -1038,6 +1040,7 @@ def _emit_session_start(trace_id: str, *, proposal_id: str, repo: Path, agent: s
             "source": "startup",
             "proposal_id": proposal_id,
             "repo": str(repo),
+            "cwd": str(repo),
             "agent": agent,
         },
     )

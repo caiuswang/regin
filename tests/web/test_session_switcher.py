@@ -424,3 +424,41 @@ def test_every_live_run_phase_folds_to_an_active_status():
         assert 'res-only' not in registry.live_session_ids()
     finally:
         registry.release_run('res-only')
+
+
+def test_a_topic_proposal_run_reaches_the_roster(tmp_db, ago, flask_client):
+    """The proposal pipeline's own session is attachable history, not a
+    hand-POSTed stub: its `session.start` must stamp a cwd, or the roster's
+    no-cwd filter drops every proposal run. Its spans must also share the
+    local basis `last_seen` is ordered on, or it sorts hours out of place."""
+    from lib.topics.proposal_external import (
+        _emit_session_start, external_trace_id,
+    )
+    import sqlite3
+    conn = sqlite3.connect(str(tmp_db))
+    try:
+        _seed_session(conn, 'older-1', last_seen=ago(60), status='ended',
+                      title='older work', cwd='/tmp/x')
+        conn.commit()
+    finally:
+        conn.close()
+
+    trace_id = external_trace_id('run42')
+    _emit_session_start(trace_id, proposal_id='run42',
+                        repo=pathlib.Path('/tmp/repo'), agent='claude')
+
+    conn = sqlite3.connect(str(tmp_db))
+    try:
+        cwd, origin, last_seen = conn.execute(
+            "SELECT cwd, origin, last_seen FROM sessions WHERE trace_id = ?",
+            (trace_id,)).fetchone()
+    finally:
+        conn.close()
+    assert cwd == '/tmp/repo'
+    assert origin == 'topic-proposal'
+    assert not last_seen.endswith('Z') and '+' not in last_seen
+
+    ids = [s['trace_id'] for s in
+           flask_client.get('/api/session-switcher').get_json()['sessions']]
+    assert trace_id in ids
+    assert ids.index(trace_id) < ids.index('older-1')
