@@ -176,3 +176,30 @@ def test_kind_is_declared_on_the_cli_and_editable(flask_client):
 
 def test_steps_key_is_stable():
     assert steps.external_id(7, "build") == "feature:7:build"
+
+
+@pytest.mark.parametrize("kind", ["task", "spec", "build"])
+def test_the_dashboard_create_declares_a_stage(flask_client, kind):
+    feature = feature_store.create("staged")
+    resp = flask_client.post("/api/tasks", json={
+        "title": "a step", "feature_id": feature.id, "kind": kind})
+
+    assert resp.status_code == 201, resp.get_json()
+    assert resp.get_json()["task"]["kind"] == kind
+
+
+@pytest.mark.parametrize("kind", ["fix", "nope", None])
+def test_the_dashboard_create_refuses_fix_and_unknown_stages(flask_client,
+                                                              kind):
+    resp = flask_client.post("/api/tasks", json={"title": "a step",
+                                                 "kind": kind})
+
+    assert resp.status_code == 400
+    assert resp.get_json()["field"] == "kind"
+
+
+def test_machine_capture_cannot_declare_a_stage():
+    from lib.tasks import capture
+    with pytest.raises(capture.CaptureRejected) as exc:
+        capture.parse_capture({"title": "t", "source": "cli", "kind": "spec"})
+    assert exc.value.field == "kind"

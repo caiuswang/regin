@@ -135,7 +135,11 @@ def _one_with_images(task: dict) -> dict:
 
 
 def _parse_web_capture(payload):
-    """Capture validation, minus the fields the server owns.
+    """Capture validation, minus the fields the server owns, plus `kind`.
+
+    `kind` is taken here and not by `parse_capture`: this route is reachable
+    only by a signed-in editor, while the machine-key capture route stays
+    unable to declare a stage.
 
     `source` is stamped, not accepted — a browser task is a `web` task by
     definition — and a request that tries to say otherwise is told so rather
@@ -146,7 +150,11 @@ def _parse_web_capture(payload):
             if field in payload:
                 raise capture.CaptureRejected(
                     f"{field} is set by the server", field)
-        payload = {**payload, "source": WEB_SOURCE}
+        kind = capture.parse_web_kind(payload)
+        payload = {key: value for key, value in payload.items()
+                   if key != "kind"}
+        return {**capture.parse_capture({**payload, "source": WEB_SOURCE}),
+                "kind": kind}
     return capture.parse_capture(payload)
 
 

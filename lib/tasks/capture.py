@@ -13,8 +13,8 @@ import re
 from typing import Optional
 
 from lib.orm.models.tasks import (
-    BODY_MAX, EXTERNAL_ID_MAX, SOURCE_MAX, TASK_KINDS, TASK_PRIORITIES,
-    TITLE_MAX,
+    BODY_MAX, EXTERNAL_ID_MAX, SOURCE_MAX, TASK_KIND_BUILD, TASK_KIND_SPEC,
+    TASK_KIND_TASK, TASK_KINDS, TASK_PRIORITIES, TITLE_MAX,
 )
 
 # The capture surface keeps the old bound. It is third-party intake reachable
@@ -205,6 +205,21 @@ def _kind(payload: dict) -> str:
     if value not in TASK_KINDS:
         raise CaptureRejected(
             f"kind must be one of {', '.join(TASK_KINDS)}", "kind")
+    return value
+
+
+# `fix` is absent: a fix step belongs to one defect and is only ever made by
+# `fix_items.create_for`, which records that ownership on both rows.
+WEB_CREATE_KINDS: tuple[str, ...] = (TASK_KIND_TASK, TASK_KIND_SPEC,
+                                     TASK_KIND_BUILD)
+
+
+def parse_web_kind(payload: dict) -> str:
+    """The stage an editor declared on the dashboard's create form."""
+    value = payload.get("kind", TASK_KIND_TASK)
+    if value not in WEB_CREATE_KINDS:
+        raise CaptureRejected(
+            f"kind must be one of {', '.join(WEB_CREATE_KINDS)}", "kind")
     return value
 
 

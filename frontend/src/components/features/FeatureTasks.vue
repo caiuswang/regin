@@ -45,6 +45,15 @@ const failed = ref('')
 const projectId = ref('')
 const stepKind = ref('')
 const stepBody = ref('')
+const newKind = ref('task')
+
+// A free-form step may declare any stage but fix: a fix step belongs to a
+// defect and is made from the defect, never typed here.
+const STAGE_OPTIONS = [
+  { value: 'task', label: 'Task' },
+  { value: 'spec', label: 'Spec' },
+  { value: 'build', label: 'Build' },
+]
 
 // Server order is kept within a kind: Array.prototype.sort is stable.
 const KIND_ORDER = { spec: 0, build: 1, fix: 2 }
@@ -85,6 +94,7 @@ async function submitStep() {
 // is always sent — "No project" included.
 async function startNew() {
   stepKind.value = ''
+  newKind.value = 'task'
   open.value = true
   await ensureProjects()
   projectId.value = carriedProject(props.projectId, projects.value)
@@ -113,7 +123,7 @@ async function submit() {
   busy.value = true
   failed.value = ''
   const res = await api.post('/tasks', {
-    title: name, feature_id: props.featureId,
+    title: name, feature_id: props.featureId, kind: newKind.value,
     project_id: projectId.value ? Number(projectId.value) : null,
   })
   busy.value = false
@@ -185,6 +195,13 @@ async function submit() {
         v-model="title" :disabled="busy"
         placeholder="a step of this feature"
         data-testid="feature-task-title"
+      />
+      <span class="ft-label">Stage</span>
+      <Select
+        v-model="newKind" block :disabled="busy"
+        :options="STAGE_OPTIONS"
+        aria-label="Stage"
+        data-testid="feature-task-kind"
       />
       <span class="ft-label">Project</span>
       <Select

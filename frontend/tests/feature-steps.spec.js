@@ -125,3 +125,29 @@ test('the board names the feature and the toggle names feature steps',
     await expect(page.locator('#task-72').getByTestId('task-feature-line'))
       .toHaveCount(0)
   })
+
+test('+ task declares its stage, and fix is not offered', async ({ page }) => {
+  const posted = []
+  await stubFeature(page, [])
+  await page.route('**/api/projects**', (route) =>
+    route.fulfill({ json: { items: [] } }))
+  await page.route('**/api/tasks', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    posted.push(route.request().postDataJSON())
+    await route.fulfill({ status: 201, json: {
+      task: task({ id: 91, kind: 'spec', title: 'draft the API' }) } })
+  })
+  await page.goto('/features/242')
+
+  await page.getByTestId('feature-new-task').click()
+  await page.getByTestId('feature-task-title').fill('draft the API')
+  await page.getByTestId('feature-task-kind').click()
+  const options = page.getByRole('option')
+  await expect(options).toHaveText(['Task', 'Spec', 'Build'])
+  await options.filter({ hasText: 'Spec' }).click()
+  await page.getByTestId('feature-task-submit').click()
+
+  await expect.poll(() => posted.length).toBe(1)
+  expect(posted[0]).toMatchObject({ title: 'draft the API', kind: 'spec',
+                                    feature_id: 242 })
+})
