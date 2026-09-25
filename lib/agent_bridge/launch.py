@@ -60,10 +60,13 @@ def _session_name(trace_id: str) -> str:
 
 
 def _argv(trace_id: str, *, model: str, effort: str, permission_mode: str,
-          prompt: str) -> list[str]:
+          prompt: str, resume: bool) -> list[str]:
     # Absolute: the tmux server may predate this process and does not carry
     # its PATH, and an nvm-installed claude is on no system path.
-    argv = [shutil.which("claude") or "claude", "--session-id", trace_id]
+    # `--resume` without `--fork-session` keeps the session's own id, so the
+    # id is still regin's to name — it is just not a fresh one.
+    argv = [shutil.which("claude") or "claude",
+            "--resume" if resume else "--session-id", trace_id]
     for flag, value in (("--model", model), ("--effort", effort),
                         ("--permission-mode", permission_mode)):
         if value:
@@ -73,6 +76,16 @@ def _argv(trace_id: str, *, model: str, effort: str, permission_mode: str,
         # bullet, or `--dangerously-skip-permissions`) is a first turn, never a flag.
         argv += ["--", prompt]
     return argv
+
+
+def _resumed_id(resume: str) -> str:
+    """The id to hand `--resume`, which lands on argv and in a tmux target
+    name: anything but a CLI session uuid would be parsed as a flag or a
+    `session:window.pane` address."""
+    try:
+        return str(uuid.UUID(resume))
+    except ValueError:
+        raise TerminalLaunchRefused(f"not a CLI session id: {resume!r}") from None
 
 
 def _pane_env() -> list[str]:
@@ -87,8 +100,11 @@ def _pane_env() -> list[str]:
 
 def launch_terminal(*, role: str | None, cwd: str | None, model: str = "",
                     effort: str = "", permission_mode: str = "",
-                    prompt: str = "") -> TerminalLaunch:
+                    prompt: str = "", resume: str = "") -> TerminalLaunch:
     """Spawn `claude` in a new `term-<id8>` session on the attach socket.
+
+    `resume` is a CLI session id to continue; the launch then runs under that
+    id instead of a new one.
 
     Raises `TerminalLaunchRefused` for every refusal; on any refusal after the
     spawn, the tmux session is killed and the row retired before raising.
@@ -101,14 +117,15 @@ def launch_terminal(*, role: str | None, cwd: str | None, model: str = "",
     # which would run claude somewhere nobody chose.
     if not os.path.isdir(workdir):
         raise TerminalLaunchRefused(f"no such directory: {workdir}")
-    trace_id = str(uuid.uuid4())
+    trace_id = _resumed_id(resume) if resume else str(uuid.uuid4())
     name = _session_name(trace_id)
     r = attach._tmux(
         "new-session", "-d", "-s", name, "-c", workdir,
         "-x", str(attach._PANE_COLS), "-y", str(attach._PANE_ROWS),
         *_pane_env(),
         *_argv(trace_id, model=model, effort=effort,
-               permission_mode=permission_mode, prompt=prompt))
+               permission_mode=permission_mode, prompt=prompt,
+               resume=bool(resume)))
     if r.returncode != 0:
         raise TerminalLaunchRefused(f"tmux refused: {r.stderr.strip()}")
     identity = attach._pane_identity(name)
@@ -121,5 +138,5 @@ def launch_terminal(*, role: str | None, cwd: str | None, model: str = "",
         raise TerminalLaunchRefused(f"pane is running {command!r}, not the CLI")
     attach._record(trace_id, pane_id, server_pid, pane_pid, cwd=workdir)
     log.write("bridge_terminal_launched", trace_id=trace_id, pane_id=pane_id,
-              cwd=workdir, tmux_socket=settings.agent_bridge.attach_socket)
+              cwd=workdir, resumed=bool(resume), tmux_socket=settings.agent_bridge.attach_socket)
     return TerminalLaunch(trace_id, pane_id)

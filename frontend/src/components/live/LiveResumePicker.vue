@@ -21,6 +21,7 @@ const props = defineProps({
   // I'm looking at" is the common case and should not require a search.
   currentId: { type: String, default: '' },
   selectedId: { type: String, default: '' },
+  launchKind: { type: String, default: 'sdk' },
 })
 const emit = defineEmits(['select', 'cancel'])
 
@@ -58,7 +59,7 @@ const rowTitle = (row) => row.title || shortTraceId(row.session_id)
 
 // The two resume shapes do different things to the trace, and an operator can
 // only weigh that before picking — so it is on the row, not in a footnote.
-const kindLabel = (row) => resumeKindLabel(row.kind)
+const kindLabel = (row) => resumeKindLabel(row.kind, props.launchKind)
 </script>
 
 <template>

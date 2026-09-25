@@ -10,7 +10,16 @@ const KINDS = {
   run: 'regin run · keeps its trace',
   session: 'terminal session · new trace',
 }
+// A terminal launch runs `claude --resume` under the CLI's own id, so a run
+// continues as its child conversation and a terminal session keeps its trace.
+const TERMINAL_KINDS = {
+  run: 'regin run · reopens its conversation in a pane',
+  session: 'terminal session · keeps its trace',
+}
 
 // An unknown kind falls back to the conservative reading: a fresh trace is what
 // an id regin has no run for gets, so it is also the safe thing to promise.
-export const resumeKindLabel = (kind) => KINDS[kind] || KINDS.session
+export const resumeKindLabel = (kind, launchKind = 'sdk') => {
+  const table = launchKind === 'terminal' ? TERMINAL_KINDS : KINDS
+  return table[kind] || table.session
+}

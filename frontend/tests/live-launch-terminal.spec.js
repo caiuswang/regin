@@ -3,8 +3,9 @@
  * (`LaunchKindField.vue` inside `LiveLaunchSheet.vue`).
  *
  * Browser-side contract only: the kind toggle's availability comes from
- * launch-options, a terminal launch posts `kind: "terminal"` without the
- * SDK-only fields, and lands on `/terminal/<id>`. The server side is owned by
+ * launch-options, a terminal launch posts `kind: "terminal"` without
+ * `one_shot` (and with `resume` when a session was picked), and lands on
+ * `/terminal/<id>`. The server side is owned by
  * tests/agent_bridge/test_terminal_launch.py.
  */
 import { test, expect } from './auth-fixture.js'
@@ -43,7 +44,6 @@ test('a terminal launch posts kind terminal and opens the browser terminal', asy
 
   await page.getByRole('radio', { name: 'Terminal' }).click()
   await expect(page.getByTestId('live-launch-terminal-note')).toBeVisible()
-  await expect(page.getByTestId('live-launch-resume-open')).toHaveCount(0)
   await expect(page.getByTestId('live-launch-oneshot')).toBeDisabled()
   await page.getByTestId('live-launch-prompt').fill('hi')
   await page.getByTestId('live-launch-go').click()
@@ -76,4 +76,32 @@ test('with neither kind available the form explains itself', async ({ page }) =>
 
   await expect(page.getByTestId('live-launch-disabled')).toContainText('bridge disabled')
   await expect(page.getByTestId('live-launch-go')).toHaveCount(0)
+})
+
+test('a terminal launch can continue a picked session in a pane', async ({ page }) => {
+  await openDialog(page)
+  const child = 'feed0000-0000-4000-8000-000000000000'
+  let body = null
+  await page.route('**/api/agent-runs', async (route) => {
+    body = route.request().postDataJSON()
+    await route.fulfill({ json: { launched: true, trace_id: child, kind: 'terminal' } })
+  })
+  await page.route('**/api/agent-runs/resumable*', (route) => route.fulfill({ json: { sessions: [{
+    session_id: child, title: 'a terminal session', cwd: '/Users/dev/repo-a',
+    last_seen: '2026-01-01T10:00:00', prompts: 3, kind: 'session', run_trace_id: '',
+  }] } }))
+  await page.route('**/api/sessions/*/terminal**', (route) => route.abort())
+
+  await page.getByRole('radio', { name: 'Terminal' }).click()
+  await page.getByTestId('live-launch-resume-open').click()
+  await expect(page.getByTestId('live-resume-row')).toContainText('keeps its trace')
+  await page.getByTestId('live-resume-row').click()
+  await expect(page.getByTestId('live-launch-resume-label')).toContainText('terminal session · keeps its trace')
+  await page.getByTestId('live-launch-go').click()
+
+  await expect(page).toHaveURL(new RegExp(`/terminal/${child}$`))
+  expect(body.kind).toBe('terminal')
+  expect(body.resume).toBe(child)
+  expect(body.cwd).toBe('/Users/dev/repo-a')
+  expect(body.worktree).toBeUndefined()
 })

@@ -164,12 +164,102 @@ def test_a_missing_binary_is_named(flask_client, tmux, monkeypatch):
     assert tmux.calls == []
 
 
-@pytest.mark.parametrize("field", [{"resume": "abc"}, {"one_shot": True}])
-def test_sdk_only_fields_are_a_400(flask_client, tmux, field):
-    res = flask_client.post("/api/agent-runs", json={"kind": "terminal", **field})
+def test_one_shot_is_a_400(flask_client, tmux):
+    res = flask_client.post("/api/agent-runs",
+                            json={"kind": "terminal", "one_shot": True})
 
     assert res.status_code == 400
     assert "not supported for terminal sessions" in res.get_json()["error"]
+    assert tmux.calls == []
+
+
+# ── resume ────────────────────────────────────────────────────────────
+
+_CHILD = "11111111-2222-3333-4444-555555555555"
+_RUN = "sdk-termres01"
+
+
+def _cmd(state):
+    argv = _new_session_argv(state)
+    return list(argv[argv.index("/abs/claude"):])
+
+
+def test_resume_reopens_the_session_under_its_own_id(flask_client, tmp_path,
+                                                      tmux):
+    body = flask_client.post("/api/agent-runs", json={
+        "kind": "terminal", "resume": _CHILD, "cwd": str(tmp_path),
+        "prompt": "carry on"}).get_json()
+
+    assert body == {"launched": True, "trace_id": _CHILD, "kind": "terminal"}
+    assert _cmd(tmux) == ["/abs/claude", "--resume", _CHILD, "--", "carry on"]
+    argv = _new_session_argv(tmux)
+    assert argv[argv.index("-s") + 1] == f"term-{_CHILD[:8]}"
+    assert _row(_CHILD)["pane_id"] == "%9"
+
+
+def test_resuming_a_stopped_run_reopens_its_cli_child(flask_client, tmux):
+    from lib.agent_sdk import store
+    store.upsert_run(_RUN, status="exited")
+    store.set_cli_session(_RUN, _CHILD)
+
+    body = flask_client.post("/api/agent-runs", json={
+        "kind": "terminal", "resume": _RUN}).get_json()
+
+    assert body["trace_id"] == _CHILD
+    assert _cmd(tmux)[:3] == ["/abs/claude", "--resume", _CHILD]
+
+
+def test_a_live_run_is_not_resumed_into_a_pane(flask_client, tmux):
+    from lib.agent_sdk import registry, store
+    store.upsert_run(_RUN, status="running")
+    store.set_cli_session(_RUN, _CHILD)
+    registry.register_run(_RUN, object())
+    try:
+        res = flask_client.post("/api/agent-runs",
+                                json={"kind": "terminal", "resume": _RUN})
+    finally:
+        registry.unregister_run(_RUN)
+
+    assert res.status_code == 400
+    assert tmux.calls == []
+
+
+@pytest.mark.parametrize("resume", [_CHILD, _RUN])
+def test_a_session_live_in_a_terminal_is_not_reopened(flask_client, tmux,
+                                                      monkeypatch, resume):
+    """Either id path: a stopped run's child may itself be running in a pane
+    this kind opened earlier."""
+    from lib.agent_bridge import delivery
+    from lib.agent_sdk import store
+    store.upsert_run(_RUN, status="exited")
+    store.set_cli_session(_RUN, _CHILD)
+    monkeypatch.setattr(delivery, "session_is_live", lambda tid: tid == _CHILD)
+
+    res = flask_client.post("/api/agent-runs",
+                            json={"kind": "terminal", "resume": resume})
+
+    assert res.status_code == 400
+    assert "live in a terminal" in res.get_json()["error"]
+    assert tmux.calls == []
+
+
+@pytest.mark.parametrize("bad", ["--dangerously-skip-permissions", "a.b:c"])
+def test_a_resume_id_that_is_not_a_uuid_never_reaches_argv(flask_client, tmux,
+                                                            bad):
+    body = flask_client.post("/api/agent-runs", json={
+        "kind": "terminal", "resume": bad}).get_json()
+
+    assert body["launched"] is False
+    assert "not a CLI session id" in body["detail"]
+    assert tmux.calls == []
+
+
+def test_a_resume_cannot_move_into_a_worktree(flask_client, tmux):
+    res = flask_client.post("/api/agent-runs", json={
+        "kind": "terminal", "resume": _CHILD,
+        "worktree": {"branch": "feat/x", "base": ""}})
+
+    assert res.status_code == 400
     assert tmux.calls == []
 
 

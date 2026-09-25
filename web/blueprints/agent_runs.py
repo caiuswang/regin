@@ -94,6 +94,9 @@ def _resume_target(resume: str) -> tuple[str | None, str | None]:
     child = _resumed_child(resume, row)
     if not child:
         raise _BadRequest("that run never reported a CLI session to resume")
+    # A run's child can be reopened in a terminal pane, so a stopped run is no
+    # proof its conversation is idle.
+    _refuse_if_live_in_terminal(child)
     return child, trace_id
 
 
@@ -275,11 +278,8 @@ def _caller_role() -> str | None:
 
 
 def _refuse_sdk_only_fields(payload: dict) -> None:
-    """An interactive TUI has no one-shot mode, and `--resume` in a pane is a
-    follow-up this kind does not yet offer — refused rather than ignored, so a
-    launch never quietly means less than the form asked for."""
-    if isinstance(payload.get("resume"), str) and payload["resume"].strip():
-        raise _BadRequest("resume is not supported for terminal sessions")
+    """An interactive TUI has no one-shot mode — refused rather than ignored,
+    so a launch never quietly means less than the form asked for."""
     if payload.get("one_shot"):
         raise _BadRequest("one_shot is not supported for terminal sessions")
 
@@ -306,7 +306,7 @@ def _launch_terminal(payload: dict, prompt: str):
         launched = terminal_launch.launch_terminal(
             role=_caller_role(), cwd=params["cwd"], model=params["model"],
             effort=params["effort"], permission_mode=params["permission_mode"],
-            prompt=prompt.strip()[:_PROMPT_MAX])
+            prompt=prompt.strip()[:_PROMPT_MAX], resume=params["resume"] or "")
     except terminal_launch.TerminalLaunchRefused as exc:
         return jsonify({"launched": False, "detail": str(exc), **made})
     return jsonify({"launched": True, "trace_id": launched.trace_id,

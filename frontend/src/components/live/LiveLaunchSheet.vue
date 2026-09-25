@@ -124,7 +124,7 @@ const resumeTitle = computed(() => {
   return row ? row.title || shortTraceId(row.session_id) : ''
 })
 const resumeKind = computed(() => (
-  resume.value ? resumeKindLabel(resume.value.kind) : ''))
+  resume.value ? resumeKindLabel(resume.value.kind, kind.value) : ''))
 
 // A recorded model is an exact id (`claude-opus-4-8`), which the menu of
 // aliases does not contain — so adopting one lands in the custom slot rather
@@ -197,9 +197,7 @@ const customModelIsBlank = computed(() => (
 // A resume outranks the worktree toggle rather than clearing it: the operator
 // may drop the pick again, and a checkbox that silently unticked itself
 // meanwhile would launch in the repo when they asked for a tree.
-// A terminal launch sends no resume, so a pick parked in the draft does not
-// block its worktree.
-const resumeApplies = computed(() => !!resume.value && !isTerminal.value)
+const resumeApplies = computed(() => !!resume.value)
 const worktreeActive = computed(() => useWorktree.value && !resumeApplies.value)
 // The same test the fields' own warning uses, not a blank check: a name of
 // pure punctuation is non-blank and slugifies to nothing, so the two readings
@@ -248,7 +246,7 @@ function launchBody() {
     effort: effort.value || undefined,
     permission_mode: mode.value || undefined,
     one_shot: (sdk && oneShot.value) || undefined,
-    resume: (sdk && resume.value?.session_id) || undefined,
+    resume: resume.value?.session_id || undefined,
     worktree: worktreeActive.value
       ? { branch: worktreeBranch.value.trim(), base: worktreeBase.value }
       : undefined,
@@ -322,6 +320,7 @@ async function launch() {
       v-else-if="picking"
       :current-id="resumeFrom"
       :selected-id="resume?.session_id || ''"
+      :launch-kind="kind"
       @select="pickResume"
       @cancel="picking = false"
     />
@@ -411,8 +410,8 @@ async function launch() {
         <span>end after the first turn</span>
       </label>
       <p v-if="isTerminal" class="live-launch-kind-note" data-testid="live-launch-terminal-note">
-        a terminal session stays open until you exit claude — one-shot and
-        continuing a session are SDK-run options.
+        a terminal session stays open until you exit claude — one-shot is an
+        SDK-run option.
       </p>
       <p
         v-if="oneShotNeedsPrompt"
@@ -422,31 +421,29 @@ async function launch() {
         a one-shot run needs a prompt — it ends with its first turn.
       </p>
 
-      <template v-if="!isTerminal">
-        <label class="live-launch-lbl">continue a session</label>
-        <div v-if="resume" class="live-launch-resumed" data-testid="live-launch-resumed">
-          <span class="live-launch-resumed-txt" data-testid="live-launch-resume-label">
-            <span class="live-launch-resumed-title">{{ resumeTitle }}</span>
-            <span class="live-launch-resumed-kind">{{ resumeKind }}</span>
-          </span>
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="Start a fresh session instead"
-            data-testid="live-launch-resume-clear"
-            @click="clearResume"
-          >
-            <Icon name="x" :size="13" />
-          </Button>
-        </div>
+      <label class="live-launch-lbl">continue a session</label>
+      <div v-if="resume" class="live-launch-resumed" data-testid="live-launch-resumed">
+        <span class="live-launch-resumed-txt" data-testid="live-launch-resume-label">
+          <span class="live-launch-resumed-title">{{ resumeTitle }}</span>
+          <span class="live-launch-resumed-kind">{{ resumeKind }}</span>
+        </span>
         <Button
-          v-else
           variant="ghost"
-          class="live-launch-pick"
-          data-testid="live-launch-resume-open"
-          @click="picking = true"
-        >Pick a session to continue…</Button>
-      </template>
+          size="icon"
+          aria-label="Start a fresh session instead"
+          data-testid="live-launch-resume-clear"
+          @click="clearResume"
+        >
+          <Icon name="x" :size="13" />
+        </Button>
+      </div>
+      <Button
+        v-else
+        variant="ghost"
+        class="live-launch-pick"
+        data-testid="live-launch-resume-open"
+        @click="picking = true"
+      >Pick a session to continue…</Button>
 
       <p v-if="refusal" class="live-launch-warn" data-testid="live-launch-refusal">
         {{ refusal }}
