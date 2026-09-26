@@ -56,7 +56,9 @@ test('test_counts_failure_does_not_blank_the_list', async ({ page }) => {
   await expect(page.getByTestId('task-counts-error')).toBeVisible()
   // And the rows still load: the ungrouped feed is what a failed count falls
   // back to, never a blank page.
-  await expect(page.getByTestId('task-list')).toBeVisible()
+  // An empty store says so (ListStatus `empty`) rather than rendering nothing.
+  await expect(page.getByTestId('task-list')
+    .or(page.locator('[data-testid="list-status"][data-state="empty"]'))).toBeVisible()
 })
 
 test('test_tab_roundtrip_preserves_query_and_scroll', async ({ page }) => {
@@ -65,7 +67,7 @@ test('test_tab_roundtrip_preserves_query_and_scroll', async ({ page }) => {
   await expect(page.getByTestId('pipeline-tabs')).toBeVisible()
   // Settle the tab's own content first: a height still arriving would move
   // the offset out from under the assertion.
-  await expect(page.getByTestId('tasks-view-tabs')).toBeVisible()
+  await expect(page.getByTestId('list-views')).toBeVisible()
 
   // Give the page something to scroll, then scroll the app-shell scroller.
   await page.evaluate(() => {
@@ -136,5 +138,7 @@ test('the scope the shell names is the scope the Tasks list sends',
     await page.getByTestId('pipeline-tab-features').click()
     await page.getByTestId('pipeline-tab-tasks').click()
     await expect(page).toHaveURL(/project=none/)
-    await expect(page.getByTestId('task-filter-project')).toContainText('No project')
+    // One control writes the scope, and it is the shell's (I4).
+    await expect(page.getByTestId('task-filter-project')).toHaveCount(0)
+    await expect(page.getByTestId('pipeline-project')).toContainText('No project')
   })

@@ -42,12 +42,15 @@ function index(over = {}) {
       strategy: 'offset', total: over.matched ?? items.length,
       page: 0, size: 50, has_next: false, has_prev: false,
     },
-    total: 25,
-    coverage: {
-      declared_sessions: 13, all_sessions: 2935,
-      declared_usd: 57.24, all_usd: 23251.49,
+    population: 25,
+    applied: { sort: 'created:desc', filters: {} },
+    extras: {
+      coverage: {
+        declared_sessions: 13, all_sessions: 2935,
+        declared_usd: 57.24, all_usd: 23251.49,
+      },
+      unattributed_defects: 1,
     },
-    unattributed_defects: 1,
     ...over,
   }
 }
@@ -58,8 +61,11 @@ async function stub(page, body) {
   const seen = []
   await page.route(/\/api\/features(\?.*)?$/, (route) => {
     if (route.request().method() !== 'GET') return route.fallback()
-    seen.push(new URL(route.request().url()).searchParams)
-    return route.fulfill({ json: body })
+    const params = new URL(route.request().url()).searchParams
+    seen.push(params)
+    // The page renders the sort the server APPLIED, so the stub echoes it.
+    const applied = { sort: params.get('sort') || 'created:desc', filters: {} }
+    return route.fulfill({ json: { ...body, applied } })
   })
   return seen
 }
@@ -103,7 +109,7 @@ test('the header counters describe the population, not the match',
     await stub(page, index({ items: [row()] }))
     await page.goto('/features?q=ledger')
 
-    await expect(page.getByText('1 of 25 features match')).toBeVisible()
+    await expect(page.getByTestId('list-count')).toHaveText('1 of 25 features')
   })
 
 test('with no search the count is the plain population', async ({ page }) => {
@@ -222,7 +228,7 @@ test('reset clears every narrowing at once', async ({ page }) => {
   await stub(page, index())
   await page.goto('/features?q=ledger&stage=shipped&sort=rounds:asc&page=2')
 
-  await page.getByTestId('toolbar-reset').click()
+  await page.getByTestId('list-clear').click()
 
   await expect(page).toHaveURL(/\/features$/)
 })
@@ -231,7 +237,7 @@ test('reset is disabled when there is nothing to undo', async ({ page }) => {
   await stub(page, index())
   await page.goto('/features')
 
-  await expect(page.getByTestId('toolbar-reset')).toBeDisabled()
+  await expect(page.getByTestId('list-clear')).toBeDisabled()
 })
 
 test('no match names the population rather than showing nothing',
@@ -239,8 +245,10 @@ test('no match names the population rather than showing nothing',
     await stub(page, index({ items: [], matched: 0 }))
     await page.goto('/features?q=zzz')
 
-    await expect(page.locator('.empty')).toContainText('no match')
-    await expect(page.locator('.empty')).toContainText('25 features')
+    const status = page.getByTestId('list-status')
+    await expect(status).toHaveAttribute('data-state', 'no-match')
+    await expect(status).toContainText('No features match this filter')
+    await expect(page.getByTestId('list-count')).toHaveText('0 of 25 features')
   })
 
 test('the title links into its ledger', async ({ page }) => {
@@ -299,8 +307,9 @@ test('a page past the end keeps its pager and names its own cause',
     }))
     await page.goto('/features?page=9')
 
-    await expect(page.locator('.empty')).toContainText('past the end')
-    await expect(page.locator('.empty')).not.toContainText('no match')
+    const status = page.getByTestId('list-status')
+    await expect(status).toHaveAttribute('data-state', 'past-end')
+    await expect(status).toContainText('Page 10 is past the end of 120')
     // Clamped, because Prev from page 10 would otherwise walk back one empty
     // page at a time from wherever the link pointed.
     await page.getByRole('button', { name: 'Prev' }).click()

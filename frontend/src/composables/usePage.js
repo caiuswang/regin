@@ -4,8 +4,12 @@ import api from '../api'
 /**
  * usePage — consume an offset-limit paginated endpoint.
  *
- * Backend envelope expected:
- *   { items, pagination: { total, page, size, has_next, has_prev }, ...extras }
+ * Backend envelope expected (the Pipeline lists add `population`/`applied`):
+ *   { items, pagination: { total, page, size, has_next, has_prev },
+ *     population?, applied?, ...extras }
+ *
+ * `loaded` turns true after the first read settles, so a reload can keep the
+ * rows on screen (dimmed via `loading`) instead of blanking them.
  *
  * Exposes `page`, `size`, and navigation helpers (`next`, `prev`, `goto`).
  * Any change to `page` or `size` triggers a re-fetch via `load()`.
@@ -20,6 +24,12 @@ export function usePage({ path, buildQuery = () => ({}), size = 50 }) {
   const error = ref(null)
   const hasNext = ref(false)
   const hasPrev = ref(false)
+  const population = ref(null)
+  const applied = ref(null)
+  const loaded = ref(false)
+  // Which read the rows belong to: two reads can be in flight (a write's
+  // reload and a control change), and the one that answers last must not win.
+  let issued = 0
   const pageCount = computed(
     () => (pageSize.value > 0 ? Math.max(1, Math.ceil(total.value / pageSize.value)) : 1)
   )
@@ -37,11 +47,16 @@ export function usePage({ path, buildQuery = () => ({}), size = 50 }) {
   }
 
   async function load() {
+    const mine = ++issued
     loading.value = true
     error.value = null
     try {
       const data = await api.get(`${path}?${buildQs()}`)
-      const { items: rows = [], pagination = {}, ...rest } = data
+      if (mine !== issued) return
+      const { items: rows = [], pagination = {}, population: pop,
+              applied: app, ...rest } = data
+      population.value = pop ?? null
+      applied.value = app ?? null
       items.value = rows
       total.value = pagination.total ?? 0
       hasNext.value = !!pagination.has_next
@@ -50,11 +65,15 @@ export function usePage({ path, buildQuery = () => ({}), size = 50 }) {
       // change shrinks the result set). Trust the server value.
       if (pagination.page != null) page.value = pagination.page
       if (pagination.size != null) pageSize.value = pagination.size
-      extras.value = rest
+      extras.value = rest.extras && typeof rest.extras === 'object' ? rest.extras : rest
     } catch (e) {
+      if (mine !== issued) return
       error.value = e.message || String(e)
     } finally {
-      loading.value = false
+      if (mine === issued) {
+        loading.value = false
+        loaded.value = true
+      }
     }
   }
 
@@ -77,7 +96,7 @@ export function usePage({ path, buildQuery = () => ({}), size = 50 }) {
   }
 
   return {
-    items, extras, loading, error,
+    items, extras, loading, error, loaded, population, applied,
     page, pageSize, total, pageCount, hasNext, hasPrev,
     load, goto, next, prev, setSize, refresh,
   }

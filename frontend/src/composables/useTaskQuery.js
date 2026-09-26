@@ -1,7 +1,6 @@
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { GROUPS, PRIORITIES, SORTS, STATUS_FILTERS } from '../utils/taskMeta.js'
-import { persistScope, SCOPE_ALL } from './usePipelineScope.js'
+import { GROUPS, PRIORITIES, SORT_KEYS, STATUS_FILTERS } from '../utils/taskMeta.js'
 
 // The task list's whole state, held in `location.search` and nowhere else.
 //
@@ -10,18 +9,21 @@ import { persistScope, SCOPE_ALL } from './usePipelineScope.js'
 // localStorage keys survive as *defaults*: what a bare `/tasks` is restored to
 // on arrival, never a second opinion the URL has to be reconciled against.
 //
-// `project` is not one of the axes below: it is the one the three Pipeline
-// tabs share, so `usePipelineScope` owns what it means and where it is
-// remembered. This composable only reads it, and writes it through that
-// module's own `persistScope` when a control on this tab changes it.
+// `project` is not one of the axes below: it is the one the Pipeline tabs
+// share, and the shell's selector is its only writer (I4). This composable
+// reads it and carries it through every patch untouched.
+//
+// `view` (list | graph) is an axis too, so a reload lands on the same view —
+// but it is a reading of the rows, not a narrowing, so Clear leaves it alone.
 
-export const DEFAULT_SORT = 'created_desc'
+export const DEFAULT_SORT = 'created:desc'
 export const DEFAULT_GROUP = 'status'
+export const DEFAULT_VIEW = 'list'
 
 const DEFAULTS = {
   status: '', priority: '', sort: DEFAULT_SORT, group: DEFAULT_GROUP,
   q: '', tag: '', source: '', feature_id: '', assignee: '',
-  archived: '', runs: '',
+  archived: '', runs: '', view: DEFAULT_VIEW,
 }
 
 const AXES = Object.keys(DEFAULTS)
@@ -45,7 +47,11 @@ const STORED = {
 // not match its own controls. An unknown *sort* or *group* has no server to
 // refuse it and no rows riding on it, so it falls back to the default.
 const LEGAL = {
-  sort: v => SORTS.some(s => s.value === v),
+  sort: (v) => {
+    const [key, dir] = v.split(':')
+    return SORT_KEYS.some(s => s.value === key) && (dir === 'asc' || dir === 'desc')
+  },
+  view: v => v === 'list' || v === 'graph',
   group: v => GROUPS.some(g => g.value === v),
   status: v => STATUS_FILTERS.some(s => s.key === v),
   priority: v => v === '' || PRIORITIES.some(p => p.value === v),
@@ -53,7 +59,7 @@ const LEGAL = {
   runs: v => v === '' || v === '1',
 }
 
-const CORRECTED = ['sort', 'group']
+const CORRECTED = ['sort', 'group', 'view']
 
 // The stored axes that reach the server. `group` is not one: it decides how
 // the loaded rows are split into feeds, never which rows those are.
@@ -132,10 +138,13 @@ export function useTaskQuery() {
     }
   })
 
+  // What "Clear N" counts. `runs` widens rather than narrows, but it is off
+  // its default and Clear puts it back, so it counts; the arrival keys are
+  // not, since Clear keeps them.
   const active = computed(() => {
     const s = state.value
-    return [s.status, s.q, s.tag, s.source, s.priority, s.feature_id,
-            s.assignee, s.archived].filter(Boolean).length
+    return [s.status, s.q, s.tag, s.source, s.priority,
+            s.archived, s.runs].filter(Boolean).length
   })
 
   /**
@@ -146,15 +155,13 @@ export function useTaskQuery() {
   function patch(next) {
     const merged = { ...state.value, ...next }
     const query = { ...route.query }
-    // The shell owns what a scope MEANS; this writes it so a control that
-    // changes a facet and the scope together is one navigation, not two —
-    // two would race, and the second would spread the first's stale query.
-    if ('project' in next) {
-      const scope = next.project || SCOPE_ALL
-      persistScope(scope)
-      if (scope === SCOPE_ALL) delete query.project
-      else query.project = scope
-      delete query.cursor
+    // Anything but an explicit page changes the predicate, and an offset that
+    // survives a narrowing points into rows the new query does not have.
+    if ('page' in next && String(next.page) !== '0') query.page = String(next.page)
+    else delete query.page
+    if ('size' in next) {
+      if (String(next.size) === '50') delete query.size
+      else query.size = String(next.size)
     }
     for (const axis of AXES) {
       const value = String(merged[axis] ?? '')
@@ -165,9 +172,21 @@ export function useTaskQuery() {
     router.replace({ path: route.path, query })
   }
 
-  function reset() {
-    patch(Object.fromEntries(AXES.map(a => [a, DEFAULTS[a]])))
+  /**
+   * Clear the narrowings. A view is a reading, not a narrowing, and an arrival
+   * key (a feature's task count links `?feature_id=`) is the list's address,
+   * so Clear keeps both — `{ arrival: true }` also leaves the address, for a
+   * caller that must reach a row the address itself hides.
+   */
+  function reset({ arrival = false } = {}) {
+    patch(Object.fromEntries(AXES
+      .filter(a => a !== 'view' && a !== 'group'
+        && (arrival || !ARRIVAL.includes(a)))
+      .map(a => [a, DEFAULTS[a]])))
   }
+
+  const page = computed(() => Math.max(0, parseInt(route.query.page, 10) || 0))
+  const size = computed(() => Math.max(1, parseInt(route.query.size, 10) || 50))
 
   /**
    * On a bare URL, restore the stored axes AND rewrite the URL, so what is on
@@ -200,8 +219,12 @@ export function useTaskQuery() {
     if (!Object.keys(restored).length) return false
     router.replace({ path: route.path,
                      query: { ...route.query, ...restored } })
-    return Object.keys(restored).some(axis => axis in PARAMS)
+    // `group` alone is client-side, except where it flips grouped ↔ flat:
+    // those two read the server differently, so the caller must wait for it.
+    const flipsMode = 'group' in restored
+      && (restored.group === 'none') !== (state.value.group === 'none')
+    return flipsMode || Object.keys(restored).some(axis => axis in PARAMS)
   }
 
-  return { state, project, params, active, patch, reset, restoreStored }
+  return { state, project, params, active, page, size, patch, reset, restoreStored }
 }

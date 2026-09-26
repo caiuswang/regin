@@ -123,8 +123,9 @@ def test_the_index_carries_its_header_counters(flask_client, tmp_db,
     body = flask_client.get("/api/features",
                             headers=_headers("viewer")).get_json()
 
-    assert set(body) == {"items", "pagination", "total", "coverage",
-                         "unattributed_defects"}
+    assert set(body) == {"items", "pagination", "population", "applied",
+                         "extras"}
+    assert set(body["extras"]) == {"coverage", "unattributed_defects"}
 
 
 def test_the_index_narrows_by_every_facet_it_declares(flask_client, tmp_db,
@@ -135,7 +136,7 @@ def test_the_index_narrows_by_every_facet_it_declares(flask_client, tmp_db,
                                 headers=_headers("viewer")).get_json()
 
     assert [row["id"] for row in narrowed["items"]] == [a_feature]
-    assert narrowed["total"] >= 1
+    assert narrowed["population"] >= 1
 
 
 def test_a_q_longer_than_the_cap_is_truncated_not_refused(flask_client,

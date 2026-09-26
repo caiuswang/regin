@@ -44,6 +44,8 @@ test('closing a defect offers the fix task, and accepting links it',
 
     await page.goto('/defects')
     const row = page.locator('li.card', { hasText: 'the gutter folds' })
+    // A list row is two lines at rest; actions sit behind its disclosure.
+    await row.getByTestId('defect-toggle-7').click()
     await row.getByRole('button', { name: 'Close' }).click()
     await row.getByPlaceholder('the test that would have caught this')
       .fill('test_the_gutter_holds')
@@ -73,6 +75,8 @@ test('arriving at an already-closed defect raises no offer', async ({ page }) =>
 
   await page.goto('/defects')
   const row = page.locator('li.card', { hasText: 'the gutter folds' })
+  // A list row is two lines at rest; actions sit behind its disclosure.
+  await row.getByTestId('defect-toggle-7').click()
   await expect(row).toContainText('test_the_gutter_holds')
   await expect(row.getByTestId('defect-fix-offer-7')).toHaveCount(0)
 })
@@ -92,6 +96,8 @@ test('a refused create says so and leaves the offer standing',
 
     await page.goto('/defects')
     const row = page.locator('li.card', { hasText: 'the gutter folds' })
+    // A list row is two lines at rest; actions sit behind its disclosure.
+    await row.getByTestId('defect-toggle-7').click()
     await row.getByRole('button', { name: 'Close' }).click()
     await row.getByPlaceholder('the test that would have caught this')
       .fill('test_the_gutter_holds')
@@ -114,6 +120,8 @@ test('a defect can be pointed at a task that already exists', async ({ page }) =
 
   await page.goto('/defects')
   const row = page.locator('li.card', { hasText: 'the gutter folds' })
+  // A list row is two lines at rest; actions sit behind its disclosure.
+  await row.getByTestId('defect-toggle-7').click()
   await row.getByTestId('defect-more-7').click()
   await page.getByRole('menuitem', { name: 'Link existing task' }).click()
   await row.getByPlaceholder('task id').fill('99')
@@ -138,6 +146,8 @@ test('an open, attributed defect files its fix task in one click',
 
     await page.goto('/defects')
     const row = page.locator('li.card', { hasText: 'the gutter folds' })
+    // A list row is two lines at rest; actions sit behind its disclosure.
+    await row.getByTestId('defect-toggle-7').click()
     await row.getByTestId('defect-more-7').click()
     await page.getByTestId('defect-fix-create-row-7').click()
 
@@ -155,6 +165,8 @@ test('an unattributed defect cannot file one, and says why', async ({ page }) =>
 
   await page.goto('/defects')
   const row = page.locator('li.card', { hasText: 'the gutter folds' })
+  // A list row is two lines at rest; actions sit behind its disclosure.
+  await row.getByTestId('defect-toggle-7').click()
   await row.getByTestId('defect-more-7').click()
   await expect(page.getByTestId('defect-fix-create-row-7'))
     .toHaveAttribute('aria-disabled', 'true')
@@ -166,6 +178,7 @@ test('the row menu is fully visible on the defects ledger, outside a feature row
   async ({ page }) => {
     await stubList(page, { row: OPEN })
     await page.goto('/defects')
+    await page.getByTestId('defect-toggle-7').click()
     const more = page.locator('li.card', { hasText: 'the gutter folds' })
       .getByTestId('defect-more-7')
     await page.mouse.move(0, 0)

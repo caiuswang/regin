@@ -117,16 +117,16 @@ def test_an_offset_past_the_end_still_reports_the_true_total(
     assert body["pagination"]["has_next"] is False
 
 
-def test_the_population_counter_still_describes_the_table(
+def test_the_population_counter_still_describes_the_scope(
         flask_client, tmp_db, many_features):
-    """`total` and `pagination.total` answer two questions — how many features
+    """`population` and `pagination.total` answer two questions — how many features
     there are, and how many this query matched. One number cannot."""
     many_features(6)
 
     body = flask_client.get("/api/features?size=2&q=feature 001",
                             headers=_headers()).get_json()
 
-    assert body["total"] == 6
+    assert body["population"] == 6
     assert body["pagination"]["total"] == 1
 
 

@@ -58,7 +58,7 @@ def test_the_unattributed_list_is_readable_from_the_browser(flask_client):
 
     assert resp.status_code == 200, resp.get_json()
     body = resp.get_json()
-    assert body["scope"] == "unattributed"
+    assert body["applied"]["filters"]["scope"] == "unattributed"
     # Newest first, the same direction every other scope reads in. This used
     # to be `id ASC` while `all` was `id DESC`.
     assert [item["id"] for item in body["items"]] == \
@@ -78,7 +78,7 @@ def test_the_counter_and_the_list_report_the_same_number(flask_client):
     counter = flask_client.get("/api/features").get_json()
     listed = flask_client.get("/api/defects?scope=unattributed").get_json()
 
-    assert counter["unattributed_defects"] == len(listed["items"]) == 3
+    assert counter["extras"]["unattributed_defects"] == len(listed["items"]) == 3
 
 
 def test_a_feature_scope_lists_that_features_defects(flask_client,
@@ -89,7 +89,7 @@ def test_a_feature_scope_lists_that_features_defects(flask_client,
 
     body = flask_client.get(f"/api/defects?feature_id={feature.id}").get_json()
 
-    assert body["scope"] == "feature"
+    assert body["applied"]["filters"]["scope"] == "feature"
     assert [i["id"] for i in body["items"]] == [mine.id]
 
 
@@ -103,7 +103,7 @@ def test_a_fix_item_scope_lists_every_defect_one_task_should_close(
 
     body = flask_client.get(f"/api/defects?fix_item={task_id}").get_json()
 
-    assert body["scope"] == "fix-item"
+    assert body["applied"]["filters"]["scope"] == "fix-item"
     assert [i["id"] for i in body["items"]] == [second.id, first.id]
     assert body["items"][0]["fix_task_id"] == task_id
 
@@ -113,7 +113,7 @@ def test_a_fix_item_that_is_not_an_id_names_no_scope(flask_client):
     scope was asked for". A 400 would make a typo louder than a wrong id."""
     body = flask_client.get("/api/defects?fix_item=nonsense").get_json()
 
-    assert body["scope"] == "all"
+    assert body["applied"]["filters"]["scope"] == "all"
 
 
 def test_the_default_scope_is_the_whole_ledger(flask_client, feature_row):
@@ -126,7 +126,7 @@ def test_the_default_scope_is_the_whole_ledger(flask_client, feature_row):
 
     body = flask_client.get("/api/defects").get_json()
 
-    assert body["scope"] == "all"
+    assert body["applied"]["filters"]["scope"] == "all"
     assert {i["id"] for i in body["items"]} == {blamed.id, loose.id}
     assert [i["id"] for i in body["items"]] == [loose.id, blamed.id]
 

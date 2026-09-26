@@ -7,24 +7,32 @@
 // the counts say, what the list pages through, and what a link someone pastes
 // into chat will show are the same set.
 import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import Button from '../ui/Button.vue'
 import Checkbox from '../ui/Checkbox.vue'
+import Icon from '../ui/Icon.vue'
+import Select from '../ui/Select.vue'
+import ListStatus from '../ListStatus.vue'
+import PageControls from '../PageControls.vue'
+import PipelineListToolbar from '../PipelineListToolbar.vue'
 import TaskArmSheet from './TaskArmSheet.vue'
 import TaskBulkBar from './TaskBulkBar.vue'
 import TaskComposerDialog from './TaskComposerDialog.vue'
 import TaskDepsEditor from './TaskDepsEditor.vue'
 import TaskEditSheet from './TaskEditSheet.vue'
-import TaskFilterBar from './TaskFilterBar.vue'
+import TaskMoreFilters from './TaskMoreFilters.vue'
 import TaskGroup from './TaskGroup.vue'
 import TaskRows from './TaskRows.vue'
 import TaskRunHistory from './TaskRunHistory.vue'
 import TasksScopeBanner from './TasksScopeBanner.vue'
-import { groupsFor } from '../../utils/taskMeta.js'
-import { useTaskCounts, useTaskFeed, useTaskMutations } from '../../composables/useTasks.js'
+import { GROUPS, PRIORITIES, SORT_KEYS, STATUS_FILTERS, groupsFor } from '../../utils/taskMeta.js'
+import { useTaskCounts, useTaskMutations } from '../../composables/useTasks.js'
 import { TASK_CAPTURED_EVENT } from '../../composables/useQuickCapture.js'
 import { useConfirm } from '../../composables/useConfirm.js'
+import { listStatusState } from '../../composables/useListQuery.js'
+import { usePage } from '../../composables/usePage.js'
+import { invalidatePipelineCounts } from '../../composables/usePipelineCounts.js'
 import { useGroupCollapse } from '../../composables/useGroupCollapse.js'
-import { usePipelineHeaderPublisher } from '../../composables/usePipelineHeader.js'
 import { useProjects } from '../../composables/useProjects.js'
 import { useTaskExec } from '../../composables/useTaskExec.js'
 import { useTaskQuery } from '../../composables/useTaskQuery.js'
@@ -34,6 +42,7 @@ import { useUsers } from '../../composables/useUsers.js'
 
 const FLAT = 'flat'
 
+const route = useRoute()
 const query = useTaskQuery()
 const { counts, error: countsError, load: loadCounts } = useTaskCounts(query.params)
 const { patch, bulk, remove, bulkRemove } = useTaskMutations()
@@ -42,35 +51,62 @@ const { items: projects, ensure: ensureProjects, byId } = useProjects()
 const { items: users, ensure: ensureUsers } = useUsers()
 const { isOpen, setOpen } = useGroupCollapse()
 const selection = useTaskSelection()
-const publish = usePipelineHeaderPublisher()
 
-const flat = useTaskFeed(query.params)
-// Grouping is built OUT of the counts, so counts the server could not give
-// cannot produce headers. The list then falls back to the ungrouped feed and
-// says why, rather than rendering an empty page that looks like an empty
-// backlog.
-const grouped = computed(() =>
-  query.state.value.group !== 'none' && counts.value != null)
+const views = [{ value: 'list', label: 'List' }, { value: 'graph', label: 'Graph' }]
+const emit = defineEmits(['view'])
+
+// The flat list pages by offset, like every other Pipeline list; the grouped
+// list is built out of the counts, and each group appends pages of its own.
+const flat = usePage({ path: '/tasks', buildQuery: () => query.params.value })
+const groupMode = computed(() => query.state.value.group !== 'none')
+// Counts the server could not give cannot produce headers, so the list then
+// falls back to the flat feed rather than rendering an empty page.
+const grouped = computed(() => groupMode.value && counts.value != null)
 // Empty groups are hidden: a backlog of ideas should not render six headers
-// reading 0 to say so. The filter bar's total is where "nothing here" is said.
+// reading 0 to say so.
 const groups = computed(() =>
   groupsFor(query.state.value.group, counts.value, projects.value,
             query.params.value)
     .filter(g => g.count > 0))
-// Counted by the server, so it is true under the current filters even when
-// every group is collapsed and no row has been fetched.
-const empty = computed(() => counts.value?.total === 0)
+
+const shownTotal = computed(() => (grouped.value ? counts.value?.total ?? null
+  : flat.loaded.value && !flat.error.value ? flat.total.value : null))
+const population = computed(() => (grouped.value ? counts.value?.population ?? null
+  : flat.population.value))
+const appliedSort = computed(() => (!grouped.value && flat.applied.value?.sort)
+  || query.state.value.sort)
+const sortKey = computed(() => appliedSort.value.split(':')[0])
+const sortDir = computed(() => (appliedSort.value.split(':')[1] === 'asc' ? 'asc' : 'desc'))
+const groupsLoaded = ref(false)
+const status = computed(() => (grouped.value
+  ? listStatusState({ loaded: groupsLoaded.value, error: '', items: groups.value,
+                      total: counts.value?.total, population: counts.value?.population })
+  : listStatusState({ loaded: flat.loaded.value, error: flat.error.value,
+                      items: flat.items.value, total: flat.total.value,
+                      population: flat.population.value })))
 
 const composerOpen = ref(false)
 const sheet = ref({ kind: '', task: null })
-const filterBar = ref(null)
+const toolbar = ref(null)
 const groupRefs = ref([])
 
 async function reload() {
+  lastKey = paramsKey.value
   selection.resetVisible()
-  await loadCounts()
+  if (groupMode.value) {
+    await loadCounts()
+    // Headers from a previous predicate would describe other rows: a failed
+    // read drops them, and the list falls back to the flat feed and says why.
+    if (countsError.value) counts.value = null
+    groupsLoaded.value = true
+  }
   if (!grouped.value) {
+    flat.page.value = query.page.value
+    flat.pageSize.value = query.size.value
     await flat.load()
+    // Only when ungrouped: in group mode a failed counts read is what put the
+    // list here, and adopting these would flip it back into groups.
+    if (!groupMode.value && flat.extras.value?.counts) counts.value = flat.extras.value.counts
     selection.reportVisible(FLAT, flat.items.value)
     await syncLiveness(flat.items.value)
   }
@@ -79,10 +115,14 @@ async function reload() {
 
 const { refusals, liveness, busyId, control, syncLiveness } = useTaskExec(reload)
 
-async function loadMoreFlat() {
-  await flat.loadMore()
-  selection.reportVisible(FLAT, flat.items.value)
-  await syncLiveness(flat.items.value)
+// A write changes a count the shell shows, and the shell cannot see it.
+async function afterWrite() {
+  invalidatePipelineCounts()
+  await reload()
+}
+
+function gotoPage(index) {
+  query.patch({ page: String(Math.max(0, Math.min(flat.pageCount.value - 1, index))) })
 }
 
 async function onGroupLoaded(key, rows) {
@@ -97,24 +137,17 @@ async function onGroupLoaded(key, rows) {
 // is rebuilt on every route change, so a rewrite that leaves the server query
 // alone — restoring `group`, which is rendered client-side — would otherwise
 // read as a filter change and cost the page a second round of requests.
-const paramsKey = computed(() => JSON.stringify(query.params.value))
-watch(paramsKey, reload)
-
-// The shell renders the tab's *population*; what this list publishes is how
-// much of it the controls are letting through, which only the list knows.
-watch([counts, query.active], ([c, narrowed]) => {
-  const total = c?.total
-  if (total == null) return publish({ subtitle: '' })
-  const noun = total === 1 ? 'task' : 'tasks'
-  publish({ subtitle: narrowed
-    ? `${total} ${noun} match ${narrowed === 1 ? 'this filter' : `these ${narrowed} filters`}.`
-    : `${total} ${noun} queued. Nothing runs until someone arms it.` })
-}, { immediate: true })
+// Kept alive: while another tab is on screen its query is not this list's,
+// so the key goes quiet (null) rather than reloading under a foreign query.
+const paramsKey = computed(() => (route.path !== '/tasks' ? null : JSON.stringify(
+  [query.params.value, query.page.value, query.size.value, groupMode.value])))
+let lastKey = null
+watch(paramsKey, (key) => { if (key != null && key !== lastKey) reload() })
 
 async function toggleArchive(task) {
   const ok = await patch(task,
     { status: task.status === 'archived' ? 'idea' : 'archived' })
-  if (ok) await reload()
+  if (ok) await afterWrite()
 }
 
 // Named in the prompt, not counted: "delete 1 task" is a number the operator
@@ -125,7 +158,7 @@ async function deleteTask(task) {
     `Delete “${task.title}” and its run history, images and links? `
     + 'This cannot be undone — archive it instead to keep it.', true)
   if (!ok) return
-  if (await remove(task)) await reload()
+  if (await remove(task)) await afterWrite()
 }
 
 async function deleteSelected() {
@@ -137,14 +170,14 @@ async function deleteSelected() {
   if (!ok) return
   if (!await bulkRemove(ids)) return
   selection.clear()
-  await reload()
+  await afterWrite()
 }
 
 async function applyBulk(fields) {
   const result = await bulk([...selection.ids.value], fields)
   if (!result) return
   selection.clear()
-  await reload()
+  await afterWrite()
 }
 
 function openSheet(kind, task) {
@@ -157,7 +190,7 @@ function closeSheet() {
 
 async function sheetDone() {
   closeSheet()
-  await reload()
+  await afterWrite()
 }
 
 // A blocking id links to its task, which the current filter may be hiding — so
@@ -167,14 +200,15 @@ async function focusTask(id) {
   // The scope is deliberately left alone: it is the shell's, shared with the
   // other two tabs, and widening it from here would move a page nobody is
   // looking at.
-  if (query.active.value) query.reset()
+  const s = query.state.value
+  if (query.active.value || s.feature_id || s.assignee) query.reset({ arrival: true })
   await nextTick()
   document.getElementById(`task-${id}`)?.scrollIntoView({ block: 'center' })
 }
 
 useTaskShortcuts({
   c: () => { composerOpen.value = true },
-  '/': () => filterBar.value?.focusSearch(),
+  '/': () => toolbar.value?.focusSearch(),
   x: () => selection.toggleAllVisible(),
   Escape: () => selection.clear(),
 })
@@ -189,7 +223,7 @@ onMounted(() => {
   // result — so the first request is issued once, under the query that is
   // actually on screen, rather than once bare and again restored.
   if (!query.restoreStored()) reload()
-  window.addEventListener(TASK_CAPTURED_EVENT, reload)
+  window.addEventListener(TASK_CAPTURED_EVENT, afterWrite)
 })
 
 // The tab is kept alive, so `onMounted` runs once for the life of the page and
@@ -200,24 +234,80 @@ onMounted(() => {
 // restore moved the query, and a re-entry that did not is already loaded.
 onActivated(() => { query.restoreStored() })
 
-onBeforeUnmount(() => window.removeEventListener(TASK_CAPTURED_EVENT, reload))
+onBeforeUnmount(() => window.removeEventListener(TASK_CAPTURED_EVENT, afterWrite))
+
+const statusOptions = STATUS_FILTERS.map(
+  s => ({ value: s.key, label: s.key ? s.label : 'Any status' }))
+const priorityOptions = [
+  { value: '', label: 'Any priority' },
+  ...PRIORITIES.map(p => ({ value: p.value, label: p.label })),
+]
+// "Status" beside "Any status" reads as a second status filter.
+const groupOptions = GROUPS.map(g => ({
+  value: g.value, label: g.value === 'none' ? g.label : `Group: ${g.label}` }))
+const archived = computed(() => query.state.value.archived === '1')
+const runs = computed(() => query.state.value.runs === '1')
 
 defineExpose({ openComposer: () => { composerOpen.value = true } })
 </script>
 
 <template>
   <div class="space-y-3">
-    <TaskFilterBar
-      ref="filterBar"
-      :state="query.state.value"
-      :active="query.active.value"
-      :project="query.project.value"
-      :projects="projects"
-      :users="users"
-      :total="counts?.total ?? null"
+    <PipelineListToolbar
+      ref="toolbar"
+      noun="task"
+      :views="views"
+      view="list"
+      :q="query.state.value.q"
+      search-label="Search tasks"
+      search-placeholder="Search titles and details…"
+      :facets="[
+        { key: 'status', label: 'Filter by status', value: query.state.value.status, options: statusOptions },
+        { key: 'priority', label: 'Filter by priority', value: query.state.value.priority, options: priorityOptions },
+      ]"
+      :sort-options="SORT_KEYS"
+      :sort-key="sortKey"
+      :sort-dir="sortDir"
+      :total="shownTotal"
+      :population="population"
+      :dirty-count="query.active.value"
+      @view="v => emit('view', v)"
       @patch="query.patch"
-      @reset="query.reset"
-    />
+      @reset="query.reset()"
+    >
+      <template #controls>
+        <Select
+          :model-value="query.state.value.group"
+          :options="groupOptions"
+          aria-label="Group by"
+          data-testid="task-group"
+          @update:model-value="v => query.patch({ group: v })"
+        />
+        <TaskMoreFilters :state="query.state.value" :users="users" @patch="query.patch" />
+        <Button
+          variant="ghost"
+          size="sm"
+          :aria-pressed="archived"
+          :aria-label="archived ? 'Hide archived tasks' : 'Show archived tasks'"
+          data-testid="task-archived-toggle"
+          @click="query.patch({ archived: archived ? '' : '1' })"
+        >
+          <Icon name="archive" :size="13" />
+          <span>{{ archived ? 'Hide archived' : 'Show archived' }}</span>
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          :aria-pressed="runs"
+          :aria-label="runs ? 'Hide feature steps' : 'List feature steps beside top-level tasks'"
+          data-testid="task-runs-toggle"
+          @click="query.patch({ runs: runs ? '' : '1' })"
+        >
+          <Icon name="list" :size="13" />
+          <span>{{ runs ? 'Hide feature steps' : 'Show feature steps' }}</span>
+        </Button>
+      </template>
+    </PipelineListToolbar>
 
     <TasksScopeBanner :feature-id="query.state.value.feature_id" />
 
@@ -247,12 +337,24 @@ defineExpose({ openComposer: () => { composerOpen.value = true } })
       Task counts unavailable — {{ countsError }}
     </p>
 
-    <div v-if="empty" class="empty-state" data-testid="tasks-empty">
-      No tasks match this view. Press <kbd>c</kbd> to capture one, or send one
-      in with <code>regin task add</code>.
-    </div>
+    <ListStatus
+      :state="status"
+      noun="task"
+      :total="shownTotal ?? 0"
+      :page="flat.page.value"
+      :dirty-count="query.active.value"
+      :error="flat.error.value || ''"
+      empty-text="No tasks yet. Press c to capture one, or send one in with regin task add."
+      @retry="reload"
+      @clear="query.reset()"
+      @first-page="query.patch({ page: '0' })"
+    >
+      <template #create>
+        <Button variant="secondary" size="sm" @click="composerOpen = true">New task</Button>
+      </template>
+    </ListStatus>
 
-    <template v-else-if="grouped">
+    <template v-if="status === 'rows' && grouped">
       <TaskGroup
         v-for="group in groups"
         :key="`${query.state.value.group}-${group.key}`"
@@ -277,45 +379,45 @@ defineExpose({ openComposer: () => { composerOpen.value = true } })
       />
     </template>
 
-    <template v-else>
-      <div v-if="flat.loading.value" class="empty-state">Loading tasks…</div>
-      <div v-else-if="flat.error.value" class="empty-state" role="alert">
-        {{ flat.error.value }}
+    <template v-else-if="status === 'rows'">
+      <div class="tl-list" :class="{ 'is-busy': flat.loading.value }" :aria-busy="flat.loading.value" data-testid="task-list">
+        <TaskRows
+          :tasks="flat.items.value"
+          :liveness="liveness"
+          :refusals="refusals"
+          :selection="selection.ids.value"
+          :busy-id="busyId"
+          :project-for="t => byId(t.project_id)"
+          @toggle="toggleArchive"
+          @open="openSheet"
+          @control="control"
+          @focus="focusTask"
+          @select="selection.toggle"
+          @delete="deleteTask"
+        />
       </div>
-      <template v-else>
-        <div class="tl-list" data-testid="task-list">
-          <TaskRows
-            :tasks="flat.items.value"
-            :liveness="liveness"
-            :refusals="refusals"
-            :selection="selection.ids.value"
-            :busy-id="busyId"
-            :project-for="t => byId(t.project_id)"
-            @toggle="toggleArchive"
-            @open="openSheet"
-            @control="control"
-            @focus="focusTask"
-            @select="selection.toggle"
-            @delete="deleteTask"
-          />
-        </div>
-        <div v-if="flat.hasNext.value" class="flex justify-center">
-          <Button
-            variant="secondary"
-            :disabled="flat.loadingMore.value"
-            @click="loadMoreFlat()"
-          >
-            {{ flat.loadingMore.value ? 'Loading…' : 'Load more' }}
-          </Button>
-        </div>
-      </template>
     </template>
+
+    <PageControls
+      v-if="!grouped && flat.loaded.value && flat.total.value > flat.pageSize.value"
+      :page="flat.page.value"
+      :page-count="flat.pageCount.value"
+      :total="flat.total.value"
+      :size="flat.pageSize.value"
+      :has-next="flat.hasNext.value"
+      :has-prev="flat.hasPrev.value"
+      :loading="flat.loading.value"
+      @prev="gotoPage(flat.page.value - 1)"
+      @next="gotoPage(flat.page.value + 1)"
+      @goto="gotoPage"
+      @set-size="n => query.patch({ size: String(n) })"
+    />
 
     <TaskComposerDialog
       v-model:open="composerOpen"
       :projects="projects"
       :project="query.project.value"
-      @created="reload"
+      @created="afterWrite"
     />
     <TaskArmSheet
       v-if="sheet.kind === 'arm'"
@@ -349,6 +451,7 @@ defineExpose({ openComposer: () => { composerOpen.value = true } })
     color: var(--color-text-muted, #6b7280);
 }
 
+.tl-list.is-busy { opacity: 0.6; }
 .tl-list {
     border: 1px solid var(--color-border);
     border-radius: var(--radius-lg);

@@ -39,7 +39,7 @@ def _row(defect_id: int) -> Defect:
 def test_the_queue_holds_every_unrouted_unattributed_defect(flask_client):
     rows = [store.record(f"symptom {n}", session_id=f"t-{n}") for n in range(3)]
     body = _queue(flask_client)
-    assert body["scope"] == "triage"
+    assert body["applied"]["filters"]["scope"] == "triage"
     assert {item["id"] for item in body["items"]} == {r.id for r in rows}
     assert body["pagination"]["total"] == 3
 

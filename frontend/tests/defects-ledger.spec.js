@@ -28,6 +28,24 @@ const BLAMED = defect({ id: 2, feature_id: 81, feature_title: 'The ledger',
                         blamed_against_state: 'started' })
 const LOOSE = defect()
 
+// The `ListPage` envelope every Pipeline list answers (feature #108).
+function envelope(items, scope = 'all', population = 2) {
+  return {
+    items,
+    pagination: { strategy: 'offset', total: items.length, page: 0, size: 50,
+                  has_next: false, has_prev: false },
+    population,
+    applied: { sort: 'opened:desc', filters: { scope } },
+    extras: { scope },
+  }
+}
+
+// A list row is two lines at rest; its evidence and actions sit behind a
+// per-row disclosure.
+async function expand(row, id) {
+  await row.getByTestId(`defect-toggle-${id}`).click()
+}
+
 // One route for every scope, answering from the query the page sent — so a
 // test cannot pass by the page reading a scope it never asked for.
 async function stubLedger(page, seen = []) {
@@ -35,12 +53,12 @@ async function stubLedger(page, seen = []) {
     const url = new URL(route.request().url())
     seen.push(url.search)
     if (url.searchParams.get('feature_id')) {
-      return route.fulfill({ json: { items: [BLAMED], scope: 'feature' } })
+      return route.fulfill({ json: envelope([BLAMED], 'feature') })
     }
     if (url.searchParams.get('scope') === 'unattributed') {
-      return route.fulfill({ json: { items: [LOOSE], scope: 'unattributed' } })
+      return route.fulfill({ json: envelope([LOOSE], 'unattributed') })
     }
-    return route.fulfill({ json: { items: [BLAMED, LOOSE], scope: 'all' } })
+    return route.fulfill({ json: envelope([BLAMED, LOOSE], 'all') })
   })
 }
 
@@ -68,7 +86,7 @@ test('the scope toggle narrows to unattributed and back', async ({ page }) => {
     .toHaveAttribute('aria-selected', 'true')
 
   await page.getByRole('tab', { name: 'Unattributed' }).click()
-  await expect(page.getByText('1 defect blamed on no feature')).toBeVisible()
+  await expect(page.getByTestId('list-count')).toHaveText('1 of 2 defects')
   await expect(page.getByText('the rail clips')).toHaveCount(0)
   await expect(page).toHaveURL(/scope=unattributed/)
   await expect(page.getByRole('tab', { name: 'Unattributed' }))
@@ -103,7 +121,7 @@ test('an already-blamed defect offers re-attribution', async ({ page }) => {
     const row = moved
       ? { ...BLAMED, feature_id: 274, feature_title: 'Another', blamed_event_kind: 'shipped' }
       : BLAMED
-    return route.fulfill({ json: { items: [row], scope: 'all' } })
+    return route.fulfill({ json: envelope([row], 'all') })
   })
   const posted = []
   await page.route('**/api/defects/*/attribute', async (route) => {
@@ -117,6 +135,7 @@ test('an already-blamed defect offers re-attribution', async ({ page }) => {
 
   await page.goto('/defects')
   const row = page.locator('li.card', { hasText: 'the rail clips' })
+  await expand(row, 2)
   await row.getByTestId('defect-more-2').click()
   await page.getByRole('menuitem', { name: 'Re-attribute' }).click()
   await row.getByPlaceholder('feature id').fill('274')
@@ -137,10 +156,9 @@ test('attributing on the unattributed scope drops the row and the count',
       const url = new URL(route.request().url())
       if (route.request().method() !== 'GET') return route.fallback()
       if (url.searchParams.get('scope') === 'unattributed') {
-        return route.fulfill({
-          json: { items: blamed ? [] : [LOOSE], scope: 'unattributed' } })
+        return route.fulfill({ json: envelope(blamed ? [] : [LOOSE], 'unattributed') })
       }
-      return route.fulfill({ json: { items: [LOOSE], scope: 'all' } })
+      return route.fulfill({ json: envelope([LOOSE], 'all') })
     })
     await page.route('**/api/defects/*/attribute', async (route) => {
       blamed = true
@@ -149,9 +167,10 @@ test('attributing on the unattributed scope drops the row and the count',
     })
 
     await page.goto('/defects?scope=unattributed')
-    await expect(page.getByText('1 defect blamed on no feature')).toBeVisible()
+    await expect(page.getByTestId('list-count')).toHaveText('1 of 2 defects')
 
     const row = page.locator('li.card', { hasText: 'the gutter folds' })
+    await expand(row, 1)
     await row.getByTestId('defect-more-1').click()
     await page.getByRole('menuitem', { name: 'Attribute' }).click()
     await row.getByPlaceholder('feature id').fill('274')
@@ -183,7 +202,7 @@ test('reopening asks first, and declining writes nothing', async ({ page }) => {
                           missing_check: 'test_badge_matches_state' })
   await page.route('**/api/defects*', (route) => {
     if (route.request().method() !== 'GET') return route.fallback()
-    return route.fulfill({ json: { items: [CLOSED], scope: 'all' } })
+    return route.fulfill({ json: envelope([CLOSED], 'all') })
   })
   const posted = []
   await page.route('**/api/defects/*/reopen', async (route) => {
@@ -193,6 +212,7 @@ test('reopening asks first, and declining writes nothing', async ({ page }) => {
 
   await page.goto('/defects')
   const row = page.locator('li.card', { hasText: 'the badge lies' })
+  await expand(row, 3)
 
   await row.getByRole('button', { name: 'Reopen' }).click()
   // The round it bumps is a figure the feature keeps for good, so it is asked
@@ -217,6 +237,7 @@ test('closing without a check is refused before anything is posted',
 
     await page.goto('/defects')
     const row = page.locator('li.card', { hasText: 'the gutter folds' })
+    await expand(row, 1)
     await row.getByRole('button', { name: 'Close' }).click()
 
     // Nothing to send, so nothing to press: the rule is stated where the

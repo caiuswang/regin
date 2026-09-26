@@ -223,8 +223,8 @@ test('a narrowing does not widen the scope it was applied inside',
     const seen = await stubDefects(page)
 
     await page.goto('/defects?project=7')
-    await expect(page.getByTestId('defects-toolbar')).toBeVisible()
-    await page.getByTestId('defects-sort-dir').click()
+    await expect(page.getByTestId('pipeline-list-toolbar')).toBeVisible()
+    await page.getByTestId('list-sort-dir').click()
 
     await expect(page).toHaveURL(/project=7/)
     await expect.poll(() => last(seen).get('project')).toBe('7')

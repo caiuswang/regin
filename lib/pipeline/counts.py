@@ -19,6 +19,7 @@ from lib.orm import SessionLocal
 from lib.orm.models.defects import Defect
 from lib.orm.models.features import Feature
 from lib.orm.models.tasks import AgentTask
+from lib.tasks import query as task_query
 
 SCOPE_ALL = "all"
 SCOPE_NONE = "none"
@@ -54,7 +55,7 @@ def _scoped(stmt, column, scope):
     return stmt.where(column == scope)
 
 
-def _defects_stmt(scope):
+def defects_stmt(scope):
     stmt = select(func.count(Defect.id)).select_from(Defect)
     if scope == SCOPE_ALL:
         return stmt
@@ -66,14 +67,22 @@ def _defects_stmt(scope):
     return stmt.where(Feature.project_id == scope)
 
 
+def tasks_stmt(scope):
+    """The Tasks tab's population: the same statement the list reports as
+    `population`, so the strip and the toolbar count cannot disagree."""
+    return task_query.population_stmt(
+        select(func.count(AgentTask.id)),
+        scope if isinstance(scope, int) else None, scope == SCOPE_NONE)
+
+
+def features_stmt(scope):
+    return _scoped(select(func.count(Feature.id)), Feature.project_id, scope)
+
+
 def counts(scope: int | str = SCOPE_ALL) -> dict[str, int]:
     with SessionLocal() as session:
         return {
-            "tasks": session.exec(_scoped(
-                select(func.count(AgentTask.id)), AgentTask.project_id,
-                scope)).one(),
-            "features": session.exec(_scoped(
-                select(func.count(Feature.id)), Feature.project_id,
-                scope)).one(),
-            "defects": session.exec(_defects_stmt(scope)).one(),
+            "tasks": session.exec(tasks_stmt(scope)).one(),
+            "features": session.exec(features_stmt(scope)).one(),
+            "defects": session.exec(defects_stmt(scope)).one(),
         }

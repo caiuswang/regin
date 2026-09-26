@@ -35,8 +35,12 @@ function runMark() {
 
 async function gotoTasks(page) {
   await page.goto('/tasks')
-  await page.getByTestId('task-search').fill(runMark())
-  await page.getByTestId('task-search').press('Enter')
+  await page.getByTestId('list-search').fill(runMark())
+  await page.getByTestId('list-search').press('Enter')
+  // A reload keeps the previous rows on screen (dimmed) until it lands, so
+  // wait for the searched read itself rather than for any rows at all.
+  await expect(page).toHaveURL(new RegExp(`q=${runMark()}`))
+  await expect(page.locator('[data-testid="task-list"][aria-busy="true"]')).toHaveCount(0)
 }
 
 async function capture(page, title) {
@@ -94,7 +98,7 @@ test.describe('/tasks — delete', () => {
     await page.getByTestId('task-bulk-delete').click()
     await confirmButton(page, 'Delete tasks').click()
 
-    await expect(page.getByTestId('tasks-empty')).toBeVisible()
+    await expect(page.getByTestId('list-status')).toHaveAttribute('data-state', /^(empty|no-match)$/)
     await expect(page.locator('.task-row')).toHaveCount(0)
   })
 

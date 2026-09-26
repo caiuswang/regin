@@ -12,6 +12,7 @@ from flask import Blueprint, jsonify, request
 from lib.auth import require_auth
 from lib.pipeline import counts as counts_module
 from lib.pipeline import projects as projects_module
+from lib.utils.pagination import clamp_page, clamp_size
 
 pipeline_bp = Blueprint("pipeline", __name__)
 
@@ -32,8 +33,13 @@ def api_pipeline_counts():
 @pipeline_bp.route("/api/pipeline/projects", methods=["GET"])
 @require_auth
 def api_pipeline_projects():
-    items = projects_module.summaries()
-    return jsonify({"items": items, "total": len(items)})
+    try:
+        filters = projects_module.parse_filters(request.args)
+    except projects_module.ProjectFilterRejected as exc:
+        return jsonify({"error": str(exc), "field": exc.field}), 400
+    return jsonify(projects_module.listing(
+        filters, page=clamp_page(request.args.get("page")),
+        size=clamp_size(request.args.get("size"))))
 
 
 @pipeline_bp.route("/api/pipeline/projects/<scope>", methods=["GET"])

@@ -25,8 +25,9 @@ from lib.orm import SessionLocal
 from lib.orm.models import Repo
 from lib.orm.models.defects import Defect
 from lib.orm.models.features import Feature
-from lib.orm.models.tasks import AgentTask, TASK_STATUS_ARCHIVED
+from lib.orm.models.tasks import AgentTask
 from lib.pipeline.counts import SCOPE_NONE
+from lib.tasks import query as task_query
 from lib.utils import pagination as offset
 
 log = get_activity_logger("features")
@@ -82,6 +83,7 @@ class Summary:
     by_status: dict = field(default_factory=dict)
     defects_total: int = 0
     defects_open: int = 0
+    last_activity: Optional[str] = None
 
     @property
     def scope(self) -> str:
@@ -103,13 +105,16 @@ class Summary:
                       "by_status": dict(self.by_status)},
             "defects": {"total": self.defects_total,
                         "open": self.defects_open},
+            "last_activity": self.last_activity,
         }
 
 
 def _task_counts(session) -> dict[Optional[int], dict[str, int]]:
-    rows = session.exec(
-        select(AgentTask.project_id, AgentTask.status, func.count(AgentTask.id))
-        .group_by(AgentTask.project_id, AgentTask.status)).all()
+    # The Tasks tab's own population predicate, so a row here and the tab
+    # strip under the same `?project=` count the same tasks.
+    rows = session.exec(task_query.population_stmt(
+        select(AgentTask.project_id, AgentTask.status, func.count(AgentTask.id)),
+        None, False).group_by(AgentTask.project_id, AgentTask.status)).all()
     out: dict[Optional[int], dict[str, int]] = {}
     for project_id, status, n in rows:
         out.setdefault(project_id, {})[status] = int(n)
@@ -130,6 +135,27 @@ def _defect_counts(session) -> dict[Optional[int], tuple[int, int]]:
     return out
 
 
+def _latest(session) -> dict[Optional[int], str]:
+    """The newest write under each project: a task touched, a defect touched,
+    a feature declared. Read, not stored, like every other figure here."""
+    out: dict[Optional[int], str] = {}
+    reads = (
+        select(AgentTask.project_id, func.max(AgentTask.updated_at))
+        .group_by(AgentTask.project_id),
+        select(Feature.project_id, func.max(Feature.created_at))
+        .group_by(Feature.project_id),
+        select(Feature.project_id, func.max(Defect.updated_at))
+        .select_from(Defect)
+        .outerjoin(Feature, Defect.feature_id == Feature.id)
+        .group_by(Feature.project_id),
+    )
+    for stmt in reads:
+        for project_id, when in session.exec(stmt).all():
+            if when and str(when) > out.get(project_id, ""):
+                out[project_id] = str(when)
+    return out
+
+
 def _collect() -> dict[Optional[int], Summary]:
     """Every scope that is registered or has a row, plus "No project"."""
     stages = feature_index.stage_counts_by_project()
@@ -137,6 +163,7 @@ def _collect() -> dict[Optional[int], Summary]:
         repos = {r.id: r for r in session.exec(select(Repo)).all()}
         tasks = _task_counts(session)
         defects = _defect_counts(session)
+        latest = _latest(session)
 
     active = {rid for rid, r in repos.items() if r.is_active}
     ids = active | set(stages) | set(tasks) | set(defects)
@@ -152,7 +179,8 @@ def _collect() -> dict[Optional[int], Summary]:
             path=repo.path if repo else None,
             registered=pid in active,
             by_stage=stages.get(pid, {}), by_status=tasks.get(pid, {}),
-            defects_total=total, defects_open=open_count)
+            defects_total=total, defects_open=open_count,
+            last_activity=latest.get(pid))
     return out
 
 
@@ -160,15 +188,100 @@ def _work(summary: Summary) -> int:
     return sum(summary.by_stage.values()) + sum(summary.by_status.values())
 
 
-def summaries() -> list[dict]:
-    """Projects with work first, then by name; "No project" always last."""
+STATUSES = (STATUS_EMPTY, STATUS_PLANNED, STATUS_ACTIVE, STATUS_COMPLETED)
+
+#: Sort key -> (how a summary ranks under it, the direction it means by
+#: default). A gap — no activity yet — sorts last in both directions.
+SORT_KEYS = {
+    "activity": (lambda s: s.last_activity or "", "desc"),
+    "name": (lambda s: _label(s).lower(), "asc"),
+    "progress": (lambda s: _progress(s), "desc"),
+    "open_defects": (lambda s: s.defects_open, "desc"),
+}
+DEFAULT_SORT = "activity:desc"
+
+
+class ProjectFilterRejected(ValueError):
+    """An unknown facet value — a 400 naming the parameter."""
+
+    def __init__(self, message: str, field: str) -> None:
+        super().__init__(message)
+        self.field = field
+
+
+def _progress(summary: Summary) -> float:
+    d = summary.to_dict()["progress"]
+    return d["done"] / d["live"] if d["live"] else -1.0
+
+
+def parse_sort(raw) -> str:
+    key, _, direction = (raw or "").strip().partition(":")
+    key = key.strip().lower()
+    if key not in SORT_KEYS:
+        return DEFAULT_SORT
+    direction = direction.strip().lower()
+    return f"{key}:{direction if direction in ('asc', 'desc') else SORT_KEYS[key][1]}"
+
+
+def parse_filters(args) -> dict:
+    status = (args.get("status") or "").strip()
+    if status and status not in STATUSES:
+        raise ProjectFilterRejected(f"unknown status: {status}", "status")
+    return {"q": (args.get("q") or "").strip()[:200], "status": status,
+            "sort": parse_sort(args.get("sort"))}
+
+
+def _label(summary: Summary) -> str:
+    """What the row renders and what search matches — one reading of a name."""
+    if summary.name:
+        return summary.name
+    return ("No project" if summary.project_id is None
+            else f"project #{summary.project_id}")
+
+
+def _matches(summary: Summary, filters: dict) -> bool:
+    if filters["status"] and status_of(summary.by_stage) != filters["status"]:
+        return False
+    term = filters["q"].lower()
+    if not term:
+        return True
+    return term in f"{_label(summary)}\n{summary.description or ''}".lower()
+
+
+def _sorted(rows: list[Summary], sort: str) -> list[Summary]:
+    key, _, direction = sort.partition(":")
+    rank = SORT_KEYS[key][0]
+    # Gaps last whichever way the column runs: a project nothing has touched is
+    # not the least recently touched.
+    present = [s for s in rows if key != "activity" or s.last_activity]
+    gaps = [s for s in rows if key == "activity" and not s.last_activity]
+    present.sort(key=lambda s: (rank(s), -(s.project_id or 0)),
+                 reverse=direction == "desc")
+    return present + sorted(gaps, key=lambda s: (s.name or "").lower())
+
+
+def listing(filters: dict, *, page: int, size: int) -> dict:
+    """One page of projects, filtered and sorted here, never in the browser.
+
+    The population is a handful of repos, so the rollup is built in full and
+    narrowed in Python; what matters is that the narrowing is the server's.
+    "No project" stays last under every sort: it is a bucket, not a project.
+    """
     collected = _collect()
     none = collected.pop(None)
-    ordered = sorted(collected.values(),
-                     key=lambda s: (-_work(s), (s.name or "").lower(),
-                                    s.project_id))
-    log.read("project_summaries_read", count=len(ordered))
-    return [s.to_dict() for s in [*ordered, none]]
+    population = len(collected) + 1
+    ordered = [*_sorted(list(collected.values()), filters["sort"]), none]
+    matched = [s for s in ordered if _matches(s, filters)]
+    start = page * size
+    items = [s.to_dict() for s in matched[start:start + size]]
+    log.read("project_summaries_read", count=len(items), total=len(matched))
+    envelope = offset.Page(
+        items=items, total=len(matched), page=page, size=size,
+        has_next=start + len(items) < len(matched),
+        has_prev=page > 0).to_envelope()
+    return offset.list_page(
+        envelope, population=population, sort=filters["sort"],
+        filters={"q": filters["q"], "status": filters["status"]})
 
 
 def _scoped(stmt, column, scope):
@@ -192,10 +305,12 @@ def _open_defects(session, scope) -> list[dict]:
 
 
 def _recent_tasks(session, scope) -> list[dict]:
-    stmt = (select(AgentTask.id, AgentTask.title, AgentTask.status,
-                   AgentTask.priority, AgentTask.feature_id,
-                   AgentTask.updated_at)
-            .where(AgentTask.status != TASK_STATUS_ARCHIVED))
+    # The same population the panel's task counts and the Tasks tab read, so
+    # the tile and the list under it describe the same tasks.
+    stmt = task_query.population_stmt(
+        select(AgentTask.id, AgentTask.title, AgentTask.status,
+               AgentTask.priority, AgentTask.feature_id, AgentTask.updated_at),
+        None, False)
     stmt = _scoped(stmt, AgentTask.project_id, scope)
     rows = session.exec(stmt.order_by(AgentTask.updated_at.desc(),
                                       AgentTask.id.desc())

@@ -104,7 +104,7 @@ test.beforeEach(async ({ page }) => {
 // moment `goto` resolves — a chord pressed before the filter bar renders lands
 // on nothing at all.
 async function listReady(page) {
-  await expect(page.getByTestId('task-search')).toBeVisible()
+  await expect(page.getByTestId('list-search')).toBeVisible()
 }
 
 // ── the identifier ───────────────────────────────────────────
@@ -175,13 +175,13 @@ test('search filters on the server and the total follows', async ({ page }) => {
     if (u.pathname === '/api/tasks') requests.push(u.searchParams.get('q'))
   })
 
-  await page.getByTestId('task-search').fill(`${SFX}-alpha`)
+  await page.getByTestId('list-search').fill(`${SFX}-alpha`)
   // Enter commits the search. There is no debounce to wait out: a clock
   // deciding when a search happened is exactly what `q` living in the URL
   // rules out — it would be one history write per keystroke.
-  await page.getByTestId('task-search').press('Enter')
+  await page.getByTestId('list-search').press('Enter')
   await expect(page.locator('[data-testid="task-row"]')).toHaveCount(1)
-  await expect(page.getByTestId('task-total')).toHaveText('1 task')
+  await expect(page.getByTestId('list-count')).toHaveText(/^1 of [0-9]+ tasks?$/)
   // The narrowing was a query, not an Array.filter over the loaded page.
   expect(requests).toContain(`${SFX}-alpha`)
 })
@@ -200,12 +200,12 @@ test('a priority filter narrows the list and the reset clears it', async ({ page
   await forceFlat(page)
   await page.goto('/tasks')
   await listReady(page)
-  await page.getByTestId('task-filter-priority').click()
+  await page.getByTestId('list-facet-priority').click()
   await page.getByRole('option', { name: 'Urgent' }).click()
   await expect(page.locator('[data-testid="task-row"]',
     { hasText: `${SFX}-beta` })).toHaveCount(0)
 
-  await page.getByTestId('task-filters-reset').click()
+  await page.getByTestId('list-clear').click()
   await expect(page.locator('[data-testid="task-row"]',
     { hasText: `${SFX}-beta` })).toHaveCount(1)
 })
@@ -290,7 +290,7 @@ test('grouping never contradicts an active filter on the same axis',
     await expect(page.locator('section[data-testid^="task-group-"]'))
       .not.toHaveCount(1)
 
-    await page.getByTestId('task-filter-status').click()
+    await page.getByTestId('list-facet-status').click()
     await page.getByRole('option', { name: 'Ideas' }).click()
     // A chip reading "Ideas" above an Armed group full of rows is two
     // contradictory claims about scope on one screen.
@@ -350,7 +350,7 @@ test('the project picker offers the registered repos and nothing else',
     await listReady(page)
 
     const repos = (await api(page, 'GET', '/repos')).body.repos
-    await page.getByTestId('task-filter-project').click()
+    await page.getByTestId('pipeline-project').click()
     for (const repo of repos) {
       await expect(page.getByRole('option', { name: repo.name, exact: true }))
         .toBeVisible()
@@ -455,15 +455,15 @@ test('c opens the composer and / focuses the search', async ({ page }) => {
   await expect(page.locator('#task-title')).toHaveCount(0)
 
   await page.keyboard.press('/')
-  await expect(page.getByTestId('task-search')).toBeFocused()
+  await expect(page.getByTestId('list-search')).toBeFocused()
 })
 
 test('a chord typed into a field is text, not a command', async ({ page }) => {
   await forceFlat(page)
   await page.goto('/tasks')
   await listReady(page)
-  await page.getByTestId('task-search').fill('')
-  await page.getByTestId('task-search').press('c')
+  await page.getByTestId('list-search').fill('')
+  await page.getByTestId('list-search').press('c')
   await expect(page.locator('#task-title')).toHaveCount(0)
-  await expect(page.getByTestId('task-search')).toHaveValue('c')
+  await expect(page.getByTestId('list-search')).toHaveValue('c')
 })

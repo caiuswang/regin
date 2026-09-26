@@ -1,4 +1,4 @@
-import { onBeforeUnmount, onMounted } from 'vue'
+import { onActivated, onBeforeUnmount, onDeactivated, onMounted } from 'vue'
 
 // A chord typed into a field is text, not a command. Checked against the event
 // target rather than a flag, so a shortcut can never fire out of a composer
@@ -28,6 +28,14 @@ export function useTaskShortcuts(handlers) {
     handler(event)
   }
 
-  onMounted(() => window.addEventListener('keydown', onKeydown))
-  onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
+  // The Pipeline tabs are kept alive, so a tab you left is deactivated, not
+  // unmounted — its chords must stop with it, or `c` on Features also opens
+  // the Tasks composer behind it.
+  let bound = false
+  const bind = () => { if (!bound) window.addEventListener('keydown', onKeydown); bound = true }
+  const unbind = () => { window.removeEventListener('keydown', onKeydown); bound = false }
+  onMounted(bind)
+  onActivated(bind)
+  onDeactivated(unbind)
+  onBeforeUnmount(unbind)
 }

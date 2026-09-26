@@ -44,12 +44,8 @@ export function storedScope() {
   }
 }
 
-/**
- * Remember a scope as the one a bare path restores to. Exported because the
- * Tasks toolbar writes `?project=` too, and a second copy of this key is how
- * the tab strip and the list would come to restore different scopes.
- */
-export function persistScope(scope) {
+/** Remember a scope as the one a bare path restores to. */
+function persistScope(scope) {
   try {
     if (!scope || scope === SCOPE_ALL) localStorage.removeItem(STORAGE_KEY)
     else localStorage.setItem(STORAGE_KEY, scope)
@@ -72,7 +68,6 @@ export function usePipelineScope() {
     // A scope change is not a place you go back to; it replaces the position
     // you are already at, and resets whatever page the old scope was on.
     delete query.page
-    delete query.cursor
     router.replace({ path: route.path, query })
   }
 

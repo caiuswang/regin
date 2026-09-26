@@ -1,6 +1,5 @@
-import { ref } from 'vue'
+import { computed, ref, shallowRef } from 'vue'
 import api from '../api'
-import { useCursor } from './useCursor.js'
 import { useFlash } from './useFlash.js'
 import { STATUS_FILTERS } from '../utils/taskMeta.js'
 
@@ -45,19 +44,70 @@ export function draftBody(draft) {
 }
 
 /**
- * useTaskFeed — one keyset-paginated slice of the task list.
+ * useTaskFeed — one group's slice of the task list, paged by offset.
  *
- * `scope` is a getter for the extra params that pin this feed to one group
- * (`{ status: 'idea' }`). A grouped list mounts one feed per group rather than
- * loading everything and partitioning it in the browser: the group that is
- * collapsed costs nothing, and the one that is open pages independently.
+ * A grouped list mounts one feed per group rather than loading everything and
+ * partitioning it in the browser: a collapsed group costs nothing, and an open
+ * one pages independently. "Load more" appends `page + 1` of the same offset
+ * scheme the flat list pages with, so there is one paging contract.
  */
 export function useTaskFeed(params, scope = () => ({}), size = 50) {
-  return useCursor({
-    path: '/tasks',
-    buildQuery: () => ({ ...params.value, ...scope() }),
-    size,
-  })
+  const items = shallowRef([])
+  const loading = ref(false)
+  const loadingMore = ref(false)
+  const error = ref(null)
+  const page = ref(0)
+  const total = ref(0)
+  const hasNext = computed(() => items.value.length < total.value)
+  // A generation per load. `loadMore` reads the generation it extends and
+  // never bumps it, so it can neither cancel a load in flight nor append onto
+  // a list a newer load replaced.
+  let generation = 0
+
+  function qs(index) {
+    const filters = { ...params.value, ...scope() }
+    const out = new URLSearchParams(
+      Object.entries(filters).filter(([, v]) => v !== '' && v != null))
+    out.set('page', String(index))
+    out.set('size', String(size))
+    return out.toString()
+  }
+
+  async function load() {
+    const mine = ++generation
+    loading.value = true
+    error.value = null
+    try {
+      const data = await api.get(`/tasks?${qs(0)}`)
+      if (mine !== generation) return
+      items.value = data.items || []
+      total.value = data.pagination?.total ?? items.value.length
+      page.value = 0
+    } catch (e) {
+      if (mine === generation) error.value = e?.message || String(e)
+    } finally {
+      if (mine === generation) loading.value = false
+    }
+  }
+
+  async function loadMore() {
+    if (!hasNext.value || loadingMore.value || loading.value) return
+    const extends_ = generation
+    loadingMore.value = true
+    try {
+      const data = await api.get(`/tasks?${qs(page.value + 1)}`)
+      if (extends_ !== generation) return
+      items.value = [...items.value, ...(data.items || [])]
+      total.value = data.pagination?.total ?? total.value
+      page.value += 1
+    } catch (e) {
+      if (extends_ === generation) error.value = e?.message || String(e)
+    } finally {
+      loadingMore.value = false
+    }
+  }
+
+  return { items, loading, loadingMore, error, hasNext, total, load, loadMore }
 }
 
 /**
@@ -71,14 +121,20 @@ export function useTaskCounts(params) {
   const error = ref('')
   const loading = ref(false)
 
+  let issued = 0
+
   async function load() {
+    const mine = ++issued
     loading.value = true
     try {
       const qs = new URLSearchParams(
         Object.entries(params.value).filter(([, v]) => v !== '' && v != null))
-      counts.value = await api.get(`/tasks/counts?${qs}`)
+      const body = await api.get(`/tasks/counts?${qs}`)
+      if (mine !== issued) return
+      counts.value = body
       error.value = ''
     } catch (e) {
+      if (mine !== issued) return
       // The counts are what build the group headers, so nulling them silently
       // rendered grouped mode as an empty page that claimed nothing was wrong.
       // The last good counts stay, and the failure becomes a value the list

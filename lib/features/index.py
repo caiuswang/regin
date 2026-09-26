@@ -89,6 +89,7 @@ class Page:
     """
 
     items: list
+    #: The population under the page's project scope — never the match.
     total: int
     coverage: cost_module.Coverage
     unattributed_defects: int
@@ -99,16 +100,20 @@ class Page:
     page: int = 0
     size: int = offset.DEFAULT_PAGE_SIZE
 
+    sort: str = ""
+    filters: Optional[dict] = None
+
     def to_dict(self) -> dict:
         body = offset.Page(
             items=[row.to_dict() for row in self.items], total=self.matched,
             page=self.page, size=self.size,
             has_next=(self.page + 1) * self.size < self.matched,
             has_prev=self.page > 0).to_envelope()
-        body.update({"total": self.total,
-                     "coverage": self.coverage.to_dict(),
-                     "unattributed_defects": self.unattributed_defects})
-        return body
+        return offset.list_page(
+            body, population=self.total, sort=self.sort,
+            filters=self.filters,
+            extras={"coverage": self.coverage.to_dict(),
+                    "unattributed_defects": self.unattributed_defects})
 
 
 #: The table the page's rows come from. Named because "the population is the
@@ -234,13 +239,11 @@ rows AS (
 
 # `matched` rides the page's own statement as a window function — evaluated
 # over the filtered set before LIMIT — so the filtered total costs no second
-# read while there are rows to carry it. `population` is the counter beside
-# the controls, and describes the table whatever the filters say.
-_OUTER = f"""
+# read while there are rows to carry it.
+_OUTER = """
 SELECT id, title, origin, external_ref, stage, rounds, sessions, tasks,
        cost_usd, no_usage, total_defects, open_defects, escapes, activity,
-       COUNT(*) OVER () AS matched,
-       (SELECT COUNT(*) FROM {ROW_SOURCE}) AS population
+       COUNT(*) OVER () AS matched
 FROM rows"""
 
 _CTES = (f"WITH {_LANE},{_ATTRIBUTED},{_SESSION_FACTS},{_DEFECT_FACTS},"
@@ -361,7 +364,7 @@ def _row_from(record) -> FeatureRow:
     """One database record as the index renders it."""
     (feature_id, title, origin, external_ref, stage, rounds, sessions, tasks,
      cost_usd, no_usage, total, open_count, escapes, activity,
-     _matched, _population) = record
+     _matched) = record
     return FeatureRow(
         id=feature_id, title=title, origin=origin, external_ref=external_ref,
         stage=stage,
@@ -401,8 +404,9 @@ def page(q: str = "", *, filters: Optional[dict] = None,
         rows = session.exec(text(query_sql(spec)).bindparams(**binds)).all()
 
     items = [_row_from(record) for record in rows]
-    matched = int(rows[0][-2]) if rows else _matched_total(spec)
-    population = rows[0][-1] if rows else _population_total()
+    matched = int(rows[0][-1]) if rows else _matched_total(spec)
+    population = _population_total(spec)
+    sort_key, sort_dir = parse_sort(spec.get("sort", ""))
 
     log.read("feature_index_read", count=len(items), q=spec["q"],
              page=page_index, size=size)
@@ -413,7 +417,11 @@ def page(q: str = "", *, filters: Optional[dict] = None,
                 # of one predicate is how a header and the page it links to
                 # come to report different numbers.
                 unattributed_defects=len(defect_store.unattributed()),
-                matched=matched, page=page_index, size=size)
+                matched=matched, page=page_index, size=size,
+                sort=f"{sort_key}:{sort_dir.lower()}",
+                filters={"q": spec["q"], "stage": spec["stage"],
+                         "project_id": "none" if spec["unassigned"]
+                         else spec["project_id"]})
 
 
 def _matched_total(spec: dict) -> int:
@@ -432,14 +440,18 @@ def _matched_total(spec: dict) -> int:
     return int(matched[0]) if matched else 0
 
 
-def _population_total() -> int:
-    """The scalar the row loop would have carried, when a search matched
-    nothing — the counter describes the population, so it survives a query
-    that returned no rows."""
+def _population_total(spec: dict) -> int:
+    """The unnarrowed count under the page's project scope only — the same
+    predicate `lib.pipeline.counts` counts the Features tab with, so the
+    toolbar and the tab strip cannot disagree."""
+    scope = {**NO_FILTERS, "project_id": spec["project_id"],
+             "unassigned": spec["unassigned"]}
+    where, binds = _where(scope)
     with SessionLocal() as session:
-        population = session.exec(
-            text(f"SELECT COUNT(*) FROM {ROW_SOURCE}")).first()
-    return population[0] if population else 0
+        population = session.exec(text(
+            f"SELECT COUNT(*) FROM {ROW_SOURCE}{where}"
+        ).bindparams(**binds)).first()
+    return int(population[0]) if population else 0
 
 
 def stage_counts_by_project() -> dict[Optional[int], dict[str, int]]:

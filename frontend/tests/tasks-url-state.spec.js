@@ -47,11 +47,16 @@ function stubFeed(page, { counts = null, rows = taskRows(3) } = {}) {
     const url = new URL(route.request().url())
     asked.push(url)
     const status = url.searchParams.get('status')
+    const items = status === 'done' ? rows.slice(0, 2) : rows
     return route.fulfill({
       status: 200, contentType: 'application/json',
       body: JSON.stringify({
-        items: status === 'done' ? rows.slice(0, 2) : rows,
-        pagination: { next_cursor: null, size: 50, has_next: false },
+        items,
+        pagination: { total: items.length, page: 0, size: 50,
+                      has_next: false, has_prev: false },
+        population: rows.length,
+        applied: { sort: url.searchParams.get('sort') || 'created:desc', filters: {} },
+        extras: { counts: body },
       }),
     })
   })
@@ -93,17 +98,17 @@ test.beforeEach(async ({ page }) => {
 test('test_task_filters_round_trip_through_url', async ({ page }) => {
   const asked = stubFeed(page)
   await page.goto('/tasks')
-  await expect(page.getByTestId('task-filter-status')).toBeVisible()
+  await expect(page.getByTestId('list-facet-status')).toBeVisible()
 
-  await choose(page, 'task-filter-status', 'Done')
-  await choose(page, 'task-filter-priority', 'High')
-  await choose(page, 'task-sort', 'Recently updated')
+  await choose(page, 'list-facet-status', 'Done')
+  await choose(page, 'list-facet-priority', 'High')
+  await choose(page, 'list-sort', 'Updated')
   await choose(page, 'task-group', 'No grouping')
 
   // Every control is in the URL, so the screen is a link.
   await expect(page).toHaveURL(/status=done/)
   await expect(page).toHaveURL(/priority=high/)
-  await expect(page).toHaveURL(/sort=updated_desc/)
+  await expect(page).toHaveURL(/sort=updated(%3A|:)desc/)
   await expect(page).toHaveURL(/group=none/)
 
   const shared = page.url()
@@ -113,16 +118,16 @@ test('test_task_filters_round_trip_through_url', async ({ page }) => {
     return last && [last.searchParams.get('status'),
                     last.searchParams.get('priority'),
                     last.searchParams.get('sort')].join('|')
-  }).toBe('done|high|updated_desc')
+  }).toBe('done|high|updated:desc')
 
   // Opening that link in a fresh tab shows the same controls and the same rows.
   const fresh = await page.context().newPage()
   stubFeed(fresh)
   await stubShell(fresh)
   await fresh.goto(shared)
-  await expect(value(fresh, 'task-filter-status')).toHaveText('Done')
-  await expect(value(fresh, 'task-filter-priority')).toHaveText('High')
-  await expect(value(fresh, 'task-sort')).toHaveText('Recently updated')
+  await expect(value(fresh, 'list-facet-status')).toHaveText('Done')
+  await expect(value(fresh, 'list-facet-priority')).toHaveText('High')
+  await expect(value(fresh, 'list-sort')).toHaveText('Updated')
   await expect(fresh.getByTestId('task-list').getByTestId('task-row'))
     .toHaveCount(2)
   await fresh.close()
@@ -138,7 +143,7 @@ test('test_bare_path_rewrites_stored_filters_into_url', async ({ page }) => {
   await page.goto('/tasks')
   // Restored AND stated: a filtered list under a bare URL is not linkable.
   await expect(page).toHaveURL(/status=done/)
-  await expect(value(page, 'task-filter-status')).toHaveText('Done')
+  await expect(value(page, 'list-facet-status')).toHaveText('Done')
   await expect(page.getByTestId('task-list').getByTestId('task-row'))
     .toHaveCount(2)
 
@@ -157,10 +162,10 @@ test('the URL wins over the stored value, and an illegal one is dropped',
     stubFeed(page)
 
     await page.goto('/tasks?status=idea')
-    await expect(value(page, 'task-filter-status')).toHaveText('Ideas')
+    await expect(value(page, 'list-facet-status')).toHaveText('Ideas')
     // An option that no longer exists falls back to the default and stops
     // being offered again.
-    await expect(value(page, 'task-sort')).toHaveText('Newest')
+    await expect(value(page, 'list-sort')).toHaveText('Created')
     await expect(page).not.toHaveURL(/by_vibes/)
     expect(await page.evaluate(
       () => localStorage.getItem('regin.tasks.sort'))).toBeNull()
@@ -170,11 +175,11 @@ test('a filter change replaces history rather than stacking it',
   async ({ page }) => {
     stubFeed(page)
     await page.goto('/tasks?group=none')
-    await expect(page.getByTestId('task-filter-status')).toBeVisible()
+    await expect(page.getByTestId('list-facet-status')).toBeVisible()
 
-    await choose(page, 'task-filter-status', 'Done')
+    await choose(page, 'list-facet-status', 'Done')
     await expect(page).toHaveURL(/status=done/)
-    await choose(page, 'task-filter-priority', 'High')
+    await choose(page, 'list-facet-priority', 'High')
     await expect(page).toHaveURL(/priority=high/)
 
     // One Back leaves the page, not the last two controls.
@@ -217,15 +222,16 @@ test('test_counts_failure_does_not_blank_the_list — in grouped mode',
       route.fulfill({ status: 200, contentType: 'application/json',
                       body: JSON.stringify({
                         items: taskRows(3),
-                        pagination: { next_cursor: null, size: 50,
-                                      has_next: false },
+                        pagination: { total: 3, page: 0, size: 50,
+                                      has_next: false, has_prev: false },
+                        population: 3,
                       }) }))
 
     await page.goto('/tasks')
     await expect(page.getByTestId('task-counts-error')).toBeVisible()
     await expect(page.getByTestId('task-list')).toBeVisible()
     await expect(page.getByTestId('task-row')).toHaveCount(3)
-    await expect(page.getByTestId('tasks-empty')).toHaveCount(0)
+    await expect(page.getByTestId('list-status')).toHaveCount(0)
   })
 
 test('collapsing a group withdraws its rows from select-all',
@@ -289,7 +295,7 @@ test('a filter change costs each open group exactly one request', async ({ page 
   await expect(page.getByTestId('task-group-done')).toBeVisible()
 
   asked.length = 0
-  await choose(page, 'task-filter-priority', 'High')
+  await choose(page, 'list-facet-priority', 'High')
   await expect(page).toHaveURL(/priority=high/)
 
   // Two open groups → two page requests and one counts request. The group
@@ -311,7 +317,9 @@ test('restoring a client-side axis alone does not re-request the page',
     await page.goto('/tasks')
     await expect(page).toHaveURL(/group=none/)
     await expect(page.getByTestId('task-list')).toBeVisible()
-    await expect.poll(() => countsQueries(asked).length).toBe(1)
+    // Ungrouped, the page's own read carries the counts: one request, total.
+    await expect.poll(() => asked.length).toBe(1)
+    expect(countsQueries(asked)).toHaveLength(0)
   })
 
 test('a bare /tasks reached again from the sidebar still restores its filters',
@@ -332,7 +340,7 @@ test('a bare /tasks reached again from the sidebar still restores its filters',
     await page.locator('nav.sb-nav .sb-item', { hasText: 'Pipeline' }).click()
 
     await expect(page).toHaveURL(/status=done/)
-    await expect(value(page, 'task-filter-status')).toHaveText('Done')
+    await expect(value(page, 'list-facet-status')).toHaveText('Done')
   })
 
 test('an arrival scope suppresses a stored narrowing, and leaving restores it',

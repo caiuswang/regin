@@ -80,6 +80,28 @@ class Page:
         }
 
 
+def list_page(envelope: dict, *, population: int, sort: str,
+              filters: dict | None = None,
+              extras: dict | None = None) -> dict:
+    """The one Pipeline list contract, over an offset ``Page`` envelope.
+
+    ``population`` is the unfiltered count under the caller's project scope,
+    so a toolbar can say "N of M" without a second request. ``applied`` echoes
+    what the server actually used: a sort key it fell back on must render as
+    the fallback, not as the key that was asked for.
+    """
+    body = dict(envelope)
+    body['population'] = int(population or 0)
+    body['applied'] = {
+        'sort': sort,
+        'filters': {k: ('1' if v is True else str(v))
+                    for k, v in (filters or {}).items()
+                    if v is not None and v != '' and v is not False},
+    }
+    body['extras'] = extras or {}
+    return body
+
+
 def paginate_query_stmt(session, stmt, page: int, size: int,
                         row_transform=None, row_to_dict=None) -> Page:
     """Offset-limit pagination using a SQLAlchemy Select + SQLModel Session.

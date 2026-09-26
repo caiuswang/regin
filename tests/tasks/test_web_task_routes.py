@@ -102,17 +102,14 @@ def test_list_is_newest_first_and_pages(flask_client):
     first = flask_client.get("/api/tasks?size=2").get_json()
     assert [t["title"] for t in first["items"]] == ["idea 4", "idea 3"]
     assert first["pagination"]["has_next"] is True
+    assert first["pagination"]["total"] == 5
 
-    second = flask_client.get(
-        f"/api/tasks?size=2&cursor={first['pagination']['next_cursor']}"
-    ).get_json()
+    second = flask_client.get("/api/tasks?size=2&page=1").get_json()
     assert [t["title"] for t in second["items"]] == ["idea 2", "idea 1"]
 
-    last = flask_client.get(
-        f"/api/tasks?size=2&cursor={second['pagination']['next_cursor']}"
-    ).get_json()
+    last = flask_client.get("/api/tasks?size=2&page=2").get_json()
     assert [t["title"] for t in last["items"]] == ["idea 0"]
-    assert last["pagination"]["next_cursor"] is None
+    assert last["pagination"]["has_next"] is False
 
 
 def test_status_filter_returns_exactly_the_archived_rows(flask_client):

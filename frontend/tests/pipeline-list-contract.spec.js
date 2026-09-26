@@ -57,11 +57,16 @@ async function stubDefects(page) {
     seen.push(url.searchParams)
     const items = url.searchParams.get('scope') === 'unattributed'
       ? [LOOSE] : [BLAMED, LOOSE]
+    const scope = url.searchParams.get('scope') || 'all'
     return route.fulfill({
       json: {
-        items, scope: url.searchParams.get('scope') || 'all',
+        items,
         pagination: { strategy: 'offset', total: items.length, page: 0,
                       size: 50, has_next: true, has_prev: false },
+        population: 2,
+        applied: { sort: url.searchParams.get('sort') || 'opened:desc',
+                   filters: { scope } },
+        extras: { scope },
       },
     })
   })
@@ -78,7 +83,8 @@ async function stubFeatures(page) {
         items: [FEATURE],
         pagination: { strategy: 'offset', total: 300, page: 0, size: 50,
                       has_next: true, has_prev: true },
-        total: 300, coverage: null, unattributed_defects: 0,
+        population: 300,
+        extras: { coverage: null, unattributed_defects: 0 },
       },
     })
   })
@@ -120,7 +126,7 @@ test('test_filter_change_resets_page_and_replaces_history — defects',
     await page.goto('/defects?page=2')
     await expect.poll(() => last(seen).get('page')).toBe('2')
 
-    await page.getByTestId('defects-status').click()
+    await page.getByTestId('list-facet-status').click()
     await page.getByRole('option', { name: 'Open', exact: true }).click()
 
     await expect(page).toHaveURL(/status=open/)
@@ -136,20 +142,20 @@ test('test_defects_scope_switch_keeps_sort_direction', async ({ page }) => {
 
   // Arrived at directly, the way a link does.
   await page.goto('/defects')
-  await expect(page.getByTestId('defects-toolbar')).toBeVisible()
-  const dirControl = page.getByTestId('defects-sort-dir')
-  const sortControl = page.getByTestId('defects-sort')
-  const allDir = await dirControl.innerText()
+  await expect(page.getByTestId('pipeline-list-toolbar')).toBeVisible()
+  const dirControl = page.getByTestId('list-sort-dir')
+  const sortControl = page.getByTestId('list-sort')
+  await expect(dirControl).toHaveAttribute('aria-label', /Sorted descending/)
+  const allDir = await dirControl.getAttribute('aria-label')
   const allSort = await sortControl.innerText()
-  expect(allDir.trim()).toBe('Newest first')
   expect(last(seen).get('sort')).toBe('opened:desc')
 
   await page.goto('/defects?scope=unattributed')
-  await expect(page.getByTestId('defects-toolbar')).toBeVisible()
+  await expect(page.getByTestId('pipeline-list-toolbar')).toBeVisible()
   // The reported bug: the list reversed, and nothing on screen said it had.
   // So the control has to read the same, and the order it names has to be the
   // order the server was asked for.
-  expect((await dirControl.innerText()).trim()).toBe(allDir.trim())
+  await expect(dirControl).toHaveAttribute('aria-label', allDir)
   expect((await sortControl.innerText()).trim()).toBe(allSort.trim())
   expect(last(seen).get('sort')).toBe('opened:desc')
 })
@@ -161,10 +167,12 @@ test('test_defects_scope_switch_keeps_sort_direction — and a chosen direction 
   // the default.
   const seen = await stubDefects(page)
   await page.goto('/defects?sort=opened:asc')
-  await expect(page.getByTestId('defects-sort-dir')).toHaveText(/Oldest first/)
+  await expect(page.getByTestId('list-sort-dir'))
+    .toHaveAttribute('aria-label', /Sorted ascending/)
 
   await page.getByRole('tab', { name: 'Unattributed' }).click()
   await expect(page).toHaveURL(/scope=unattributed/)
-  await expect(page.getByTestId('defects-sort-dir')).toHaveText(/Oldest first/)
+  await expect(page.getByTestId('list-sort-dir'))
+    .toHaveAttribute('aria-label', /Sorted ascending/)
   await expect.poll(() => last(seen).get('sort')).toBe('opened:asc')
 })

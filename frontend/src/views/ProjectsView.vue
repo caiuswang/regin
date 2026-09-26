@@ -3,41 +3,74 @@
 // progress bar per row. A project is a registered repo; nothing here is
 // stored, every figure is a rollup the tab strip would report under the same
 // `?project=`.
-import { onActivated, ref } from 'vue'
-import api from '../api'
+import { computed, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import Badge from '../components/Badge.vue'
 import Card from '../components/Card.vue'
+import ListStatus from '../components/ListStatus.vue'
+import PageControls from '../components/PageControls.vue'
+import PipelineListToolbar from '../components/PipelineListToolbar.vue'
 import ProjectProgress from '../components/projects/ProjectProgress.vue'
-import { usePipelineHeaderPublisher, usePipelineTabActive } from '../composables/usePipelineHeader'
+import { usePage } from '../composables/usePage'
+import { listStatusState, useListQuery } from '../composables/useListQuery'
+import { useTaskShortcuts } from '../composables/useTaskShortcuts'
 import { OPEN_TASKS_HINT, STATUS_COLOR, STATUS_LABEL, openTasks, projectName }
   from '../utils/projectFormat'
 
-const publish = usePipelineHeaderPublisher()
-const isCurrentTab = usePipelineTabActive()
-const items = ref([])
-const loading = ref(true)
-const error = ref('')
+// `lib/pipeline/projects.py` — STATUSES and SORT_KEYS.
+const STATUS_OPTIONS = [
+  { value: '', label: 'Any status' },
+  ...['in_progress', 'planned', 'completed', 'empty']
+    .map(v => ({ value: v, label: STATUS_LABEL[v] || v })),
+]
+const SORT_OPTIONS = [
+  { value: 'activity', label: 'Last activity' },
+  { value: 'name', label: 'Name' },
+  { value: 'progress', label: 'Progress' },
+  { value: 'open_defects', label: 'Open defects' },
+]
 
-async function load() {
-  error.value = ''
-  try {
-    const body = await api.get('/pipeline/projects')
-    items.value = body.items || []
-    const registered = items.value.filter(p => p.registered).length
-    // A fetch that lands after the reader has opened a panel must not take the
-    // panel's caption over.
-    if (isCurrentTab.value) publish({ subtitle: `${registered} registered project${registered === 1 ? '' : 's'} — progress is read off the stages of the features filed under each.` })
-  } catch (e) {
-    error.value = e?.message || String(e)
-  } finally {
-    loading.value = false
-  }
+const route = useRoute()
+const list = useListQuery({
+  defaults: { q: '', status: '', sort: 'activity:desc' },
+  facets: ['status'],
+})
+const { state } = list
+
+// Every narrowing is the server's (I3): the tab sends q/status/sort/page and
+// renders exactly the rows that come back.
+const {
+  items, loading, error, loaded, population, applied,
+  page, pageSize, total, pageCount, hasNext, hasPrev, load,
+} = usePage({
+  path: '/pipeline/projects',
+  buildQuery: () => ({ q: state.value.q, status: state.value.status,
+                       sort: state.value.sort }),
+})
+const appliedSort = computed(() => applied.value?.sort || state.value.sort)
+const sortKey = computed(() => appliedSort.value.split(':')[0])
+const sortDir = computed(() => (appliedSort.value.split(':')[1] === 'asc' ? 'asc' : 'desc'))
+const status = computed(() => listStatusState({
+  loaded: loaded.value, error: error.value, items: items.value,
+  total: total.value, population: population.value,
+}))
+
+async function reload() {
+  page.value = state.value.page
+  pageSize.value = state.value.size
+  await load()
+}
+// Kept alive by the shell: a write made on another tab only shows here if the
+// list is re-read when the tab comes back, which the path key does.
+watch(() => (route.path === '/projects' ? JSON.stringify(route.query) : null),
+  (key) => { if (key != null) reload() }, { immediate: true })
+
+function gotoPage(index) {
+  list.patch({ page: String(Math.max(0, Math.min(pageCount.value - 1, index))) })
 }
 
-// Kept alive by the shell, so a write made on another tab only shows here if
-// the list is re-read when the tab comes back.
-// `onActivated` also fires on the first mount, so it is the only load hook.
-onActivated(load)
+const toolbar = ref(null)
+useTaskShortcuts({ '/': () => toolbar.value?.focusSearch() })
 
 function isQuiet(p) {
   return p.features.total === 0 && p.tasks.total === 0 && p.defects.total === 0
@@ -46,11 +79,35 @@ function isQuiet(p) {
 
 <template>
   <div class="space-y-4" data-testid="projects-view">
-    <div v-if="loading" class="empty-state">Loading projects…</div>
-    <p v-else-if="error" class="pv-error" role="alert" data-testid="projects-error">
-      Projects could not be read — {{ error }}
-    </p>
-    <Card v-else :no-padding="true">
+    <PipelineListToolbar
+      ref="toolbar"
+      noun="project"
+      :q="state.q"
+      search-label="Search projects by name or description"
+      search-placeholder="Search projects…"
+      :facets="[{ key: 'status', label: 'Filter by status', value: state.status, options: STATUS_OPTIONS }]"
+      :sort-options="SORT_OPTIONS"
+      :sort-key="sortKey"
+      :sort-dir="sortDir"
+      :total="loaded && !error ? total : null"
+      :population="population"
+      :dirty-count="list.dirtyCount.value"
+      @patch="list.patch"
+      @reset="list.reset"
+    />
+    <ListStatus
+      :state="status"
+      noun="project"
+      :total="total"
+      :page="page"
+      :dirty-count="list.dirtyCount.value"
+      :error="error || ''"
+      empty-text="No projects yet. Register a repo with regin add-repo."
+      @retry="load"
+      @clear="list.reset"
+      @first-page="list.patch({ page: '0' })"
+    />
+    <Card v-if="status === 'rows'" :no-padding="true" :class="{ 'pv-busy': loading }">
       <div class="overflow-x-auto">
         <table class="tbl" data-testid="projects-table">
           <thead>
@@ -90,6 +147,20 @@ function isQuiet(p) {
         </table>
       </div>
     </Card>
+    <PageControls
+      v-if="loaded && total > pageSize"
+      :page="page"
+      :page-count="pageCount"
+      :total="total"
+      :size="pageSize"
+      :has-next="hasNext"
+      :has-prev="hasPrev"
+      :loading="loading"
+      @prev="gotoPage(page - 1)"
+      @next="gotoPage(page + 1)"
+      @goto="gotoPage"
+      @set-size="n => list.patch({ size: String(n) })"
+    />
   </div>
 </template>
 
@@ -106,5 +177,5 @@ function isQuiet(p) {
 }
 .pv-quiet { opacity: 0.6; }
 .pv-hot { color: var(--color-amber-700, #b45309); font-weight: 600; }
-.pv-error { font-size: 0.875rem; color: var(--color-red-700, #b91c1c); }
+.pv-busy { opacity: 0.6; }
 </style>

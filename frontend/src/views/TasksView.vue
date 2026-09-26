@@ -1,30 +1,33 @@
 <script setup>
-// The list and the graph are two readings of one table, so they are two tabs
-// inside this view rather than two sidebar entries: AppLayout compares
-// `route.path`, so a second entry would need a `?query` the highlight cannot
-// see.
-import { ref } from 'vue'
+// The list and the graph are two readings of one table, so they are two views
+// of this tab rather than two sidebar entries. The view is a URL axis
+// (`?view=graph`), so a reload lands where the reader was.
+import { computed, ref } from 'vue'
 import Button from '../components/ui/Button.vue'
 import Icon from '../components/ui/Icon.vue'
+import PipelineListToolbar from '../components/PipelineListToolbar.vue'
 import TaskGraphPanel from '../components/tasks/TaskGraphPanel.vue'
 import TaskListPanel from '../components/tasks/TaskListPanel.vue'
-import Tabs from '../components/ui/Tabs.vue'
 import { usePipelineTabActive } from '../composables/usePipelineHeader'
+import { useTaskQuery } from '../composables/useTaskQuery'
 
 const VIEWS = [
   { value: 'list', label: 'List' },
   { value: 'graph', label: 'Graph' },
 ]
 
-const view = ref('list')
+const query = useTaskQuery()
+const view = computed(() => query.state.value.view)
 const list = ref(null)
 const isCurrentTab = usePipelineTabActive()
+
+function setView(v) { query.patch({ view: v }) }
 </script>
 
 <template>
   <div class="space-y-4">
-    <!-- Title, eyebrow and lead are the Pipeline shell's now; this view keeps
-         only what is its own, and sends its one action up into that header. -->
+    <!-- The one thing this tab sends up into the shell's header: its create
+         action. Every list control stays in the body. -->
     <Teleport v-if="isCurrentTab" defer to="#pipeline-actions">
       <Button
         v-if="view === 'list'"
@@ -38,10 +41,11 @@ const isCurrentTab = usePipelineTabActive()
       </Button>
     </Teleport>
 
-    <Tabs v-model="view" :tabs="VIEWS" variant="underline" data-testid="tasks-view-tabs" />
-
-    <TaskListPanel v-if="view === 'list'" ref="list" />
-    <TaskGraphPanel v-else />
+    <TaskListPanel v-if="view === 'list'" ref="list" @view="setView" />
+    <template v-else>
+      <PipelineListToolbar noun="task" :views="VIEWS" :view="view" bare @view="setView" />
+      <TaskGraphPanel />
+    </template>
   </div>
 </template>
 

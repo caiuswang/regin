@@ -41,4 +41,4 @@ export function scopedLink(path, scope) {
   return { path, query: { project: scope } }
 }
 
-export const OPEN_TASKS_HINT = 'every task not done or archived — a failed task counts as open'
+export const OPEN_TASKS_HINT = 'every top-level task not done or archived — a failed task counts as open; a feature\'s steps are counted on the feature'

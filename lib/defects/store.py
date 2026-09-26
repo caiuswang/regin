@@ -680,6 +680,21 @@ def listing_stmt(query):
     return _ordered(_narrowed(stmt, query), query.sort)
 
 
+def population(query) -> int:
+    """The ledger under `query`'s project scope and nothing else — the same
+    predicate the shell's Defects tab count uses."""
+    from lib.pipeline import counts as counts_module  # noqa: PLC0415
+
+    if query.project_id is not None:
+        scope = query.project_id
+    elif query.project_none:
+        scope = counts_module.SCOPE_NONE
+    else:
+        scope = counts_module.SCOPE_ALL
+    with SessionLocal() as session:
+        return int(session.exec(counts_module.defects_stmt(scope)).one())
+
+
 def listing(query=None, *, page: int = 0,
             size: int = DEFAULT_PAGE_SIZE) -> Page:
     """One page of the ledger under `query`.

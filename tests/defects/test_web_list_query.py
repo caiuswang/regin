@@ -67,7 +67,7 @@ def test_defects_scope_switch_keeps_sort_direction(flask_client, feature_row):
     assert _ids(unattributed) == [r.id for r in reversed(loose)]
     # The control reads the same in both — the whole defect was that it could
     # not, because the direction was never a parameter.
-    assert every["sort"] == unattributed["sort"] == "opened:desc"
+    assert every["applied"]["sort"] == unattributed["applied"]["sort"] == "opened:desc"
 
 
 def test_every_scope_reads_the_same_direction(flask_client, feature_row,
@@ -85,7 +85,7 @@ def test_every_scope_reads_the_same_direction(flask_client, feature_row,
                 f"/api/defects?fix_item={task_id}"):
         body = _get(flask_client, url)
         assert _ids(body) == newest_first, url
-        assert body["sort"] == "opened:desc", url
+        assert body["applied"]["sort"] == "opened:desc", url
 
 
 def test_an_unknown_sort_key_falls_back_instead_of_erroring(flask_client):
@@ -93,7 +93,7 @@ def test_an_unknown_sort_key_falls_back_instead_of_erroring(flask_client):
 
     body = _get(flask_client, "/api/defects?sort=whenever:asc")
 
-    assert body["sort"] == "opened:desc"
+    assert body["applied"]["sort"] == "opened:desc"
     assert _ids(body) == [r.id for r in reversed(rows)]
 
 

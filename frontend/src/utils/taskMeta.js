@@ -38,10 +38,10 @@ export const STATUS_FILTERS = [
   { key: 'archived', label: 'Archived' },
 ]
 
-export const SORTS = [
-  { value: 'created_desc', label: 'Newest' },
-  { value: 'created_asc', label: 'Oldest' },
-  { value: 'updated_desc', label: 'Recently updated' },
+// `lib/tasks/query.py::SORT_KEYS`. The URL carries `key:dir`.
+export const SORT_KEYS = [
+  { value: 'created', label: 'Created' },
+  { value: 'updated', label: 'Updated' },
   { value: 'priority', label: 'Priority' },
 ]
 

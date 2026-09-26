@@ -36,7 +36,7 @@ async function setDeps(page, headers, taskId, dependsOn) {
 
 async function openGraph(page, rootId) {
   await page.goto('/tasks')
-  await page.getByTestId('tasks-view-tabs').getByText('Graph').click()
+  await page.getByTestId('list-views').getByRole('tab', { name: 'Graph' }).click()
   await expect(page.getByTestId(`task-graph-node-${rootId}`)).toBeVisible()
 }
 

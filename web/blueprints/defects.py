@@ -32,7 +32,7 @@ from lib.defects import fix_items
 from lib.defects import images as defect_images
 from lib.defects import query as defect_query
 from lib.defects import store
-from lib.utils.pagination import clamp_page, clamp_size
+from lib.utils.pagination import clamp_page, clamp_size, list_page
 from web.blueprints.image_payload import decoded_image, wanted_idx
 
 defects_bp = Blueprint("defects", __name__)
@@ -170,9 +170,14 @@ def api_list_defects():
     # have to be able to render what the server actually applied — a sort key
     # the server fell back on, shown as the one that was asked for, is a
     # control that lies about its own list.
-    body["scope"] = query.scope
-    body["sort"] = str(query.sort)
-    return jsonify(body)
+    return jsonify(list_page(
+        body, population=store.population(query), sort=str(query.sort),
+        filters={"scope": query.scope, "status": query.status, "q": query.q,
+                 "feature_id": query.feature_id,
+                 "fix_item": query.fix_task_id,
+                 "project": "none" if query.project_none
+                 else query.project_id},
+        extras={"scope": query.scope}))
 
 
 @defects_bp.route("/api/defects/<int:defect_id>", methods=["GET"])

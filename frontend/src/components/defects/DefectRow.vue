@@ -5,11 +5,14 @@
 // no ellipsis. `regin defects list` truncates at 88 characters because a
 // terminal line is finite; a page is not, and the wording is the whole
 // evidence a reader needs to decide which feature caused it.
+import { ref } from 'vue'
+import Button from '../ui/Button.vue'
+import Icon from '../ui/Icon.vue'
 import DefectActions from './DefectActions.vue'
 import DefectImages from './DefectImages.vue'
 import { shortDate } from '../../utils/ledgerFormat'
 
-defineProps({
+const props = defineProps({
   defect: { type: Object, required: true },
   canWrite: { type: Boolean, default: false },
   // Set where the list is already scoped to one feature: every row would
@@ -18,12 +21,21 @@ defineProps({
   // A row in a list of rows (the feature page's ledger grammar) rather than
   // a free-standing card.
   flat: { type: Boolean, default: false },
+  // A list row: two lines at rest (the head, then the symptom's first line),
+  // with the full wording, evidence and actions behind a per-row disclosure.
+  // The permalink and the expanded row still carry the symptom unclamped.
+  collapsible: { type: Boolean, default: false },
 })
 defineEmits(['changed'])
+
+const open = ref(!props.collapsible)
 </script>
 
 <template>
-  <li :class="flat ? 'ledger-row defect-flat' : 'card'">
+  <li
+    :class="[flat ? 'ledger-row defect-flat' : 'card', { 'is-collapsed': !open }]"
+    :data-testid="`defect-row-${defect.id}`"
+  >
     <div class="head">
       <!-- The id is the row's address. A list is a predicate plus a page
            position, and neither survives being sent to someone else; a
@@ -50,9 +62,24 @@ defineEmits(['changed'])
       </template>
       <span class="spacer" />
       <span class="when" :title="defect.opened_at">{{ shortDate(defect.opened_at) }}</span>
+      <Button
+        v-if="collapsible"
+        variant="ghost"
+        size="sm"
+        :aria-expanded="open"
+        :aria-label="`${open ? 'Hide' : 'Show'} details and actions for defect #${defect.id}`"
+        :data-testid="`defect-toggle-${defect.id}`"
+        @click="open = !open"
+      >
+        <Icon :name="open ? 'chevron-down' : 'chevron-right'" :size="13" />
+        {{ open ? 'Less' : 'Details' }}
+      </Button>
     </div>
 
-    <p class="symptom">{{ defect.symptom }}</p>
+    <p class="symptom" :class="{ 'symptom-clamped': !open }"
+       :title="open ? undefined : defect.symptom">{{ defect.symptom }}</p>
+
+    <template v-if="open">
 
     <!-- Only when the row really carries evidence: binding costs one
          authenticated fetch per picture, and a list of reports that mostly
@@ -94,6 +121,7 @@ defineEmits(['changed'])
 
     <DefectActions :defect="defect" :can-write="canWrite"
                    @changed="(msg) => $emit('changed', msg)" />
+    </template>
   </li>
 </template>
 
@@ -120,6 +148,21 @@ defineEmits(['changed'])
 .symptom {
     max-width: 60rem; font-size: 13px; line-height: 1.5;
     color: var(--color-fg); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.symptom-clamped {
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.card.is-collapsed { gap: 0.25rem; padding: 0.5rem 0.9rem; }
+/* Two lines at rest on any width: the head never wraps — the feature title
+   truncates and, on a phone, the date gives way to the disclosure. */
+.is-collapsed .head { flex-wrap: nowrap; min-width: 0; }
+.is-collapsed .head > * { flex-shrink: 0; }
+.is-collapsed .key, .is-collapsed .unblamed {
+    flex-shrink: 1; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+@media (max-width: 639px) {
+    .is-collapsed .when { display: none; }
 }
 .facts {
     display: grid; grid-template-columns: max-content 1fr;

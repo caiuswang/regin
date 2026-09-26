@@ -45,8 +45,12 @@ function runMark() {
 
 async function gotoTasks(page) {
   await page.goto('/tasks')
-  await page.getByTestId('task-search').fill(runMark())
-  await page.getByTestId('task-search').press('Enter')
+  await page.getByTestId('list-search').fill(runMark())
+  await page.getByTestId('list-search').press('Enter')
+  // A reload keeps the previous rows on screen (dimmed) until it lands, so
+  // wait for the searched read itself rather than for any rows at all.
+  await expect(page).toHaveURL(new RegExp(`q=${runMark()}`))
+  await expect(page.locator('[data-testid="task-list"][aria-busy="true"]')).toHaveCount(0)
 }
 
 async function openComposer(page) {
@@ -57,7 +61,7 @@ async function openComposer(page) {
 // The status filter is a portalled listbox: the option is clicked in the
 // portal at the end of <body>, not inside the filter bar.
 async function selectStatus(page, label) {
-  await page.getByTestId('task-filter-status').click()
+  await page.getByTestId('list-facet-status').click()
   await page.getByRole('option', { name: label, exact: true }).click()
 }
 
@@ -84,7 +88,7 @@ test.describe('/tasks', () => {
     const rows = await page.locator('.task-row').count()
     test.skip(rows > 0, 'tasks already captured (retry, or an earlier test)')
 
-    await expect(page.getByTestId('tasks-empty')).toBeVisible()
+    await expect(page.getByTestId('list-status')).toHaveAttribute('data-state', /^(empty|no-match)$/)
     expect(errors).toEqual([])
   })
 

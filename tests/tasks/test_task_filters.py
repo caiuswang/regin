@@ -105,26 +105,28 @@ def test_an_unknown_priority_is_refused(flask_client):
     assert resp.get_json()["field"] == "priority"
 
 
-def test_an_unknown_sort_is_refused(flask_client):
+def test_an_unknown_sort_falls_back_and_is_echoed(flask_client):
     resp = flask_client.get("/api/tasks?sort=whatever", headers=EDITOR)
-    assert resp.status_code == 400
-    assert resp.get_json()["field"] == "sort"
+    assert resp.status_code == 200
+    assert resp.get_json()["applied"]["sort"] == "created:desc"
 
 
-def test_priority_sort_pages_past_the_first_cursor(flask_client):
+def test_the_retired_single_token_sort_falls_back(flask_client):
+    body = flask_client.get("/api/tasks?sort=created_asc",
+                            headers=EDITOR).get_json()
+    assert body["applied"]["sort"] == "created:desc"
+
+
+def test_priority_sort_pages_by_offset(flask_client):
     order = ['urgent', 'high', 'medium', 'low', 'none']
     for name in order:
         _task(flask_client, title=name, priority=name)
 
-    first = flask_client.get("/api/tasks?sort=priority&size=2",
+    first = flask_client.get("/api/tasks?sort=priority:asc&size=2",
                              headers=EDITOR).get_json()
     assert [t["priority"] for t in first["items"]] == order[:2]
 
-    # The cursor is built by reading each order column's value back off the
-    # serialized row, so a computed sort expression cannot produce one — this
-    # is the page that 500s if `priority` is ordered by a CASE.
-    cursor = first["pagination"]["next_cursor"]
-    second = flask_client.get(f"/api/tasks?sort=priority&size=2&cursor={cursor}",
+    second = flask_client.get("/api/tasks?sort=priority:asc&size=2&page=1",
                               headers=EDITOR)
     assert second.status_code == 200, second.get_json()
     assert [t["priority"] for t in second.get_json()["items"]] == order[2:4]
@@ -134,8 +136,8 @@ def test_created_asc_reverses_the_default(flask_client):
     first = _task(flask_client, title="first")
     second = _task(flask_client, title="second")
 
-    assert _ids(flask_client, "?sort=created_asc") == [first["id"], second["id"]]
-    assert _ids(flask_client, "?sort=created_desc") == [second["id"], first["id"]]
+    assert _ids(flask_client, "?sort=created:asc") == [first["id"], second["id"]]
+    assert _ids(flask_client, "?sort=created:desc") == [second["id"], first["id"]]
 
 
 # ── filters compose ──────────────────────────────────────────
@@ -155,20 +157,30 @@ def test_filters_are_conjunctive(flask_client):
 
 # ── counts ───────────────────────────────────────────────────
 
-def test_counts_ride_the_first_page_but_not_the_next(flask_client):
+def test_counts_ride_every_page(flask_client):
     for n in range(3):
         _task(flask_client, title=f"idea {n}")
 
     first = flask_client.get("/api/tasks?size=2", headers=EDITOR).get_json()
-    assert first["counts"]["total"] == 3
-    assert first["counts"]["by_status"]["idea"] == 3
+    assert first["extras"]["counts"]["total"] == 3
+    assert first["extras"]["counts"]["by_status"]["idea"] == 3
 
-    cursor = first["pagination"]["next_cursor"]
-    nxt = flask_client.get(f"/api/tasks?size=2&cursor={cursor}",
+    nxt = flask_client.get("/api/tasks?size=2&page=1",
                            headers=EDITOR).get_json()
-    # The totals describe the whole filtered set; resending them on an append
-    # would be a second full count per scroll.
-    assert "counts" not in nxt
+    assert nxt["extras"]["counts"]["total"] == 3
+
+
+def test_population_is_the_unnarrowed_scope(flask_client):
+    pid = _project(flask_client)
+    _task(flask_client, title="match", project_id=pid)
+    _task(flask_client, title="other", project_id=pid)
+    _task(flask_client, title="elsewhere")
+
+    body = flask_client.get(f"/api/tasks?project_id={pid}&q=match",
+                            headers=EDITOR).get_json()
+    assert body["pagination"]["total"] == 1
+    assert body["population"] == 2
+    assert body["applied"]["filters"]["q"] == "match"
 
 
 def test_counts_are_status_blind_but_honour_every_other_filter(flask_client):

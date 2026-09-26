@@ -20,11 +20,14 @@ import { useRoute, useRouter } from 'vue-router'
 import { usePipelineTabActive } from '../composables/usePipelineHeader'
 import { scopeParam } from '../composables/usePipelineScope'
 import { usePage } from '../composables/usePage'
+import { listStatusState, useListQuery } from '../composables/useListQuery'
+import { useTaskShortcuts } from '../composables/useTaskShortcuts'
 import api from '../api'
 import Button from '../components/ui/Button.vue'
 import Icon from '../components/ui/Icon.vue'
-import ListToolbar from '../components/ListToolbar.vue'
+import ListStatus from '../components/ListStatus.vue'
 import PageControls from '../components/PageControls.vue'
+import PipelineListToolbar from '../components/PipelineListToolbar.vue'
 import FeatureIndexTable from '../components/features/FeatureIndexTable.vue'
 import NewFeatureDialog from '../components/features/NewFeatureDialog.vue'
 import { money, num, percent } from '../utils/ledgerFormat'
@@ -46,7 +49,6 @@ const SORT_OPTIONS = [
   { value: 'stage', label: 'Stage' },
   { value: 'created', label: 'Created' },
 ]
-const DEFAULT_SORT = 'created:desc'
 
 // `lib/features/events.py::STAGES`. An unknown value is a 400 from the server,
 // not a silently dropped filter, so this list and that tuple must agree.
@@ -59,107 +61,54 @@ const STAGE_OPTIONS = [
   { value: 'abandoned', label: 'abandoned' },
 ]
 
-const q = computed(() => String(route.query.q || ''))
-const stage = computed(() => String(route.query.stage || ''))
-const sort = computed(() => String(route.query.sort || DEFAULT_SORT))
-const sortKey = computed(() => sort.value.split(':')[0] || 'created')
-const sortDir = computed(() => (sort.value.split(':')[1] === 'asc' ? 'asc' : 'desc'))
+const list = useListQuery({
+  defaults: { q: '', stage: '', sort: 'created:desc' },
+  facets: ['stage'],
+})
+const { state } = list
 
 const {
-  items, extras, loading, error,
+  items, extras, loading, error, loaded, population, applied,
   page, pageSize, total, pageCount, hasNext, hasPrev, load,
 } = usePage({
   path: '/features',
   buildQuery: () => ({
-    q: q.value,
-    stage: stage.value,
-    sort: sort.value,
-    // Shell-owned (R1): the tab reads the scope but never sets it, so the
-    // project carries across tabs without three writers of one axis. The URL
-    // spells it `project` — one axis, one name, across all three tabs — and
-    // this endpoint spells the same scope `project_id`, so the translation
-    // happens here rather than by the shell writing a per-tab key. `all` is
-    // the absence of a scope rather than a value of one, and this endpoint
-    // refuses the literal, so `scopeParam` drops it.
+    q: state.value.q,
+    stage: state.value.stage,
+    sort: state.value.sort,
+    // Shell-owned: the URL spells the scope `project`, this endpoint spells it
+    // `project_id`, and `all` is the absence of a scope the server refuses.
     project_id: scopeParam(route.query.project),
   }),
 })
 
-// The search box is the one control that is not purely derived: it holds what
-// has been typed but not yet submitted. Submitting is a navigation.
-const draft = ref(null)
-const typed = computed({
-  get: () => (draft.value === null ? q.value : draft.value),
-  set: (value) => { draft.value = value },
-})
+// The toolbar renders what the server applied, not what was asked for.
+const appliedSort = computed(() => applied.value?.sort || state.value.sort)
+const sortKey = computed(() => appliedSort.value.split(':')[0])
+const sortDir = computed(() => (appliedSort.value.split(':')[1] === 'asc' ? 'asc' : 'desc'))
 
-const population = computed(() => extras.value.total ?? 0)
 const cov = computed(() => extras.value.coverage)
 const unattributed = computed(() => extras.value.unattributed_defects || 0)
-// What the counters describe: `total` is the filtered match, `population` the
-// table. Two numbers because they answer two questions, and one number
-// answering both answers neither.
-const filtered = computed(() => Boolean(q.value || stage.value))
-// An offset past the last page: rows exist, this page just has none of them.
-const beyondEnd = computed(() => Boolean(total.value) && !items.value.length)
-// Whether Reset has anything to undo — the position counts, because a reader
-// stranded on page 9 of a list they did not filter still needs one control
-// that puts them back at the top.
-const narrowed = computed(() => Boolean(filtered.value || route.query.sort
-  || route.query.page || route.query.size))
+const status = computed(() => listStatusState({
+  loaded: loaded.value, error: error.value, items: items.value,
+  total: total.value, population: population.value,
+}))
 
-// One navigation per control, and a filter change drops the page: an offset
-// that survives a narrowing points into rows the new query does not have.
-// `replace`, not `push`, so the Back button leaves the list rather than
-// walking a filter history nobody asked to keep.
-function navigate(patch, { keepPage = false } = {}) {
-  const next = { ...route.query, ...patch }
-  if (!keepPage) delete next.page
-  for (const [key, value] of Object.entries(next)) {
-    if (value === '' || value === undefined || value === null) delete next[key]
-  }
-  router.replace({ path: '/features', query: next })
-}
-
-function submitSearch() {
-  const term = typed.value.trim()
-  draft.value = null
-  navigate({ q: term })
-}
-function setFacet(key, value) { navigate({ [key]: value }) }
-function setSort(key, dir) { navigate({ sort: `${key}:${dir}` }) }
-function toggleDir() {
-  setSort(sortKey.value, sortDir.value === 'asc' ? 'desc' : 'asc')
-}
-function reset() {
-  draft.value = null
-  const { project } = route.query
-  router.replace({ path: '/features', query: project ? { project } : {} })
-}
-// Clamped to the list that came back, because the server echoes the offset it
-// was ASKED for rather than the last one that exists — `?page=9` on a two-page
-// list is a real read returning no rows. Without the clamp, Prev walks back one
-// empty page at a time from wherever the link pointed.
 function gotoPage(index) {
   const target = Math.max(0, Math.min(pageCount.value - 1, index))
-  navigate({ page: String(target) }, { keepPage: true })
+  list.patch({ page: String(target) })
 }
-function setSize(size) { navigate({ size: String(size) }) }
 
-// The URL is read, never written back from here: `usePage` holds the offset
-// this view navigated to, and a second writer of it would let the rows and the
-// address bar disagree.
 async function reload() {
-  // An unsubmitted search term describes the rows it was typed against and no
-  // others, so any navigation retires it. Leaving it in the box lets the
-  // control contradict the list beneath it — invariant 1, inside one session.
-  draft.value = null
-  page.value = Math.max(0, parseInt(route.query.page, 10) || 0)
-  const size = parseInt(route.query.size, 10)
-  if (size > 0) pageSize.value = size
+  page.value = state.value.page
+  pageSize.value = state.value.size
   await load()
 }
-watch(() => route.query, reload, { immediate: true, deep: true })
+// Keyed on the query string, so a route change elsewhere does not re-read.
+watch(() => (route.path === '/features' ? JSON.stringify(route.query) : null),
+  (key) => { if (key != null) reload() }, { immediate: true })
+
+const toolbar = ref(null)
 
 // The create endpoint is editor-level, so the control is too. Read off the
 // stored role rather than a field in the payload, which would make the
@@ -173,41 +122,42 @@ const declaring = ref(false)
 function declared(ledger) {
   if (ledger?.id) router.push(`/features/${ledger.id}`)
 }
+
+useTaskShortcuts({
+  '/': () => toolbar.value?.focusSearch(),
+  c: () => { if (canWrite.value) declaring.value = true },
+})
 </script>
 
 <template>
   <div class="space-y-4">
-    <!-- The title and the lead belong to the Pipeline shell now; the controls
-         belong to this tab alone, and ride up into the shell's header. -->
-    <Teleport v-if="isCurrentTab" defer to="#pipeline-actions">
-      <div class="flex items-center gap-2">
-        <ListToolbar
-          v-model:q="typed"
-          search-label="Search features by title, spec or tracker reference"
-          search-placeholder="search title, spec or reference"
-          :facets="[{ key: 'stage', label: 'Filter by stage',
-                      value: stage, options: STAGE_OPTIONS }]"
-          :sort-options="SORT_OPTIONS"
-          :sort-key="sortKey"
-          :sort-dir="sortDir"
-          :dirty="narrowed"
-          @submit="submitSearch"
-          @facet="setFacet"
-          @sort-key="key => setSort(key, sortDir)"
-          @toggle-dir="toggleDir"
-          @reset="reset"
-        />
-        <Button
-          v-if="canWrite"
-          variant="primary"
-          data-testid="declare-feature"
-          @click="declaring = true"
-        >
-          <Icon name="plus" :size="12" />
-          New feature
-        </Button>
-      </div>
+    <!-- Only the create action rides up into the shell's header; the list's
+         controls sit in the body, under the tab strip, as on every tab. -->
+    <Teleport v-if="isCurrentTab && canWrite" defer to="#pipeline-actions">
+      <Button variant="primary" data-testid="declare-feature" @click="declaring = true">
+        <Icon name="plus" :size="12" />
+        New feature
+        <kbd class="fv-kbd">c</kbd>
+      </Button>
     </Teleport>
+
+    <PipelineListToolbar
+      ref="toolbar"
+      noun="feature"
+      :q="state.q"
+      search-label="Search features by title, spec or tracker reference"
+      search-placeholder="Search title, spec or reference…"
+      :facets="[{ key: 'stage', label: 'Filter by stage',
+                  value: state.stage, options: STAGE_OPTIONS }]"
+      :sort-options="SORT_OPTIONS"
+      :sort-key="sortKey"
+      :sort-dir="sortDir"
+      :total="loaded && !error ? total : null"
+      :population="population"
+      :dirty-count="list.dirtyCount.value"
+      @patch="list.patch"
+      @reset="list.reset"
+    />
 
     <NewFeatureDialog
       v-model:open="declaring"
@@ -223,10 +173,8 @@ function declared(ledger) {
         · <b>{{ money(cov.declared_usd) }}</b> of {{ money(cov.all_usd) }}
         ({{ percent(cov.declared_usd, cov.all_usd) }})
       </span>
-      <!-- A link now that `/defects` carries the remedy as well as the list:
-           attribute, close and reopen are all on the web, so the click lands
-           on the action owed instead of one short of it. Both this number and
-           that page read `store.unattributed()`, so they cannot disagree. -->
+      <!-- Both this number and `/defects?scope=unattributed` read
+           `store.unattributed()`, so they cannot disagree. -->
       <router-link
         v-if="unattributed" class="counter-gap"
         :to="{ path: '/defects', query: { scope: 'unattributed' } }"
@@ -236,62 +184,48 @@ function declared(ledger) {
       </router-link>
     </div>
 
-    <p v-if="loading" class="text-sm text-slate-500">Loading…</p>
-    <p
-      v-else-if="error"
-      class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700"
-      role="alert"
-    >{{ error }}</p>
-
-    <template v-else>
-      <p v-if="filtered" class="text-xs text-slate-500">
-        {{ total }} of {{ population }} features match
-      </p>
-
-      <!-- An empty page has two causes and they need two sentences. A
-           narrowing that matched nothing is about the query; an offset past
-           the end is about the position, and telling that reader "nothing
-           matches" sends them to change a filter that is working. -->
-      <div v-if="!items.length" class="empty">
-        <strong>{{ beyondEnd ? 'past the end' : 'no match' }}</strong>
-        <p v-if="beyondEnd">
-          Page {{ page + 1 }} is past the last page of this list. Its
-          {{ total }} {{ total === 1 ? 'row' : 'rows' }} end on page
-          {{ pageCount }}.
-        </p>
-        <p v-else>
-          Nothing here matches that. regin knows {{ population }}
-          {{ population === 1 ? 'feature' : 'features' }} in total.
-        </p>
-      </div>
-
-      <template v-else>
-        <FeatureIndexTable
-          :rows="items"
-          :sort-key="sortKey"
-          :sort-dir="sortDir"
-          @sort="setSort"
-        />
+    <ListStatus
+      :state="status"
+      noun="feature"
+      :total="total"
+      :page="page"
+      :dirty-count="list.dirtyCount.value"
+      :error="error || ''"
+      empty-text="No features yet. Declaring one is the only way in."
+      @retry="load"
+      @clear="list.reset"
+      @first-page="list.patch({ page: '0' })"
+    >
+      <template #create>
+        <Button v-if="canWrite" variant="secondary" size="sm" @click="declaring = true">
+          New feature
+        </Button>
       </template>
+    </ListStatus>
 
-      <!-- Outside the rows, because the way back from an offset past the end
-           is the pager itself: hiding it with the table strands the reader on
-           an empty page with no Prev. -->
-      <PageControls
-        v-if="total"
-        :page="page"
-        :page-count="pageCount"
-        :total="total"
-        :size="pageSize"
-        :has-next="hasNext"
-        :has-prev="hasPrev"
-        :loading="loading"
-        @prev="gotoPage(page - 1)"
-        @next="gotoPage(page + 1)"
-        @goto="gotoPage"
-        @set-size="setSize"
+    <div v-if="status === 'rows'" :class="{ 'is-busy': loading }">
+      <FeatureIndexTable
+        :rows="items"
+        :sort-key="sortKey"
+        :sort-dir="sortDir"
+        @sort="list.setSort"
       />
-    </template>
+    </div>
+
+    <PageControls
+      v-if="loaded && total > pageSize"
+      :page="page"
+      :page-count="pageCount"
+      :total="total"
+      :size="pageSize"
+      :has-next="hasNext"
+      :has-prev="hasPrev"
+      :loading="loading"
+      @prev="gotoPage(page - 1)"
+      @next="gotoPage(page + 1)"
+      @goto="gotoPage"
+      @set-size="n => list.patch({ size: String(n) })"
+    />
   </div>
 </template>
 
@@ -309,13 +243,11 @@ function declared(ledger) {
 }
 .counter-gap:hover { text-decoration: underline; }
 .counter-gap:focus-visible { outline: 2px solid var(--color-blue-500); }
-.empty {
-    border: 1px dashed var(--color-border-strong); border-radius: 0.6rem;
-    padding: 0.9rem 1rem; color: var(--color-fg-muted);
+.is-busy { opacity: 0.6; }
+.fv-kbd {
+    margin-left: 0.25rem; padding: 0 0.25rem; font-size: 0.6875rem;
+    font-family: var(--font-mono, ui-monospace, monospace);
+    border: 1px solid currentColor; border-radius: var(--radius-sm, 0.25rem);
+    opacity: 0.7;
 }
-.empty strong {
-    display: block; font-family: var(--font-mono, monospace);
-    font-size: 13px; color: var(--color-fg-subtle);
-}
-.empty p { margin-top: 0.3rem; font-size: 12px; }
 </style>

@@ -58,7 +58,9 @@ from lib.settings import settings
 from lib.tasks import (arm, capture, deps, images, query,
                        ratelimit, runs, store)
 from lib.tasks import integrations
-from lib.utils.pagination import clamp_size, keyset_page_stmt
+from lib.utils.pagination import (
+    clamp_page, clamp_size, list_page, paginate_query_stmt,
+)
 from web.blueprints.image_payload import decoded_image, wanted_idx
 
 tasks_bp = Blueprint('tasks', __name__)
@@ -203,40 +205,41 @@ def _rejected_filter(exc: query.FilterRejected):
 @tasks_bp.route('/api/tasks', methods=['GET'])
 @require_auth
 def api_list_tasks():
-    """One keyset page of the task feed under the current filters.
+    """One offset page of the task feed under the current filters.
 
     Every filter is a WHERE clause here rather than an `Array.filter` in the
     page: a client-side filter over one 50-row page answers a different
     question than the control claims to ask, and the counts beside it would
-    then describe the page instead of the backlog. `counts` rides the first
-    page so the status chips are true totals without a second round trip.
+    then describe the page instead of the backlog. `extras.counts` rides every
+    page so the group headers are true totals without a second round trip.
     """
     try:
         filters = query.parse_filters(request.args)
     except query.FilterRejected as exc:
         return _rejected_filter(exc)
-    size = clamp_size(request.args.get("size"))
-    cursor = request.args.get("cursor")
     with SessionLocal() as session:
-        stmt = query.apply_filters(select(AgentTask), filters)
-        page = keyset_page_stmt(
-            session, stmt,
-            order_cols=query.ORDER_COLS[filters["sort"]],
-            cursor_token=cursor, size=size,
-            row_to_dict=store.serialize,
-        )
-        # Only on the first page: `loadMore` appends rows, and the totals
-        # describe the whole filtered set, not the slice just fetched.
-        totals = None if cursor else query.counts(session, filters)
+        stmt = query.ordered(query.apply_filters(select(AgentTask), filters),
+                             filters["sort"])
+        page = paginate_query_stmt(
+            session, stmt, clamp_page(request.args.get("page")),
+            clamp_size(request.args.get("size")),
+            row_to_dict=store.serialize)
+        totals = query.counts(session, filters)
+        population = session.exec(query.population_stmt(
+            select(func.count(AgentTask.id)), filters["project_id"],
+            filters["unassigned"])).one()
     envelope = page.to_envelope()
     _with_images(envelope["items"])
     _with_feature_titles(envelope["items"])
     _with_fix_defects(envelope["items"])
     _with_run_counts(envelope["items"])
-    envelope["status_filter"] = filters["status"]
-    if totals is not None:
-        envelope["counts"] = totals
-    return jsonify(envelope)
+    applied = {k: v for k, v in filters.items() if k != "sort"}
+    applied["project_id"] = ("none" if filters["unassigned"]
+                             else filters["project_id"])
+    applied.pop("unassigned", None)
+    return jsonify(list_page(envelope, population=population,
+                             sort=filters["sort"], filters=applied,
+                             extras={"counts": totals}))
 
 
 @tasks_bp.route('/api/tasks/counts', methods=['GET'])
@@ -253,7 +256,12 @@ def api_task_counts():
     except query.FilterRejected as exc:
         return _rejected_filter(exc)
     with SessionLocal() as session:
-        return jsonify(query.counts(session, filters))
+        body = query.counts(session, filters)
+        # The grouped list renders its toolbar count from this read alone.
+        body["population"] = session.exec(query.population_stmt(
+            select(func.count(AgentTask.id)), filters["project_id"],
+            filters["unassigned"])).one()
+        return jsonify(body)
 
 
 def _bulk_ids(payload) -> list[int]:

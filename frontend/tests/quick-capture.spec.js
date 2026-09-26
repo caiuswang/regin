@@ -66,8 +66,12 @@ async function markDraft(page) {
 
 async function gotoTasks(page) {
   await page.goto('/tasks')
-  await page.getByTestId('task-search').fill(runMark())
-  await page.getByTestId('task-search').press('Enter')
+  await page.getByTestId('list-search').fill(runMark())
+  await page.getByTestId('list-search').press('Enter')
+  // A reload keeps the previous rows on screen (dimmed) until it lands, so
+  // wait for the searched read itself rather than for any rows at all.
+  await expect(page).toHaveURL(new RegExp(`q=${runMark()}`))
+  await expect(page.locator('[data-testid="task-list"][aria-busy="true"]')).toHaveCount(0)
 }
 
 // The keyboard path runs through the palette, which owns its own keyboard:

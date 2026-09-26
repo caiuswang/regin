@@ -33,6 +33,11 @@ def _file(feature_id: int, project_id):
         session.commit()
 
 
+def _all():
+    return projects.listing(projects.parse_filters({}), page=0,
+                            size=200)["items"]
+
+
 def _by_scope(items):
     return {item["scope"]: item for item in items}
 
@@ -108,7 +113,7 @@ def test_every_row_agrees_with_the_tab_counts(flask_client, feature_row,
     native_task(title="t", project_id=rid, status="archived")
     native_task(title="u", project_id=999)
 
-    items = projects.summaries()
+    items = _all()
     for item in items:
         counted = counts_module.counts(counts_module.parse_scope(item["scope"]))
         assert item["tasks"]["total"] == counted["tasks"], item["scope"]
@@ -126,7 +131,7 @@ def test_every_row_agrees_with_the_tab_counts(flask_client, feature_row,
 
 def test_inactive_repo_without_rows_is_not_listed(flask_client):
     _repo("gone", active=0)
-    names = [i["name"] for i in projects.summaries()]
+    names = [i["name"] for i in _all()]
     assert "gone" not in names
 
 
@@ -135,7 +140,7 @@ def test_projects_with_work_sort_first(flask_client, feature_row):
     busy = _repo("zzz-busy")
     _file(feature_row("x").id, busy)
 
-    names = [i["name"] for i in projects.summaries()]
+    names = [i["name"] for i in _all()]
     assert names.index("zzz-busy") < names.index("aaa-empty")
 
 
@@ -199,3 +204,19 @@ def test_panel_refuses_what_is_not_one_project(flask_client, scope, code):
     resp = flask_client.get(f"/api/pipeline/projects/{scope}", headers=VIEWER)
     assert resp.status_code == code
     assert "error" in resp.get_json()
+
+
+def test_panel_tile_and_open_work_count_the_same_tasks(flask_client,
+                                                       feature_row,
+                                                       native_task):
+    rid = _repo("delta")
+    f = feature_row("delta feature", stage=events.BUILD_STARTED)
+    _file(f.id, rid)
+    native_task(title="a step", project_id=rid, feature_id=f.id)
+    native_task(title="top level", project_id=rid)
+
+    body = flask_client.get(f"/api/pipeline/projects/{rid}",
+                            headers=VIEWER).get_json()
+
+    assert body["project"]["tasks"]["total"] == len(body["recent_tasks"]) == 1
+    assert [t["title"] for t in body["recent_tasks"]] == ["top level"]

@@ -7,9 +7,8 @@ counts beside it would then describe the page rather than the backlog. That is
 the whole reason `counts()` exists — the status chips report the true totals
 *under the current non-status filters*, not `items.length`.
 
-Sorting is likewise server-side and keyset-friendly: each option ends in
-`id DESC` so the cursor has a unique tiebreaker, which is what keeps deep pages
-O(log n) and immune to rows arriving while someone browses.
+Sorting is likewise server-side: every order ends in `id`, so offset pages
+are a total order and a row never lands on two pages or on neither.
 """
 
 from __future__ import annotations
@@ -25,12 +24,17 @@ from lib.orm.models.tasks import (
 Q_MAX = 200
 TAG_MAX = 60
 
-SORT_CREATED_DESC = "created_desc"
-SORT_CREATED_ASC = "created_asc"
-SORT_UPDATED_DESC = "updated_desc"
-SORT_PRIORITY = "priority"
-SORTS: tuple[str, ...] = (SORT_CREATED_DESC, SORT_CREATED_ASC,
-                          SORT_UPDATED_DESC, SORT_PRIORITY)
+#: Sort key -> (its column, the direction it means by default). The URL says
+#: `key:dir`; an unknown key, or the retired single-token form
+#: (`created_desc`), falls back to the default and is echoed back as such, so
+#: the toolbar renders what the server applied rather than what was asked for.
+SORT_KEYS: dict[str, tuple] = {
+    "created": (AgentTask.created_at, "desc"),
+    "updated": (AgentTask.updated_at, "desc"),
+    "priority": (AgentTask.priority_rank, "asc"),
+}
+DEFAULT_SORT_KEY = "created"
+DEFAULT_SORT = f"{DEFAULT_SORT_KEY}:{SORT_KEYS[DEFAULT_SORT_KEY][1]}"
 
 GROUP_NONE = "none"
 GROUP_STATUS = "status"
@@ -38,20 +42,6 @@ GROUP_PROJECT = "project"
 GROUP_PRIORITY = "priority"
 GROUPS: tuple[str, ...] = (GROUP_NONE, GROUP_STATUS, GROUP_PROJECT,
                            GROUP_PRIORITY)
-
-# (column, direction) pairs handed to `keyset_page_stmt`. Every option ends in
-# `id` so the cursor always has a unique tiebreaker, and every entry is a real
-# COLUMN: `keyset_page_stmt` builds the next cursor by reading each order
-# column's value back off the serialized row, which a computed expression has
-# no key for.
-ORDER_COLS: dict[str, list] = {
-    SORT_CREATED_DESC: [(AgentTask.created_at, "DESC"), (AgentTask.id, "DESC")],
-    SORT_CREATED_ASC: [(AgentTask.created_at, "ASC"), (AgentTask.id, "ASC")],
-    SORT_UPDATED_DESC: [(AgentTask.updated_at, "DESC"), (AgentTask.id, "DESC")],
-    SORT_PRIORITY: [(AgentTask.priority_rank, "ASC"),
-                    (AgentTask.created_at, "DESC"), (AgentTask.id, "DESC")],
-}
-
 
 class FilterRejected(ValueError):
     """A filter value the feed cannot honour — a 400 naming the parameter."""
@@ -105,7 +95,7 @@ def parse_filters(args) -> dict:
         # surface leaves to `PATCH /tasks/<id>`.
         "assignee": parse_int((args.get("assignee") or "").strip() or None,
                               "assignee"),
-        "sort": _enum(args, "sort", SORTS, SORT_CREATED_DESC),
+        "sort": parse_sort(args.get("sort")),
         "priority": _enum(args, "priority", TASK_PRIORITIES),
         "q": (args.get("q") or "").strip()[:Q_MAX],
         "tag": (args.get("tag") or "").strip()[:TAG_MAX],
@@ -116,6 +106,48 @@ def parse_filters(args) -> dict:
         "include_archived": (args.get("include_archived") or "").strip()
         in ("1", "true", "yes"),
     }
+
+
+def parse_sort(raw) -> str:
+    """`key:dir`, defaulted on both halves; never refused."""
+    key, _, direction = (raw or "").strip().partition(":")
+    key = key.strip().lower()
+    if key not in SORT_KEYS:
+        return DEFAULT_SORT
+    direction = direction.strip().lower()
+    if direction not in ("asc", "desc"):
+        direction = SORT_KEYS[key][1]
+    return f"{key}:{direction}"
+
+
+def ordered(stmt, sort: str):
+    """Apply `sort`, tie-broken by `id` in the same direction so the order is
+    total and a row cannot land on two offset pages or on neither."""
+    key, _, direction = sort.partition(":")
+    column = SORT_KEYS[key][0]
+    descending = direction == "desc"
+    cols = [column.desc() if descending else column.asc()]
+    if key == "priority":
+        cols.append(AgentTask.created_at.desc())
+    cols.append(AgentTask.id.desc() if descending else AgentTask.id.asc())
+    return stmt.order_by(*cols)
+
+
+def population_stmt(stmt, project_id: Optional[int], unassigned: bool):
+    """The tab's unnarrowed population under one project scope.
+
+    What `/tasks` shows with no control touched: archived is a world you ask
+    for by name, and a feature's steps are reached from the feature. The shell's
+    tab count and the list's `population` are both this statement, so the two
+    numbers cannot disagree.
+    """
+    stmt = stmt.where(AgentTask.status != TASK_STATUS_ARCHIVED) \
+        .where(AgentTask.feature_id.is_(None))
+    if unassigned:
+        return stmt.where(AgentTask.project_id.is_(None))
+    if project_id is not None:
+        return stmt.where(AgentTask.project_id == project_id)
+    return stmt
 
 
 def like_pattern(term: str) -> str:
