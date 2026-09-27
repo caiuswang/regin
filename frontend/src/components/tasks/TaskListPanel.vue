@@ -8,24 +8,18 @@
 // into chat will show are the same set.
 import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import Button from '../ui/Button.vue'
 import Checkbox from '../ui/Checkbox.vue'
 import Icon from '../ui/Icon.vue'
-import Select from '../ui/Select.vue'
 import ListStatus from '../ListStatus.vue'
 import PageControls from '../PageControls.vue'
-import PipelineListToolbar from '../PipelineListToolbar.vue'
 import TaskArmSheet from './TaskArmSheet.vue'
 import TaskBulkBar from './TaskBulkBar.vue'
-import TaskComposerDialog from './TaskComposerDialog.vue'
 import TaskDepsEditor from './TaskDepsEditor.vue'
 import TaskEditSheet from './TaskEditSheet.vue'
-import TaskMoreFilters from './TaskMoreFilters.vue'
 import TaskGroup from './TaskGroup.vue'
 import TaskRows from './TaskRows.vue'
 import TaskRunHistory from './TaskRunHistory.vue'
-import TasksScopeBanner from './TasksScopeBanner.vue'
-import { GROUPS, PRIORITIES, SORT_KEYS, STATUS_FILTERS, groupsFor } from '../../utils/taskMeta.js'
+import { groupsFor } from '../../utils/taskMeta.js'
 import { useTaskCounts, useTaskMutations } from '../../composables/useTasks.js'
 import { TASK_CAPTURED_EVENT } from '../../composables/useQuickCapture.js'
 import { useConfirm } from '../../composables/useConfirm.js'
@@ -38,7 +32,6 @@ import { useTaskExec } from '../../composables/useTaskExec.js'
 import { useTaskQuery } from '../../composables/useTaskQuery.js'
 import { useTaskSelection } from '../../composables/useTaskSelection.js'
 import { useTaskShortcuts } from '../../composables/useTaskShortcuts.js'
-import { useUsers } from '../../composables/useUsers.js'
 
 const FLAT = 'flat'
 
@@ -48,12 +41,10 @@ const { counts, error: countsError, load: loadCounts } = useTaskCounts(query.par
 const { patch, bulk, remove, bulkRemove } = useTaskMutations()
 const { confirm } = useConfirm()
 const { items: projects, ensure: ensureProjects, byId } = useProjects()
-const { items: users, ensure: ensureUsers } = useUsers()
 const { isOpen, setOpen } = useGroupCollapse()
 const selection = useTaskSelection()
 
-const views = [{ value: 'list', label: 'List' }, { value: 'graph', label: 'Graph' }]
-const emit = defineEmits(['view'])
+const emit = defineEmits(['count'])
 
 // The flat list pages by offset, like every other Pipeline list; the grouped
 // list is built out of the counts, and each group appends pages of its own.
@@ -73,10 +64,20 @@ const shownTotal = computed(() => (grouped.value ? counts.value?.total ?? null
   : flat.loaded.value && !flat.error.value ? flat.total.value : null))
 const population = computed(() => (grouped.value ? counts.value?.population ?? null
   : flat.population.value))
-const appliedSort = computed(() => (!grouped.value && flat.applied.value?.sort)
-  || query.state.value.sort)
-const sortKey = computed(() => appliedSort.value.split(':')[0])
-const sortDir = computed(() => (appliedSort.value.split(':')[1] === 'asc' ? 'asc' : 'desc'))
+
+// R4: unnarrowed → "M tasks"; narrowed → "N of M tasks". A widening control
+// (archived, feature steps) can make N exceed M, and "12 of 9" is nonsense,
+// so that reading states N alone.
+const countText = computed(() => {
+  const total = shownTotal.value
+  const pop = population.value
+  if (total == null || pop == null) return ''
+  const noun = n => (n === 1 ? 'task' : 'tasks')
+  const narrowed = query.active.value > 0 || total !== pop
+  if (narrowed && total <= pop) return `${total} of ${pop} ${noun(pop)}`
+  return `${total} ${noun(total)}`
+})
+watch(countText, text => emit('count', text), { immediate: true })
 const groupsLoaded = ref(false)
 const status = computed(() => (grouped.value
   ? listStatusState({ loaded: groupsLoaded.value, error: '', items: groups.value,
@@ -85,9 +86,7 @@ const status = computed(() => (grouped.value
                       items: flat.items.value, total: flat.total.value,
                       population: flat.population.value })))
 
-const composerOpen = ref(false)
 const sheet = ref({ kind: '', task: null })
-const toolbar = ref(null)
 const groupRefs = ref([])
 
 async function reload() {
@@ -207,8 +206,6 @@ async function focusTask(id) {
 }
 
 useTaskShortcuts({
-  c: () => { composerOpen.value = true },
-  '/': () => toolbar.value?.focusSearch(),
   x: () => selection.toggleAllVisible(),
   Escape: () => selection.clear(),
 })
@@ -218,7 +215,6 @@ useTaskShortcuts({
 // capture event and never by a timer.
 onMounted(() => {
   ensureProjects()
-  ensureUsers()
   // A restore rewrites the URL, and the params watch above is what loads the
   // result — so the first request is issued once, under the query that is
   // actually on screen, rather than once bare and again restored.
@@ -236,80 +232,11 @@ onActivated(() => { query.restoreStored() })
 
 onBeforeUnmount(() => window.removeEventListener(TASK_CAPTURED_EVENT, afterWrite))
 
-const statusOptions = STATUS_FILTERS.map(
-  s => ({ value: s.key, label: s.key ? s.label : 'Any status' }))
-const priorityOptions = [
-  { value: '', label: 'Any priority' },
-  ...PRIORITIES.map(p => ({ value: p.value, label: p.label })),
-]
-// "Status" beside "Any status" reads as a second status filter.
-const groupOptions = GROUPS.map(g => ({
-  value: g.value, label: g.value === 'none' ? g.label : `Group: ${g.label}` }))
-const archived = computed(() => query.state.value.archived === '1')
-const runs = computed(() => query.state.value.runs === '1')
-
-defineExpose({ openComposer: () => { composerOpen.value = true } })
+defineExpose({ reload: afterWrite })
 </script>
 
 <template>
   <div class="space-y-3">
-    <PipelineListToolbar
-      ref="toolbar"
-      noun="task"
-      :views="views"
-      view="list"
-      :q="query.state.value.q"
-      search-label="Search tasks"
-      search-placeholder="Search titles and details…"
-      :facets="[
-        { key: 'status', label: 'Filter by status', value: query.state.value.status, options: statusOptions },
-        { key: 'priority', label: 'Filter by priority', value: query.state.value.priority, options: priorityOptions },
-      ]"
-      :sort-options="SORT_KEYS"
-      :sort-key="sortKey"
-      :sort-dir="sortDir"
-      :total="shownTotal"
-      :population="population"
-      :dirty-count="query.active.value"
-      @view="v => emit('view', v)"
-      @patch="query.patch"
-      @reset="query.reset()"
-    >
-      <template #controls>
-        <Select
-          :model-value="query.state.value.group"
-          :options="groupOptions"
-          aria-label="Group by"
-          data-testid="task-group"
-          @update:model-value="v => query.patch({ group: v })"
-        />
-        <TaskMoreFilters :state="query.state.value" :users="users" @patch="query.patch" />
-        <Button
-          variant="ghost"
-          size="sm"
-          :aria-pressed="archived"
-          :aria-label="archived ? 'Hide archived tasks' : 'Show archived tasks'"
-          data-testid="task-archived-toggle"
-          @click="query.patch({ archived: archived ? '' : '1' })"
-        >
-          <Icon name="archive" :size="13" />
-          <span>{{ archived ? 'Hide archived' : 'Show archived' }}</span>
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          :aria-pressed="runs"
-          :aria-label="runs ? 'Hide feature steps' : 'List feature steps beside top-level tasks'"
-          data-testid="task-runs-toggle"
-          @click="query.patch({ runs: runs ? '' : '1' })"
-        >
-          <Icon name="list" :size="13" />
-          <span>{{ runs ? 'Hide feature steps' : 'Show feature steps' }}</span>
-        </Button>
-      </template>
-    </PipelineListToolbar>
-
-    <TasksScopeBanner :feature-id="query.state.value.feature_id" />
 
     <TaskBulkBar
       v-if="selection.count.value"
@@ -349,9 +276,6 @@ defineExpose({ openComposer: () => { composerOpen.value = true } })
       @clear="query.reset()"
       @first-page="query.patch({ page: '0' })"
     >
-      <template #create>
-        <Button variant="secondary" size="sm" @click="composerOpen = true">New task</Button>
-      </template>
     </ListStatus>
 
     <template v-if="status === 'rows' && grouped">
@@ -413,12 +337,6 @@ defineExpose({ openComposer: () => { composerOpen.value = true } })
       @set-size="n => query.patch({ size: String(n) })"
     />
 
-    <TaskComposerDialog
-      v-model:open="composerOpen"
-      :projects="projects"
-      :project="query.project.value"
-      @created="afterWrite"
-    />
     <TaskArmSheet
       v-if="sheet.kind === 'arm'"
       :task="sheet.task"

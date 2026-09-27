@@ -75,6 +75,22 @@ function value(page, testId) {
   return page.getByTestId(testId).locator('.ds-select-value')
 }
 
+// Status, priority and the free-text axes live behind the one Filter button;
+// what is applied shows as a chip.
+async function openFilters(page) {
+  await page.getByTestId('task-filter-button').click()
+}
+
+async function pickPriority(page, value) {
+  await openFilters(page)
+  await page.getByTestId(`task-filter-priority-${value}`).click()
+  await page.keyboard.press('Escape')
+}
+
+function chip(page, key) {
+  return page.getByTestId(`task-chip-${key}`)
+}
+
 function countsQueries(asked) {
   return asked.filter(u => u.pathname.endsWith('/tasks/counts'))
 }
@@ -97,13 +113,14 @@ test.beforeEach(async ({ page }) => {
 
 test('test_task_filters_round_trip_through_url', async ({ page }) => {
   const asked = stubFeed(page)
-  await page.goto('/tasks')
-  await expect(page.getByTestId('list-facet-status')).toBeVisible()
-
-  await choose(page, 'list-facet-status', 'Done')
-  await choose(page, 'list-facet-priority', 'High')
-  await choose(page, 'list-sort', 'Updated')
+  await page.goto('/tasks?group=status')
   await choose(page, 'task-group', 'No grouping')
+
+  await openFilters(page)
+  await choose(page, 'list-facet-status', 'Done')
+  await page.getByTestId('task-filter-priority-high').click()
+  await page.keyboard.press('Escape')
+  await choose(page, 'list-sort', 'Updated')
 
   // Every control is in the URL, so the screen is a link.
   await expect(page).toHaveURL(/status=done/)
@@ -125,8 +142,8 @@ test('test_task_filters_round_trip_through_url', async ({ page }) => {
   stubFeed(fresh)
   await stubShell(fresh)
   await fresh.goto(shared)
-  await expect(value(fresh, 'list-facet-status')).toHaveText('Done')
-  await expect(value(fresh, 'list-facet-priority')).toHaveText('High')
+  await expect(chip(fresh, 'status')).toContainText('Done')
+  await expect(chip(fresh, 'priority')).toContainText('High')
   await expect(value(fresh, 'list-sort')).toHaveText('Updated')
   await expect(fresh.getByTestId('task-list').getByTestId('task-row'))
     .toHaveCount(2)
@@ -143,7 +160,7 @@ test('test_bare_path_rewrites_stored_filters_into_url', async ({ page }) => {
   await page.goto('/tasks')
   // Restored AND stated: a filtered list under a bare URL is not linkable.
   await expect(page).toHaveURL(/status=done/)
-  await expect(value(page, 'list-facet-status')).toHaveText('Done')
+  await expect(chip(page, 'status')).toContainText('Done')
   await expect(page.getByTestId('task-list').getByTestId('task-row'))
     .toHaveCount(2)
 
@@ -162,7 +179,7 @@ test('the URL wins over the stored value, and an illegal one is dropped',
     stubFeed(page)
 
     await page.goto('/tasks?status=idea')
-    await expect(value(page, 'list-facet-status')).toHaveText('Ideas')
+    await expect(chip(page, 'status')).toContainText('Ideas')
     // An option that no longer exists falls back to the default and stops
     // being offered again.
     await expect(value(page, 'list-sort')).toHaveText('Created')
@@ -175,12 +192,14 @@ test('a filter change replaces history rather than stacking it',
   async ({ page }) => {
     stubFeed(page)
     await page.goto('/tasks?group=none')
-    await expect(page.getByTestId('list-facet-status')).toBeVisible()
+    await expect(page.getByTestId('task-list')).toBeVisible()
 
+    await openFilters(page)
     await choose(page, 'list-facet-status', 'Done')
     await expect(page).toHaveURL(/status=done/)
-    await choose(page, 'list-facet-priority', 'High')
+    await page.getByTestId('task-filter-priority-high').click()
     await expect(page).toHaveURL(/priority=high/)
+    await page.keyboard.press('Escape')
 
     // One Back leaves the page, not the last two controls.
     await page.goBack()
@@ -191,7 +210,7 @@ test('the four axes the toolbar never offered are reachable and shareable',
   async ({ page }) => {
     const asked = stubFeed(page)
     await page.goto('/tasks?group=none')
-    await page.getByTestId('task-more-filters').click()
+    await openFilters(page)
 
     await page.getByTestId('task-filter-tag').fill('release')
     await page.getByTestId('task-filter-source').fill('linear')
@@ -201,7 +220,9 @@ test('the four axes the toolbar never offered are reachable and shareable',
     await expect(page).toHaveURL(/tag=release/)
     await expect(page).toHaveURL(/source=linear/)
     await expect(page).toHaveURL(/feature_id=73/)
-    await expect(page.getByTestId('task-more-count')).toHaveText('3')
+    for (const key of ['tag', 'source', 'feature']) {
+      await expect(chip(page, key)).toBeVisible()
+    }
 
     await expect.poll(() => {
       const last = asked.filter(u => u.pathname.endsWith('/api/tasks')).at(-1)
@@ -213,8 +234,8 @@ test('the four axes the toolbar never offered are reachable and shareable',
 
 test('test_counts_failure_does_not_blank_the_list — in grouped mode',
   async ({ page }) => {
-    // Grouped is the default, and grouping is built out of the counts. A
-    // failure there used to leave no headers, no rows and no error.
+    // Status grouping is built out of the counts. A failure there used to
+    // leave no headers, no rows and no error.
     await page.route('**/api/tasks/counts*', (route) =>
       route.fulfill({ status: 500, contentType: 'application/json',
                       body: JSON.stringify({ error: 'boom' }) }))
@@ -227,7 +248,7 @@ test('test_counts_failure_does_not_blank_the_list — in grouped mode',
                         population: 3,
                       }) }))
 
-    await page.goto('/tasks')
+    await page.goto('/tasks?group=status')
     await expect(page.getByTestId('task-counts-error')).toBeVisible()
     await expect(page.getByTestId('task-list')).toBeVisible()
     await expect(page.getByTestId('task-row')).toHaveCount(3)
@@ -237,7 +258,7 @@ test('test_counts_failure_does_not_blank_the_list — in grouped mode',
 test('collapsing a group withdraws its rows from select-all',
   async ({ page }) => {
     stubFeed(page)
-    await page.goto('/tasks')
+    await page.goto('/tasks?group=status')
     await expect(page.getByTestId('task-group-idea')).toBeVisible()
 
     // Both groups open: the union of what is rendered.
@@ -256,7 +277,7 @@ test('collapsing a group withdraws its rows from select-all',
 test('a collapsed group is remembered, and costs no request on the next mount',
   async ({ page }) => {
     const asked = stubFeed(page)
-    await page.goto('/tasks')
+    await page.goto('/tasks?group=status')
     await page.getByTestId('task-group-toggle-done').click()
     await expect(page.getByTestId('task-group-done')
       .getByTestId('task-row')).toHaveCount(0)
@@ -278,7 +299,7 @@ test('the assignee control reaches the URL and the wire', async ({ page }) => {
   await stubUsers(page)
   const asked = stubFeed(page)
   await page.goto('/tasks?group=none')
-  await page.getByTestId('task-more-filters').click()
+  await openFilters(page)
 
   await choose(page, 'task-filter-assignee', 'Ada')
   await page.getByTestId('task-more-apply').click()
@@ -290,12 +311,12 @@ test('the assignee control reaches the URL and the wire', async ({ page }) => {
 
 test('a filter change costs each open group exactly one request', async ({ page }) => {
   const asked = stubFeed(page)
-  await page.goto('/tasks')
+  await page.goto('/tasks?group=status')
   await expect(page.getByTestId('task-group-idea')).toBeVisible()
   await expect(page.getByTestId('task-group-done')).toBeVisible()
 
   asked.length = 0
-  await choose(page, 'list-facet-priority', 'High')
+  await pickPriority(page, 'high')
   await expect(page).toHaveURL(/priority=high/)
 
   // Two open groups → two page requests and one counts request. The group
@@ -343,7 +364,7 @@ test('a bare /tasks reached again from the sidebar still restores its filters',
     await page.getByTestId('pipeline-tab-tasks').click()
 
     await expect(page).toHaveURL(/status=done/)
-    await expect(value(page, 'list-facet-status')).toHaveText('Done')
+    await expect(chip(page, 'status')).toContainText('Done')
   })
 
 test('an arrival scope suppresses a stored narrowing, and leaving restores it',

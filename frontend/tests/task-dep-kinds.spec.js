@@ -34,14 +34,13 @@ async function setDeps(page, headers, taskId, dependsOn) {
   return resp.json()
 }
 
-async function openGraph(page, rootId) {
-  await page.goto('/tasks')
-  await page.getByTestId('list-views').getByRole('tab', { name: 'Graph' }).click()
-  await expect(page.getByTestId(`task-graph-node-${rootId}`)).toBeVisible()
+async function openGraph(page, nodeId) {
+  await page.goto('/tasks?view=graph')
+  await expect(page.getByTestId(`graph-node-${nodeId}`)).toBeVisible()
 }
 
 test.describe('/tasks — a dependency edge carries a kind', () => {
-  test('after edges draw dashed and requires edges draw solid',
+  test('the lane graph draws both kinds, and an unmet one of either blocks',
     async ({ page }) => {
       const headers = await authed(page)
       const strict = await capture(page, headers, `${mark()} strict dep`)
@@ -52,14 +51,13 @@ test.describe('/tasks — a dependency edge carries a kind', () => {
 
       await openGraph(page, dependent)
 
-      const solid = page.getByTestId(`task-graph-edge-${dependent}-${strict}`)
-      const dashed = page.getByTestId(`task-graph-edge-${dependent}-${loose}`)
-      await expect(solid).toHaveAttribute('data-kind', 'requires')
-      await expect(dashed).toHaveAttribute('data-kind', 'after')
-      // The class is what carries the dash; asserting it rather than the
-      // computed stroke keeps the test off the token's exact value.
-      await expect(solid).not.toHaveClass(/tg-edge-after/)
-      await expect(dashed).toHaveClass(/tg-edge-after/)
+      const requires = page.getByTestId(`graph-edge-${dependent}-${strict}`)
+      const after = page.getByTestId(`graph-edge-${dependent}-${loose}`)
+      await expect(requires).toHaveAttribute('data-kind', 'requires')
+      await expect(after).toHaveAttribute('data-kind', 'after')
+      // Neither dependency has settled, so both still hold the task back.
+      await expect(requires).toHaveAttribute('data-blocking', '')
+      await expect(after).toHaveAttribute('data-blocking', '')
     })
 
   test('the deps editor saves an ordering-only edge', async ({ page }) => {

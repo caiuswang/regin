@@ -46,6 +46,7 @@ export const SORT_KEYS = [
 ]
 
 export const GROUPS = [
+  { value: 'next_step', label: 'Next step' },
   { value: 'none', label: 'No grouping' },
   { value: 'status', label: 'Status' },
   { value: 'priority', label: 'Priority' },
@@ -108,5 +109,61 @@ export function groupsFor(groupBy, counts, projects, filters = {}) {
   if (!groups.length) return []
   const active = { status: filters.status, priority: filters.priority,
                    project_id: filters.project_id }[groups[0].param]
-  return active ? groups.filter(g => g.key === active) : groups
+  if (!active) return groups
+  const wanted = String(active).split(',')
+  return groups.filter(g => wanted.includes(g.key))
+}
+
+/**
+ * A priority set as a chip reads it. Full: "High, Urgent" — least urgent
+ * first, as the prototype writes it. Compact (the phone's chip row): a set
+ * that is "this level and everything above it" reads "High+".
+ */
+export function priorityChipLabel(value, { compact = false } = {}) {
+  const wanted = String(value || '').split(',').filter(Boolean)
+  const picked = PRIORITIES.filter(p => wanted.includes(p.value))
+  const top = PRIORITIES.slice(0, picked.length)
+  if (compact && picked.length > 1 && top.every((p, i) => p === picked[i])) {
+    return `${picked[picked.length - 1].label}+`
+  }
+  return picked.map(p => p.label).reverse().join(', ')
+}
+
+// Task and run timestamps are SQLite `CURRENT_TIMESTAMP`: naive UTC.
+function parseUtc(iso) {
+  if (!iso) return null
+  const d = new Date(iso.includes('T') ? iso : `${iso.replace(' ', 'T')}Z`)
+  return Number.isNaN(d.valueOf()) ? null : d
+}
+
+/** "Sep 25" — the day column of a task row. */
+export function taskDay(iso) {
+  const d = parseUtc(iso)
+  return d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''
+}
+
+/** "12m" / "3h" / "2d" since a run started, read once at render. */
+export function liveFor(iso) {
+  const d = parseUtc(iso)
+  if (!d) return ''
+  const mins = Math.max(0, Math.floor((Date.now() - d.valueOf()) / 60000))
+  if (mins < 60) return `${mins}m`
+  const hours = Math.floor(mins / 60)
+  return hours < 24 ? `${hours}h` : `${Math.floor(hours / 24)}d`
+}
+
+/** "#38 Span search facets · step 4 of 7" | "… · attempt 2" | "No feature". */
+export function taskSub(task) {
+  const feature = task.feature_id == null ? 'No feature'
+    : `#${task.feature_id} ${task.feature_title || ''}`.trim()
+  if (task.live?.attempt) return `${feature} · attempt ${task.live.attempt}`
+  if (task.step && task.step.of > 1) return `${feature} · step ${task.step.n} of ${task.step.of}`
+  return feature
+}
+
+/** "waits on #408 (running)" — the running note only when it is. */
+export function waitsLabel(task) {
+  const w = task.waits_on
+  if (!w) return ''
+  return `waits on #${w.id}${w.status === 'running' ? ' (running)' : ''}`
 }

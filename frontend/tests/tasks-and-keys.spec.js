@@ -43,8 +43,10 @@ function runMark() {
   return `mark${info.workerIndex}x${info.retry}`
 }
 
+// Ungrouped: these tests act on the flat list's rows (archive, restore,
+// select) rather than on the next-step list's one action per row.
 async function gotoTasks(page) {
-  await page.goto('/tasks')
+  await page.goto('/tasks?group=none')
   await page.getByTestId('list-search').fill(runMark())
   await page.getByTestId('list-search').press('Enter')
   // A reload keeps the previous rows on screen (dimmed) until it lands, so
@@ -61,8 +63,15 @@ async function openComposer(page) {
 // The status filter is a portalled listbox: the option is clicked in the
 // portal at the end of <body>, not inside the filter bar.
 async function selectStatus(page, label) {
+  await page.getByTestId('task-filter-button').click()
   await page.getByTestId('list-facet-status').click()
   await page.getByRole('option', { name: label, exact: true }).click()
+  // Close the menu so it cannot cover the rows the test acts on next.
+  const menu = page.getByRole('dialog', { name: 'Filter' })
+  await page.keyboard.press('Escape')
+  await expect(menu).toHaveCount(0, { timeout: 1500 })
+    .catch(() => page.getByTestId('task-filter-button').click())
+  await expect(menu).toHaveCount(0)
 }
 
 // The stale note and the refusal are SIBLINGS of the row, not children: a row
@@ -839,90 +848,6 @@ function graphNode(id, over = {}) {
   }
 }
 
-test.describe('/tasks — the DAG panel', () => {
-  async function openGraph(page) {
-    await page.goto('/tasks')
-    await page.getByRole('tab', { name: 'Graph' }).click()
-  }
-
-  test('0 nodes renders an empty state', async ({ page }) => {
-    await mockGraph(page, [], [])
-    await openGraph(page)
-    await expect(page.getByTestId('task-graph-empty')).toBeVisible()
-    await expect(page.getByTestId('task-graph')).toHaveCount(0)
-  })
-
-  test('1 node renders one box and no edges', async ({ page }) => {
-    await mockGraph(page, [graphNode(1, { status: 'armed', runnable: true })], [])
-    await openGraph(page)
-    await expect(page.getByTestId('task-graph-node-1')).toBeVisible()
-    await expect(page.getByTestId('task-graph').locator('line')).toHaveCount(0)
-    await expect(page.getByTestId('task-graph-node-1')).toHaveAttribute('data-layer', '0')
-  })
-
-  test('8 nodes stack into topological layers', async ({ page }) => {
-    // 1 → 2,3 → 4 ; 5 → 6 ; 7, 8 free. Depth 3 on the first chain.
-    const nodes = [
-      graphNode(1, { status: 'done' }),
-      graphNode(2, { status: 'armed', blocked: true, blocked_by: [1] }),
-      graphNode(3, { status: 'armed', blocked: true, blocked_by: [1] }),
-      graphNode(4, { status: 'idea', blocked: true, blocked_by: [2, 3] }),
-      graphNode(5, { status: 'running' }),
-      graphNode(6, { status: 'failed', blocked: true, blocked_by: [5] }),
-      graphNode(7, { status: 'armed', runnable: true }),
-      graphNode(8, { status: 'archived' }),
-    ]
-    const edges = [
-      { task_id: 2, depends_on_id: 1 },
-      { task_id: 3, depends_on_id: 1 },
-      { task_id: 4, depends_on_id: 2 },
-      { task_id: 4, depends_on_id: 3 },
-      { task_id: 6, depends_on_id: 5 },
-    ]
-    await mockGraph(page, nodes, edges)
-    await openGraph(page)
-
-    await expect(page.getByTestId('task-graph').locator('g[data-testid^="task-graph-node-"]'))
-      .toHaveCount(8)
-    await expect(page.getByTestId('task-graph').locator('line')).toHaveCount(5)
-    for (const [id, layer] of [[1, '0'], [2, '1'], [3, '1'], [4, '2'],
-      [5, '0'], [6, '1'], [7, '0'], [8, '0']]) {
-      await expect(page.getByTestId(`task-graph-node-${id}`))
-        .toHaveAttribute('data-layer', layer)
-    }
-    // Every edge points downward: a dependency is drawn above its dependent.
-    const downward = await page.getByTestId('task-graph').locator('line').evaluateAll(
-      els => els.every(el => Number(el.getAttribute('y2')) > Number(el.getAttribute('y1'))))
-    expect(downward).toBe(true)
-    // A blocked node is outlined dashed; a runnable one is not.
-    await expect(page.getByTestId('task-graph-node-4').locator('rect'))
-      .toHaveClass(/tg-blocked/)
-    await expect(page.getByTestId('task-graph-node-7').locator('rect'))
-      .toHaveClass(/tg-runnable/)
-  })
-
-  test('the real graph draws whatever the API returns', async ({ page }) => {
-    await openGraph(page)
-    await expect(page.getByTestId('task-graph')).toBeVisible()
-    await expect(page.getByTestId('task-graph').locator('g[data-testid^="task-graph-node-"]'))
-      .not.toHaveCount(0)
-  })
-
-  test('List and Graph are tabs of one /tasks route', async ({ page }) => {
-    await page.goto('/tasks')
-    await expect(page.getByTestId('task-list')).toBeVisible()
-    await page.getByRole('tab', { name: 'Graph' }).click()
-    // The path, not the whole URL: the list's filters live in the query now,
-    // and a stored one is restored into it on arrival.
-    await expect(page).toHaveURL(/\/tasks(\?|$)/)
-    await expect(page.getByTestId('task-list')).toHaveCount(0)
-    await page.getByRole('tab', { name: 'List' }).click()
-    await expect(page.getByTestId('task-list')).toBeVisible()
-    await expect(page.locator('nav.sb-nav .sb-item', { hasText: 'Pipeline' }))
-      .toHaveClass(/is-active/)
-  })
-})
-
 test.describe('/tasks — the dependency picker', () => {
   async function openPicker(page, tasks, nodes, edges) {
     await mockList(page, tasks)
@@ -1089,11 +1014,11 @@ test.describe('sidebar + rendering', () => {
     }
   }
 
-  // The DAG is the one panel with an intrinsic width of its own, so it gets
+  // The graph is the one panel with an intrinsic width of its own, so it gets
   // its own measurement: the drawing scrolls inside its wrapper rather than
-  // pushing the page sideways.
+  // pushing the page sideways. Below 768px the tab offers the list only.
   for (const theme of ['light', 'dark']) {
-    for (const width of [1440, 390]) {
+    for (const width of [1440, 1024]) {
       test(`/tasks graph renders clean — ${theme} @ ${width}px`, async ({ page }) => {
         await page.setViewportSize({ width, height: 900 })
         await page.addInitScript((t) => localStorage.setItem('regin_theme', t), theme)
@@ -1103,7 +1028,7 @@ test.describe('sidebar + rendering', () => {
         await page.getByRole('tab', { name: 'Graph' }).click()
         await settle(page)
 
-        await expect(page.getByTestId('task-graph')).toBeVisible()
+        await expect(page.getByTestId('task-lane-graph')).toBeVisible()
         const m = await contentOverflow(page)
         expect(
           m.scrollWidth,

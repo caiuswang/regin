@@ -50,7 +50,8 @@ test('test_counts_failure_does_not_blank_the_list', async ({ page }) => {
     route.fulfill({ status: 500, contentType: 'application/json',
                     body: JSON.stringify({ error: 'boom' }) }))
 
-  await page.goto('/tasks')
+  // Status grouping is the reading built out of the task counts.
+  await page.goto('/tasks?group=status')
   // The strip renders — without numbers, and saying so.
   await expect(page.getByTestId('pipeline-tabs')).toBeVisible()
   await expect(page.getByTestId('pipeline-count-tasks')).toHaveCount(0)

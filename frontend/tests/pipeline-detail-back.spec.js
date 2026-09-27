@@ -10,7 +10,7 @@
 import { test, expect } from './auth-fixture.js'
 
 const COUNTS = { tasks: 7, features: 3, defects: 5 }
-const ROW = '[data-testid="task-row"]'
+const ROW = '[data-testid^="next-step-row-"]'
 
 function taskRows(n, base = 1000) {
   return Array.from({ length: n }, (_, i) => ({
@@ -48,12 +48,15 @@ async function stub(page) {
         images: [], comments: [], deps: [],
       }) })
   })
+  // The default reading is the next-step list: one Ideas group here.
   await page.route('**/api/tasks?*', (route) => {
     const scoped = new URL(route.request().url()).searchParams.get('feature_id')
+    const rows = taskRows(scoped ? 2 : 5)
     return route.fulfill({ status: 200, contentType: 'application/json',
       body: JSON.stringify({
-        items: taskRows(scoped ? 2 : 5),
-        pagination: { next_cursor: null, size: 50, has_next: false },
+        groups: [{ key: 'ideas', label: 'Ideas', hint: '', n: rows.length,
+                   rows, more: 0, page: 0, size: 50 }],
+        open: rows.length, done_hidden: 0, population: rows.length,
       }) })
   })
 }
@@ -64,7 +67,7 @@ test('test_back_from_a_task_returns_to_the_list_it_was_opened_from',
     await page.goto('/tasks?feature_id=42')
     await expect(page.locator(ROW)).toHaveCount(2)
 
-    await page.getByTestId('task-id').first().click()
+    await page.locator(`${ROW} .nsr-title`).first().click()
     await expect(page).toHaveURL(/\/tasks\/1000$/)
 
     await page.locator('.td-back').click()

@@ -14,6 +14,10 @@ const TABS = ['/tasks']
 // What `/` focuses on each Pipeline tab.
 const SEARCH = { '/tasks': 'list-search', '/features': 'list-search', '/overview': 'projects-search' }
 
+// Tasks renders its own chip toolbar (search, chips, one Filter button —
+// feature #110); the other tabs still share the list chassis's.
+const toolbarOf = path => (path === '/tasks' ? 'task-toolbar' : 'pipeline-list-toolbar')
+
 function envelope(items, over = {}) {
   return {
     items,
@@ -48,7 +52,7 @@ test.beforeEach(async ({ page }) => {
 test('one toolbar, same place, on every tab', async ({ page }) => {
   for (const path of TABS) {
     await page.goto(path)
-    const toolbar = page.getByTestId('pipeline-list-toolbar')
+    const toolbar = page.getByTestId(toolbarOf(path))
     await expect(toolbar).toBeVisible()
     const strip = await page.getByTestId('pipeline-tabs').boundingBox()
     const box = await toolbar.boundingBox()
@@ -69,7 +73,7 @@ test('tasks has one project control, and it is the shell\'s', async ({ page }) =
     if (url.pathname === '/api/tasks') asked.push(url.searchParams.get('project_id'))
   })
   await page.goto('/tasks?group=none')
-  await expect(page.getByTestId('pipeline-list-toolbar')).toBeVisible()
+  await expect(page.getByTestId('task-toolbar')).toBeVisible()
   await expect(page.getByTestId('task-filter-project')).toHaveCount(0)
 
   await page.getByTestId('pipeline-project').click()
@@ -213,10 +217,10 @@ test('/ focuses search on every tab', async ({ page }) => {
   }
 })
 
-test('Clear keeps the address a reader arrived on', async ({ page }) => {
+test('removing a narrowing keeps the address a reader arrived on', async ({ page }) => {
   await page.goto('/tasks?group=none&feature_id=5&status=done')
-  await expect(page.getByTestId('list-clear')).toHaveText(/Clear 1/)
-  await page.getByTestId('list-clear').click()
+  await expect(page.getByTestId('task-chip-status')).toBeVisible()
+  await page.getByTestId('task-chip-remove-status').click()
   await expect(page).toHaveURL(/feature_id=5/)
   await expect(page).not.toHaveURL(/status=done/)
 })
@@ -224,7 +228,7 @@ test('Clear keeps the address a reader arrived on', async ({ page }) => {
 test('a kept-alive Tasks list stays quiet while another tab is on screen',
   async ({ page }) => {
     await page.goto('/tasks?group=none')
-    await expect(page.getByTestId('pipeline-list-toolbar')).toBeVisible()
+    await expect(page.getByTestId('task-toolbar')).toBeVisible()
     await page.getByTestId('pipeline-tab-features').click()
     await expect(page).toHaveURL(/\/features/)
     const stray = []
