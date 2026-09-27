@@ -105,7 +105,7 @@ function cost(row) {
 </template>
 
 <style scoped>
-.ftt { min-width: 0; }
+.ftt { min-width: 0; container: ftt / inline-size; }
 .ftt-head, .ftt-row {
     display: grid; align-items: center; gap: 1rem;
     grid-template-columns: minmax(12rem, 2.6fr) minmax(7.5rem, 1fr) minmax(4.5rem, 0.8fr) minmax(4rem, 0.7fr) 4rem 3rem;
@@ -142,17 +142,21 @@ function cost(row) {
 .muted { color: var(--color-fg-muted); }
 .ftt-expansion { padding: 0 1rem 0.75rem 3rem; }
 
-@media (max-width: 1279.98px) {
+/* Tiers key off the table's own width, not the viewport: beside the triage
+   rail the table is ~300px even on a 1024px screen. */
+@container ftt (max-width: 44rem) {
     .ftt-head, .ftt-row { grid-template-columns: minmax(10rem, 2fr) minmax(7rem, 1.2fr) minmax(4rem, 0.8fr) 4rem 3rem; }
     .ftt-head > :nth-child(4), .ftt-row > :nth-child(4) { display: none; }
 }
-/* 768–1023 keeps the sidebar and stacks the rail under the table, so the pane
-   is ~500px: the fixed column minimums above sum past that. */
-@media (max-width: 1023.98px) {
+@container ftt (max-width: 34rem) {
     .ftt-head, .ftt-row {
         grid-template-columns: minmax(0, 2fr) minmax(6rem, 1.2fr) minmax(3.5rem, 0.8fr) 3.5rem 3rem;
         gap: 0.75rem; padding-left: 0.75rem; padding-right: 0.75rem;
     }
     .ftt-expansion { padding-left: 2.25rem; padding-right: 0.75rem; }
+}
+@container ftt (max-width: 24rem) {
+    .ftt-head, .ftt-row { grid-template-columns: minmax(0, 2fr) minmax(6rem, 1.2fr) 3rem 3rem; }
+    .ftt-head > :nth-child(3), .ftt-row > :nth-child(3) { display: none; }
 }
 </style>

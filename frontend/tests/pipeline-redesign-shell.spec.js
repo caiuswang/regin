@@ -425,3 +425,16 @@ for (const width of [1024, 1440]) {
     })
   }
 }
+
+test('test_features_table_rows_fit_their_own_width', async ({ page }) => {
+  await stubPipeline(page)
+  for (const width of [800, 1024, 1280, 1440, 1920]) {
+    await page.setViewportSize({ width, height: 900 })
+    await page.goto('/features')
+    await expect(page.locator('.ftt-row').first()).toBeVisible()
+    const clipped = await page.$$eval('.ftt-head, .ftt-row', els =>
+      els.filter(e => e.scrollWidth > e.clientWidth + 1).map(e => `${e.scrollWidth}>${e.clientWidth}`))
+    expect(clipped, `viewport ${width}`).toEqual([])
+    await expect(page.locator('.ftt-head .num').last()).toBeVisible()
+  }
+})
