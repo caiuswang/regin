@@ -14,12 +14,14 @@ async function stubCounts(page, body = { counts: COUNTS, project: 'all' }) {
 
 test('test_shell_publishes_all_three_counts', async ({ page }) => {
   await stubCounts(page)
-  for (const path of ['/tasks', '/features', '/defects']) {
+  for (const path of ['/overview', '/tasks', '/features']) {
     await page.goto(path)
     await expect(page.getByTestId('pipeline-tabs')).toBeVisible()
-    for (const [key, n] of Object.entries(COUNTS)) {
-      await expect(page.getByTestId(`pipeline-count-${key}`)).toHaveText(String(n))
+    for (const key of ['tasks', 'features']) {
+      await expect(page.getByTestId(`pipeline-count-${key}`)).toHaveText(String(COUNTS[key]))
     }
+    // Defects is not a tab: its count lives on the Overview's loop.
+    await expect(page.getByTestId('pipeline-count-defects')).toHaveCount(0)
   }
 })
 
@@ -36,7 +38,7 @@ test('test_shell_publishes_all_three_counts — one request, under the scope',
     expect(asked).toEqual([null])
 
     await page.goto('/features?project=none')
-    await expect(page.getByTestId('pipeline-count-defects')).toBeVisible()
+    await expect(page.getByTestId('pipeline-count-features')).toBeVisible()
     expect(asked.at(-1)).toBe('none')
   })
 
@@ -112,8 +114,8 @@ test('the project scope carries from tab to tab', async ({ page }) => {
   await stubCounts(page)
   await page.goto('/tasks?project=none')
   await expect(page.getByTestId('pipeline-tabs')).toBeVisible()
-  await page.getByTestId('pipeline-tab-defects').click()
-  await expect(page).toHaveURL(/\/defects\?.*project=none/)
+  await page.getByTestId('pipeline-tab-overview').click()
+  await expect(page).toHaveURL(/\/overview\?.*project=none/)
   await page.getByTestId('pipeline-tab-features').click()
   await expect(page).toHaveURL(/\/features\?.*project=none/)
 })

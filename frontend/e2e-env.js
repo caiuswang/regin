@@ -22,10 +22,14 @@ import { join } from 'node:path'
 // Fixed, not `mkdtemp`-random: the server script provisions it and
 // `global-teardown.js` removes it, and a run killed before teardown must leave
 // a path the next run can find and wipe rather than a new orphan each time.
-export const SCRATCH_DIR = join(tmpdir(), 'regin-e2e')
+// Overridable so two worktrees can run the suite at once without sharing a
+// server, a port or a scratch DB.
+export const SCRATCH_DIR = process.env.REGIN_E2E_SCRATCH || join(tmpdir(), 'regin-e2e')
 
-export const API_PORT = 8322
-export const VITE_PORT = 5174
+const DEFAULT_API_PORT = 8322
+const DEFAULT_VITE_PORT = 5174
+export const API_PORT = Number(process.env.REGIN_E2E_API_PORT) || DEFAULT_API_PORT
+export const VITE_PORT = Number(process.env.REGIN_E2E_VITE_PORT) || DEFAULT_VITE_PORT
 export const API_BASE = `http://localhost:${API_PORT}`
 
 // Distinct from the dev stack's 8321/5173 on purpose. Sharing the ports would

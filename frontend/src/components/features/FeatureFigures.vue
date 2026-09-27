@@ -17,7 +17,7 @@
 import { computed, nextTick } from 'vue'
 import Icon from '../ui/Icon.vue'
 import { duration, gapList, gapTotal, money, num, percent } from '../../utils/ledgerFormat'
-import { SESSIONS_ANCHOR, defectsLink, revealSessions } from '../../utils/featureLinks'
+import { DEFECTS_ANCHOR, SESSIONS_ANCHOR, defectsLink, reveal, revealSessions } from '../../utils/featureLinks'
 
 const props = defineProps({
   ledger: { type: Object, required: true },
@@ -74,11 +74,10 @@ const tiles = computed(() => {
       sub: `open / total · ${l.defects.escapes} escaped`,
       gaps: l.defects.gaps, qualifies: l.defects.total,
       // A count with no way through to what it counts is how a defect stays
-      // reported and unread. The key is `feature_id`, spelled as
-      // `lib/defects/query.py` spells it, carrying the id the payload actually
-      // emits: a `feature=` under a key the ledger never had landed every
-      // reader on the unscoped list, silently.
+      // reported and unread. The list is this page's own, so the click has
+      // to move the page, exactly as the sessions tile does.
       to: l.defects.total ? defectsLink(l.id) : null,
+      onClick: l.defects.total ? () => nextTick(() => reveal(DEFECTS_ANCHOR)) : null,
     }),
   ]
 })

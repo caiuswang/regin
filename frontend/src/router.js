@@ -16,7 +16,6 @@ const LibraryView = () => import('./views/LibraryView.vue')
 const PipelineView = () => import('./views/PipelineView.vue')
 const FeaturesView = () => import('./views/FeaturesView.vue')
 const FeatureLedgerView = () => import('./views/FeatureLedgerView.vue')
-const DefectsView = () => import('./views/DefectsView.vue')
 const DefectDetailView = () => import('./views/DefectDetailView.vue')
 const SkillDetailView = () => import('./views/SkillDetailView.vue')
 const PromptTemplatesView = () => import('./views/PromptTemplatesView.vue')
@@ -37,8 +36,7 @@ const LoginView = () => import('./views/LoginView.vue')
 const AuditView = () => import('./views/AuditView.vue')
 const UsersView = () => import('./views/UsersView.vue')
 const TasksView = () => import('./views/TasksView.vue')
-const ProjectsView = () => import('./views/ProjectsView.vue')
-const ProjectPanelView = () => import('./views/ProjectPanelView.vue')
+const OverviewView = () => import('./views/OverviewView.vue')
 const TaskDetailView = () => import('./views/TaskDetailView.vue')
 const SchemaDriftView = () => import('./views/SchemaDriftView.vue')
 const PayloadLogView = () => import('./views/PayloadLogView.vue')
@@ -72,29 +70,21 @@ const routes = [
     ],
   },
   { path: '/patterns/:slug(.*)', name: 'pattern-detail', component: PatternDetailView },
-  // Tasks, features and defects are three readings of one loop, so they share
-  // one shell and one sidebar entry. The children are ABSOLUTE paths: the
-  // grouping is new, the URLs are not, and every existing link — in a view, a
-  // test, or printed by the CLI — still resolves.
-  //
-  // A feature's detail is a CHILD, not a sibling: as a sibling it rendered
-  // outside the shell, so opening one took the whole tab strip off screen.
+  // Overview, Tasks and Features are three readings of one loop, so they share
+  // one shell and one sidebar entry. The children are ABSOLUTE paths, so every
+  // link printed by the CLI still resolves. A feature's or a defect's detail is
+  // a CHILD, not a sibling: opening one must not take the tab strip off screen.
   {
     path: '/pipeline',
     name: 'pipeline',
     component: PipelineView,
-    redirect: '/tasks',
+    redirect: '/overview',
     children: [
+      { path: '/overview', name: 'overview', component: OverviewView },
       { path: '/tasks', name: 'tasks', component: TasksView },
       { path: '/features', name: 'features', component: FeaturesView },
       { path: '/features/:id', name: 'feature-ledger', component: FeatureLedgerView },
-      { path: '/defects', name: 'defects', component: DefectsView },
-      // A defect's permalink is a child of the shell, not a sibling of it:
-      // following a row's id must not make the tab strip that framed it
-      // disappear.
       { path: '/defects/:id', name: 'defect-detail', component: DefectDetailView },
-      { path: '/projects', name: 'projects', component: ProjectsView },
-      { path: '/projects/:id', name: 'project-panel', component: ProjectPanelView },
     ],
   },
   { path: '/skills/:id', name: 'skill-detail', component: SkillDetailView },

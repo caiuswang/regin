@@ -18,7 +18,7 @@ from lib.auth import create_token
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 LINKS = ROOT / "frontend/src/utils/featureLinks.js"
 FIGURES = ROOT / "frontend/src/components/features/FeatureFigures.vue"
-INDEX_TABLE = ROOT / "frontend/src/components/features/FeatureIndexTable.vue"
+INDEX_TABLE = ROOT / "frontend/src/components/pipeline/FeatureTrackTable.vue"
 EVIDENCE = ROOT / "frontend/src/components/features/FeatureEvidence.vue"
 DEFECT_ROW = ROOT / "frontend/src/components/defects/DefectRow.vue"
 TASK_PANEL = ROOT / "frontend/src/components/tasks/TaskListPanel.vue"
@@ -85,7 +85,7 @@ def test_feature_index_links_to_its_tasks(
 
     table = INDEX_TABLE.read_text()
     assert "tasksLink(row.id)" in table
-    assert "'Tasks'" in table, "the index offers no task column at all"
+    assert ">Tasks<" in table, "the index offers no task column at all"
     assert "path: '/tasks'" in LINKS.read_text()
 
 
@@ -210,8 +210,8 @@ def test_feature_sessions_count_links_to_its_traces(tmp_db):
     assert "to: sessions ? { hash: `#${SESSIONS_ANCHOR}` } : null" in figures, (
         "the sessions figure is still not a link")
 
-    table = INDEX_TABLE.read_text()
-    assert "sessionsLink(row.id)" in table
+    # The index carries no sessions column since feature #110: the ledger
+    # page's figure is the one way through.
 
     # The hash is an address, not a movement: `router-link` preventDefaults
     # the native jump, the router declares no `scrollBehavior`, and the page
@@ -243,8 +243,7 @@ def test_a_zero_count_offers_no_link(tmp_db, feature_row):
     assert "to: l.defects.total ?" in figures
 
     table = INDEX_TABLE.read_text()
-    for guard in ('v-if="row.sessions"', 'v-if="row.tasks"',
-                  'v-if="row.defects.total"'):
+    for guard in ('v-if="row.tasks"', 'v-if="row.defects.total"'):
         assert guard in table, f"{guard} is missing — a zero would be a link"
 
 

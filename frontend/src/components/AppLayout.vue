@@ -131,8 +131,8 @@ const navGroups = computed(() => [
       // Tasks, features and defects are one workbench behind one entry — the
       // switcher is the tab strip in PipelineView. No role conditional: the
       // ledger reads are authenticated-any-role.
-      { to: '/tasks', label: 'Pipeline', icon: 'pipeline',
-        match: ['/tasks', '/features', '/defects', '/projects'] },
+      { to: '/overview', label: 'Pipeline', icon: 'pipeline',
+        match: ['/overview', '/tasks', '/features', '/defects'] },
       { to: '/rules', label: 'Rules', exact: true, icon: 'rules' },
       { to: '/plans', label: 'Plans', icon: 'plans' },
     ],

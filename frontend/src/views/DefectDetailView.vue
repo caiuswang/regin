@@ -23,11 +23,14 @@ const loading = ref(true)
 const loadError = ref('')
 
 const canWrite = computed(() => api.getStoredUser()?.role !== 'viewer')
-// The list you opened this row from, not the default one: the back link
-// carries the query the tab was last left under, so a filter, a search or a
-// scope survives the round trip. An arrival by deep link has none, and the
-// bare path is the right answer there.
-const backTo = computed(() => ({ path: '/defects', query: rememberedQuery('/defects') }))
+// Back to the feature this defect is blamed on, or to the triage rail it is
+// routed from when it is blamed on none — carrying the query the Features tab
+// was last left under.
+const backTo = computed(() => (defect.value?.feature_id
+  ? { path: `/features/${defect.value.feature_id}` }
+  : { path: '/features', query: rememberedQuery('/features') }))
+const backLabel = computed(() => (defect.value?.feature_id
+  ? `← feature #${defect.value.feature_id}` : '← triage'))
 
 async function load() {
   loading.value = true
@@ -56,7 +59,7 @@ function onChanged(message) {
 <template>
   <div class="space-y-4">
     <p class="back">
-      <router-link :to="backTo">&larr; every defect</router-link>
+      <router-link :to="backTo" data-testid="defect-back">{{ backLabel }}</router-link>
     </p>
 
     <!-- Only before the first row lands: a re-read after a write keeps the row

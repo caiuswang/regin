@@ -26,15 +26,17 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 #: reaches the screen on that tab.
 ROWS = {
     "tasks": ROOT / "frontend/src/components/tasks/TaskRow.vue",
-    "features": ROOT / "frontend/src/components/features/FeatureIndexTable.vue",
+    "features": ROOT / "frontend/src/components/pipeline/FeatureTrackTable.vue",
     "defects": ROOT / "frontend/src/components/defects/DefectRow.vue",
 }
 
 #: `iso.slice(0, 10)` and its spelling variants — `shortDate`'s body, inlined.
 HAND_ROLLED = re.compile(r"\.slice\(\s*0\s*,\s*10\s*\)")
 
+#: A date through `ledgerFormat::shortDate`, or an age through
+#: `pipelineFormat::ago` — the Features tab's Active column is an age (#110).
 SHARED_IMPORT = re.compile(
-    r"import\s*\{[^}]*\bshortDate\b[^}]*\}\s*from\s*['\"][^'\"]*ledgerFormat")
+    r"import\s*\{[^}]*\b(shortDate|ago)\b[^}]*\}\s*from\s*['\"][^'\"]*(ledgerFormat|pipelineFormat)")
 
 
 def test_every_tab_uses_the_shared_date_formatter():

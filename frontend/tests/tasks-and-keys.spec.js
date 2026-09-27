@@ -1047,7 +1047,7 @@ test.describe('API keys (Settings section)', () => {
 })
 
 test.describe('sidebar + rendering', () => {
-  for (const [path, label] of [['/tasks', 'Pipeline'], ['/settings', 'Settings']]) {
+  for (const [path, label] of [['/overview', 'Pipeline'], ['/settings', 'Settings']]) {
     test(`${path} highlights its sidebar entry`, async ({ page }) => {
       await page.goto('/')
       const item = page.locator('nav.sb-nav .sb-item', { hasText: label })

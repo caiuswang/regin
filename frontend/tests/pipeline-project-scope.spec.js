@@ -49,6 +49,12 @@ async function stubShell(page) {
     route.fulfill({ json: { counts: COUNTS } }))
   await page.route('**/api/repos', (route) =>
     route.fulfill({ json: { repos: REPOS } }))
+  // The chip's picker reads the rollup, which ends with the "No project" bucket.
+  const rollup = [...REPOS.map(r => ({ id: r.id, scope: String(r.id), name: r.name })),
+    { id: null, scope: 'none', name: null }]
+    .map(r => ({ ...r, features: { by_stage: {} }, defects: { open: 0 }, tasks: { by_status: {} } }))
+  await page.route('**/api/pipeline/projects?*', (route) =>
+    route.fulfill({ json: { items: rollup, pagination: { total: rollup.length }, population: rollup.length } }))
 }
 
 /**
@@ -105,12 +111,14 @@ async function stubDefects(page) {
 
 const last = (seen) => seen[seen.length - 1] || new URLSearchParams()
 
-// The shell's selector is a Reka combobox portalled to the end of <body>, so
-// choosing is a click on the trigger and a click on the option.
+// The shell's chip opens a picker portalled to the end of <body>, so choosing
+// is a click on the chip and a click on the row.
 async function chooseScope(page, label) {
   await page.getByTestId('pipeline-project').click()
-  await page.getByRole('option', { name: label, exact: true }).click()
+  await page.getByTestId('project-picker').getByRole('button', { name: label }).first().click()
 }
+
+const triageAsked = (seen) => seen.filter(p => p.get('scope') === 'triage').at(-1) || new URLSearchParams()
 
 test.beforeEach(async ({ page }) => {
   // The scope is restored from localStorage on a bare path, which is exactly
@@ -149,32 +157,38 @@ test('test_feature_project_null_listed_under_none_scope — chosen, not typed',
     expect(last(seen).get('project_id')).toBe('none')
   })
 
+// Defects are reached through the Features triage rail now; the rail asks
+// under the shell's scope exactly as the list it replaced did.
 test('test_defect_project_follows_feature', async ({ page }) => {
+  await stubFeatures(page)
   const seen = await stubDefects(page)
 
-  await page.goto('/defects?project=7')
-  await expect(page.getByText('the rail clips')).toBeVisible()
-  await expect(page.getByText('the gutter folds')).toHaveCount(0)
-  expect(last(seen).get('project')).toBe('7')
+  await page.goto('/features?project=7')
+  const rail = page.getByTestId('triage-rail')
+  await expect(rail.getByText('the rail clips')).toBeVisible()
+  await expect(rail.getByText('the gutter folds')).toHaveCount(0)
+  expect(triageAsked(seen).get('project')).toBe('7')
 })
 
 test('test_unattributed_defect_has_no_project', async ({ page }) => {
+  await stubFeatures(page)
   const seen = await stubDefects(page)
+  const rail = page.getByTestId('triage-rail')
 
   // Under "All" it is there, and under "No project" it is still there: having
   // no project is not the same as being filtered out of the page.
-  await page.goto('/defects')
-  await expect(page.getByText('the gutter folds')).toBeVisible()
-  expect(last(seen).get('project')).toBeNull()
+  await page.goto('/features')
+  await expect(rail.getByText('the gutter folds')).toBeVisible()
+  expect(triageAsked(seen).get('project')).toBeNull()
 
   await chooseScope(page, 'No project')
-  await expect(page.getByText('the gutter folds')).toBeVisible()
-  expect(last(seen).get('project')).toBe('none')
+  await expect(rail.getByText('the gutter folds')).toBeVisible()
+  await expect.poll(() => triageAsked(seen).get('project')).toBe('none')
 
   // And under a named project it is not, because it is in none of them.
   await chooseScope(page, 'regin')
-  await expect(page.getByText('the gutter folds')).toHaveCount(0)
-  expect(last(seen).get('project')).toBe('7')
+  await expect(rail.getByText('the gutter folds')).toHaveCount(0)
+  await expect.poll(() => triageAsked(seen).get('project')).toBe('7')
 })
 
 test('test_no_row_is_invisible_under_every_scope', async ({ page }) => {
@@ -187,13 +201,13 @@ test('test_no_row_is_invisible_under_every_scope', async ({ page }) => {
   await expect(page.getByTestId('pipeline-project')).toBeVisible()
 
   await page.getByTestId('pipeline-project').click()
-  const offered = (await page.getByRole('option').allInnerTexts())
-    .map(text => text.trim())
+  const offered = (await page.getByTestId('project-picker').getByRole('button').allInnerTexts())
+    .map(text => text.replace(/\s+/g, ' ').trim())
   // Both sentinels and every registered project. Asserted as membership
   // rather than as a sequence: the order of the repo registry is not a rule
   // this test is about, and pinning it would fail on a rename.
   for (const scope of ['All projects', 'No project', ...REPOS.map(r => r.name)]) {
-    expect(offered).toContain(scope)
+    expect(offered.some(text => text.startsWith(scope)), scope).toBe(true)
   }
 })
 
@@ -205,30 +219,12 @@ test('the default scope is asked for by saying nothing, never by name',
     // all, or the default scope renders a 400 under a header reading "All
     // projects".
     const defects = await stubDefects(page)
-    await page.goto('/defects?project=all')
-    await expect(page.getByText('the gutter folds')).toBeVisible()
-    expect(last(defects).get('project')).toBeNull()
-
     const features = await stubFeatures(page)
     await page.goto('/features?project=all')
     await expect(page.getByText('Filed row')).toBeVisible()
     expect(last(features).get('project_id')).toBeNull()
-  })
-
-test('a narrowing does not widen the scope it was applied inside',
-  async ({ page }) => {
-    // R1: `project` carries, every other axis is per tab. A control that
-    // rebuilds the query from its own axes drops the shell's — and the list
-    // silently widens to every project while the header still names one.
-    const seen = await stubDefects(page)
-
-    await page.goto('/defects?project=7')
-    await expect(page.getByTestId('pipeline-list-toolbar')).toBeVisible()
-    await page.getByTestId('list-sort-dir').click()
-
-    await expect(page).toHaveURL(/project=7/)
-    await expect.poll(() => last(seen).get('project')).toBe('7')
-    await expect(page.getByTestId('pipeline-project')).toContainText('regin')
+    await expect(page.getByTestId('triage-rail').getByText('the gutter folds')).toBeVisible()
+    expect(triageAsked(defects).get('project')).toBeNull()
   })
 
 test('a narrowing does not widen the scope on the features tab either',

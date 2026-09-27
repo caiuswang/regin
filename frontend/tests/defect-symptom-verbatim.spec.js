@@ -65,9 +65,7 @@ test('a symptom is quoted, never rendered, and keeps its line breaks',
   async ({ page }) => {
     await stubDefects(page)
 
-    await page.goto('/defects')
-    // Expanded, the row carries the symptom unclamped.
-    await page.locator('li.card').getByRole('button', { name: /Show details/ }).click()
+    await page.goto('/defects/7')
     const symptom = page.locator('li.card .symptom')
     await expect(symptom).toBeVisible()
 

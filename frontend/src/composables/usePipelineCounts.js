@@ -8,9 +8,19 @@ import api from '../api'
 // intake count that did not move after accept, decline or duplicate, because
 // nothing told it one had happened.
 const revision = ref(0)
+// The shell's "Updated …": the last successful read of counts or the Overview.
+const updatedAt = ref(null)
 
 export function invalidatePipelineCounts() {
   revision.value += 1
+}
+
+export function markPipelineRead() {
+  updatedAt.value = Date.now()
+}
+
+export function usePipelineUpdatedAt() {
+  return updatedAt
 }
 
 /**
@@ -33,6 +43,7 @@ export function usePipelineCounts() {
       const data = await api.get(`/pipeline/counts${qs}`)
       counts.value = data?.counts || null
       error.value = ''
+      markPipelineRead()
     } catch (e) {
       error.value = e?.message || String(e)
     } finally {

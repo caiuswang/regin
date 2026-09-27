@@ -1,5 +1,6 @@
 /**
- * Feature #108 — one list chassis for the four Pipeline tabs.
+ * Feature #108 — one list chassis for the Pipeline lists (Features' toolbar
+ * became stage tabs in feature #110).
  *
  * Each test is an acceptance scenario from the feature's spec. The count
  * agreement test reads the real e2e server, because I1 is a claim about two
@@ -8,7 +9,10 @@
  */
 import { test, expect } from './auth-fixture.js'
 
-const TABS = ['/tasks', '/features', '/defects', '/projects']
+// Features has its own stage-tab toolbar (feature #110); Tasks keeps the chassis.
+const TABS = ['/tasks']
+// What `/` focuses on each Pipeline tab.
+const SEARCH = { '/tasks': 'list-search', '/features': 'list-search', '/overview': 'projects-search' }
 
 function envelope(items, over = {}) {
   return {
@@ -56,6 +60,9 @@ test('one toolbar, same place, on every tab', async ({ page }) => {
 test('tasks has one project control, and it is the shell\'s', async ({ page }) => {
   await page.route('**/api/repos', (route) =>
     route.fulfill({ json: { repos: [{ id: 7, name: 'regin' }] } }))
+  await page.route('**/api/pipeline/projects?*', (route) =>
+    route.fulfill({ json: envelope([{ id: 7, scope: '7', name: 'regin',
+      features: { by_stage: {} }, defects: { open: 0 }, tasks: { by_status: {} } }]) }))
   const asked = []
   page.on('request', (req) => {
     const url = new URL(req.url())
@@ -66,7 +73,7 @@ test('tasks has one project control, and it is the shell\'s', async ({ page }) =
   await expect(page.getByTestId('task-filter-project')).toHaveCount(0)
 
   await page.getByTestId('pipeline-project').click()
-  await page.getByRole('option', { name: 'regin', exact: true }).click()
+  await page.getByTestId('project-picker-row-7').click()
   await expect.poll(() => asked.at(-1)).toBe('7')
 })
 
@@ -115,7 +122,7 @@ test('sort is key:dir, and a retired form renders the server default',
     await expect.poll(() => sorts.at(-1)).toBe('created:asc')
   })
 
-for (const key of ['tasks', 'features', 'defects']) {
+for (const key of ['tasks']) {
   for (const scope of ['all', 'none']) {
     test(`the toolbar count agrees with the tab strip — ${key}, ${scope}`,
       async ({ page }) => {
@@ -132,16 +139,6 @@ for (const key of ['tasks', 'features', 'defects']) {
   }
 }
 
-test('Clear N is always present, and counts what narrows', async ({ page }) => {
-  await page.goto('/defects')
-  await expect(page.getByTestId('list-clear')).toBeVisible()
-  await expect(page.getByTestId('list-clear')).toBeDisabled()
-
-  await page.goto('/defects?status=open&q=zz')
-  await expect(page.getByTestId('list-clear')).toHaveText(/Clear 2/)
-  await expect(page.getByTestId('list-clear')).toBeEnabled()
-})
-
 test('the empty states say which kind of nothing they are', async ({ page }) => {
   await page.route(/\/api\/features(\?.*)?$/, (route) =>
     route.fulfill({ json: envelope([], { population: 4 }) }))
@@ -150,11 +147,12 @@ test('the empty states say which kind of nothing they are', async ({ page }) => 
   await expect(status).toHaveAttribute('data-state', 'no-match')
   await expect(status.getByTestId('list-status-clear')).toBeVisible()
 
-  await page.route('**/api/defects*', (route) =>
+  await page.unroute(/\/api\/features(\?.*)?$/)
+  await page.route(/\/api\/features(\?.*)?$/, (route) =>
     route.fulfill({ json: envelope([], {
       population: 3, pagination: { total: 3, page: 99 },
-      applied: { sort: 'opened:desc', filters: { scope: 'all' } } }) }))
-  await page.goto('/defects?page=99')
+      applied: { sort: 'activity:desc', filters: {} } }) }))
+  await page.goto('/features?page=99')
   await expect(status).toHaveAttribute('data-state', 'past-end')
   await status.getByTestId('list-status-first').click()
   await expect(page).not.toHaveURL(/page=/)
@@ -196,21 +194,22 @@ test('projects narrow on the server', async ({ page }) => {
       registered: true, status: 'in_progress', progress: { done: 1, live: 2 },
       features: { total: 2, by_stage: {} }, tasks: { total: 0, by_status: {} },
       defects: { total: 0, open: 0 }, last_activity: null,
-    }], { population: 4, applied: { sort: 'activity:desc', filters: { q: 'reg' } } }) })
+    }], { population: 4, applied: { sort: 'attention:desc', filters: { q: 'reg' } } }) })
   })
-  await page.goto('/projects?q=reg')
+  await page.goto('/overview')
+  await page.getByTestId('projects-search').fill('reg')
   await expect.poll(() => asked.at(-1)).toBe('reg')
-  await expect(page.getByTestId('project-row-1')).toBeVisible()
-  await expect(page.getByTestId('list-count')).toHaveText('1 of 4 projects')
+  await expect(page.getByTestId('projects-row-1')).toBeVisible()
+  await expect(page.getByTestId('projects-foot')).toContainText('Showing 1 of 1')
 })
 
 test('/ focuses search on every tab', async ({ page }) => {
-  for (const path of TABS) {
+  for (const [path, testid] of Object.entries(SEARCH)) {
     await page.goto(path)
-    await expect(page.getByTestId('list-search')).toBeVisible()
+    await expect(page.getByTestId(testid)).toBeVisible()
     await page.locator('body').click({ position: { x: 5, y: 5 } })
     await page.keyboard.press('/')
-    await expect(page.getByTestId('list-search'), path).toBeFocused()
+    await expect(page.getByTestId(testid), path).toBeFocused()
   }
 })
 
@@ -226,18 +225,17 @@ test('a kept-alive Tasks list stays quiet while another tab is on screen',
   async ({ page }) => {
     await page.goto('/tasks?group=none')
     await expect(page.getByTestId('pipeline-list-toolbar')).toBeVisible()
-    await page.getByTestId('pipeline-tab-defects').click()
-    await expect(page).toHaveURL(/\/defects/)
+    await page.getByTestId('pipeline-tab-features').click()
+    await expect(page).toHaveURL(/\/features/)
     const stray = []
     page.on('request', (req) => {
       if (new URL(req.url()).pathname.startsWith('/api/tasks')) stray.push(req.url())
     })
-    // Both lists watch the same route change, so by the time the defects read
+    // Both lists watch the same route change, so by the time the features read
     // for it has answered, any read the hidden Tasks list issued has been sent.
     const answered = page.waitForResponse(r =>
-      r.url().includes('/api/defects') && r.url().includes('status=open'))
-    await page.getByTestId('list-facet-status').click()
-    await page.getByRole('option', { name: 'Open', exact: true }).click()
+      r.url().includes('/api/features') && r.url().includes('stage=building'))
+    await page.getByTestId('feature-stage-building').click()
     await answered
     expect(stray).toEqual([])
   })

@@ -25,6 +25,7 @@ import Textarea from '../ui/Textarea.vue'
 import DefectRow from '../defects/DefectRow.vue'
 import TaskImageStrip from '../tasks/TaskImageStrip.vue'
 import { imageFilesFrom } from '../../utils/imageFiles'
+import { DEFECTS_ANCHOR } from '../../utils/featureLinks'
 import { useAttachedImages } from '../../composables/useAttachedImages.js'
 
 const props = defineProps({
@@ -61,8 +62,6 @@ const MAX_ROWS = 200
 
 const isFeature = computed(() => Boolean(props.feature))
 const canSubmit = computed(() => symptom.value.trim().length > 0 && !busy.value)
-const scopeHref = computed(
-  () => `/defects?feature_id=${props.feature?.id}`)
 const truncated = computed(() => total.value > items.value.length)
 
 // Re-read rather than patch: re-attributing a defect moves it off this
@@ -146,13 +145,9 @@ async function onRowChanged(message) {
 </script>
 
 <template>
-  <Card v-if="isFeature" data-testid="feature-defects">
+  <Card v-if="isFeature" :id="DEFECTS_ANCHOR" data-testid="feature-defects">
     <div class="td-head">
       <h2 class="card-header">Defects</h2>
-      <router-link
-        v-if="items.length"
-        class="td-key" :to="scopeHref" data-testid="feature-defects-scope"
-      >open in the defects ledger</router-link>
       <span class="td-spacer" />
       <Button
         v-if="canWrite && !open"

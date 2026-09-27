@@ -257,22 +257,6 @@ test('a viewer sees no edit, no new task and no report control',
 
 // ── the defects head ──────────────────────────────────────────
 
-test('the defects scope link appears only when there is a defect to scope to',
-  async ({ page }) => {
-    await stub(page)
-    await page.goto('/features/242')
-
-    await expect(page.getByTestId('feature-defects-empty')).toBeVisible()
-    // A link into a filtered list that is empty by construction: it promises
-    // rows and lands on none.
-    await expect(page.getByTestId('feature-defects-scope')).toHaveCount(0)
-
-    await stub(page, { defects: [defect()] })
-    await page.reload()
-    await expect(page.getByTestId('feature-defects-scope'))
-      .toHaveAttribute('href', '/defects?feature_id=242')
-  })
-
 test('the defects head centres its title against its controls',
   async ({ page }) => {
     await stub(page, { defects: [defect()] })
@@ -280,13 +264,12 @@ test('the defects head centres its title against its controls',
 
     const head = page.getByTestId('feature-defects').locator('.td-head')
     const title = head.locator('h2')
-    const link = page.getByTestId('feature-defects-scope')
     const button = page.getByTestId('feature-report-defect')
-    const [h, t, l, b] = await Promise.all(
-      [head, title, link, button].map((el) => el.boundingBox()))
+    const [h, t, b] = await Promise.all(
+      [head, title, button].map((el) => el.boundingBox()))
 
     // The heading's own bottom margin is what pushed it off the row's centre.
-    expect(Math.abs((t.y + t.height / 2) - (l.y + l.height / 2)))
+    expect(Math.abs((t.y + t.height / 2) - (b.y + b.height / 2)))
       .toBeLessThanOrEqual(1)
     // and made the row taller than its tallest control.
     expect(h.height).toBeLessThanOrEqual(Math.max(t.height, b.height) + 1)
@@ -366,8 +349,6 @@ test('a defect row on its own feature page does not repeat the feature title',
     const list = page.getByTestId('feature-defects-list')
     await expect(list).toContainText('the spec is write-only from the browser')
     await expect(list).not.toContainText('Feature workbench')
-    await expect(page.getByTestId('feature-defects-scope'))
-      .not.toContainText('Feature workbench')
   })
 
 test('tasks, defects and sessions rows share one row grammar', async ({ page }) => {

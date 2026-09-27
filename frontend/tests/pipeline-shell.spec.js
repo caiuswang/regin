@@ -11,9 +11,9 @@
 import { test, expect } from './auth-fixture.js'
 
 const TABS = [
+  { testid: 'pipeline-tab-overview', path: '/overview' },
   { testid: 'pipeline-tab-tasks', path: '/tasks' },
   { testid: 'pipeline-tab-features', path: '/features' },
-  { testid: 'pipeline-tab-defects', path: '/defects' },
 ]
 
 test('one rail entry, not three', async ({ page }) => {
@@ -22,7 +22,7 @@ test('one rail entry, not three', async ({ page }) => {
   const labels = await page.$$eval('nav.sb-nav .sb-item', (items) =>
     items.map((i) => (i.getAttribute('aria-label') || i.innerText || '').trim()))
   expect(labels).toContain('Pipeline')
-  for (const gone of ['Tasks', 'Features', 'Defects']) {
+  for (const gone of ['Tasks', 'Features', 'Defects', 'Projects']) {
     expect(labels).not.toContain(gone)
   }
 })
@@ -49,7 +49,7 @@ test('a deep link to any of the three lands on its own tab', async ({ page }) =>
 test('the Pipeline entry stays lit on every one of the three, and on a detail page',
   async ({ page }) => {
     const rail = page.locator('nav.sb-nav .sb-item', { hasText: 'Pipeline' })
-    for (const path of ['/tasks', '/features', '/defects', '/tasks/1', '/features/1']) {
+    for (const path of ['/overview', '/tasks', '/features', '/tasks/1', '/features/1', '/defects/1']) {
       await page.goto(path)
       await page.waitForSelector('.app-shell')
       await expect(rail).toHaveClass(/is-active/)
@@ -63,8 +63,9 @@ test("each tab's own controls ride up into the shell header", async ({ page }) =
   await expect(page.locator('#pipeline-actions [data-testid="declare-feature"]')).toBeVisible()
   // One tab's action must not outlive it.
   await expect(page.locator('#pipeline-actions [data-testid="task-new"]')).toHaveCount(0)
-  await page.getByTestId('pipeline-tab-defects').click()
+  await page.getByTestId('pipeline-tab-overview').click()
   await expect(page.locator('#pipeline-actions [data-testid="declare-feature"]')).toHaveCount(0)
+  await expect(page.locator('#pipeline-actions [data-testid="task-new"]')).toHaveCount(1)
 })
 
 test('the shell renders no console error on a cold load of any tab',

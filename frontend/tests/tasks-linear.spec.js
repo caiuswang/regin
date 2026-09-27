@@ -352,12 +352,10 @@ test('the project picker offers the registered repos and nothing else',
     const repos = (await api(page, 'GET', '/repos')).body.repos
     await page.getByTestId('pipeline-project').click()
     for (const repo of repos) {
-      await expect(page.getByRole('option', { name: repo.name, exact: true }))
-        .toBeVisible()
+      await expect(page.getByTestId(`project-picker-row-${repo.id}`)).toContainText(repo.name)
     }
     // The backlog is a real option, not the absence of one.
-    await expect(page.getByRole('option', { name: 'No project', exact: true }))
-      .toBeVisible()
+    await expect(page.getByTestId('project-picker-row-none')).toContainText('No project')
   })
 
 test('a row filed under a repo names that repo', async ({ page }) => {

@@ -19,10 +19,11 @@ const OPEN = {
 const CLOSED = { ...OPEN, status: 'closed', missing_check: 'test_the_gutter_holds' }
 const FIXED = { ...CLOSED, fix_task_id: 142 }
 
+// The row is read on its own page: there is no defects list (feature #110).
 function stubList(page, state) {
-  return page.route('**/api/defects*', (route) => {
+  return page.route(/\/api\/defects\/\d+$/, (route) => {
     if (route.request().method() !== 'GET') return route.fallback()
-    return route.fulfill({ json: { items: [state.row], scope: 'all' } })
+    return route.fulfill({ json: { defect: state.row } })
   })
 }
 
@@ -42,10 +43,8 @@ test('closing a defect offers the fix task, and accepting links it',
       await route.fulfill({ json: { defect: FIXED } })
     })
 
-    await page.goto('/defects')
+    await page.goto('/defects/7')
     const row = page.locator('li.card', { hasText: 'the gutter folds' })
-    // A list row is two lines at rest; actions sit behind its disclosure.
-    await row.getByTestId('defect-toggle-7').click()
     await row.getByRole('button', { name: 'Close' }).click()
     await row.getByPlaceholder('the test that would have caught this')
       .fill('test_the_gutter_holds')
@@ -73,10 +72,8 @@ test('arriving at an already-closed defect raises no offer', async ({ page }) =>
   // closed weeks ago is being read, not decided.
   await stubList(page, { row: CLOSED })
 
-  await page.goto('/defects')
+  await page.goto('/defects/7')
   const row = page.locator('li.card', { hasText: 'the gutter folds' })
-  // A list row is two lines at rest; actions sit behind its disclosure.
-  await row.getByTestId('defect-toggle-7').click()
   await expect(row).toContainText('test_the_gutter_holds')
   await expect(row.getByTestId('defect-fix-offer-7')).toHaveCount(0)
 })
@@ -94,10 +91,8 @@ test('a refused create says so and leaves the offer standing',
       json: { error: '#7 is unattributed, so there is no feature to file under' },
     }))
 
-    await page.goto('/defects')
+    await page.goto('/defects/7')
     const row = page.locator('li.card', { hasText: 'the gutter folds' })
-    // A list row is two lines at rest; actions sit behind its disclosure.
-    await row.getByTestId('defect-toggle-7').click()
     await row.getByRole('button', { name: 'Close' }).click()
     await row.getByPlaceholder('the test that would have caught this')
       .fill('test_the_gutter_holds')
@@ -118,10 +113,8 @@ test('a defect can be pointed at a task that already exists', async ({ page }) =
     await route.fulfill({ json: { defect: state.row } })
   })
 
-  await page.goto('/defects')
+  await page.goto('/defects/7')
   const row = page.locator('li.card', { hasText: 'the gutter folds' })
-  // A list row is two lines at rest; actions sit behind its disclosure.
-  await row.getByTestId('defect-toggle-7').click()
   await row.getByTestId('defect-more-7').click()
   await page.getByRole('menuitem', { name: 'Link existing task' }).click()
   await row.getByPlaceholder('task id').fill('99')
@@ -144,10 +137,8 @@ test('an open, attributed defect files its fix task in one click',
       await route.fulfill({ json: { defect: state.row } })
     })
 
-    await page.goto('/defects')
+    await page.goto('/defects/7')
     const row = page.locator('li.card', { hasText: 'the gutter folds' })
-    // A list row is two lines at rest; actions sit behind its disclosure.
-    await row.getByTestId('defect-toggle-7').click()
     await row.getByTestId('defect-more-7').click()
     await page.getByTestId('defect-fix-create-row-7').click()
 
@@ -163,10 +154,8 @@ test('an open, attributed defect files its fix task in one click',
 test('an unattributed defect cannot file one, and says why', async ({ page }) => {
   await stubList(page, { row: { ...OPEN, feature_id: null, feature_title: null } })
 
-  await page.goto('/defects')
+  await page.goto('/defects/7')
   const row = page.locator('li.card', { hasText: 'the gutter folds' })
-  // A list row is two lines at rest; actions sit behind its disclosure.
-  await row.getByTestId('defect-toggle-7').click()
   await row.getByTestId('defect-more-7').click()
   await expect(page.getByTestId('defect-fix-create-row-7'))
     .toHaveAttribute('aria-disabled', 'true')
@@ -177,8 +166,7 @@ test('an unattributed defect cannot file one, and says why', async ({ page }) =>
 test('the row menu is fully visible on the defects ledger, outside a feature row',
   async ({ page }) => {
     await stubList(page, { row: OPEN })
-    await page.goto('/defects')
-    await page.getByTestId('defect-toggle-7').click()
+    await page.goto('/defects/7')
     const more = page.locator('li.card', { hasText: 'the gutter folds' })
       .getByTestId('defect-more-7')
     await page.mouse.move(0, 0)

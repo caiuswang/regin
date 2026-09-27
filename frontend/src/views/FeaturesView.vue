@@ -1,69 +1,54 @@
 <script setup>
-// Every feature regin knows — a way in, not a leaderboard.
+// Every feature regin knows, as stage tracks with their defects hanging off
+// them, and the triage rail beside them (designs 1c, 2c).
 //
-// The population is the `features` table, so this list has no membership rule
-// of its own to disagree with the ledger's. It used to be a union of four
-// string sources, which is how a shipped feature could be missing from it.
-//
-// The header counters describe the POPULATION, never the match, so a search
-// reads "3 of 25 features" rather than implying it has shown everything.
-//
-// **Every narrowing is in the URL.** Search, stage, sort and page are read from
-// `route.query` and written back by navigation — the view holds no filter state
-// of its own. That is the single rule the whole consistency story rests on
-// (spec 73, R1): a narrowed list is a link, and the controls above the rows
-// always describe the rows below them. It also means the server does every
-// narrowing: `GET /api/features` is an offset page with facets and seven sort
-// keys, so nothing here filters or sorts a loaded array.
+// Every narrowing is in the URL — search, stage, sort and page are read from
+// `route.query` and written back by navigation — and the server does all of
+// it: `GET /api/features` is an offset page with stage-blind stage counts, so
+// nothing here filters or counts a loaded array.
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { usePipelineTabActive } from '../composables/usePipelineHeader'
+import { usePipelineHeaderPublisher, usePipelineTabActive } from '../composables/usePipelineHeader'
 import { scopeParam } from '../composables/usePipelineScope'
 import { usePage } from '../composables/usePage'
 import { listStatusState, useListQuery } from '../composables/useListQuery'
 import { useTaskShortcuts } from '../composables/useTaskShortcuts'
+import { useBreakpoint } from '../composables/useBreakpoint'
 import api from '../api'
 import Button from '../components/ui/Button.vue'
 import Icon from '../components/ui/Icon.vue'
+import Input from '../components/ui/Input.vue'
+import Select from '../components/ui/Select.vue'
 import ListStatus from '../components/ListStatus.vue'
 import PageControls from '../components/PageControls.vue'
-import PipelineListToolbar from '../components/PipelineListToolbar.vue'
-import FeatureIndexTable from '../components/features/FeatureIndexTable.vue'
 import NewFeatureDialog from '../components/features/NewFeatureDialog.vue'
-import { money, num, percent } from '../utils/ledgerFormat'
+import FeatureStageTabs from '../components/pipeline/FeatureStageTabs.vue'
+import FeatureTrackTable from '../components/pipeline/FeatureTrackTable.vue'
+import FeatureCard from '../components/pipeline/FeatureCard.vue'
+import TriageRail from '../components/pipeline/TriageRail.vue'
+import TriageSheet from '../components/pipeline/TriageSheet.vue'
 
 const route = useRoute()
 const router = useRouter()
 const isCurrentTab = usePipelineTabActive()
+const publish = usePipelineHeaderPublisher()
+const { isMdUp } = useBreakpoint()
 
-// `lib/features/index.py::SORT_KEYS`, in the order the toolbar offers them.
-// Restated here rather than fetched because a select whose options arrive late
-// renders a control with nothing in it; the server is still the authority, and
-// it falls back to its own default rather than erroring on a key it dropped.
+// `lib/features/index.py::SORT_KEYS`. Restated rather than fetched because a
+// select whose options arrive late renders a control with nothing in it.
 const SORT_OPTIONS = [
-  { value: 'activity', label: 'Last activity' },
-  { value: 'rounds', label: 'Rounds' },
-  { value: 'open_defects', label: 'Open defects' },
-  { value: 'escapes', label: 'Escapes' },
-  { value: 'cost', label: 'Cost' },
-  { value: 'stage', label: 'Stage' },
-  { value: 'created', label: 'Created' },
-]
-
-// `lib/features/events.py::STAGES`. An unknown value is a 400 from the server,
-// not a silently dropped filter, so this list and that tuple must agree.
-const STAGE_OPTIONS = [
-  { value: '', label: 'Any stage' },
-  { value: 'spec', label: 'spec' },
-  { value: 'building', label: 'building' },
-  { value: 'shipped', label: 'shipped' },
-  { value: 'escaped', label: 'escaped' },
-  { value: 'abandoned', label: 'abandoned' },
+  { value: 'activity:desc', label: 'Last activity ↓' },
+  { value: 'rounds:desc', label: 'Rounds ↓' },
+  { value: 'open_defects:desc', label: 'Open defects ↓' },
+  { value: 'escapes:desc', label: 'Escapes ↓' },
+  { value: 'cost:desc', label: 'Cost ↓' },
+  { value: 'created:desc', label: 'Newest ↓' },
 ]
 
 const list = useListQuery({
-  defaults: { q: '', stage: '', sort: 'created:desc' },
+  defaults: { q: '', stage: '', sort: 'activity:desc' },
   facets: ['stage'],
+  kept: ['triage'],
 })
 const { state } = list
 
@@ -76,27 +61,32 @@ const {
     q: state.value.q,
     stage: state.value.stage,
     sort: state.value.sort,
-    // Shell-owned: the URL spells the scope `project`, this endpoint spells it
-    // `project_id`, and `all` is the absence of a scope the server refuses.
     project_id: scopeParam(route.query.project),
   }),
 })
 
-// The toolbar renders what the server applied, not what was asked for.
 const appliedSort = computed(() => applied.value?.sort || state.value.sort)
-const sortKey = computed(() => appliedSort.value.split(':')[0])
-const sortDir = computed(() => (appliedSort.value.split(':')[1] === 'asc' ? 'asc' : 'desc'))
-
-const cov = computed(() => extras.value.coverage)
-const unattributed = computed(() => extras.value.unattributed_defects || 0)
+const scope = computed(() => scopeParam(route.query.project))
 const status = computed(() => listStatusState({
   loaded: loaded.value, error: error.value, items: items.value,
   total: total.value, population: population.value,
 }))
 
+// Escaped cards lead on a phone: they are the ones owed attention.
+const cards = computed(() => [...items.value].sort((a, b) =>
+  Number(b.stage === 'escaped') - Number(a.stage === 'escaped')))
+
+function dollars(v) {
+  return `$${Math.round(Number(v || 0)).toLocaleString('en-US')}`
+}
+watch(() => extras.value.attribution, (a) => {
+  if (!a) return
+  const pct = a.sessions_pct == null ? '—' : `${a.sessions_pct}%`
+  publish({ subline: `${pct} of sessions attributed · ${dollars(a.declared_usd)} of ${dollars(a.all_usd)}` })
+})
+
 function gotoPage(index) {
-  const target = Math.max(0, Math.min(pageCount.value - 1, index))
-  list.patch({ page: String(target) })
+  list.patch({ page: String(Math.max(0, Math.min(pageCount.value - 1, index))) })
 }
 
 async function reload() {
@@ -104,150 +94,185 @@ async function reload() {
   pageSize.value = state.value.size
   await load()
 }
-// Keyed on the query string, so a route change elsewhere does not re-read.
-watch(() => (route.path === '/features' ? JSON.stringify(route.query) : null),
-  (key) => { if (key != null) reload() }, { immediate: true })
+watch(() => (route.path === '/features'
+  ? JSON.stringify({ ...route.query, triage: undefined }) : null),
+(key) => { if (key != null) reload() }, { immediate: true })
 
-const toolbar = ref(null)
-
-// The create endpoint is editor-level, so the control is too. Read off the
-// stored role rather than a field in the payload, which would make the
-// population's shape depend on who asked for it.
+const search = ref(null)
+// A search commits on Enter and Escape reverts it, so typing costs no request.
+const draft = ref(state.value.q)
+// Any navigation drops an unsubmitted term: the box describes the rows below.
+watch(() => route.fullPath, () => { draft.value = state.value.q })
 const canWrite = computed(() => api.getStoredUser()?.role !== 'viewer')
 const declaring = ref(false)
+const triaging = ref(false)
+const rail = ref(null)
 
-// Onto the new feature's own page, not back to the list: everything the
-// operator does next — finish the spec, attribute a session, ship — is there,
-// and the row they just made is the only one they are looking for.
 function declared(ledger) {
   if (ledger?.id) router.push(`/features/${ledger.id}`)
 }
 
 useTaskShortcuts({
-  '/': () => toolbar.value?.focusSearch(),
+  '/': () => search.value?.focus(),
   c: () => { if (canWrite.value) declaring.value = true },
 })
 </script>
 
 <template>
-  <div class="space-y-4">
-    <!-- Only the create action rides up into the shell's header; the list's
-         controls sit in the body, under the tab strip, as on every tab. -->
+  <div class="fv">
     <Teleport v-if="isCurrentTab && canWrite" defer to="#pipeline-actions">
       <Button variant="primary" data-testid="declare-feature" @click="declaring = true">
         <Icon name="plus" :size="12" />
-        New feature
+        <span>New feature</span>
         <kbd class="fv-kbd">c</kbd>
       </Button>
     </Teleport>
 
-    <PipelineListToolbar
-      ref="toolbar"
-      noun="feature"
-      :q="state.q"
-      search-label="Search features by title, spec or tracker reference"
-      search-placeholder="Search title, spec or reference…"
-      :facets="[{ key: 'stage', label: 'Filter by stage',
-                  value: state.stage, options: STAGE_OPTIONS }]"
-      :sort-options="SORT_OPTIONS"
-      :sort-key="sortKey"
-      :sort-dir="sortDir"
-      :total="loaded && !error ? total : null"
-      :population="population"
-      :dirty-count="list.dirtyCount.value"
-      @patch="list.patch"
-      @reset="list.reset"
-    />
+    <NewFeatureDialog v-model:open="declaring" :scope="scope" @declared="declared" />
 
-    <NewFeatureDialog
-      v-model:open="declaring"
-      :scope="scopeParam(route.query.project)"
-      @declared="declared"
-    />
+    <div class="fv-layout">
+      <div class="fv-main">
+        <div class="fv-toolbar">
+          <FeatureStageTabs
+            :counts="extras.stage_counts || null"
+            :stage="state.stage"
+            :compact="!isMdUp"
+            @select="s => list.patch({ stage: s })"
+          />
+          <template v-if="isMdUp">
+            <span class="fv-spacer" />
+            <label class="fv-search">
+              <Icon name="search" :size="13" />
+              <Input
+                ref="search"
+                v-model="draft"
+                type="search"
+                class="fv-search__input"
+                placeholder="Search features"
+                aria-label="Search features by title, spec or tracker reference"
+                data-testid="list-search"
+                @keydown.enter.prevent="list.patch({ q: draft.trim() })"
+                @keydown.esc.prevent="draft = state.q"
+              />
+            </label>
+            <Select
+              :model-value="appliedSort"
+              :options="SORT_OPTIONS"
+              bare
+              aria-label="Sort features"
+              data-testid="features-sort"
+              @update:model-value="v => list.patch({ sort: v })"
+            />
+          </template>
+        </div>
 
-    <div v-if="cov" class="counters">
-      <span>
-        <b>{{ cov.declared_sessions }}</b> of {{ num(cov.all_sessions) }}
-        sessions attributed
-        ({{ percent(cov.declared_sessions, cov.all_sessions) }})
-        · <b>{{ money(cov.declared_usd) }}</b> of {{ money(cov.all_usd) }}
-        ({{ percent(cov.declared_usd, cov.all_usd) }})
-      </span>
-      <!-- Both this number and `/defects?scope=unattributed` read
-           `store.unattributed()`, so they cannot disagree. -->
-      <router-link
-        v-if="unattributed" class="counter-gap"
-        :to="{ path: '/defects', query: { scope: 'unattributed' } }"
-      >
-        <Icon name="alert-triangle" :size="11" />
-        <b>{{ unattributed }}</b> defects blamed on no feature
-      </router-link>
-    </div>
+        <ListStatus
+          :state="status"
+          noun="feature"
+          :total="total"
+          :page="page"
+          :dirty-count="list.dirtyCount.value"
+          :error="error || ''"
+          empty-text="No features yet. Declaring one is the only way in."
+          @retry="load"
+          @clear="list.reset"
+          @first-page="list.patch({ page: '0' })"
+        >
+          <template #create>
+            <Button v-if="canWrite" variant="secondary" size="sm" @click="declaring = true">New feature</Button>
+          </template>
+        </ListStatus>
 
-    <ListStatus
-      :state="status"
-      noun="feature"
-      :total="total"
-      :page="page"
-      :dirty-count="list.dirtyCount.value"
-      :error="error || ''"
-      empty-text="No features yet. Declaring one is the only way in."
-      @retry="load"
-      @clear="list.reset"
-      @first-page="list.patch({ page: '0' })"
-    >
-      <template #create>
-        <Button v-if="canWrite" variant="secondary" size="sm" @click="declaring = true">
-          New feature
+        <div v-if="status === 'rows'" :class="{ 'is-busy': loading }">
+          <FeatureTrackTable v-if="isMdUp" :rows="items" />
+          <div v-else class="fv-cards">
+            <FeatureCard v-for="f in cards" :key="f.id" :feature="f" />
+          </div>
+        </div>
+
+        <PageControls
+          v-if="loaded && total > pageSize"
+          :page="page"
+          :page-count="pageCount"
+          :total="total"
+          :size="pageSize"
+          :has-next="hasNext"
+          :has-prev="hasPrev"
+          :loading="loading"
+          @prev="gotoPage(page - 1)"
+          @next="gotoPage(page + 1)"
+          @goto="gotoPage"
+          @set-size="n => list.patch({ size: String(n) })"
+        />
+      </div>
+
+      <aside v-if="isMdUp" class="fv-rail">
+        <TriageRail
+          ref="rail"
+          :scope="route.query.project ? String(route.query.project) : ''"
+          :unattributed="extras.unattributed_defects || 0"
+          :focus-id="route.query.triage || null"
+          @changed="reload"
+        />
+      </aside>
+      <section v-else class="fv-triage-card" data-testid="features-triage-card">
+        <span>Reports nobody has routed</span>
+        <Button variant="secondary" class="fv-triage-go" data-testid="features-triage-open" @click="triaging = true">
+          Triage
         </Button>
-      </template>
-    </ListStatus>
-
-    <div v-if="status === 'rows'" :class="{ 'is-busy': loading }">
-      <FeatureIndexTable
-        :rows="items"
-        :sort-key="sortKey"
-        :sort-dir="sortDir"
-        @sort="list.setSort"
-      />
+      </section>
     </div>
 
-    <PageControls
-      v-if="loaded && total > pageSize"
-      :page="page"
-      :page-count="pageCount"
-      :total="total"
-      :size="pageSize"
-      :has-next="hasNext"
-      :has-prev="hasPrev"
-      :loading="loading"
-      @prev="gotoPage(page - 1)"
-      @next="gotoPage(page + 1)"
-      @goto="gotoPage"
-      @set-size="n => list.patch({ size: String(n) })"
+    <TriageSheet
+      v-if="!isMdUp"
+      v-model:open="triaging"
+      :scope="route.query.project ? String(route.query.project) : ''"
+      @changed="reload"
     />
   </div>
 </template>
 
 <style scoped>
-.counters {
-    display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 1.25rem;
-    border: 1px solid var(--color-border); border-radius: var(--radius-xl);
-    background: var(--color-slate-50); padding: 0.5rem 0.9rem;
-    font-size: 11.5px; color: var(--color-fg-muted);
+.fv { min-width: 0; }
+.fv-layout {
+    display: grid; gap: 1.25rem; align-items: start;
+    grid-template-columns: minmax(0, 1fr) 21rem;
 }
-.counters b { color: var(--color-fg); font-variant-numeric: tabular-nums; }
-.counter-gap {
-    display: inline-flex; align-items: center; gap: 0.3rem;
-    color: var(--color-amber-800); text-decoration: none;
+.fv-main { min-width: 0; display: flex; flex-direction: column; gap: 0.9rem; }
+.fv-toolbar { display: flex; align-items: center; gap: 0.6rem; min-width: 0; flex-wrap: wrap; }
+.fv-spacer { flex: 1; }
+.fv-search {
+    display: flex; align-items: center; gap: 0.45rem; flex: 0 1 12rem; min-width: 8rem;
+    border: 1px solid var(--color-border); border-radius: var(--radius-lg);
+    background: var(--color-surface); padding: 0 0.6rem; color: var(--color-fg-faint);
 }
-.counter-gap:hover { text-decoration: underline; }
-.counter-gap:focus-visible { outline: 2px solid var(--color-blue-500); }
+.fv-search .fv-search__input { border: 0; box-shadow: none; background: none; padding: 0; height: 32px; }
+.fv-rail {
+    position: sticky; top: 0.5rem;
+    border-left: 1px solid var(--color-border); padding-left: 1.25rem; min-width: 0;
+}
+.fv-cards { display: flex; flex-direction: column; gap: 0.6rem; }
 .is-busy { opacity: 0.6; }
+.fv-triage-card {
+    display: flex; align-items: center; gap: 0.75rem;
+    border: 1px solid var(--color-amber-300); border-radius: var(--radius-xl);
+    background: var(--color-warning-soft); padding: 0.75rem 1rem;
+    font-size: 13px; color: var(--color-warning-strong); font-weight: 600;
+}
+.fv-triage-card span { flex: 1; }
+.fv-triage-card .fv-triage-go { min-height: 44px; background: var(--color-surface); color: var(--color-fg); }
 .fv-kbd {
     margin-left: 0.25rem; padding: 0 0.25rem; font-size: 0.6875rem;
     font-family: var(--font-mono, ui-monospace, monospace);
-    border: 1px solid currentColor; border-radius: var(--radius-sm, 0.25rem);
-    opacity: 0.7;
+    border: 1px solid currentColor; border-radius: var(--radius-sm, 0.25rem); opacity: 0.7;
+}
+
+@media (max-width: 1023.98px) {
+    .fv-layout { grid-template-columns: minmax(0, 1fr); }
+    .fv-rail { position: static; border-left: 0; padding-left: 0; border-top: 1px solid var(--color-border); padding-top: 1rem; }
+}
+@media (max-width: 767.98px) {
+    .fv-layout { display: flex; flex-direction: column-reverse; align-items: stretch; gap: 0.9rem; }
+    .fv { padding-bottom: 5rem; }
 }
 </style>

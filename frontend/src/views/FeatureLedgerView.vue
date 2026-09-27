@@ -23,7 +23,7 @@ import { useAttachedImages } from '../composables/useAttachedImages.js'
 import { useBusyAction } from '../composables/useBusyAction'
 import { useConfirm } from '../composables/useConfirm'
 import { rememberedQuery } from '../composables/usePipelineTabState'
-import { SESSIONS_ANCHOR, revealSessions } from '../utils/featureLinks'
+import { LEDGER_ANCHORS, reveal } from '../utils/featureLinks'
 import Button from '../components/ui/Button.vue'
 import Icon from '../components/ui/Icon.vue'
 import DeclareSessionDialog from '../components/features/DeclareSessionDialog.vue'
@@ -97,9 +97,10 @@ watch(featureId, load, { immediate: true })
 // the reader back down to the evidence list after each of them.
 let revealedHash = ''
 function revealHash() {
-  if (route.hash !== `#${SESSIONS_ANCHOR}` || revealedHash === route.hash) return
+  const anchor = route.hash.slice(1)
+  if (!LEDGER_ANCHORS.includes(anchor) || revealedHash === route.hash) return
   revealedHash = route.hash
-  nextTick(revealSessions)
+  nextTick(() => reveal(anchor))
 }
 watch(ledger, revealHash)
 watch(() => route.hash, (hash) => {

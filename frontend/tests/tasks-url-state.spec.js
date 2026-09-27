@@ -337,7 +337,10 @@ test('a bare /tasks reached again from the sidebar still restores its filters',
     // The tab is kept alive, so there is no remount to restore from.
     await page.goto('/repos')
     await expect(page).toHaveURL(/\/repos/)
+    // The sidebar lands on the Overview; the Tasks tab is one click from it.
     await page.locator('nav.sb-nav .sb-item', { hasText: 'Pipeline' }).click()
+    await expect(page).toHaveURL(/\/overview/)
+    await page.getByTestId('pipeline-tab-tasks').click()
 
     await expect(page).toHaveURL(/status=done/)
     await expect(value(page, 'list-facet-status')).toHaveText('Done')

@@ -8,10 +8,13 @@
 //: than in its URL, so it cannot be scoped to a feature by link at all.
 export const SESSIONS_ANCHOR = 'feature-sessions'
 
-//: The defects a feature caused. `feature_id` is `lib/defects/query.py`'s own
-//: parameter name.
+//: The id the feature page's defect list carries.
+export const DEFECTS_ANCHOR = 'feature-defects'
+
+//: The defects a feature caused, listed on its own page — there is no defects
+//: list outside it.
 export function defectsLink(featureId) {
-  return { path: '/defects', query: { feature_id: String(featureId) } }
+  return { path: `/features/${featureId}`, hash: `#${DEFECTS_ANCHOR}` }
 }
 
 //: The tasks that are a feature's steps. `feature_id` is
@@ -35,7 +38,14 @@ export function sessionsLink(featureId) {
  * inert on every one of the three counts. `scrollIntoView` walks to the
  * nearest scrollable ancestor, which is that container.
  */
-export function revealSessions() {
-  document.getElementById(SESSIONS_ANCHOR)
+export function reveal(anchor) {
+  document.getElementById(anchor)
     ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
+
+export function revealSessions() {
+  reveal(SESSIONS_ANCHOR)
+}
+
+//: The anchors a ledger arrival may carry, and so may reveal.
+export const LEDGER_ANCHORS = [SESSIONS_ANCHOR, DEFECTS_ANCHOR]
