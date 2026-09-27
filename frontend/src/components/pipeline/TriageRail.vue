@@ -2,7 +2,7 @@
 // The Features tab's triage rail (design 1c): reports nobody has routed, and
 // A / D / X / S to route them. The chords are live only while focus is inside
 // the rail and not in a text field, so they never fire from the table beside it.
-import { computed, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import api from '../../api'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
@@ -16,8 +16,11 @@ const props = defineProps({
   unattributed: { type: Number, default: 0 },
   // A defect id to put the cursor on once the queue is read.
   focusId: { type: [Number, String], default: null },
+  // Folded, the rail is a 52px strip that still counts the queue; the parent
+  // owns the flag because it also owns the column width.
+  folded: { type: Boolean, default: false },
 })
-const emit = defineEmits(['changed'])
+const emit = defineEmits(['changed', 'update:folded'])
 
 const triage = useDefectTriage(() => props.scope)
 const {
@@ -48,6 +51,7 @@ function isTyping(el) {
 }
 
 function onKeydown(event) {
+  if (props.folded) return
   if (event.metaKey || event.ctrlKey || event.altKey || isTyping(event.target)) return
   const key = event.key.length === 1 ? event.key.toUpperCase() : event.key
   if (VERBS[key]) {
@@ -84,6 +88,22 @@ async function toggleOlder() {
   olderRows.value = (body.items || []).filter(d => !queued.has(d.id))
 }
 
+const stripCaption = computed(() => {
+  if (loading.value) return ''
+  return error.value ? 'unavailable' : `${total.value} waiting`
+})
+const foldButton = ref(null)
+const unfoldButton = ref(null)
+// The control that was clicked is replaced by its opposite; hand focus across
+// so a keyboard user is not dropped onto <body>. A fold from `]` elsewhere on
+// the page leaves focus where it was.
+watch(() => props.folded, (folded) => {
+  // A prompt left open on a hidden card would resurface on unfold, stale.
+  if (folded) cancel()
+  if (!rail.value?.contains(document.activeElement)) return
+  nextTick(() => (folded ? unfoldButton.value : foldButton.value)?.$el?.focus())
+})
+
 watch(() => props.scope, load)
 watch(() => props.focusId, focusRequested)
 // Inside a `<KeepAlive>` Vue fires `mounted` and THEN `activated` on the first
@@ -103,12 +123,49 @@ defineExpose({ load })
 </script>
 
 <template>
-  <section ref="rail" class="tr" data-testid="triage-rail" aria-label="Triage">
+  <section
+    ref="rail"
+    class="tr"
+    :class="{ 'is-folded': folded }"
+    data-testid="triage-rail"
+    aria-label="Triage"
+  >
+    <Button
+      v-if="folded"
+      ref="unfoldButton"
+      variant="ghost"
+      class="tr-strip"
+      data-testid="triage-unfold"
+      aria-expanded="false"
+      :aria-label="stripCaption ? `Show triage, ${stripCaption}` : 'Show triage'"
+      title="Show triage ( ] )"
+      @click="emit('update:folded', false)"
+    >
+      <span class="tr-strip__icon"><Icon name="panel-right-open" :size="15" /></span>
+      <span v-if="!loading && total" class="tr-strip__badge" data-testid="triage-fold-count">{{ total }}</span>
+      <span class="tr-strip__label">Triage</span>
+      <span v-if="stripCaption" class="tr-strip__caption">{{ stripCaption }}</span>
+      <kbd class="tr-strip__kbd">]</kbd>
+    </Button>
+    <template v-else>
     <header class="tr-head">
       <h2 class="tr-title">Triage</h2>
       <span class="tr-caption">
         <span data-testid="triage-count">{{ total }}</span> waiting · no feature is preselected
       </span>
+      <Button
+        ref="foldButton"
+        variant="ghost"
+        size="icon"
+        class="tr-fold"
+        data-testid="triage-fold"
+        aria-expanded="true"
+        aria-label="Fold triage to the side"
+        title="Fold to sidebar ( ] )"
+        @click="emit('update:folded', true)"
+      >
+        <Icon name="panel-right-close" :size="15" />
+      </Button>
     </header>
 
     <p v-if="loading" class="tr-muted">Loading…</p>
@@ -152,12 +209,43 @@ defineExpose({ load })
         </router-link>
       </li>
     </ul>
+    </template>
   </section>
 </template>
 
 <style scoped>
 .tr { display: flex; flex-direction: column; gap: 0.75rem; min-width: 0; }
 .tr-head { display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; }
+.tr-fold { align-self: center; margin-left: auto; width: 28px; height: 28px; flex-shrink: 0; }
+.tr.is-folded { height: 100%; }
+.tr-strip {
+    display: flex; flex-direction: column; justify-content: flex-start; gap: 12px;
+    width: 100%; height: 100%; min-height: 22rem; padding: 14px 0; border-radius: 0;
+    color: var(--color-fg);
+}
+.tr-strip__icon {
+    width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;
+    border: 1px solid var(--color-border); border-radius: var(--radius-lg);
+    background: var(--color-surface); color: var(--color-fg-muted);
+}
+.tr-strip__badge {
+    min-width: 22px; height: 22px; padding: 0 6px; box-sizing: border-box;
+    display: flex; align-items: center; justify-content: center; border-radius: 99px;
+    background: var(--color-warning-soft); color: var(--color-warning-strong);
+    font-size: 11.5px; font-weight: 700;
+}
+.tr-strip__label { writing-mode: vertical-rl; font-size: 13px; font-weight: 600; letter-spacing: 0.02em; }
+.tr-strip__caption { writing-mode: vertical-rl; font-size: 11.5px; color: var(--color-fg-muted); }
+.tr-strip__kbd {
+    margin-top: auto; padding: 1px 5px; font: 10.5px var(--font-mono, ui-monospace, monospace);
+    border: 1px solid var(--color-border); border-radius: var(--radius-sm, 4px); color: var(--color-fg-muted);
+}
+/* Stacked under the table there is no column to fold into: the strip lies flat. */
+@media (max-width: 1023.98px) {
+    .tr-strip { flex-direction: row; min-height: 0; padding: 0.5rem 0.75rem; }
+    .tr-strip__label, .tr-strip__caption { writing-mode: horizontal-tb; }
+    .tr-strip__kbd { margin-top: 0; margin-left: auto; }
+}
 .tr-title { font-size: 14px; font-weight: 700; color: var(--color-fg); }
 .tr-caption { font-size: 12px; color: var(--color-fg-muted); }
 .tr-list { display: flex; flex-direction: column; gap: 0.6rem; }

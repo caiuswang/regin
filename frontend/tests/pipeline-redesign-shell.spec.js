@@ -385,6 +385,53 @@ test('test_features_stage_tabs_expand_and_triage_keys', async ({ page }) => {
   expect(state.posts.at(-1)).toEqual({ path: '/api/defects/93/attribute', body: { feature_id: 44 } })
 })
 
+test('test_features_triage_rail_folds', async ({ page }) => {
+  const state = await stubPipeline(page)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto('/features')
+  await expect(page.getByTestId('triage-count')).toHaveText('3')
+  const table = page.getByTestId('feature-table')
+  const railWidth = async () => (await page.getByTestId('triage-rail').boundingBox()).width
+  const open = (await table.boundingBox()).width
+
+  // The header button folds the rail to a strip that still counts the queue,
+  // and the table takes the column it gave up. A prompt left open is dropped.
+  await page.getByTestId('triage-card-94').click()
+  await page.keyboard.press('x')
+  await expect(page.getByTestId('triage-prompt-decline')).toBeVisible()
+  await page.getByTestId('triage-fold').click()
+  const strip = page.getByTestId('triage-unfold')
+  await expect(strip).toBeFocused()
+  await expect(page.getByTestId('triage-fold-count')).toHaveText('3')
+  await expect(strip).toContainText('3 waiting')
+  await expect(page.getByTestId('triage-card-94')).toHaveCount(0)
+  await expect.poll(railWidth).toBeLessThanOrEqual(52)
+  await expect.poll(async () => (await table.boundingBox()).width).toBeGreaterThan(open + 250)
+
+  // A folded rail answers no verb: X from the strip opens no prompt.
+  await page.keyboard.press('x')
+  await expect(page.getByTestId('triage-prompt-decline')).toHaveCount(0)
+  expect(state.posts).toEqual([])
+
+  // ] toggles it from anywhere on the tab — but not out of a text field.
+  await page.keyboard.press(']')
+  await expect(page.getByTestId('triage-card-94')).toBeVisible()
+  await page.getByTestId('list-search').focus()
+  await page.keyboard.press(']')
+  await expect(page.getByTestId('triage-card-94')).toBeVisible()
+  await expect(page.getByTestId('list-search')).toHaveValue(']')
+  await page.getByTestId('list-search').blur()
+  await page.keyboard.press(']')
+  await expect(strip).toBeVisible()
+
+  // The strip itself unfolds, handing focus back to the fold button.
+  await strip.click()
+  await expect(page.getByTestId('triage-fold')).toBeFocused()
+  await expect.poll(railWidth).toBeGreaterThan(300)
+  await expect(page.getByTestId('triage-prompt-decline')).toHaveCount(0)
+  expect(state.posts).toEqual([])
+})
+
 test('test_pipeline_mobile_overview_features_triage', async ({ page }) => {
   await stubPipeline(page)
   await page.setViewportSize({ width: 390, height: 844 })
