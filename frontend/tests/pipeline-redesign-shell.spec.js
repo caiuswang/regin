@@ -32,6 +32,19 @@ const runRow = (id, title, action, extra = {}) => ({
   feature_title: 'Span search facets', step: { n: 4, of: 7 }, fixes_defects: [], action, ...extra,
 })
 
+const minutesAgo = n => new Date(Date.now() - n * 60000).toISOString()
+const RUNNING = {
+  total: 2,
+  rows: [
+    { id: 414, title: 'Reconnect tail when the socket drops mid-turn', status: 'running', priority: 'urgent', kind: 'fix',
+      feature_id: 31, feature_title: 'Live tail reconnect', step: null, fixes_defects: [89],
+      live: { run_id: 7, trace_id: 'tr-414', attempt: 2, started_at: minutesAgo(3) }, turns: 14, cost_usd: 0.82 },
+    { id: 408, title: 'Index tool-span arguments for search', status: 'running', priority: 'high', kind: 'task',
+      feature_id: 38, feature_title: 'Span search facets', step: { n: 3, of: 7 }, fixes_defects: [],
+      live: { run_id: 6, trace_id: null, attempt: 1, started_at: minutesAgo(12) }, turns: null, cost_usd: null },
+  ],
+}
+
 const TRIAGE = [
   { id: 94, round: 2, opened_at: '2026-09-25T10:00:00', symptom: 'Search palette returns spans from a deleted repo after re-ingest; clicking one 404s.', paths: ['lib/search/index.py', 'SpanPreview.vue'] },
   { id: 93, round: 1, opened_at: '2026-09-25T08:00:00', symptom: 'Arming a task that depends on an archived task leaves it armed forever, with no warning.', paths: ['lib/tasks/deps.py'] },
@@ -47,6 +60,7 @@ function overview({ empty = false, project = null } = {}) {
   const body = {
     scope: project ? String(project) : 'all',
     loop: LOOP,
+    running: empty ? { total: 0, rows: [] } : RUNNING,
     run_next: empty ? { total: 0, ready: 0, rows: [] } : {
       total: 9, ready: 4,
       rows: [
@@ -258,6 +272,27 @@ test('test_overview_panels_and_empty_states', async ({ page }) => {
   }
   await expect(page.getByTestId('loop-note')).toContainText('4 fix tasks carry open defects back into the queue')
 
+  // Running now heads the Run next card: newest attempt first, one Watch per row.
+  const runningNow = page.getByTestId('running-now')
+  await expect(page.getByTestId('running-now-count')).toHaveText('2 agents working')
+  await expect(runningNow.getByRole('link', { name: 'Open Live →' })).toHaveAttribute('href', '/live')
+  await expect(runningNow.locator('li')).toHaveCount(2)
+  const retry = page.getByTestId('running-now-row-414')
+  await expect(retry).toContainText('Fix for D-89 · #31 Live tail reconnect · attempt 2')
+  await expect(retry).toContainText('live · 3m')
+  await expect(retry).toContainText('14 turns · $0.82')
+  await expect(page.getByTestId('running-now-watch-414')).toHaveAttribute('href', '/trace/sessions/tr-414')
+  await expect(page.getByTestId('running-now-row-408')).toContainText('#38 Span search facets · step 3 of 7')
+  await expect(page.getByTestId('running-now-row-408')).not.toContainText('attempt')
+  await expect(page.getByTestId('running-now-watch-408')).toHaveAttribute('href', '/tasks/408')
+  const runningBox = await runningNow.boundingBox()
+  const runNextHead = await page.getByTestId('run-next').locator('#rn-title').boundingBox()
+  expect(runningBox.y + runningBox.height).toBeLessThanOrEqual(runNextHead.y)
+  // .pl-panel clips, so the page-level overflow check cannot see a row that overflows its card.
+  for (const row of await runningNow.locator('li').all()) {
+    expect(await row.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0)
+  }
+
   // Run next: a waiting row is dimmed, names what it waits on, has no Run.
   const waiting = page.getByTestId('run-next-row-409')
   await expect(page.getByTestId('run-next-wait-409')).toHaveText(/waits on #408 \(running\)/)
@@ -292,6 +327,7 @@ test('test_overview_panels_and_empty_states', async ({ page }) => {
   await page.reload()
   await expect(page.getByTestId('run-next')).toBeVisible()
   await expect(page.getByTestId('run-next-empty')).toBeVisible()
+  await expect(page.getByTestId('running-now')).toHaveCount(0)
   await expect(page.getByTestId('needs-decision-empty')).toBeVisible()
   await expect(page.getByTestId('escaped-empty')).toBeVisible()
 })
@@ -359,6 +395,7 @@ test('test_pipeline_mobile_overview_features_triage', async ({ page }) => {
   const rows = page.getByTestId('run-next').locator('li')
   await expect(rows).toHaveCount(2)
   await expect(page.getByTestId('run-next-row-409')).toHaveCount(0)
+  await expect(page.getByTestId('running-now')).toHaveCount(0)
   await expect(page.getByTestId('needs-decision')).toContainText('3 defects need a decision')
   await expect(page.getByTestId('needs-decision')).toContainText('Newest: D-94')
   for (const tab of await page.getByTestId('pipeline-tabs').locator('a').all()) {

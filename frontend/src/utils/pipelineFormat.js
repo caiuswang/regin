@@ -67,6 +67,20 @@ export function runNextSub(row) {
   return parts.length ? parts.join(' · ') : 'No feature'
 }
 
+/** A running row's second line: the run-next line, plus the attempt once it is a retry. */
+export function runningSub(row) {
+  const attempt = row.live?.attempt > 1 ? ` · attempt ${row.live.attempt}` : ''
+  return `${runNextSub(row)}${attempt}`
+}
+
+/** "14 turns · $0.82" — what the running session has spent so far; blank parts drop out. */
+export function runningMeta(row) {
+  const parts = []
+  if (row.turns != null) parts.push(`${row.turns} ${row.turns === 1 ? 'turn' : 'turns'}`)
+  if (row.cost_usd != null) parts.push(`$${Number(row.cost_usd).toFixed(2)}`)
+  return parts.join(' · ')
+}
+
 /** "1 escaped · active 2h ago" — a project row's status line. */
 export function projectStatusLine(row) {
   const active = row.last_activity ? ago(row.last_activity) : null

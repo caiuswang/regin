@@ -9,9 +9,10 @@ from lib.features import events
 from lib.orm import SessionLocal
 from lib.orm.models.sync import Repo
 from lib.orm.models.tasks import (
-    AgentTaskDep, DEP_KIND_AFTER, TASK_STATUS_ARMED, TASK_STATUS_DONE,
+    AgentTaskDep, AgentTaskRun, DEP_KIND_AFTER, RUN_STATUS_RUNNING, TASK_STATUS_ARMED, TASK_STATUS_DONE,
     TASK_STATUS_FAILED, TASK_STATUS_QUEUED, TASK_STATUS_RUNNING,
 )
+from lib.pipeline import overview as overview_module
 from lib.pipeline import projects
 
 
@@ -259,3 +260,71 @@ def test_escaped_panel_is_uncapped_and_newest_escape_first(
 
     assert titles == ["escaped 05", "escaped 04", "escaped 03", "escaped 02",
                       "escaped 01"]
+
+
+def _live_attempt(task_id: int, started_at: str, trace_id=None, attempt=1):
+    with SessionLocal() as session:
+        session.add(AgentTaskRun(task_id=task_id, trace_id=trace_id,
+                                 attempt=attempt, status=RUN_STATUS_RUNNING,
+                                 started_at=started_at))
+        session.commit()
+
+
+def _session_with_turns(trace_id: str, turns: int, cost_usd):
+    with SessionLocal() as session:
+        session.exec(text(
+            "INSERT INTO sessions (trace_id, started_at, last_seen, cost_usd)"
+            " VALUES (:t, '2026-09-27 10:00:00', '2026-09-27 10:00:00', :c)")
+            .bindparams(t=trace_id, c=cost_usd))
+        for i in range(turns):
+            session.exec(text(
+                "INSERT INTO turn_usage (trace_id, turn_uuid, turn_index,"
+                " timestamp) VALUES (:t, :u, :i, '2026-09-27 10:00:00')")
+                .bindparams(t=trace_id, u=f"{trace_id}-{i}", i=i))
+        session.commit()
+
+
+def test_overview_running_now_lists_live_attempts_newest_first(
+        flask_client, native_task):
+    older = native_task(title="index spans", status=TASK_STATUS_RUNNING)
+    _live_attempt(older, "2026-09-27 09:00:00", trace_id="tr-older")
+    _session_with_turns("tr-older", 3, 2.1)
+    newer = native_task(title="reconnect tail", status=TASK_STATUS_RUNNING)
+    _live_attempt(newer, "2026-09-27 09:30:00", attempt=2)
+    fresh = native_task(title="just started", status=TASK_STATUS_RUNNING)
+    _live_attempt(fresh, "2026-09-27 09:45:00", trace_id="tr-fresh")
+    native_task(title="armed, not running", status=TASK_STATUS_ARMED)
+
+    running = _overview(flask_client)["running"]
+    rows = running["rows"]
+
+    assert running["total"] == 3
+    assert [r["id"] for r in rows] == [fresh, newer, older]
+    # A trace with no ingested turns yet reads as unknown, not as zero.
+    assert (rows[0]["turns"], rows[0]["cost_usd"]) == (None, None)
+    assert rows[1]["live"]["attempt"] == 2
+    assert (rows[1]["turns"], rows[1]["cost_usd"]) == (None, None)
+    assert rows[2]["live"]["trace_id"] == "tr-older"
+    assert (rows[2]["turns"], rows[2]["cost_usd"]) == (3, 2.1)
+
+
+def test_overview_running_now_caps_rows_and_follows_scope(flask_client,
+                                                          native_task):
+    _repo(7, "regin-core")
+    for i in range(overview_module.RUNNING_CAP + 1):
+        native_task(title=f"loose {i}", status=TASK_STATUS_RUNNING)
+    filed = native_task(title="core", status=TASK_STATUS_RUNNING,
+                        project_id=7)
+
+    everywhere = _overview(flask_client)["running"]
+    scoped = _overview(flask_client, 7)["running"]
+
+    assert everywhere["total"] == overview_module.RUNNING_CAP + 2
+    assert len(everywhere["rows"]) == overview_module.RUNNING_CAP
+    assert [r["id"] for r in scoped["rows"]] == [filed]
+    assert _overview(flask_client, "none")["running"]["total"] == (
+        overview_module.RUNNING_CAP + 1)
+
+
+def test_overview_running_now_empty(flask_client):
+    assert _overview(flask_client)["running"] == {"total": 0, "rows": []}
