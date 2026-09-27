@@ -40,8 +40,10 @@ GROUP_NONE = "none"
 GROUP_STATUS = "status"
 GROUP_PROJECT = "project"
 GROUP_PRIORITY = "priority"
+#: Not a column: what each task needs next (`lib.tasks.next_step`).
+GROUP_NEXT_STEP = "next_step"
 GROUPS: tuple[str, ...] = (GROUP_NONE, GROUP_STATUS, GROUP_PROJECT,
-                           GROUP_PRIORITY)
+                           GROUP_PRIORITY, GROUP_NEXT_STEP)
 
 class FilterRejected(ValueError):
     """A filter value the feed cannot honour — a 400 naming the parameter."""

@@ -348,7 +348,7 @@ def _node(task: AgentTask, blocked_by: list[int]) -> dict:
     }
 
 
-def _unmet(edges: list[tuple[int, int, str]],
+def unmet(edges: list[tuple[int, int, str]],
            status: dict[int, str]) -> dict[int, list[int]]:
     """`{task: [deps still holding it back]}`, resolved per edge kind."""
     out: dict[int, list[int]] = {}
@@ -435,14 +435,14 @@ def graph(*, root: Optional[int] = None, depth: Optional[int] = None,
         tasks = session.exec(select(AgentTask)).all()
         edges = [(row.task_id, row.depends_on_id, row.kind)
                  for row in session.exec(select(AgentTaskDep)).all()]
-    unmet = _unmet(edges, {t.id: t.status for t in tasks})
+    unmet_deps = unmet(edges, {t.id: t.status for t in tasks})
 
     scoped = _scoped(tasks, edges, root, depth, status)
     total = len(scoped)
     truncated = _over_cap(total, root, cap)
     keep = set() if truncated else scoped
 
-    nodes = [_node(task, sorted(unmet.get(task.id, [])))
+    nodes = [_node(task, sorted(unmet_deps.get(task.id, [])))
              for task in tasks if task.id in keep]
     kept_edges = [{"task_id": a, "depends_on_id": b, "kind": kind}
                   for a, b, kind in edges if a in keep and b in keep]

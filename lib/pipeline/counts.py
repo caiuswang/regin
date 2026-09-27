@@ -13,7 +13,7 @@ blame, never a third state.
 
 from __future__ import annotations
 
-from sqlmodel import func, select
+from sqlmodel import func, select, text
 
 from lib.orm import SessionLocal
 from lib.orm.models.defects import Defect
@@ -76,7 +76,12 @@ def tasks_stmt(scope):
 
 
 def features_stmt(scope):
-    return _scoped(select(func.count(Feature.id)), Feature.project_id, scope)
+    """Live features only: an abandoned one is never listed on the tab, so it
+    is not counted on it either, and the four stage tabs sum to this."""
+    from lib.features.index import LIVE_SQL  # noqa: PLC0415
+
+    return _scoped(select(func.count(Feature.id)).where(text(LIVE_SQL)),
+                   Feature.project_id, scope)
 
 
 def counts(scope: int | str = SCOPE_ALL) -> dict[str, int]:

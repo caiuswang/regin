@@ -48,15 +48,12 @@ from lib.comments import store as comments
 from lib.auth import get_current_user, require_auth, require_editor, require_scope
 from lib.orm import SessionLocal
 from lib.orm.models.api_keys import SCOPE_TASK_CAPTURE
-from lib.orm.models.defects import Defect
-from lib.orm.models.features import Feature
 from lib.agent_sdk import worktree
-from lib.orm.models.tasks import (
-    AgentTask, AgentTaskRun, RUN_STATUS_ARMED,
-)
+from lib.orm.models.tasks import AgentTask
 from lib.settings import settings
-from lib.tasks import (arm, capture, deps, images, query,
+from lib.tasks import (arm, capture, deps, images, next_step, query,
                        ratelimit, runs, store)
+from lib.tasks import rows as task_rows
 from lib.tasks import integrations
 from lib.utils.pagination import (
     clamp_page, clamp_size, list_page, paginate_query_stmt,
@@ -115,46 +112,9 @@ def _with_images(tasks: list[dict]) -> list[dict]:
     return tasks
 
 
-def _with_feature_titles(tasks: list[dict]) -> list[dict]:
-    """`feature_title` beside `feature_id`, one query for the page.
-
-    Resolved, never stored on the task: `features.title` is the one home of
-    that name, so a rename shows on every step at once.
-    """
-    ids = {t["feature_id"] for t in tasks if t.get("feature_id") is not None}
-    titles = {}
-    if ids:
-        with SessionLocal() as session:
-            titles = dict(session.exec(
-                select(Feature.id, Feature.title)
-                .where(Feature.id.in_(ids))).all())
-    for task in tasks:
-        task["feature_title"] = titles.get(task.get("feature_id"))
-    return tasks
-
-
-def _with_fix_defects(tasks: list[dict]) -> list[dict]:
-    """`fixes_defects`: the defects pointing at each task, one query.
-
-    The pointer lives on the defect (`defects.fix_task_id`), so without this
-    a task created from a defect cannot name the defect it closes.
-    """
-    ids = [t["id"] for t in tasks]
-    by_task: dict[int, list[int]] = {}
-    if ids:
-        with SessionLocal() as session:
-            for defect_id, task_id in session.exec(
-                    select(Defect.id, Defect.fix_task_id)
-                    .where(Defect.fix_task_id.in_(ids))
-                    .order_by(Defect.id)).all():
-                by_task.setdefault(task_id, []).append(defect_id)
-    for task in tasks:
-        task["fixes_defects"] = by_task.get(task["id"], [])
-    return tasks
-
-
 def _one_with_images(task: dict) -> dict:
-    return _with_fix_defects(_with_feature_titles(_with_images([task])))[0]
+    return task_rows.fix_defects(
+        task_rows.feature_titles(_with_images([task])))[0]
 
 
 def _parse_web_capture(payload):
@@ -213,6 +173,8 @@ def api_list_tasks():
     then describe the page instead of the backlog. `extras.counts` rides every
     page so the group headers are true totals without a second round trip.
     """
+    if (request.args.get("group") or "").strip() == query.GROUP_NEXT_STEP:
+        return _next_step_groups()
     try:
         filters = query.parse_filters(request.args)
     except query.FilterRejected as exc:
@@ -230,16 +192,62 @@ def api_list_tasks():
             filters["unassigned"])).one()
     envelope = page.to_envelope()
     _with_images(envelope["items"])
-    _with_feature_titles(envelope["items"])
-    _with_fix_defects(envelope["items"])
-    _with_run_counts(envelope["items"])
+    task_rows.feature_titles(envelope["items"])
+    task_rows.fix_defects(envelope["items"])
+    task_rows.run_counts(envelope["items"])
+    return jsonify(list_page(envelope, population=population,
+                             sort=filters["sort"], filters=_applied(filters),
+                             extras={"counts": totals}))
+
+
+def _applied(filters: dict) -> dict:
     applied = {k: v for k, v in filters.items() if k != "sort"}
     applied["project_id"] = ("none" if filters["unassigned"]
                              else filters["project_id"])
     applied.pop("unassigned", None)
-    return jsonify(list_page(envelope, population=population,
-                             sort=filters["sort"], filters=applied,
-                             extras={"counts": totals}))
+    return applied
+
+
+def _population(session, filters: dict) -> int:
+    return session.exec(query.population_stmt(
+        select(func.count(AgentTask.id)), filters["project_id"],
+        filters["unassigned"])).one()
+
+
+def _grouped_read(read, only_field: str, allowed: tuple[str, ...]):
+    """Shared shape of the two grouped reads: parse, read, envelope."""
+    try:
+        filters = query.parse_filters(request.args)
+        only = next_step.parse_only(request.args.get(only_field), allowed,
+                                    only_field)
+    except query.FilterRejected as exc:
+        return _rejected_filter(exc)
+    except next_step.UnknownGroup as exc:
+        return jsonify({"error": str(exc), "field": exc.field}), 400
+    with SessionLocal() as session:
+        body = read(session, filters,
+                    size=clamp_size(request.args.get("size")),
+                    page=clamp_page(request.args.get("page")), only=only)
+        body["population"] = _population(session, filters)
+    body["applied"] = _applied(filters)
+    return jsonify(body)
+
+
+def _next_step_groups():
+    """`group=next_step`: Ready / Running / Blocked / Ideas, each with its
+    server count and first rows; done and failed counted, never listed."""
+    return _grouped_read(next_step.groups, "only", next_step.GROUP_KEYS)
+
+
+@tasks_bp.route('/api/tasks/board', methods=['GET'])
+@require_auth
+def api_task_board():
+    """The feed as status columns, each counted and paged on its own.
+
+    `column=<status>&page=N` pages one column; failed is pageable that way but
+    is otherwise only a count.
+    """
+    return _grouped_read(next_step.board, "column", next_step.BOARD_PAGEABLE)
 
 
 @tasks_bp.route('/api/tasks/counts', methods=['GET'])
@@ -296,41 +304,6 @@ def api_bulk_update_tasks():
     except store.BulkFieldRejected as exc:
         return jsonify({"error": str(exc), "field": exc.field}), 400
     return jsonify(result)
-
-
-def _with_run_counts(items: list[dict]) -> None:
-    """`run_count` and the pending attempt per row, two grouped queries.
-
-    On the page rather than in `serialize`: a read per row is the N+1 the
-    keyset cursor exists to avoid, and a query over the page's ids is not.
-
-    `armed` rides along because the arm sheet seeds its draft from whatever the
-    task was last armed with, and those parameters live on the attempt now —
-    so a row that could not carry them would open an empty sheet over a task
-    that is armed.
-
-    `child_count` went with the two-level grain. A task has attempts and a
-    feature, and neither of those is a child task.
-    """
-    if not items:
-        return
-    from lib.tasks import runs  # noqa: PLC0415
-
-    ids = [row["id"] for row in items]
-    with SessionLocal() as session:
-        attempts = dict(session.exec(
-            select(AgentTaskRun.task_id, func.count(AgentTaskRun.id))
-            .where(AgentTaskRun.task_id.in_(ids),
-                   AgentTaskRun.status != RUN_STATUS_ARMED)
-            .group_by(AgentTaskRun.task_id)).all())
-        pending = {row.task_id: row for row in session.exec(
-            select(AgentTaskRun)
-            .where(AgentTaskRun.task_id.in_(ids),
-                   AgentTaskRun.status == RUN_STATUS_ARMED)).all()}
-    for row in items:
-        row["run_count"] = attempts.get(row["id"], 0)
-        armed = pending.get(row["id"])
-        row["armed"] = runs.serialize_attempt(armed) if armed else None
 
 
 def _detail(task: dict, task_id: int) -> dict:

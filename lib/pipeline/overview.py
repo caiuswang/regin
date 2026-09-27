@@ -1,0 +1,282 @@
+"""The Overview tab: the whole pipeline under one scope, from one request.
+
+| Panel           | Drawn from                                         | Order                                   | Cap |
+|-----------------|----------------------------------------------------|-----------------------------------------|-----|
+| loop            | the three tab populations, split into their parts  | fixed                                   | —   |
+| run_next        | armed or queued tasks, feature steps included      | dependency-clear first, priority, id    | 6   |
+| needs_decision  | the triage queue (`defects.store.in_queue`)        | newest first                            | 3   |
+| escaped         | features at stage `escaped`                        | most recent escape first                | —   |
+| projects        | scope `all` only — `projects.panel`                | attention                               | 5   |
+| project_head / project_features | scope = one project                | last activity                           | 5   |
+
+Every loop stage sums its parts, and the Tasks and Features stages are the
+tab strip's own statements (`lib.pipeline.counts`), so a loop total and the
+tab count under the same scope cannot disagree.
+
+Run next is not the Tasks tab's population: the tab lists loose tasks and
+reaches a feature's steps from the feature, while "what can run next" is
+mostly those steps. Its `total` therefore counts armed and queued tasks of
+every grain, and says so by being its own number.
+"""
+
+from __future__ import annotations
+
+import json
+
+from sqlalchemy import case
+from sqlmodel import func, select
+
+from lib.activity_log import get_activity_logger
+from lib.defects import store as defect_store
+from lib.features import events as events_module
+from lib.features import index as feature_index
+from lib.orm import SessionLocal
+from lib.orm.models.defects import STATUS_CLOSED, STATUS_OPEN, Defect
+from lib.orm.models.features import Feature, FeatureEvent, SHIPPED
+from lib.orm.models.tasks import (
+    AgentTask, TASK_KIND_FIX, TASK_STATUS_ARMED,
+    TASK_STATUS_DONE, TASK_STATUS_FAILED, TASK_STATUS_IDEA,
+    TASK_STATUS_QUEUED, TASK_STATUS_RUNNING,
+)
+from lib.pipeline import counts as counts_module
+from lib.pipeline import projects as projects_module
+from lib.pipeline.counts import SCOPE_ALL, SCOPE_NONE
+from lib.tasks import next_step
+from lib.tasks import query as task_query
+from lib.tasks import rows as task_rows
+from lib.tasks import store as task_store
+from lib.utils.pagination import MAX_PAGE_SIZE
+
+log = get_activity_logger("features")
+
+RUN_NEXT_CAP = 6
+NEEDS_DECISION_CAP = 3
+PROJECT_FEATURES_CAP = 5
+
+_TASK_PARTS = ((TASK_STATUS_IDEA, "Ideas"), (TASK_STATUS_ARMED, "Armed"),
+               (TASK_STATUS_QUEUED, "Queued"), (TASK_STATUS_RUNNING, "Running"),
+               (TASK_STATUS_DONE, "Done"), (TASK_STATUS_FAILED, "Failed"))
+_FEATURE_PARTS = ((events_module.STAGE_SPEC, "Spec"),
+                  (events_module.STAGE_BUILDING, "Building"),
+                  (events_module.STAGE_SHIPPED, "Shipped"),
+                  (events_module.STAGE_ESCAPED, "Escaped"))
+_HIGHLIGHTED = {TASK_STATUS_FAILED, events_module.STAGE_ESCAPED, "triage"}
+
+
+def _stage(label: str, parts: list[tuple[str, str, int]]) -> dict:
+    return {"label": label, "total": sum(n for _, _, n in parts),
+            "parts": [{"key": key, "label": part_label, "n": n,
+                       "highlighted": key in _HIGHLIGHTED}
+                      for key, part_label, n in parts]}
+
+
+def _project_args(scope) -> tuple:
+    """`(project_id, unassigned)` — the pair every feed filter speaks."""
+    return (scope if isinstance(scope, int) else None), scope == SCOPE_NONE
+
+
+def _task_scoped(stmt, scope):
+    project_id, unassigned = _project_args(scope)
+    if unassigned:
+        return stmt.where(AgentTask.project_id.is_(None))
+    if project_id is not None:
+        return stmt.where(AgentTask.project_id == project_id)
+    return stmt
+
+
+def _tasks_stage(session, scope) -> dict:
+    # Built on the Tasks tab's own predicate, so the parts sum to its count.
+    by_status = dict(session.exec(task_query.population_stmt(
+        select(AgentTask.status, func.count(AgentTask.id)),
+        *_project_args(scope)).group_by(AgentTask.status)).all())
+    stage = _stage("Tasks", [(key, label, int(by_status.get(key, 0)))
+                             for key, label in _TASK_PARTS])
+    if isinstance(scope, int):
+        ready = session.exec(counts_module.tasks_stmt(scope).where(
+            next_step.membership(next_step.GROUP_READY))).one()
+        stage["hint"] = (f"{ready} ready · "
+                         f"{by_status.get(TASK_STATUS_RUNNING, 0)} running")
+    return stage
+
+
+def _features_stage(scope) -> dict:
+    project_id, unassigned = _project_args(scope)
+    found = feature_index.stage_counts({
+        **feature_index.NO_FILTERS, "project_id": project_id,
+        "unassigned": unassigned})
+    return _stage("Features", [(key, label, found[key])
+                               for key, label in _FEATURE_PARTS])
+
+
+def _defects_stage(session, scope) -> dict:
+    queued = defect_store.in_queue()
+    triage, open_rest, closed = (
+        int(session.exec(counts_module.defects_stmt(scope).where(where)).one())
+        for where in (queued,
+                      (Defect.status == STATUS_OPEN) & ~queued,
+                      Defect.status == STATUS_CLOSED))
+    return _stage("Defects", [("triage", "Triage", triage),
+                              ("open", "Open", open_rest),
+                              ("closed", "Closed", closed)])
+
+
+def _fix_tasks_carrying_defects(session, scope) -> int:
+    """Fix tasks still to finish whose defect is still open — the loop's
+    return edge, from Defects back into the Tasks queue."""
+    stmt = (select(func.count(func.distinct(AgentTask.id)))
+            .select_from(AgentTask)
+            .join(Defect, Defect.fix_task_id == AgentTask.id)
+            .where(AgentTask.kind == TASK_KIND_FIX,
+                   AgentTask.status.in_(projects_module.OPEN_TASK_STATUSES),
+                   Defect.status == STATUS_OPEN))
+    return int(session.exec(_task_scoped(stmt, scope)).one())
+
+
+def _loop(session, scope) -> dict:
+    stages = [_tasks_stage(session, scope), _features_stage(scope),
+              _defects_stage(session, scope)]
+    fixes = _fix_tasks_carrying_defects(session, scope)
+    return {"stages": stages, "fix_tasks": fixes}
+
+
+def _run_next_stmt(stmt, scope):
+    stmt = stmt.where(AgentTask.status.in_(
+        (TASK_STATUS_ARMED, TASK_STATUS_QUEUED)))
+    return _task_scoped(stmt, scope)
+
+
+def _run_next_row(task: dict) -> dict:
+    waits = task["waits_on"]
+    action = ({"kind": "wait", "on": waits["id"], "on_status": waits["status"]}
+              if waits else {"kind": task_rows.ACTION_RUN})
+    keep = ("id", "title", "status", "priority", "kind", "feature_id",
+            "feature_title", "step", "fixes_defects")
+    return {**{k: task[k] for k in keep}, "action": action}
+
+
+def _run_next(session, scope) -> dict:
+    blocked_last = case((next_step.has_unmet_dependency(), 1), else_=0)
+    stmt = (_run_next_stmt(select(AgentTask), scope)
+            .order_by(blocked_last, AgentTask.priority_rank.asc(),
+                      AgentTask.id.asc())
+            .limit(RUN_NEXT_CAP))
+    tasks = [task_store.serialize(t) for t in session.exec(stmt).all()]
+    for enrich in (task_rows.feature_titles, task_rows.fix_defects,
+                   task_rows.dependencies, task_rows.steps):
+        enrich(tasks)
+    total = session.exec(_run_next_stmt(
+        select(func.count(AgentTask.id)), scope)).one()
+    ready = session.exec(_run_next_stmt(
+        select(func.count(AgentTask.id)), scope)
+        .where(~next_step.has_unmet_dependency())).one()
+    return {"total": int(total), "ready": int(ready),
+            "rows": [_run_next_row(t) for t in tasks]}
+
+
+def _defects_scoped(stmt, scope):
+    if scope == SCOPE_ALL:
+        return stmt
+    stmt = stmt.outerjoin(Feature, Defect.feature_id == Feature.id)
+    if scope == SCOPE_NONE:
+        return stmt.where(Feature.project_id.is_(None))
+    return stmt.where(Feature.project_id == scope)
+
+
+def _needs_decision(session, scope) -> dict:
+    queued = _defects_scoped(select(Defect), scope).where(
+        defect_store.in_queue())
+    rows = session.exec(queued.order_by(Defect.opened_at.desc(),
+                                        Defect.id.desc())
+                        .limit(NEEDS_DECISION_CAP)).all()
+    waiting = session.exec(_defects_scoped(
+        select(func.count(Defect.id)), scope)
+        .where(defect_store.in_queue())).one()
+    return {"waiting": int(waiting),
+            "rows": [{"id": d.id, "round": d.round, "opened_at": d.opened_at,
+                      "symptom": d.symptom,
+                      "paths": (json.loads(d.suspect_paths_json)
+                                if d.suspect_paths_json else [])}
+                     for d in rows]}
+
+
+def _last_escapes(session, feature_ids: list[int]) -> dict[int, str]:
+    if not feature_ids:
+        return {}
+    return dict(session.exec(
+        select(Defect.feature_id, func.max(Defect.opened_at))
+        .join(FeatureEvent, FeatureEvent.id == Defect.blamed_event_id)
+        .where(FeatureEvent.kind == SHIPPED,
+               Defect.feature_id.in_(feature_ids))
+        .group_by(Defect.feature_id)).all())
+
+
+def _feature_filters(scope, **extra) -> dict:
+    project_id, unassigned = _project_args(scope)
+    return {"project_id": project_id, "unassigned": unassigned, **extra}
+
+
+def _every_escaped(scope) -> list:
+    """Every escaped feature under `scope` — the panel is uncapped, so it
+    pages the index rather than trusting one page to hold them all."""
+    filters = _feature_filters(scope, stage=events_module.STAGE_ESCAPED)
+    found, matched = feature_index.rows(filters, size=MAX_PAGE_SIZE)
+    while len(found) < matched:
+        more, _ = feature_index.rows(filters, size=MAX_PAGE_SIZE,
+                                     page_index=len(found) // MAX_PAGE_SIZE)
+        if not more:
+            break
+        found.extend(more)
+    return found
+
+
+def _escaped(session, scope) -> list[dict]:
+    found = _every_escaped(scope)
+    last = _last_escapes(session, [row.id for row in found])
+    ordered = sorted(found, key=lambda row: (last.get(row.id) or "", row.id),
+                     reverse=True)
+    return [{"feature_id": row.id, "title": row.title, "rounds": row.rounds,
+             "defects_open": row.open_defects,
+             "defects_total": row.total_defects, "escapes": row.escapes,
+             "last_escape_at": last.get(row.id)} for row in ordered]
+
+
+def _project_head(scope: int) -> dict:
+    summary = projects_module.summary_for(scope)
+    live = summary.live_features
+    done = summary.escaped + summary.by_stage.get(
+        events_module.STAGE_SHIPPED, 0)
+    return {"id": scope, "name": projects_module.label(summary),
+            "breadcrumb": ["All projects", projects_module.label(summary)],
+            "stage_bar": summary.stage_bar(),
+            "shipped_pct": round(100 * done / live) if live else None,
+            "open_tasks": summary.open_tasks,
+            "open_defects": summary.defects_open,
+            "spent_usd": feature_index.spent(scope)}
+
+
+def _project_features(scope: int) -> dict:
+    found, matched = feature_index.rows(
+        _feature_filters(scope, sort="activity:desc"),
+        size=PROJECT_FEATURES_CAP)
+    return {"total": matched, "rows": [row.to_dict() for row in found]}
+
+
+def overview(scope: int | str = SCOPE_ALL) -> dict:
+    """Every Overview panel under `scope`.
+
+    Raises `projects.ProjectNotFound` for a project id nothing is filed under,
+    before any panel is read.
+    """
+    head = _project_head(scope) if isinstance(scope, int) else None
+    with SessionLocal() as session:
+        body = {"scope": str(scope), "loop": _loop(session, scope),
+                "run_next": _run_next(session, scope),
+                "needs_decision": _needs_decision(session, scope),
+                "escaped": _escaped(session, scope)}
+    if scope == SCOPE_ALL:
+        body["projects"] = projects_module.panel()
+    if head is not None:
+        body["project_head"] = head
+        body["project_features"] = _project_features(scope)
+    log.read("pipeline_overview_read", scope=str(scope))
+    return body

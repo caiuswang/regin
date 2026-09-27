@@ -125,7 +125,8 @@ def test_the_index_carries_its_header_counters(flask_client, tmp_db,
 
     assert set(body) == {"items", "pagination", "population", "applied",
                          "extras"}
-    assert set(body["extras"]) == {"coverage", "unattributed_defects"}
+    assert set(body["extras"]) == {"coverage", "attribution", "stage_counts",
+                                   "unattributed_defects"}
 
 
 def test_the_index_narrows_by_every_facet_it_declares(flask_client, tmp_db,

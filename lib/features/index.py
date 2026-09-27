@@ -64,12 +64,14 @@ class FeatureRow:
     open_defects: int
     escapes: int
     last_activity: Optional[str]
+    tasks_done: int = 0
 
     def to_dict(self) -> dict:
         return {"id": self.id, "title": self.title, "origin": self.origin,
                 "external_ref": self.external_ref, "stage": self.stage,
                 "blurb": events_module.blurb(self.stage), "rounds": self.rounds,
                 "sessions": self.sessions, "tasks": self.tasks,
+                "tasks_done": self.tasks_done,
                 "cost_usd": self.cost_usd,
                 "gaps": {"no_usage_captured": self.no_usage_captured},
                 "defects": {"total": self.total_defects,
@@ -102,6 +104,7 @@ class Page:
 
     sort: str = ""
     filters: Optional[dict] = None
+    stage_counts: Optional[dict] = None
 
     def to_dict(self) -> dict:
         body = offset.Page(
@@ -113,7 +116,20 @@ class Page:
             body, population=self.total, sort=self.sort,
             filters=self.filters,
             extras={"coverage": self.coverage.to_dict(),
+                    "attribution": attribution_header(self.coverage),
+                    "stage_counts": self.stage_counts,
                     "unattributed_defects": self.unattributed_defects})
+
+
+def attribution_header(coverage: cost_module.Coverage) -> dict:
+    """The Features header's one line: what share of sessions, and of money,
+    any feature has claimed. `sessions_pct` is None over no sessions — 0% of
+    nothing is not a figure."""
+    body = coverage.to_dict()
+    body["sessions_pct"] = (
+        round(100 * coverage.declared_sessions / coverage.all_sessions)
+        if coverage.all_sessions else None)
+    return body
 
 
 #: The table the page's rows come from. Named because "the population is the
@@ -176,7 +192,9 @@ defect_facts AS (
 # `feature_id` wins over `root_only` in `lib/tasks/query.py::_by_grain`.
 _TASK_FACTS = f"""
 task_facts AS (
-    SELECT t.feature_id, COUNT(*) AS tasks
+    SELECT t.feature_id, COUNT(*) AS tasks,
+           SUM(CASE WHEN t.status = '{task_model.TASK_STATUS_DONE}'
+               THEN 1 ELSE 0 END) AS tasks_done
     FROM agent_tasks t
     WHERE t.feature_id IS NOT NULL
       AND t.status <> '{task_model.TASK_STATUS_ARCHIVED}'
@@ -220,6 +238,7 @@ rows AS (
                 WHERE e.feature_id = f.id AND e.kind = 'restarted') AS rounds,
            COALESCE(sf.sessions, 0) AS sessions,
            COALESCE(tf.tasks, 0) AS tasks,
+           COALESCE(tf.tasks_done, 0) AS tasks_done,
            sf.cost_usd AS cost_usd,
            COALESCE(sf.no_usage, 0) AS no_usage,
            COALESCE(df.total, 0) AS total_defects,
@@ -242,7 +261,7 @@ rows AS (
 # read while there are rows to carry it.
 _OUTER = """
 SELECT id, title, origin, external_ref, stage, rounds, sessions, tasks,
-       cost_usd, no_usage, total_defects, open_defects, escapes, activity,
+       tasks_done, cost_usd, no_usage, total_defects, open_defects, escapes, activity,
        COUNT(*) OVER () AS matched
 FROM rows"""
 
@@ -331,6 +350,22 @@ def parse_filters(args) -> dict:
     }
 
 
+#: A feature whose last event is `abandoned` was taken down, and the Features
+#: tab never lists one unless asked for that stage by name. One predicate over
+#: the bare table, so the tab strip, the population and the stage counts all
+#: leave out the same rows. `features.id` is spelled out because it is also
+#: embedded in `lib.pipeline.counts`' ORM statement.
+LIVE_SQL = (
+    "COALESCE((SELECT e.kind FROM feature_events e"
+    " WHERE e.feature_id = features.id ORDER BY e.id DESC LIMIT 1), '')"
+    f" <> '{events_module.ABANDONED}'")
+
+#: The stages a stage tab is drawn for, in lifecycle order. `abandoned` is
+#: reachable by `stage=abandoned` and never counted into `all`.
+LIVE_STAGES = (events_module.STAGE_SPEC, events_module.STAGE_BUILDING,
+               events_module.STAGE_SHIPPED, events_module.STAGE_ESCAPED)
+
+
 def _where(spec: dict) -> tuple[str, dict]:
     """The narrowing, as a clause over the `rows` CTE and its binds."""
     clauses: list[str] = []
@@ -345,6 +380,8 @@ def _where(spec: dict) -> tuple[str, dict]:
     if spec["stage"]:
         clauses.append("stage = :stage")
         binds["stage"] = spec["stage"]
+    elif not spec.get("any_stage"):
+        clauses.append(f"stage <> '{events_module.STAGE_ABANDONED}'")
     if spec["unassigned"]:
         clauses.append("project_id IS NULL")
     elif spec["project_id"] is not None:
@@ -363,7 +400,7 @@ def query_sql(spec: dict) -> str:
 def _row_from(record) -> FeatureRow:
     """One database record as the index renders it."""
     (feature_id, title, origin, external_ref, stage, rounds, sessions, tasks,
-     cost_usd, no_usage, total, open_count, escapes, activity,
+     tasks_done, cost_usd, no_usage, total, open_count, escapes, activity,
      _matched) = record
     return FeatureRow(
         id=feature_id, title=title, origin=origin, external_ref=external_ref,
@@ -371,6 +408,7 @@ def _row_from(record) -> FeatureRow:
         rounds=int(rounds or 1),
         sessions=int(sessions or 0),
         tasks=int(tasks or 0),
+        tasks_done=int(tasks_done or 0),
         cost_usd=None if cost_usd is None else float(cost_usd),
         no_usage_captured=int(no_usage or 0),
         total_defects=int(total or 0), open_defects=int(open_count or 0),
@@ -418,10 +456,25 @@ def page(q: str = "", *, filters: Optional[dict] = None,
                 # come to report different numbers.
                 unattributed_defects=len(defect_store.unattributed()),
                 matched=matched, page=page_index, size=size,
+                stage_counts=stage_counts(spec),
                 sort=f"{sort_key}:{sort_dir.lower()}",
                 filters={"q": spec["q"], "stage": spec["stage"],
                          "project_id": "none" if spec["unassigned"]
                          else spec["project_id"]})
+
+
+def rows(filters: dict, *, size: int,
+         page_index: int = 0) -> tuple[list[FeatureRow], int]:
+    """One page of rows under `filters` and how many matched — the page's own
+    statement without the header counters a panel does not draw."""
+    spec = _spec_from("", filters)
+    _, binds = _where(spec)
+    size = offset.clamp_size(size)
+    binds.update({"limit": size, "offset": page_index * size})
+    with SessionLocal() as session:
+        records = session.exec(text(query_sql(spec)).bindparams(**binds)).all()
+    matched = int(records[0][-1]) if records else 0
+    return [_row_from(record) for record in records], matched
 
 
 def _matched_total(spec: dict) -> int:
@@ -445,13 +498,44 @@ def _population_total(spec: dict) -> int:
     predicate `lib.pipeline.counts` counts the Features tab with, so the
     toolbar and the tab strip cannot disagree."""
     scope = {**NO_FILTERS, "project_id": spec["project_id"],
-             "unassigned": spec["unassigned"]}
+             "unassigned": spec["unassigned"], "any_stage": True}
     where, binds = _where(scope)
+    where = f"{where} AND {LIVE_SQL}" if where else f" WHERE {LIVE_SQL}"
     with SessionLocal() as session:
         population = session.exec(text(
             f"SELECT COUNT(*) FROM {ROW_SOURCE}{where}"
         ).bindparams(**binds)).first()
     return int(population[0]) if population else 0
+
+
+def stage_counts(spec: dict) -> dict[str, int]:
+    """One count per stage tab under every filter but the stage itself.
+
+    Stage-blind for the reason the task status chips are: a tab reports how
+    many rows it WOULD show. `all` is the sum of the four live stages, never
+    a separate count, so the tabs cannot disagree with their own total.
+    """
+    where, binds = _where({**spec, "stage": "", "any_stage": True})
+    with SessionLocal() as session:
+        records = session.exec(text(
+            f"{_CTES} SELECT stage, COUNT(*) FROM rows{where} GROUP BY stage"
+        ).bindparams(**binds)).all()
+    found = {stage_name: int(n) for stage_name, n in records}
+    out = {stage_name: found.get(stage_name, 0) for stage_name in LIVE_STAGES}
+    return {"all": sum(out.values()), **out}
+
+
+def spent(project_id: Optional[int], unassigned: bool = False) -> Optional[float]:
+    """What the features under one scope cost, summed the way each row's
+    `cost_usd` is — `None` when no feature there has a declared cost."""
+    spec = {**NO_FILTERS, "project_id": project_id, "unassigned": unassigned,
+            "any_stage": True}
+    where, binds = _where(spec)
+    with SessionLocal() as session:
+        total = session.exec(text(
+            f"{_CTES} SELECT SUM(cost_usd) FROM rows{where}"
+        ).bindparams(**binds)).first()
+    return None if not total or total[0] is None else float(total[0])
 
 
 def stage_counts_by_project() -> dict[Optional[int], dict[str, int]]:

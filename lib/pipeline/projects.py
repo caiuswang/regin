@@ -25,7 +25,10 @@ from lib.orm import SessionLocal
 from lib.orm.models import Repo
 from lib.orm.models.defects import Defect
 from lib.orm.models.features import Feature
-from lib.orm.models.tasks import AgentTask
+from lib.orm.models.tasks import (
+    AgentTask, TASK_STATUS_ARMED, TASK_STATUS_IDEA, TASK_STATUS_QUEUED,
+    TASK_STATUS_RUNNING,
+)
 from lib.pipeline.counts import SCOPE_NONE
 from lib.tasks import query as task_query
 from lib.utils import pagination as offset
@@ -43,6 +46,12 @@ STATUS_COMPLETED = "completed"
 _DONE_STAGES = (events_module.STAGE_SHIPPED, events_module.STAGE_ESCAPED)
 
 RECENT_LIMIT = 20
+
+OPEN_TASK_STATUSES = (TASK_STATUS_IDEA, TASK_STATUS_ARMED, TASK_STATUS_QUEUED,
+                      TASK_STATUS_RUNNING)
+
+#: The Overview's Projects panel: this many rows, the rest summarised.
+PANEL_ROWS = 5
 
 
 class ProjectNotFound(LookupError):
@@ -84,6 +93,22 @@ class Summary:
     defects_total: int = 0
     defects_open: int = 0
     last_activity: Optional[str] = None
+
+    @property
+    def escaped(self) -> int:
+        return self.by_stage.get(events_module.STAGE_ESCAPED, 0)
+
+    @property
+    def open_tasks(self) -> int:
+        return sum(self.by_status.get(s, 0) for s in OPEN_TASK_STATUSES)
+
+    @property
+    def live_features(self) -> int:
+        return sum(n for s, n in self.by_stage.items()
+                   if s != events_module.STAGE_ABANDONED)
+
+    def stage_bar(self) -> dict:
+        return {s: self.by_stage.get(s, 0) for s in feature_index.LIVE_STAGES}
 
     @property
     def scope(self) -> str:
@@ -197,6 +222,10 @@ SORT_KEYS = {
     "name": (lambda s: _label(s).lower(), "asc"),
     "progress": (lambda s: _progress(s), "desc"),
     "open_defects": (lambda s: s.defects_open, "desc"),
+    # What the Overview's Projects panel leads with: a walked-back ship first,
+    # then unresolved defects, then whatever moved most recently.
+    "attention": (lambda s: (s.escaped, s.defects_open, s.last_activity or ""),
+                  "desc"),
 }
 DEFAULT_SORT = "activity:desc"
 
@@ -341,3 +370,61 @@ def overview(scope: int | str) -> dict:
     log.read("project_overview_read", scope=summary.scope)
     return {"project": summary.to_dict(), "features": _features(scope),
             "open_defects": defects, "recent_tasks": tasks}
+
+
+def label(summary: Summary) -> str:
+    return _label(summary)
+
+
+def panel_row(summary: Summary) -> dict:
+    """One Projects-panel row: the figures the row draws, nothing else."""
+    return {"id": summary.project_id, "scope": summary.scope,
+            "name": _label(summary), "status": status_of(summary.by_stage),
+            "escaped": summary.escaped, "last_activity": summary.last_activity,
+            "stage_bar": summary.stage_bar(),
+            "features": summary.live_features,
+            "open_tasks": summary.open_tasks,
+            "open_defects": summary.defects_open}
+
+
+def _completed(summary: Summary) -> bool:
+    return (status_of(summary.by_stage) == STATUS_COMPLETED
+            and not summary.defects_open and not summary.open_tasks)
+
+
+def _quiet(summary: Summary) -> bool:
+    """Nothing asks for a look: no walked-back ship, no open defect, no open
+    task. Completed projects are counted apart, not as quiet."""
+    return not (summary.escaped or summary.defects_open or summary.open_tasks)
+
+
+def panel(limit: int = PANEL_ROWS) -> dict:
+    """The Overview's Projects panel under the attention sort.
+
+    | project                                   | goes to          |
+    |-------------------------------------------|------------------|
+    | completed, nothing open                   | `completed_hidden` |
+    | nothing open, not completed               | `quiet`          |
+    | anything else                             | `rows` (≤ limit), then `more` |
+
+    "No project" is a bucket, not a project, and is not a row here.
+    """
+    collected = _collect()
+    collected.pop(None, None)
+    summaries = list(collected.values())
+    completed = [s for s in summaries if _completed(s)]
+    rest = [s for s in summaries if not _completed(s)]
+    quiet = [s for s in rest if _quiet(s)]
+    active = _sorted([s for s in rest if not _quiet(s)], "attention:desc")
+    log.read("project_panel_read", total=len(summaries), active=len(active))
+    return {"sort": "attention", "total": len(summaries),
+            "rows": [panel_row(s) for s in active[:limit]],
+            "more": max(0, len(active) - limit),
+            "quiet": len(quiet), "completed_hidden": len(completed)}
+
+
+def summary_for(scope: int | str) -> Summary:
+    found = _collect().get(None if scope == SCOPE_NONE else scope)
+    if found is None:
+        raise ProjectNotFound(f"no project {scope!r}")
+    return found
