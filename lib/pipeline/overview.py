@@ -3,6 +3,7 @@
 | Panel           | Drawn from                                         | Order                                   | Cap |
 |-----------------|----------------------------------------------------|-----------------------------------------|-----|
 | loop            | the three tab populations, split into their parts  | fixed                                   | —   |
+| running         | running tasks, feature steps included              | latest attempt started, desc            | 6   |
 | run_next        | armed or queued tasks, feature steps included      | dependency-clear first, priority, id    | 6   |
 | needs_decision  | the triage queue (`defects.store.in_queue`)        | newest first                            | 3   |
 | escaped         | features at stage `escaped`                        | most recent escape first                | —   |
@@ -16,7 +17,8 @@ tab count under the same scope cannot disagree.
 Run next is not the Tasks tab's population: the tab lists loose tasks and
 reaches a feature's steps from the feature, while "what can run next" is
 mostly those steps. Its `total` therefore counts armed and queued tasks of
-every grain, and says so by being its own number.
+every grain, and says so by being its own number. Running reads the same
+every-grain population, so its `total` is the number of agents working.
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ from lib.features import index as feature_index
 from lib.orm import SessionLocal
 from lib.orm.models.defects import STATUS_CLOSED, STATUS_OPEN, Defect
 from lib.orm.models.features import Feature, FeatureEvent, SHIPPED
+from lib.orm.models.trace import Session as TraceSession, TurnUsage
 from lib.orm.models.tasks import (
     AgentTask, TASK_KIND_FIX, TASK_STATUS_ARMED,
     TASK_STATUS_DONE, TASK_STATUS_FAILED, TASK_STATUS_IDEA,
@@ -50,6 +53,7 @@ from lib.utils.pagination import MAX_PAGE_SIZE
 log = get_activity_logger("features")
 
 RUN_NEXT_CAP = 6
+RUNNING_CAP = 6
 NEEDS_DECISION_CAP = 3
 PROJECT_FEATURES_CAP = 5
 
@@ -173,6 +177,53 @@ def _run_next(session, scope) -> dict:
             "rows": [_run_next_row(t) for t in tasks]}
 
 
+def _running_stmt(stmt, scope):
+    return _task_scoped(stmt.where(AgentTask.status == TASK_STATUS_RUNNING),
+                        scope)
+
+
+def _session_facts(session, trace_ids: list[str]) -> dict[str, dict]:
+    """`{trace_id: {turns, cost_usd}}` — what a running row's meta reads.
+
+    Turns are counted from `turn_usage`, not `sessions.prompts`: an autonomous
+    run has one prompt and many turns."""
+    if not trace_ids:
+        return {}
+    turns = dict(session.exec(
+        select(TurnUsage.trace_id, func.count(TurnUsage.turn_uuid))
+        .where(TurnUsage.trace_id.in_(trace_ids))
+        .group_by(TurnUsage.trace_id)).all())
+    cost = dict(session.exec(
+        select(TraceSession.trace_id, TraceSession.cost_usd)
+        .where(TraceSession.trace_id.in_(trace_ids))).all())
+    return {t: {"turns": turns.get(t), "cost_usd": cost.get(t)}
+            for t in trace_ids}
+
+
+def _running_row(task: dict, facts: dict[str, dict]) -> dict:
+    keep = ("id", "title", "status", "priority", "kind", "feature_id",
+            "feature_title", "step", "fixes_defects", "live")
+    trace_id = (task["live"] or {}).get("trace_id")
+    return {**{k: task[k] for k in keep},
+            **facts.get(trace_id, {"turns": None, "cost_usd": None})}
+
+
+def _running(session, scope) -> dict:
+    stmt = next_step.group_order(_running_stmt(select(AgentTask), scope),
+                                 next_step.GROUP_RUNNING)
+    tasks = [task_store.serialize(t)
+             for t in session.exec(stmt.limit(RUNNING_CAP)).all()]
+    for enrich in (task_rows.feature_titles, task_rows.fix_defects,
+                   task_rows.live_runs, task_rows.steps):
+        enrich(tasks)
+    facts = _session_facts(session, [t["live"]["trace_id"] for t in tasks
+                                     if t["live"] and t["live"]["trace_id"]])
+    total = session.exec(_running_stmt(
+        select(func.count(AgentTask.id)), scope)).one()
+    return {"total": int(total),
+            "rows": [_running_row(t, facts) for t in tasks]}
+
+
 def _defects_scoped(stmt, scope):
     if scope == SCOPE_ALL:
         return stmt
@@ -270,6 +321,7 @@ def overview(scope: int | str = SCOPE_ALL) -> dict:
     head = _project_head(scope) if isinstance(scope, int) else None
     with SessionLocal() as session:
         body = {"scope": str(scope), "loop": _loop(session, scope),
+                "running": _running(session, scope),
                 "run_next": _run_next(session, scope),
                 "needs_decision": _needs_decision(session, scope),
                 "escaped": _escaped(session, scope)}

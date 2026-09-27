@@ -1,16 +1,20 @@
 <script setup>
 // "Run next" (1a / 2a): armed and queued tasks, dependency-clear first. A row
 // shows the one action it needs — ▶ Run, or the task it waits on, dimmed.
+// On desktop the card opens with "Running now" while any agent is working;
+// the mobile 2a design does not draw it.
 import { computed, ref } from 'vue'
 import api from '../../api'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
+import RunningNow from './RunningNow.vue'
 import TaskPriorityIcon from '../tasks/TaskPriorityIcon.vue'
 import TaskStatusIcon from '../tasks/TaskStatusIcon.vue'
 import { runNextSub } from '../../utils/pipelineFormat'
 
 const props = defineProps({
   runNext: { type: Object, required: true },
+  running: { type: Object, default: null },
   compact: { type: Boolean, default: false },
   tasksTo: { type: Object, required: true },
 })
@@ -41,7 +45,8 @@ async function run(row) {
 
 <template>
   <section class="pl-panel rn" data-testid="run-next" aria-labelledby="rn-title">
-    <header class="pl-panel__head">
+    <RunningNow v-if="!compact && running?.total" :running="running" />
+    <header class="pl-panel__head" :class="{ 'rn-head--after': !compact && running?.total }">
       <h2 id="rn-title" class="pl-panel__title">Run next</h2>
       <span v-if="!compact" class="pl-panel__sub">Armed and queued · dependency-clear first</span>
       <router-link :to="tasksTo" class="pl-panel__link focus-visible:outline-2 focus-visible:outline-blue-500"
@@ -90,6 +95,7 @@ async function run(row) {
 
 <style scoped>
 .rn-rows { display: flex; flex-direction: column; }
+.rn-head--after { border-top: 1px solid var(--color-border-subtle); }
 .rn-row {
     display: flex; align-items: center; gap: 0.6rem; min-width: 0;
     padding: 0.6rem 1.1rem; border-top: 1px solid var(--color-border-subtle);
