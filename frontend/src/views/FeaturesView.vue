@@ -107,6 +107,7 @@ const canWrite = computed(() => api.getStoredUser()?.role !== 'viewer')
 const declaring = ref(false)
 const triaging = ref(false)
 const rail = ref(null)
+const railFolded = ref(false)
 
 function declared(ledger) {
   if (ledger?.id) router.push(`/features/${ledger.id}`)
@@ -115,6 +116,7 @@ function declared(ledger) {
 useTaskShortcuts({
   '/': () => search.value?.focus(),
   c: () => { if (canWrite.value) declaring.value = true },
+  ']': () => { if (isMdUp.value) railFolded.value = !railFolded.value },
 })
 </script>
 
@@ -130,7 +132,7 @@ useTaskShortcuts({
 
     <NewFeatureDialog v-model:open="declaring" :scope="scope" @declared="declared" />
 
-    <div class="fv-layout">
+    <div class="fv-layout" :class="{ 'fv-layout--folded': isMdUp && railFolded }">
       <div class="fv-main">
         <div class="fv-toolbar">
           <FeatureStageTabs
@@ -209,6 +211,7 @@ useTaskShortcuts({
       <aside v-if="isMdUp" class="fv-rail">
         <TriageRail
           ref="rail"
+          v-model:folded="railFolded"
           :scope="route.query.project ? String(route.query.project) : ''"
           :unattributed="extras.unattributed_defects || 0"
           :focus-id="route.query.triage || null"
@@ -237,6 +240,12 @@ useTaskShortcuts({
 .fv-layout {
     display: grid; gap: 1.25rem; align-items: start;
     grid-template-columns: minmax(0, 1fr) 21rem;
+    transition: grid-template-columns 0.2s ease;
+}
+.fv-layout--folded { grid-template-columns: minmax(0, 1fr) 52px; }
+.fv-layout--folded .fv-rail { padding-left: 0; }
+@media (prefers-reduced-motion: reduce) {
+    .fv-layout { transition: none; }
 }
 .fv-main { min-width: 0; display: flex; flex-direction: column; gap: 0.9rem; }
 .fv-toolbar { display: flex; align-items: center; gap: 0.6rem; min-width: 0; flex-wrap: wrap; }
@@ -270,6 +279,8 @@ useTaskShortcuts({
 @media (max-width: 1023.98px) {
     .fv-layout { grid-template-columns: minmax(0, 1fr); }
     .fv-rail { position: static; border-left: 0; padding-left: 0; border-top: 1px solid var(--color-border); padding-top: 1rem; }
+    .fv-layout--folded { grid-template-columns: minmax(0, 1fr); }
+    .fv-layout--folded .fv-rail { padding-top: 0; }
 }
 @media (max-width: 767.98px) {
     .fv-layout { display: flex; flex-direction: column-reverse; align-items: stretch; gap: 0.9rem; }

@@ -117,6 +117,8 @@ const ICONS = {
   // cannot be read as the single caret that opens one row; not a download
   // arrow, which promised an export.
   'chevrons-up': ['m17 11-5-5-5 5', 'm17 18-5-5-5 5'],
+  'panel-right-close': ['M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z', 'M15 3v18', 'm8 9 3 3-3 3'],
+  'panel-right-open': ['M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z', 'M15 3v18', 'm10 15-3-3 3-3'],
   eye: ['M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z', 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z'],
 }
 
