@@ -72,7 +72,7 @@ async function run(row) {
           <span class="rn-sub">{{ compact ? `#${row.id} · ` : '' }}{{ runNextSub(row) }}</span>
         </router-link>
         <span v-if="row.action.kind === 'wait'" class="rn-wait" :data-testid="`run-next-wait-${row.id}`">
-          <Icon name="hourglass" :size="12" />
+          <Icon name="dependency-tree" :size="12" />
           waits on #{{ row.action.on }}{{ row.action.on_status === 'running' ? ' (running)' : '' }}
         </span>
         <Button

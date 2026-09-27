@@ -153,46 +153,41 @@ defineExpose({ reload })
 </template>
 
 <style scoped>
-.nsl {
-    overflow: hidden;
-    background: var(--color-surface);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-lg);
-}
 .nsl-note {
-    padding: 1.25rem 1rem;
+    padding: 1.25rem 0;
     font-size: 0.8125rem;
     color: var(--color-fg-muted);
 }
-.nsl-group + .nsl-group { border-top: 1px solid var(--color-border); }
 .nsl-head {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    min-height: 2.75rem;
-    padding: 0.25rem 1rem 0.25rem 0.5rem;
+    gap: 0.625rem;
+    padding: 0.625rem 0 0.25rem;
 }
 .nsl .nsl-toggle {
-    gap: 0.5rem;
+    gap: 0.625rem;
+    margin-left: -0.5rem;
+    padding-inline: 0.5rem;
     color: var(--color-fg);
 }
-.nsl-label { font-size: 0.875rem; font-weight: 600; }
+.nsl-label { font-size: 0.8125rem; font-weight: 600; }
 .nsl-n {
-    font-size: 0.8125rem;
-    font-weight: 500;
-    color: var(--color-fg-muted);
+    font-size: 0.75rem;
+    color: var(--color-fg-subtle);
     font-variant-numeric: tabular-nums;
 }
 .nsl-hint {
     overflow: hidden;
-    font-size: 0.8125rem;
+    font-size: 0.75rem;
     color: var(--color-fg-subtle);
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 .nsl .nsl-bulk {
     margin-left: auto;
-    font-weight: 600;
+    padding-inline: 0;
+    font-size: 0.75rem;
+    font-weight: 500;
 }
 .nsl-rows {
     margin: 0;
@@ -202,20 +197,19 @@ defineExpose({ reload })
 .nsl .nsl-more {
     width: 100%;
     justify-content: flex-start;
-    padding-left: 4.5rem;
+    padding-left: 3rem;
+    font-size: 0.75rem;
+    font-weight: 400;
+    color: var(--color-fg-subtle);
     border-top: 1px solid var(--color-border-subtle);
     border-radius: 0;
 }
 
 @media (max-width: 767px) {
-    .nsl {
-        border-right: 0;
-        border-left: 0;
-        border-radius: 0;
-    }
     .nsl-hint { display: none; }
     .nsl .nsl-bulk,
     .nsl .nsl-toggle { min-height: 2.75rem; }
-    .nsl .nsl-more { min-height: 2.75rem; padding-left: 1rem; }
+    .nsl .nsl-bulk { font-size: 0.8125rem; font-weight: 600; }
+    .nsl .nsl-more { min-height: 2.75rem; padding-left: 0; }
 }
 </style>

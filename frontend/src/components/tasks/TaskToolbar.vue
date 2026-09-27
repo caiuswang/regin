@@ -25,9 +25,9 @@ const props = defineProps({
 const emit = defineEmits(['patch', 'view', 'search'])
 
 const VIEWS = [
-  { value: 'board', label: 'Board' },
-  { value: 'list', label: 'List' },
-  { value: 'graph', label: 'Graph' },
+  { value: 'board', label: 'Board', icon: 'board-columns' },
+  { value: 'list', label: 'List', icon: 'list' },
+  { value: 'graph', label: 'Graph', icon: 'dependency-tree' },
 ]
 
 const draft = ref(props.q)

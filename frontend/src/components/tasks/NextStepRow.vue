@@ -54,7 +54,7 @@ const watchTo = computed(() => (props.task.live?.trace_id
         data-testid="task-action-run"
         @click="emit('run', task)"
       >
-        <Icon name="play" :size="12" />
+        <Icon name="play" :size="12" class="nsr-play" />
         <span class="nsr-run-label">Run</span>
       </Button>
       <router-link
@@ -87,7 +87,7 @@ const watchTo = computed(() => (props.task.live?.trace_id
     align-items: center;
     column-gap: 0.625rem;
     min-height: 3.25rem;
-    padding: 0.4375rem 1rem;
+    padding: 0.4375rem 0;
     border-top: 1px solid var(--color-border-subtle);
 }
 .nsr-prio { grid-area: prio; }
@@ -159,8 +159,8 @@ const watchTo = computed(() => (props.task.live?.trace_id
 }
 .nsr-watch:hover { text-decoration: none; filter: brightness(0.97); }
 .nsr-watch:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 2px; }
-.nsr.is-waiting > :not(.nsr-meta),
-.nsr.is-waiting .nsr-id { opacity: 0.6; }
+.nsr-play { fill: currentColor; }
+.nsr.is-waiting { opacity: 0.65; }
 .nsr-refusal {
     grid-column: main / -1;
     font-size: 0.75rem;
@@ -173,7 +173,7 @@ const watchTo = computed(() => (props.task.live?.trace_id
         grid-template-areas: "status main action" "status meta action";
         column-gap: 0.75rem;
         row-gap: 0.125rem;
-        padding: 0.75rem 1rem;
+        padding: 0.75rem 0;
     }
     .nsr-prio,
     .nsr-sub,

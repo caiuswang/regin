@@ -25,7 +25,7 @@ const live = computed(() => (props.showLive && props.task.live
     data-testid="task-fixes"
   >fixes D-{{ id }}</span>
   <span v-if="waits" class="tf-chip tf-wait" data-testid="task-waits">
-    <Icon name="hourglass" :size="11" />{{ waits }}
+    <Icon name="dependency-tree" :size="11" />{{ waits }}
   </span>
   <span v-if="live" class="tf-live" data-testid="task-live">
     <span class="tf-dot" aria-hidden="true" />{{ live }}
@@ -64,5 +64,6 @@ const live = computed(() => (props.showLive && props.task.live
     height: 0.4375rem;
     background: currentColor;
     border-radius: 999px;
+    box-shadow: 0 0 0 3px var(--color-agent-soft);
 }
 </style>

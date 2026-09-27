@@ -5,6 +5,7 @@
 // v-model the active value; parent renders the panel for that value.
 import { ref, watch, nextTick, onMounted } from 'vue'
 import { TabsRoot, TabsList, TabsTrigger } from 'reka-ui'
+import Icon from './Icon.vue'
 
 const model = defineModel({ type: [String, Number], default: '' })
 defineProps({
@@ -60,6 +61,7 @@ watch(model, revealActive)
         :value="t.value ?? t"
         class="ds-tab"
       >
+        <Icon v-if="t.icon" :name="t.icon" :size="13" class="ds-tab-icon" />
         {{ t.label ?? t }}
       </TabsTrigger>
     </TabsList>
@@ -84,6 +86,11 @@ watch(model, revealActive)
 }
 .ds-tablist::-webkit-scrollbar { display: none; }
 .ds-tab { flex-shrink: 0; white-space: nowrap; }
+.ds-tab:has(.ds-tab-icon) {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3125rem;
+}
 
 /* Right-edge fade signalling more tabs off-screen; applied only while the
    list actually overflows and isn't scrolled to its end. */
