@@ -48,8 +48,9 @@ export function taskChips(state, { mode = 'grouped', mobile = false, users = [] 
     chips.push({ key: 'assignee', field: 'Assignee', value: userLabel(users, state.assignee),
                  patch: { assignee: '' } })
   }
-  if (state.runs === '1') {
-    chips.push({ key: 'runs', field: 'Show', value: 'Feature steps', patch: { runs: '' } })
+  if (state.unfeatured === '1') {
+    chips.push({ key: 'unfeatured', field: 'Show', value: 'No feature only',
+                 patch: { unfeatured: '' } })
   }
   if (mode === 'flat' && state.archived === '1') {
     chips.push({ key: 'archived', field: 'Show', value: 'Archived', patch: { archived: '' } })

@@ -100,7 +100,7 @@ test('steps list spec, then build, then fix, then free-form, with kind chips',
       .getByTestId('task-kind-chip')).toHaveText(['spec', 'build', 'fix'])
   })
 
-test('the board names the feature and the toggle names feature steps',
+test('the list shows feature steps by default, and names the feature',
   async ({ page }) => {
     await page.route('**/api/tasks?**', (route) =>
       route.request().method() === 'GET'
@@ -113,9 +113,14 @@ test('the board names the feature and the toggle names feature steps',
     await page.route('**/api/tasks/counts?**', (route) =>
       route.fulfill({ json: { total: 2, by_status: { idea: 2 },
                                      by_priority: {}, by_project: {} } }))
-    await page.goto('/tasks?runs=1&group=none')
+    const asked = []
+    page.on('request', (req) => {
+      const url = new URL(req.url())
+      if (url.pathname === '/api/tasks') asked.push(url.searchParams)
+    })
+    await page.goto('/tasks?group=none')
 
-    await expect(page.getByTestId('task-chip-runs')).toContainText('Feature steps')
+    await expect(page.getByTestId('task-chip-unfeatured')).toHaveCount(0)
     const row = page.locator('#task-71')
     await expect(row.getByTestId('task-feature-line'))
       .toHaveText('#242 Feature workbench')
@@ -123,6 +128,41 @@ test('the board names the feature and the toggle names feature steps',
       .toHaveText('Enrich the feature')
     await expect(page.locator('#task-72').getByTestId('task-feature-line'))
       .toHaveCount(0)
+    expect(asked.length).toBeGreaterThan(0)
+    expect(asked.every(p => !p.get('root_only'))).toBe(true)
+  })
+
+test('unchecking Feature steps narrows to tasks under no feature',
+  async ({ page }) => {
+    await page.route('**/api/tasks?**', (route) =>
+      route.request().method() === 'GET'
+        ? route.fulfill({ json: { items: [], next_cursor: null, counts: {} } })
+        : route.fallback())
+    await page.route('**/api/tasks/counts?**', (route) =>
+      route.fulfill({ json: { total: 0, by_status: {}, by_priority: {},
+                              by_project: {} } }))
+    const feed = (rootOnly) => page.waitForRequest((req) => {
+      const url = new URL(req.url())
+      return url.pathname === '/api/tasks'
+        && (url.searchParams.get('root_only') || '') === rootOnly
+    })
+    await page.goto('/tasks?group=none')
+    await expect(page.getByTestId('task-chip-unfeatured')).toHaveCount(0)
+
+    const narrowed = feed('1')
+    await page.getByTestId('task-filter-button').click()
+    await page.getByTestId('task-steps-toggle').click()
+    await narrowed
+    await page.keyboard.press('Escape')
+    await expect(page).toHaveURL(/unfeatured=1/)
+    await expect(page.getByTestId('task-chip-unfeatured'))
+      .toContainText('No feature only')
+
+    const widened = feed('')
+    await page.getByTestId('task-chip-remove-unfeatured').click()
+    await widened
+    await expect(page).not.toHaveURL(/unfeatured=/)
+    await expect(page.getByTestId('task-chip-unfeatured')).toHaveCount(0)
   })
 
 test('+ task declares its stage, and fix is not offered', async ({ page }) => {

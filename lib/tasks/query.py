@@ -94,10 +94,8 @@ def parse_filters(args) -> dict:
     unassigned = raw_project == "none"
 
     # `root_only` narrows the feed to the tasks under no feature. Off by
-    # default and
-    # deliberately so: a run is a task like any other, and hiding one from the
-    # backlog by default would make the counts beside the feed describe
-    # something other than the backlog.
+    # default and deliberately so: hiding a feature's steps by default would
+    # make the counts beside the feed describe something other than the backlog.
     root_only = (args.get("root_only") or "").strip() in ("1", "true", "yes")
 
     return {
@@ -151,12 +149,12 @@ def population_stmt(stmt, project_id: Optional[int], unassigned: bool):
     """The tab's unnarrowed population under one project scope.
 
     What `/tasks` shows with no control touched: archived is a world you ask
-    for by name, and a feature's steps are reached from the feature. The shell's
+    for by name. A feature's steps and a defect's fix tasks are counted — they
+    are most of the backlog, and the feed lists them by default. The shell's
     tab count and the list's `population` are both this statement, so the two
     numbers cannot disagree.
     """
-    stmt = stmt.where(AgentTask.status != TASK_STATUS_ARCHIVED) \
-        .where(AgentTask.feature_id.is_(None))
+    stmt = stmt.where(AgentTask.status != TASK_STATUS_ARCHIVED)
     if unassigned:
         return stmt.where(AgentTask.project_id.is_(None))
     if project_id is not None:

@@ -27,7 +27,7 @@ export const DEFAULT_VIEW = 'list'
 const DEFAULTS = {
   status: '', priority: '', sort: DEFAULT_SORT, group: DEFAULT_GROUP,
   q: '', tag: '', source: '', feature_id: '', assignee: '',
-  archived: '', runs: '', view: DEFAULT_VIEW, open: '',
+  archived: '', unfeatured: '', view: DEFAULT_VIEW, open: '',
 }
 
 const AXES = Object.keys(DEFAULTS)
@@ -42,7 +42,7 @@ const STORED = {
   sort: 'regin.tasks.sort',
   group: 'regin.tasks.group',
   archived: 'regin.tasks.archived',
-  runs: 'regin.tasks.runs',
+  unfeatured: 'regin.tasks.unfeatured',
 }
 
 // Only the axes this surface can decide about. An unknown *facet* value is the
@@ -61,7 +61,7 @@ const LEGAL = {
   priority: v => v === '' || v.split(',').every(
     part => PRIORITIES.some(p => p.value === part)),
   archived: v => v === '' || v === '1',
-  runs: v => v === '' || v === '1',
+  unfeatured: v => v === '' || v === '1',
 }
 
 const CORRECTED = ['sort', 'group', 'view']
@@ -70,7 +70,7 @@ export const VIEWS = ['board', 'list', 'graph']
 
 // The stored axes that reach the server. `group` is not one: it decides how
 // the loaded rows are split into feeds, never which rows those are.
-const PARAMS = { status: 1, priority: 1, sort: 1, archived: 1, runs: 1 }
+const PARAMS = { status: 1, priority: 1, sort: 1, archived: 1, unfeatured: 1 }
 
 // The axes a reader ARRIVES in rather than chooses: a feature's task count
 // links to `?feature_id=`, and the number clicked is the whole of that
@@ -81,7 +81,7 @@ const ARRIVAL = ['feature_id', 'assignee']
 // …and what such an arrival suppresses. `sort` and `group` are not narrowings:
 // they decide how the same rows are ordered and split, so a link that scopes
 // the list has no quarrel with them.
-const NARROWING = ['status', 'priority', 'archived']
+const NARROWING = ['status', 'priority', 'archived', 'unfeatured']
 
 function readAxis(query, axis) {
   const raw = String(query[axis] ?? '').trim()
@@ -138,20 +138,17 @@ export function useTaskQuery() {
       feature_id: s.feature_id,
       assignee: s.assignee,
       include_archived: s.archived,
-      // Off by default: the backlog is features, and a run of one is reached
-      // by opening it. The server's own default is the opposite, so the
-      // narrowing is a parameter this surface sends, never a server change.
-      root_only: s.runs === '1' ? '' : '1',
+      // Off by default: a feature's steps and a defect's fix tasks are most of
+      // the backlog, and the counts beside the feed describe all of it.
+      root_only: s.unfeatured,
     }
   })
 
-  // What "Clear N" counts. `runs` widens rather than narrows, but it is off
-  // its default and Clear puts it back, so it counts; the arrival keys are
-  // not, since Clear keeps them.
+  // What "Clear N" counts. The arrival keys are not, since Clear keeps them.
   const active = computed(() => {
     const s = state.value
     return [s.status, s.q, s.tag, s.source, s.priority,
-            s.archived, s.runs].filter(Boolean).length
+            s.archived, s.unfeatured].filter(Boolean).length
   })
 
   /**

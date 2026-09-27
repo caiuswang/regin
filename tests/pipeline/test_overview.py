@@ -97,8 +97,9 @@ def test_overview_loop_parts_sum_to_totals(flask_client, native_task,
         ["Ideas", "Armed", "Queued", "Running", "Done", "Failed"],
         ["Spec", "Building", "Shipped", "Escaped"],
         ["Triage", "Open", "Closed"]]
-    # Loose tasks only, archived out: the Tasks tab's own population.
-    assert stages["Tasks"]["total"] == 6
+    # Every task but archived, a feature's step included: the Tasks tab's own
+    # population.
+    assert stages["Tasks"]["total"] == 7
     # Abandoned is never shown, so it is neither a part nor in the total.
     assert stages["Features"]["total"] == 3
     assert [p["n"] for p in stages["Defects"]["parts"]] == [1, 1, 1]

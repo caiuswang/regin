@@ -77,11 +77,14 @@ test('test_tasks_list_board_graph_views', async ({ page }) => {
   // List, grouped by next step, is the default reading.
   await page.goto(`/tasks?tag=${tag}`)
   await expect(page.getByTestId('next-step-list')).toBeVisible()
+  // A feature's steps are in the backlog like any other task (defect #186).
   await expect(groupN(page, 'ready')).toHaveText('1')
-  await expect(groupN(page, 'running')).toHaveText('1')
-  await expect(groupN(page, 'blocked')).toHaveText('1')
+  await expect(groupN(page, 'running')).toHaveText('2')
+  await expect(groupN(page, 'blocked')).toHaveText('2')
   await expect(groupN(page, 'ideas')).toHaveText('5')
-  await expect(page.getByTestId('list-count')).toHaveText('8 open · 2 done hidden')
+  await expect(page.getByTestId('list-count')).toHaveText('10 open · 3 done hidden')
+  await expect(page.getByTestId(`next-step-row-${ids.g_run}`)).toBeVisible()
+  await expect(page.getByTestId(`next-step-row-${ids.g_wait}`)).toBeVisible()
 
   // One visible action per row, decided by the server.
   const ready = page.getByTestId(`next-step-row-${ids.ready}`)
@@ -120,22 +123,22 @@ test('test_tasks_list_board_graph_views', async ({ page }) => {
   await expect(page.getByTestId('list-count')).toHaveText('3 open · 0 done hidden')
   await page.getByTestId('task-chip-remove-priority').click()
   await expect(page).not.toHaveURL(/priority=/)
-  await expect(page.getByTestId('list-count')).toHaveText('8 open · 2 done hidden')
+  await expect(page.getByTestId('list-count')).toHaveText('10 open · 3 done hidden')
 
   // Board: five columns with server counts; failed only behind Done's footer.
   await page.getByTestId('list-views').getByRole('tab', { name: 'Board' }).click()
   await expect(page).toHaveURL(/view=board/)
   const col = s => page.getByTestId(`board-column-${s}`)
   await expect(col('idea').getByTestId('board-column-n')).toHaveText('5')
-  await expect(col('armed').getByTestId('board-column-n')).toHaveText('2')
-  await expect(col('armed')).toContainText('1 blocked')
-  await expect(col('running').getByTestId('board-column-n')).toHaveText('1')
-  await expect(col('done').getByTestId('board-column-n')).toHaveText('1')
+  await expect(col('armed').getByTestId('board-column-n')).toHaveText('3')
+  await expect(col('armed')).toContainText('2 blocked')
+  await expect(col('running').getByTestId('board-column-n')).toHaveText('2')
+  await expect(col('done').getByTestId('board-column-n')).toHaveText('2')
   await expect(page.getByTestId('board-column-failed')).toHaveCount(0)
   await expect(page.getByTestId(`board-card-${ids.failed}`)).toHaveCount(0)
   await page.getByTestId('board-failed-show').click()
   await expect(page.getByTestId(`board-card-${ids.failed}`)).toBeVisible()
-  await expect(page.getByTestId('list-count')).toHaveText(/^10 of \d+ tasks$/)
+  await expect(page.getByTestId('list-count')).toHaveText(/^13( of \d+)? tasks$/)
 
   // Graph: the seeded feature has its own lane; the unmet edge is the blocking one.
   await page.getByTestId('list-views').getByRole('tab', { name: 'Graph' }).click()

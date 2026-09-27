@@ -73,7 +73,7 @@ def test_population_equals_the_tab_count(flask_client, seeded, scope):
                               headers=VIEWER).get_json()["counts"]
     param = "" if project == "all" else project
     reads = {
-        "tasks": f"/api/tasks?root_only=1&project_id={param}",
+        "tasks": f"/api/tasks?project_id={param}",
         "features": f"/api/features?project_id={param}",
         "defects": f"/api/defects?project={param}",
     }

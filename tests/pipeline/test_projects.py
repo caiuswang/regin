@@ -218,5 +218,6 @@ def test_panel_tile_and_open_work_count_the_same_tasks(flask_client,
     body = flask_client.get(f"/api/pipeline/projects/{rid}",
                             headers=VIEWER).get_json()
 
-    assert body["project"]["tasks"]["total"] == len(body["recent_tasks"]) == 1
-    assert [t["title"] for t in body["recent_tasks"]] == ["top level"]
+    assert body["project"]["tasks"]["total"] == len(body["recent_tasks"]) == 2
+    assert sorted(t["title"] for t in body["recent_tasks"]) == [
+        "a step", "top level"]

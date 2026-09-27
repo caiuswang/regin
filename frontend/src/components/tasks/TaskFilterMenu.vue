@@ -108,10 +108,10 @@ function apply() {
         <span class="tfm-label">Show</span>
         <span class="tfm-row">
           <Checkbox
-            :model-value="state.runs === '1'"
+            :model-value="state.unfeatured !== '1'"
             label="Feature steps"
-            data-testid="task-runs-toggle"
-            @update:model-value="v => emit('patch', { runs: v ? '1' : '' })"
+            data-testid="task-steps-toggle"
+            @update:model-value="v => emit('patch', { unfeatured: v ? '' : '1' })"
           />
           <Checkbox
             v-if="mode === 'flat'"
