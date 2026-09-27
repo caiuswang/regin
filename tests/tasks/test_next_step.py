@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from sqlmodel import text
 
@@ -149,3 +152,42 @@ def test_board_pages_one_column(flask_client, board_rows):
     assert _ids(more["columns"][0]["cards"]) == [board_rows["ideas"][3]]
     assert failed["columns"][0]["n"] == 1
     assert refused.status_code == 400
+
+
+def _stamp(days_ago: float) -> str:
+    moment = datetime.now(timezone.utc) - timedelta(days=days_ago)
+    return moment.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _touched(task_id: int, days_ago: float):
+    with SessionLocal() as session:
+        session.exec(text("UPDATE agent_tasks SET updated_at = :u WHERE id = :i")
+                     .bindparams(u=_stamp(days_ago), i=task_id))
+        session.commit()
+
+
+def test_task_board_done_week(flask_client, native_task, task_run_row):
+    tag = json.dumps(["wk"])
+    recent_run = native_task(title="recent run", status="done", tags_json=tag)
+    task_run_row(recent_run, ended_at=_stamp(2))
+    _touched(recent_run, 30)
+    old_run = native_task(title="old run", status="done", tags_json=tag)
+    task_run_row(old_run, ended_at=_stamp(10))
+    retried = native_task(title="retried", status="done", tags_json=tag)
+    task_run_row(retried, attempt=1, ended_at=_stamp(12))
+    task_run_row(retried, attempt=2, ended_at=_stamp(1))
+    _touched(retried, 30)
+    no_run = native_task(title="no run", status="done", tags_json=tag)
+    stale = native_task(title="stale, no run", status="done", tags_json=tag)
+    _touched(stale, 30)
+    task_run_row(native_task(title="failed", status="failed", tags_json=tag),
+                 ended_at=_stamp(1))
+    native_task(title="other tag", status="done", tags_json='["other"]')
+
+    tagged = _get(flask_client, "/api/tasks/board?tag=wk")
+    everything = _get(flask_client, "/api/tasks/board")
+    done = {c["status"]: c for c in tagged["columns"]}["done"]
+
+    assert tagged["done_week"] == 3
+    assert done["n"] == 5
+    assert everything["done_week"] == 4

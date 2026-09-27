@@ -20,6 +20,7 @@ reads as unsatisfied, exactly as `deps.blocking` reads it.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from sqlalchemy import and_, exists, or_
@@ -57,6 +58,9 @@ BOARD_COLUMNS = (TASK_STATUS_IDEA, TASK_STATUS_ARMED, TASK_STATUS_QUEUED,
 #: Pageable like a column, never drawn as one: the board shows it as a count
 #: behind Done's footer.
 BOARD_PAGEABLE = (*BOARD_COLUMNS, TASK_STATUS_FAILED)
+
+#: The "Queue is clear" banner's window: done tasks that finished this recently.
+DONE_WEEK = timedelta(days=7)
 
 _RUNNABLE = (TASK_STATUS_ARMED, TASK_STATUS_QUEUED)
 _HIDDEN = (TASK_STATUS_DONE, TASK_STATUS_FAILED)
@@ -233,5 +237,21 @@ def board(session, filters: dict, *, size: int, page: int = 0,
                        Window(size=size, page=page if only else 0))
                for status in statuses]
     failed = _count(session, filters, AgentTask.status == TASK_STATUS_FAILED)
-    return {"columns": columns, "failed": failed}
+    return {"columns": columns, "failed": failed,
+            "done_week": _count(session, filters, _done_since(DONE_WEEK))}
+
+
+def _latest_end():
+    return (select(func.max(AgentTaskRun.ended_at))
+            .where(AgentTaskRun.task_id == AgentTask.id)
+            .correlate(AgentTask).scalar_subquery())
+
+
+def _done_since(window: timedelta):
+    """Done tasks whose latest run ended inside `window`, or — having no ended
+    run — whose row last changed inside it. The cutoff is written in the
+    columns' own `%Y-%m-%d %H:%M:%S` UTC form so the comparison is textual."""
+    cutoff = (datetime.now(timezone.utc) - window).strftime("%Y-%m-%d %H:%M:%S")
+    finished = func.coalesce(_latest_end(), AgentTask.updated_at)
+    return and_(AgentTask.status == TASK_STATUS_DONE, finished >= cutoff)
 

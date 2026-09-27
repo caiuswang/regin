@@ -201,3 +201,97 @@ test('test_pipeline_mobile_layouts', async ({ page }) => {
     }
   }
 })
+
+// A board of the given statuses. `ended` is how many days ago a done task's
+// one run ended; the run is what `done_week` reads.
+function seedBoard(tag, rows) {
+  const script = `
+import json, sys
+from datetime import datetime, timedelta, timezone
+sys.path.insert(0, ".")
+from lib.orm import SessionLocal
+from lib.orm.models.tasks import AgentTask, AgentTaskRun
+tag, rows = sys.argv[1], json.loads(sys.argv[2])
+stamp = lambda d: (datetime.now(timezone.utc) - timedelta(days=d)).strftime("%Y-%m-%d %H:%M:%S")
+ids = []
+with SessionLocal() as s:
+    for i, row in enumerate(rows):
+        task = AgentTask(title=f"{tag} {row['status']} {i}", status=row["status"], source="test",
+                         tags_json=json.dumps([tag]))
+        s.add(task); s.flush()
+        if "ended" in row:
+            s.add(AgentTaskRun(task_id=task.id, attempt=1, status="done",
+                               started_at=stamp(row["ended"]), ended_at=stamp(row["ended"])))
+        ids.append(task.id)
+    s.commit()
+print(json.dumps(ids))
+`
+  const out = execFileSync(PY, ['-c', script, tag, JSON.stringify(rows)], { cwd: ROOT, encoding: 'utf8' })
+  return JSON.parse(out.trim().split('\n').pop())
+}
+
+const widthOf = async locator => (await locator.boundingBox()).width
+
+test('test_tasks_board_sparse_layout', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 })
+  const col = s => page.getByTestId(`board-column-${s}`)
+
+  // 1h: Armed and Queued are empty — they collapse to rails, the rest share the row.
+  const mixed = mark()
+  seedBoard(mixed, [{ status: 'idea' }, { status: 'idea' }, { status: 'running' },
+    { status: 'done', ended: 1 }, { status: 'done', ended: 2 }])
+  await page.goto(`/tasks?view=board&tag=${mixed}`)
+  await expect(col('idea').getByTestId('board-column-n')).toHaveText('2')
+  for (const s of ['armed', 'queued']) {
+    await expect(col(s)).toHaveAttribute('data-kind', 'rail')
+    expect(await widthOf(col(s))).toBeCloseTo(48, 0)
+    await expect(col(s).getByTestId('board-rail-n')).toHaveText('0')
+    await expect(col(s).getByTestId('board-rail-label'))
+      .toHaveCSS('writing-mode', 'vertical-rl')
+    await expect(col(s).locator('.tb-hint, button')).toHaveCount(0)
+  }
+  const full = await Promise.all(['idea', 'running', 'done'].map(s => widthOf(col(s))))
+  for (const w of full) {
+    expect(w).toBeGreaterThan(200)
+    expect(Math.abs(w - full[0])).toBeLessThanOrEqual(1)
+  }
+  await expect(page.getByTestId('board-queue-clear')).toHaveCount(0)
+
+  // 1g: only done tasks match — four rails, one Done column spread over a card grid.
+  const clear = mark()
+  seedBoard(clear, [1, 1, 2, 3, 4, 6, 12].map(ended => ({ status: 'done', ended })))
+  await page.goto(`/tasks?view=board&tag=${clear}`)
+  await expect(col('done').getByTestId('board-column-n')).toHaveText('7')
+  for (const s of ['idea', 'armed', 'queued', 'running']) {
+    await expect(col(s)).toHaveAttribute('data-kind', 'rail')
+    expect(await widthOf(col(s))).toBeCloseTo(48, 0)
+  }
+  const cards = col('done').locator('[data-testid^="board-card-"]')
+  await expect(cards).toHaveCount(7)
+  const lefts = new Set(await cards.evaluateAll(els => els.map(e => Math.round(e.getBoundingClientRect().left))))
+  expect(lefts.size).toBeGreaterThan(1)
+  const banner = page.getByTestId('board-queue-clear')
+  await expect(banner).toHaveText(/Queue is clear\. Nothing armed, queued or running — 6 tasks done this week\./)
+
+  await banner.getByRole('button', { name: 'New task' }).click()
+  await expect(page.getByRole('dialog')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await banner.getByRole('button', { name: 'Switch to List' }).click()
+  // List is the default view, so the URL drops the axis rather than spelling it.
+  await expect(page).not.toHaveURL(/view=/)
+  await expect(page.getByTestId('next-step-list')).toBeVisible()
+
+  // Only a failed task: Done stays open, or its "failed · show" footer has nowhere to live.
+  const failedOnly = mark()
+  seedBoard(failedOnly, [{ status: 'failed' }])
+  await page.goto(`/tasks?view=board&tag=${failedOnly}`)
+  await expect(col('done')).toHaveAttribute('data-kind', 'full')
+  await expect(page.getByTestId('board-failed-show')).toBeVisible()
+  await expect(page.getByTestId('board-queue-clear')).toContainText('0 tasks done this week')
+
+  // Nothing matches: five rails and the banner.
+  await page.goto(`/tasks?view=board&tag=${mark()}-empty`)
+  await expect(page.locator('[data-kind="rail"]')).toHaveCount(5)
+  await expect(page.getByTestId('board-queue-clear')).toBeVisible()
+})

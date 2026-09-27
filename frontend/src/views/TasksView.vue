@@ -180,7 +180,14 @@ onBeforeUnmount(() => window.removeEventListener(TASK_CAPTURED_EVENT, afterWrite
 
     <TasksScopeBanner :feature-id="query.state.value.feature_id" />
 
-    <TaskBoard v-if="view === 'board' && params" ref="body" :params="params" @count="v => (count = v)" />
+    <TaskBoard
+      v-if="view === 'board' && params"
+      ref="body"
+      :params="params"
+      @count="v => (count = v)"
+      @compose="composerOpen = true"
+      @view="setView"
+    />
     <TaskLaneGraph
       v-else-if="view === 'graph'"
       ref="body"
