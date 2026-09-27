@@ -146,4 +146,13 @@ function cost(row) {
     .ftt-head, .ftt-row { grid-template-columns: minmax(10rem, 2fr) minmax(7rem, 1.2fr) minmax(4rem, 0.8fr) 4rem 3rem; }
     .ftt-head > :nth-child(4), .ftt-row > :nth-child(4) { display: none; }
 }
+/* 768–1023 keeps the sidebar and stacks the rail under the table, so the pane
+   is ~500px: the fixed column minimums above sum past that. */
+@media (max-width: 1023.98px) {
+    .ftt-head, .ftt-row {
+        grid-template-columns: minmax(0, 2fr) minmax(6rem, 1.2fr) minmax(3.5rem, 0.8fr) 3.5rem 3rem;
+        gap: 0.75rem; padding-left: 0.75rem; padding-right: 0.75rem;
+    }
+    .ftt-expansion { padding-left: 2.25rem; padding-right: 0.75rem; }
+}
 </style>

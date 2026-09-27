@@ -267,7 +267,7 @@ test('the arm sheet seeds cwd from the task project, not the last arm',
     await page.addInitScript(() => localStorage.setItem(
       'regin.tasks.arm.last', JSON.stringify({ cwd: '/r/regin' })))
     await stubArm(page, task())
-    await page.goto('/tasks')
+    await page.goto('/tasks?group=none')
     await page.locator('.task-row').first().getByTestId('task-arm').click()
 
     await expect(page.getByTestId('task-arm-form')).toBeVisible()
@@ -279,7 +279,7 @@ test('the arm sheet seeds cwd from the task project, not the last arm',
 test('an arm cwd outside the task project is flagged, not refused',
   async ({ page }) => {
     const armed = await stubArm(page, task())
-    await page.goto('/tasks')
+    await page.goto('/tasks?group=none')
     await page.locator('.task-row').first().getByTestId('task-arm').click()
 
     await page.getByTestId('task-arm-cwd').click()
@@ -296,7 +296,7 @@ test('a task with no project keeps the recalled cwd', async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem(
     'regin.tasks.arm.last', JSON.stringify({ cwd: '/r/regin' })))
   await stubArm(page, task({ project_id: null }))
-  await page.goto('/tasks')
+  await page.goto('/tasks?group=none')
   await page.locator('.task-row').first().getByTestId('task-arm').click()
 
   await expect(page.getByTestId('task-arm-cwd')).toContainText('/r/regin')
