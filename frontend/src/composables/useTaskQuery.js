@@ -13,17 +13,21 @@ import { GROUPS, PRIORITIES, SORT_KEYS, STATUS_FILTERS } from '../utils/taskMeta
 // share, and the shell's selector is its only writer (I4). This composable
 // reads it and carries it through every patch untouched.
 //
-// `view` (list | graph) is an axis too, so a reload lands on the same view —
-// but it is a reading of the rows, not a narrowing, so Clear leaves it alone.
+// `view` (board | list | graph) is an axis too, so a reload lands on the same
+// view — but it is a reading of the rows, not a narrowing, so Clear leaves it
+// alone. `open` is the Graph's "Open chains only" chip: on by default, so the
+// URL carries only its absence (`open=0`).
+//
+// `priority` is a comma list (`high,urgent`), canonicalised by the server.
 
 export const DEFAULT_SORT = 'created:desc'
-export const DEFAULT_GROUP = 'status'
+export const DEFAULT_GROUP = 'next_step'
 export const DEFAULT_VIEW = 'list'
 
 const DEFAULTS = {
   status: '', priority: '', sort: DEFAULT_SORT, group: DEFAULT_GROUP,
   q: '', tag: '', source: '', feature_id: '', assignee: '',
-  archived: '', runs: '', view: DEFAULT_VIEW,
+  archived: '', runs: '', view: DEFAULT_VIEW, open: '',
 }
 
 const AXES = Object.keys(DEFAULTS)
@@ -51,15 +55,18 @@ const LEGAL = {
     const [key, dir] = v.split(':')
     return SORT_KEYS.some(s => s.value === key) && (dir === 'asc' || dir === 'desc')
   },
-  view: v => v === 'list' || v === 'graph',
+  view: v => VIEWS.includes(v),
   group: v => GROUPS.some(g => g.value === v),
   status: v => STATUS_FILTERS.some(s => s.key === v),
-  priority: v => v === '' || PRIORITIES.some(p => p.value === v),
+  priority: v => v === '' || v.split(',').every(
+    part => PRIORITIES.some(p => p.value === part)),
   archived: v => v === '' || v === '1',
   runs: v => v === '' || v === '1',
 }
 
 const CORRECTED = ['sort', 'group', 'view']
+
+export const VIEWS = ['board', 'list', 'graph']
 
 // The stored axes that reach the server. `group` is not one: it decides how
 // the loaded rows are split into feeds, never which rows those are.

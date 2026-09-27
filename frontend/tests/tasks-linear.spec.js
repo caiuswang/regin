@@ -200,12 +200,13 @@ test('a priority filter narrows the list and the reset clears it', async ({ page
   await forceFlat(page)
   await page.goto('/tasks')
   await listReady(page)
-  await page.getByTestId('list-facet-priority').click()
-  await page.getByRole('option', { name: 'Urgent' }).click()
+  await page.getByTestId('task-filter-button').click()
+  await page.getByTestId('task-filter-priority-urgent').click()
+  await page.keyboard.press('Escape')
   await expect(page.locator('[data-testid="task-row"]',
     { hasText: `${SFX}-beta` })).toHaveCount(0)
 
-  await page.getByTestId('list-clear').click()
+  await page.getByTestId('task-chip-remove-priority').click()
   await expect(page.locator('[data-testid="task-row"]',
     { hasText: `${SFX}-beta` })).toHaveCount(1)
 })
@@ -276,7 +277,9 @@ test('archived is a world you enter, not one mixed into the default view',
     await listReady(page)
     await expect(page.getByTestId('task-group-archived')).toHaveCount(0)
 
+    await page.getByTestId('task-filter-button').click()
     await page.getByTestId('task-archived-toggle').click()
+    await page.keyboard.press('Escape')
     await expect(page.getByTestId('task-group-archived')).toHaveCount(1)
 
     await api(page, 'PATCH', `/tasks/${target.id}`, { status: 'idea' })
@@ -290,8 +293,10 @@ test('grouping never contradicts an active filter on the same axis',
     await expect(page.locator('section[data-testid^="task-group-"]'))
       .not.toHaveCount(1)
 
+    await page.getByTestId('task-filter-button').click()
     await page.getByTestId('list-facet-status').click()
     await page.getByRole('option', { name: 'Ideas' }).click()
+    await page.keyboard.press('Escape')
     // A chip reading "Ideas" above an Armed group full of rows is two
     // contradictory claims about scope on one screen.
     await expect(page.locator('section[data-testid^="task-group-"]'))
@@ -336,7 +341,9 @@ test('archived rows are reachable by asking for them', async ({ page }) => {
   await forceFlat(page)
   await page.goto('/tasks')
   await listReady(page)
+  await page.getByTestId('task-filter-button').click()
   await page.getByTestId('task-archived-toggle').click()
+  await page.keyboard.press('Escape')
   await expect(page.locator('[data-testid="task-row"]',
     { hasText: `${SFX}-alpha` })).toHaveCount(1)
 })

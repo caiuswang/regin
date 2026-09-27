@@ -51,8 +51,8 @@ from lib.orm.models.api_keys import SCOPE_TASK_CAPTURE
 from lib.agent_sdk import worktree
 from lib.orm.models.tasks import AgentTask
 from lib.settings import settings
-from lib.tasks import (arm, capture, deps, images, next_step, query,
-                       ratelimit, runs, store)
+from lib.tasks import (arm, capture, deps, graph_lanes, images, next_step,
+                       query, ratelimit, runs, store)
 from lib.tasks import rows as task_rows
 from lib.tasks import integrations
 from lib.utils.pagination import (
@@ -647,6 +647,19 @@ def api_set_task_deps(task_id: int):
     })
 
 
+def _lane_graph(cap):
+    """`lanes=1`: the Graph view's drawing — feature lanes, open chains, and
+    the footer's counts, all counted here over what is drawn."""
+    try:
+        filters = query.parse_filters(request.args)
+    except query.FilterRejected as exc:
+        return _rejected_filter(exc)
+    return jsonify(graph_lanes.read(graph_lanes.LaneQuery(
+        open_only=(request.args.get("open") or "1").strip() != "0",
+        project_id=filters["project_id"], unassigned=filters["unassigned"],
+        cap=cap)))
+
+
 @tasks_bp.route('/api/tasks/graph', methods=['GET'])
 @require_editor
 def api_task_graph():
@@ -664,6 +677,8 @@ def api_task_graph():
         cap = query.parse_int(request.args.get("cap"), "cap")
     except query.FilterRejected as exc:
         return _rejected_filter(exc)
+    if (request.args.get("lanes") or "").strip() == "1":
+        return _lane_graph(cap)
     status = (request.args.get("status") or "").strip()
     return jsonify(deps.graph(root=root, depth=depth, status=status or None,
                               cap=cap))

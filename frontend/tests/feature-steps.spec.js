@@ -113,10 +113,9 @@ test('the board names the feature and the toggle names feature steps',
     await page.route('**/api/tasks/counts?**', (route) =>
       route.fulfill({ json: { total: 2, by_status: { idea: 2 },
                                      by_priority: {}, by_project: {} } }))
-    await page.goto('/tasks?runs=1')
+    await page.goto('/tasks?runs=1&group=none')
 
-    await expect(page.getByTestId('task-runs-toggle'))
-      .toContainText('Hide feature steps')
+    await expect(page.getByTestId('task-chip-runs')).toContainText('Feature steps')
     const row = page.locator('#task-71')
     await expect(row.getByTestId('task-feature-line'))
       .toHaveText('#242 Feature workbench')

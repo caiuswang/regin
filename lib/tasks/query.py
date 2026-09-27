@@ -62,6 +62,18 @@ def parse_int(raw, field: str) -> Optional[int]:
         raise FilterRejected(f"{field} must be an integer", field) from None
 
 
+def _enum_list(args, field: str, allowed) -> str:
+    """A comma list of `allowed` values, canonicalised to `allowed`'s order so
+    `high,urgent` and `urgent,high` are one query. Any unknown member is
+    refused, never dropped."""
+    wanted = {v.strip() for v in (args.get(field) or "").split(",")
+              if v.strip()}
+    unknown = sorted(wanted - set(allowed))
+    if unknown:
+        raise FilterRejected(f"unknown {field}: {unknown[0]}", field)
+    return ",".join(v for v in allowed if v in wanted)
+
+
 def _enum(args, field: str, allowed, default: str = "") -> str:
     value = (args.get(field) or default).strip()
     if value and value not in allowed:
@@ -98,7 +110,7 @@ def parse_filters(args) -> dict:
         "assignee": parse_int((args.get("assignee") or "").strip() or None,
                               "assignee"),
         "sort": parse_sort(args.get("sort")),
-        "priority": _enum(args, "priority", TASK_PRIORITIES),
+        "priority": _enum_list(args, "priority", TASK_PRIORITIES),
         "q": (args.get("q") or "").strip()[:Q_MAX],
         "tag": (args.get("tag") or "").strip()[:TAG_MAX],
         "source": (args.get("source") or "").strip(),
@@ -190,7 +202,8 @@ def apply_filters(stmt, filters: dict, *, ignore_status: bool = False):
     if filters["source"]:
         stmt = stmt.where(AgentTask.source == filters["source"])
     if filters["priority"]:
-        stmt = stmt.where(AgentTask.priority == filters["priority"])
+        stmt = stmt.where(
+            AgentTask.priority.in_(filters["priority"].split(",")))
     if filters.get("assignee") is not None:
         stmt = stmt.where(AgentTask.assignee == filters["assignee"])
     return _by_grain(_by_project(stmt, filters), filters)

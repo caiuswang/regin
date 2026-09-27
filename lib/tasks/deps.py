@@ -337,9 +337,10 @@ def failed_blockers(task_id: int) -> list[dict]:
     return [{"id": row.id, "title": row.title} for row in rows]
 
 
-def _node(task: AgentTask, blocked_by: list[int]) -> dict:
+def node(task: AgentTask, blocked_by: list[int]) -> dict:
     return {
         "id": task.id,
+        "feature_id": task.feature_id,
         "title": task.title,
         "status": task.status,
         "blocked": bool(blocked_by),
@@ -442,7 +443,7 @@ def graph(*, root: Optional[int] = None, depth: Optional[int] = None,
     truncated = _over_cap(total, root, cap)
     keep = set() if truncated else scoped
 
-    nodes = [_node(task, sorted(unmet_deps.get(task.id, [])))
+    nodes = [node(task, sorted(unmet_deps.get(task.id, [])))
              for task in tasks if task.id in keep]
     kept_edges = [{"task_id": a, "depends_on_id": b, "kind": kind}
                   for a, b, kind in edges if a in keep and b in keep]
