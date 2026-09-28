@@ -23,6 +23,7 @@ from sqlmodel import delete, select
 
 from lib.activity_log import get_activity_logger
 from lib.orm import SessionLocal
+from lib.pipeline import live
 from lib.orm.models.tasks import (
     AgentTask, AgentTaskDep, DEP_KIND_AFTER, DEP_KIND_REQUIRES, DEP_KINDS,
     TASK_STATUS_ARMED, TASK_STATUS_DONE, TASK_STATUS_FAILED,
@@ -161,6 +162,7 @@ def retire_satisfied_after(task_id: int) -> list[int]:
                      .where(AgentTaskDep.task_id == task_id)
                      .where(AgentTaskDep.kind == DEP_KIND_AFTER)
                      .where(AgentTaskDep.depends_on_id.in_(settled)))
+        live.mark(session, "task", task_id)
         session.commit()
     log.write("task_after_edges_retired", task_id=task_id, retired=settled)
     return settled
@@ -244,6 +246,7 @@ def set_deps(task_id: int,
         _refuse_bad_edges(session, task_id, edges)
         session.exec(delete(AgentTaskDep)
                      .where(AgentTaskDep.task_id == task_id))
+        live.mark(session, "task", task_id)
         for dep, kind in edges:
             session.add(AgentTaskDep(task_id=task_id, depends_on_id=dep,
                                      kind=kind))

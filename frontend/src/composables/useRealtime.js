@@ -29,7 +29,7 @@ const STREAM_ID = randomId()
 // Counts ride SSE's *unnamed* event, whose DOM name is 'message'; the relay
 // reuses that label so leader and follower speak one vocabulary.
 const COUNTS = 'message'
-const NAMED_EVENTS = ['notification', 'resolved', 'trace_spans', 'session_successor']
+const NAMED_EVENTS = ['notification', 'resolved', 'trace_spans', 'session_successor', 'pipeline']
 
 const subscribers = new Map()
 

@@ -24,6 +24,7 @@ import { useBusyAction } from '../composables/useBusyAction'
 import { useConfirm } from '../composables/useConfirm'
 import { rememberedQuery } from '../composables/usePipelineTabState'
 import { useDetailBack } from '../composables/useDetailBack'
+import { usePipelineLive } from '../composables/usePipelineEvents'
 import { LEDGER_ANCHORS, reveal } from '../utils/featureLinks'
 import { reopenMessage, shipMessage } from '../utils/featureConfirm'
 import Button from '../components/ui/Button.vue'
@@ -76,22 +77,24 @@ const canWrite = computed(() => user?.role !== 'viewer')
 // `verbs` is the server's R2 table for this stage; the page only draws it.
 const offers = (verb) => canWrite.value && (ledger.value?.verbs || []).includes(verb)
 
-async function load() {
-  loading.value = true
+async function load({ quiet = false } = {}) {
+  if (!quiet) loading.value = true
   loadError.value = ''
   try {
     ledger.value = await api.get(`/features/${featureId.value}`)
     // Here and not on every `ledger` reassignment: a ship, a refresh or a
     // project edit returns the same attachments, and rebinding on each would
     // re-fetch every blob and blow away thumbnails the operator just added.
-    bindImages(ledger.value)
+    // A quiet (event) re-read is the same case.
+    if (!quiet) bindImages(ledger.value)
   } catch (e) {
     loadError.value = e?.message || String(e)
   } finally {
     loading.value = false
   }
 }
-watch(featureId, load, { immediate: true })
+watch(featureId, () => load(), { immediate: true })
+usePipelineLive(() => load({ quiet: true }))
 
 // An arrival at `/features/12#feature-sessions` — the index's sessions count —
 // has to land ON the evidence list, and the list does not exist until the

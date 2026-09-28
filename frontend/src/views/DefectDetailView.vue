@@ -13,6 +13,7 @@ import { usePipelineHeaderPublisher } from '../composables/usePipelineHeader'
 import { rememberedQuery } from '../composables/usePipelineTabState'
 import { useDetailBack } from '../composables/useDetailBack'
 import { useFlash } from '../composables/useFlash'
+import { usePipelineLive } from '../composables/usePipelineEvents'
 import DefectRow from '../components/defects/DefectRow.vue'
 
 const route = useRoute()
@@ -47,6 +48,7 @@ async function load() {
     loading.value = false
   }
 }
+usePipelineLive(load)
 watch(() => route.params.id, () => { defect.value = null; load() },
       { immediate: true })
 

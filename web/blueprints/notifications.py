@@ -159,7 +159,8 @@ def api_internal_notify():
     The body is optional. `{"message_id": N}` pushes that inbox row to the
     notification surfaces; `{"resolved": {...}}` retires a blocker whose
     prompt was answered; `{"successor": {"trace_id": ...}}` moves a page off a
-    `/clear`ed session onto the one that replaced it. Either way the counters
+    `/clear`ed session onto the one that replaced it; `{"pipeline": [...]}`
+    re-raises task/feature/defect frames a CLI write produced. Either way the counters
     follow, so a client that ignores the named frame still sees the badge
     move.
 
@@ -192,6 +193,11 @@ def _fan_out(body: dict) -> None:
     resolved = body.get('resolved')
     if resolved:
         hub.broadcast_event('resolved', resolved)
+        return
+    pipeline = body.get('pipeline')
+    if pipeline:
+        from lib.pipeline import live
+        live.broadcast(live.valid_frames(pipeline))
         return
     successor = body.get('successor')
     if successor:

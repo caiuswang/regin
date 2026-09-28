@@ -37,6 +37,11 @@ def _root(ctx: typer.Context) -> None:
     record the invocation in the activity log (tagged `feature=cli`)."""
     configure_logging()
     configure_activity_log()
+    # `serve` is the one command that IS the server; every other command
+    # writes from outside it, so its pipeline frames go over the loopback.
+    if ctx.invoked_subcommand != 'serve':
+        from lib.pipeline import live
+        live.use_loopback()
     _stamp_cli_invocation(ctx)
 
 

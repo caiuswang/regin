@@ -26,6 +26,7 @@ from sqlmodel import select
 
 from lib.activity_log import get_activity_logger
 from lib.orm import SessionLocal
+from lib.pipeline import live  # noqa: F401  (registers the `pipeline` frames on commit)
 from lib.orm.models.features import (
     ABANDONED, BUILD_STARTED, KINDS, OPERATOR, RESTARTED, SHIPPED, SPECCED,
     Feature, FeatureEvent,

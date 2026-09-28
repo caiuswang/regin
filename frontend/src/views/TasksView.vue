@@ -26,6 +26,7 @@ import { TASK_CAPTURED_EVENT } from '../composables/useQuickCapture.js'
 import { useTaskQuery } from '../composables/useTaskQuery'
 import { useTaskShortcuts } from '../composables/useTaskShortcuts.js'
 import { useUsers } from '../composables/useUsers.js'
+import { usePipelineLive } from '../composables/usePipelineEvents'
 import { taskChips } from '../utils/taskChips.js'
 import { GROUPS, SORT_KEYS } from '../utils/taskMeta.js'
 
@@ -84,6 +85,8 @@ async function afterWrite() {
   invalidatePipelineCounts()
   await body.value?.reload?.()
 }
+
+usePipelineLive(() => body.value?.reload?.())
 
 useTaskShortcuts({
   c: () => openCreate('task'),

@@ -17,6 +17,7 @@ import { useTaskShortcuts } from '../composables/useTaskShortcuts'
 import { useBreakpoint } from '../composables/useBreakpoint'
 import { usePipelineCreate } from '../composables/usePipelineCreate'
 import { invalidatePipelineCounts } from '../composables/usePipelineCounts'
+import { usePipelineLive } from '../composables/usePipelineEvents'
 import { TASK_CAPTURED_EVENT } from '../composables/useQuickCapture.js'
 import { useFlash } from '../composables/useFlash'
 import api from '../api'
@@ -166,6 +167,7 @@ onBeforeUnmount(() => publishShellScope(null))
 // A tab writing a row is what makes its own count wrong, and the tab has no
 // way to reach this header. It bumps a revision instead.
 watch(countsRevision, () => loadCounts(carried.value))
+usePipelineLive(() => loadCounts(carried.value))
 </script>
 
 <template>
