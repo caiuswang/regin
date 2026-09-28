@@ -138,7 +138,7 @@ def _spec_stage_steps() -> int:
     sliceable = store.create("sliceable", body=SLICEABLE)
     assert _step(sliceable.id) == {
         "kind": "slice", "label": "Transcribe 2 slices",
-        "target": f"/features/{sliceable.id}#feature-spec"}
+        "target": f"/features/{sliceable.id}#slices"}
     for n in ("S0", "S1"):
         _task(sliceable.id, "idea", source="spec",
               external_id=f"{sliceable.id}:{n}")

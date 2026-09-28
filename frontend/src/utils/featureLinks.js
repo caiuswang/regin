@@ -47,9 +47,18 @@ export function revealSessions() {
   reveal(SESSIONS_ANCHOR)
 }
 
-//: The spec and task cards — where a feature's `next_step` sends a reader.
+//: The spec, slices and task cards — where a feature's `next_step` sends a
+//: reader. `slices` is `lib/features/next_step.SLICES_ANCHOR`.
 export const SPEC_ANCHOR = 'feature-spec'
+export const SLICES_ANCHOR = 'slices'
 export const TASKS_ANCHOR = 'feature-tasks'
 
+//: The Slices panel, where a feature's idea slices are armed.
+export function slicesLink(featureId) {
+  return { path: `/features/${featureId}`, hash: `#${SLICES_ANCHOR}` }
+}
+
 //: The anchors a ledger arrival may carry, and so may reveal.
-export const LEDGER_ANCHORS = [SESSIONS_ANCHOR, DEFECTS_ANCHOR, SPEC_ANCHOR, TASKS_ANCHOR]
+export const LEDGER_ANCHORS = [
+  SESSIONS_ANCHOR, DEFECTS_ANCHOR, SPEC_ANCHOR, SLICES_ANCHOR, TASKS_ANCHOR,
+]

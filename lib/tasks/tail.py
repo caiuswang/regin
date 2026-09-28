@@ -158,3 +158,14 @@ def tail_slice_rows(rows: Sequence[SliceRow], commands: ProjectCommands,
         previous = [row.n]
     log.write("tail_slices_built", slices=",".join(row.n for row in tail))
     return tail
+
+
+#: The acceptance names only a tail row carries. A spec may fold the three
+#: into fewer rows (one "integrate + verify" slice when nothing migrates), so
+#: the tail is recognised by what it proves, not by how many rows it took.
+TAIL_TESTS = frozenset(test for spec in TAIL_SPECS for test in spec.tests)
+
+
+def has_tail(rows: Sequence[SliceRow]) -> bool:
+    """Whether the table already ends in a chain tail, however it was folded."""
+    return any(TAIL_TESTS.intersection(row.tests) for row in rows)

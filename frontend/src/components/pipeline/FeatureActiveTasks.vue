@@ -6,7 +6,7 @@ import { computed, onMounted, ref } from 'vue'
 import api from '../../api'
 import TaskStatusIcon from '../tasks/TaskStatusIcon.vue'
 import { ago } from '../../utils/pipelineFormat'
-import { tasksLink } from '../../utils/featureLinks'
+import { slicesLink, tasksLink } from '../../utils/featureLinks'
 
 const props = defineProps({
   featureId: { type: Number, required: true },
@@ -18,6 +18,9 @@ const PAGE = 20
 
 const groups = ref([])
 const byStatus = ref({})
+// Idea slices, counted off the same report the ledger's Slices panel draws,
+// so "K not armed" and that panel's "Arm K" cannot disagree.
+const notArmed = ref(0)
 const loaded = ref(false)
 const error = ref('')
 
@@ -25,10 +28,12 @@ onMounted(async () => {
   const q = `feature_id=${props.featureId}`
   try {
     // The heading's counts are garnish on the rows: losing them must not hide the rows.
-    const [g, c] = await Promise.all([
+    const [g, c, s] = await Promise.all([
       api.get(`/tasks?group=next_step&${q}&size=${PAGE}`),
       api.get(`/tasks/counts?${q}`).catch(() => null),
+      api.get(`/features/${props.featureId}/slices`).catch(() => null),
     ])
+    notArmed.value = (s?.rows || []).filter(r => r.task_status === 'idea').length
     const byKey = new Map((g.groups || []).map(grp => [grp.key, grp]))
     groups.value = ORDER.map(k => byKey.get(k)).filter(Boolean)
     byStatus.value = c?.by_status || {}
@@ -56,6 +61,14 @@ function label(t) {
 <template>
   <section class="fa" :data-testid="`feature-active-${featureId}`">
     <h3 class="fa-label" data-testid="feature-active-heading">Active tasks<template v-if="heading"> · {{ heading }}</template></h3>
+    <p v-if="notArmed" class="fa-ideas" data-testid="feature-active-ideas">
+      {{ notArmed }} not armed ·
+      <router-link
+        :to="slicesLink(featureId)"
+        class="fa-more focus-visible:outline-2 focus-visible:outline-blue-500"
+        data-testid="feature-active-arm"
+      >Arm →</router-link>
+    </p>
     <p v-if="!loaded" class="fa-muted">Loading…</p>
     <p v-else-if="error" class="fa-muted" role="alert">{{ error }}</p>
     <p v-else-if="!rows.length" class="fa-muted">Nothing is running, armed or queued.</p>
@@ -98,6 +111,7 @@ function label(t) {
 .fa-state--queued { color: var(--color-warning-strong); }
 .fa-state--running { color: var(--color-agent); }
 .fa-muted { font-size: 12px; color: var(--color-fg-muted); }
+.fa-ideas { font-size: 12px; color: var(--color-fg-muted); }
 .fa-more { font-size: 12px; color: var(--color-info); text-decoration: none; }
 .fa-more:hover { text-decoration: underline; }
 </style>

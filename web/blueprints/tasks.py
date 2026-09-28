@@ -51,8 +51,8 @@ from lib.orm.models.api_keys import SCOPE_TASK_CAPTURE
 from lib.agent_sdk import worktree
 from lib.orm.models.tasks import AgentTask
 from lib.settings import settings
-from lib.tasks import (arm, capture, deps, graph_lanes, images, next_step,
-                       query, ratelimit, runs, store)
+from lib.tasks import (arm, capture, deps, feature_slices, graph_lanes,
+                       images, next_step, query, ratelimit, runs, store)
 from lib.tasks import rows as task_rows
 from lib.tasks import integrations
 from lib.utils.pagination import (
@@ -506,6 +506,17 @@ def api_arm_task(task_id: int):
     # notice.
     _fire_after_write(task_id)
     return jsonify(_detail(store.get_task(task_id), task_id))
+
+
+@tasks_bp.route('/api/tasks/<int:task_id>/arm-proposal', methods=['GET'])
+@require_auth
+def api_task_arm_proposal(task_id: int):
+    """What the task's slice row proposes to arm it with, derived now and
+    never stored (#119 D7). 404 when there is no slice row behind it."""
+    try:
+        return jsonify(feature_slices.proposal_for_task(task_id))
+    except feature_slices.NoProposal as exc:
+        return jsonify({"error": str(exc)}), 404
 
 
 @tasks_bp.route('/api/tasks/<int:task_id>/run', methods=['POST'])

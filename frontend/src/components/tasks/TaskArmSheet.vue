@@ -11,9 +11,10 @@ import Input from '../ui/Input.vue'
 import LaunchWorktreeFields from '../live/LaunchWorktreeFields.vue'
 import Select from '../ui/Select.vue'
 import { CUSTOM_MODEL, CUSTOM_SKILL, useTaskArm } from '../../composables/useTaskArm.js'
+import api from '../../api'
 import {
-  blankArmDraft, cwdWithin, forgetArm, hasRecalledValues, projectCwd,
-  rememberArm, seededArmDraft,
+  blankArmDraft, cwdWithin, forgetArm, hasRecalledValues, prefilledArmDraft,
+  projectCwd, rememberArm, seededArmDraft,
 } from '../../composables/useArmPrefs.js'
 import { useProjects } from '../../composables/useProjects.js'
 
@@ -38,16 +39,49 @@ const draft = reactive(seeded.draft)
 // it by pressing the button they always press.
 const recalled = ref(seeded.recalled)
 
+// The last attempt's cwd outranks the project's (R4b): it is where this very
+// task last ran, not a default for its filing.
+const attemptCwd = ref('')
+let higher = {}
+// The form stays hidden until sources 2 and 3 have answered: they replace the
+// draft wholesale, and anything typed before they land would be overwritten.
+const prefilling = ref(true)
+
 // Seeded after the recall banner is settled: a cwd that came from the task's
 // own project is not a carry-over from another task, and must not raise it.
 function seedProjectCwd() {
-  if (props.task?.armed?.params) return
+  if (props.task?.armed?.params || attemptCwd.value) return
   const cwd = projectCwd(props.task, projects.value)
   if (cwd !== null) draft.cwd = cwd
 }
 
+// Sources 2 and 3 of R4b. Neither is an error when absent: a task that is no
+// slice has no proposal (404), and a task never run has no attempt.
+async function readHigherSources() {
+  try {
+    await layerHigherSources()
+  } finally {
+    prefilling.value = false
+  }
+}
+
+async function layerHigherSources() {
+  if (props.task?.armed?.params || props.task?.id == null) return
+  const [proposal, history] = await Promise.all([
+    api.get(`/tasks/${props.task.id}/arm-proposal`).catch(() => null),
+    api.get(`/tasks/${props.task.id}/runs`).catch(() => null),
+  ])
+  const lastRun = history?.runs?.[0] || null
+  if (!proposal && !lastRun) return
+  higher = { proposal, lastRun }
+  const seeded = prefilledArmDraft(props.task, { proposal, lastRun })
+  Object.assign(draft, seeded.draft)
+  recalled.value = seeded.recalled
+  attemptCwd.value = lastRun?.params?.cwd || ''
+}
+
 onMounted(async () => {
-  await Promise.all([loadOptions(), ensureProjects()])
+  await Promise.all([loadOptions(), ensureProjects(), readHigherSources()])
   if (recalled.value) {
     pruneUnlisted(draft)
     recalled.value = hasRecalledValues(draft)
@@ -56,9 +90,12 @@ onMounted(async () => {
   adoptUnlisted(draft)
 })
 
+// Reset drops only what the prefs carried: the plan and the history are this
+// task's own, so they come straight back.
 function resetDraft() {
-  Object.assign(draft, blankArmDraft(props.task))
   forgetArm()
+  Object.assign(draft, blankArmDraft(props.task),
+                prefilledArmDraft({ ...props.task, armed: null }, higher).draft)
   recalled.value = false
   seedProjectCwd()
 }
@@ -97,7 +134,7 @@ async function submit() {
     :description="task.title"
     @update:open="v => !v && emit('close')"
   >
-    <div v-if="loading" class="task-arm-note">reading launch options…</div>
+    <div v-if="loading || prefilling" class="task-arm-note">reading launch options…</div>
     <div v-else-if="error" class="live-launch-warn" data-testid="task-arm-error">
       {{ error }}
     </div>
@@ -225,7 +262,7 @@ async function submit() {
       <Button variant="ghost" @click="emit('close')">Cancel</Button>
       <Button
         variant="primary"
-        :disabled="saving || loading || !!error"
+        :disabled="saving || loading || prefilling || !!error"
         data-testid="task-arm-submit"
         @click="submit"
       >

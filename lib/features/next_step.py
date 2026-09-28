@@ -42,6 +42,9 @@ SHIP = "ship"
 REOPEN = "reopen"
 NONE = "none"
 
+#: The ledger's Slices panel, where both slicing steps are taken.
+SLICES_ANCHOR = "slices"
+
 _RUNNABLE = (TASK_STATUS_ARMED, TASK_STATUS_QUEUED)
 _CLOSED_TASK = (TASK_STATUS_DONE, TASK_STATUS_ARCHIVED)
 
@@ -127,13 +130,13 @@ def _spec_step(feature_id: int, body: Optional[str],
         if refusal is not None:
             reason = refusal.missing[0] if refusal.missing else str(refusal)
             return NextStep(SLICE, f"Slice the spec — {reason}",
-                            f"{page}#feature-spec")
+                            f"{page}#{SLICES_ANCHOR}")
         return NextStep(SLICE, f"Transcribe {_plural(len(rows), 'slice')}",
-                        f"{page}#feature-spec")
+                        f"{page}#{SLICES_ANCHOR}")
     if facts.idea_slices:
         return NextStep(ARM_SLICES,
                         f"Arm {_plural(facts.idea_slices, 'slice')}",
-                        f"{page}#feature-tasks")
+                        f"{page}#{SLICES_ANCHOR}")
     return _run_step(feature_id, facts)
 
 

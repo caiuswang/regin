@@ -176,26 +176,42 @@ def _header_columns(cells: list[str]) -> Optional[dict[str, int]]:
     return None if missing else columns
 
 
-def _find_table(body: str) -> tuple[dict[str, int], list[list[str]]]:
+@dataclass(frozen=True)
+class TableBounds:
+    """Where the slice table sits in a body: its header's cells and column
+    map, and the line index of its last row."""
+
+    header: list[str]
+    columns: dict[str, int]
+    header_line: int
+    last_line: int
+
+
+def table_bounds(body: str) -> TableBounds:
     lines = body.splitlines()
     for index, line in enumerate(lines):
         if "|" not in line:
             continue
-        columns = _header_columns(_split_row(line))
+        header = _split_row(line)
+        columns = _header_columns(header)
         if columns is None:
             continue
-        rows: list[list[str]] = []
-        for following in lines[index + 1:]:
-            if "|" not in following:
+        last = index
+        for offset in range(index + 1, len(lines)):
+            if "|" not in lines[offset]:
                 break
-            cells = _split_row(following)
-            if _is_divider(cells):
-                continue
-            rows.append(cells)
-        return columns, rows
+            last = offset
+        return TableBounds(header, columns, index, last)
     raise SliceTableError(
         "no slice table found — a table needs a header row naming "
         + ", ".join(REQUIRED_COLUMNS))
+
+
+def _find_table(body: str) -> tuple[dict[str, int], list[list[str]]]:
+    bounds = table_bounds(body)
+    lines = body.splitlines()[bounds.header_line + 1:bounds.last_line + 1]
+    rows = [cells for cells in map(_split_row, lines) if not _is_divider(cells)]
+    return bounds.columns, rows
 
 
 def _cell(cells: list[str], columns: dict[str, int], column: str) -> str:

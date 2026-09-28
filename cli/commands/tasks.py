@@ -417,20 +417,17 @@ def cmd_transcribe(
     as_json: bool = typer.Option(False, "--json", help="Emit the raw result."),
 ):
     from lib.features import store as feature_store
-    from lib.tasks.transcribe import TranscribeRefused, transcribe
+    from lib.tasks.feature_slices import SlicesRefused, transcribe_feature
+    from lib.tasks.transcribe import TranscribeRefused
 
-    feature = feature_store.get(feature_id)
-    if feature is None:
+    try:
+        result = transcribe_feature(feature_id, branch_prefix=branch_prefix)
+    except feature_store.FeatureError:
         typer.echo(f"task transcribe: no feature #{feature_id}", err=True)
         raise typer.Exit(code=1)
-    if not (feature.body or "").strip():
-        typer.echo(f"task transcribe: feature #{feature_id} has no spec — the "
-                   "slice table is the plan and there is nowhere else to read "
-                   "it from", err=True)
+    except SlicesRefused as refused:
+        typer.echo(f"task transcribe: {refused}", err=True)
         raise typer.Exit(code=1)
-    try:
-        result = transcribe(feature_id, feature.body,
-                            branch_prefix=branch_prefix or f"f{feature_id}/")
     except TranscribeRefused as refused:
         typer.echo(f"task transcribe: refused — {refused}", err=True)
         raise typer.Exit(code=1)
