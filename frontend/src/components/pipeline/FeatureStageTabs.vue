@@ -50,9 +50,10 @@ const tabs = computed(() => (props.compact ? MOBILE : DESKTOP).map(key => ({
     background: var(--color-surface-2); color: var(--color-fg-muted);
 }
 .fst .fst-tab:first-child { margin-left: 0; clip-path: polygon(0 0, calc(100% - 9px) 0, 100% 50%, calc(100% - 9px) 100%, 0 100%); border-radius: var(--radius-lg) 0 0 var(--radius-lg); }
-.fst .fst-tab--building { background: var(--color-info-soft); color: var(--color-info); }
-.fst .fst-tab--shipped { background: var(--color-success-soft); color: var(--color-success); }
-.fst .fst-tab--escaped { background: var(--color-amber-200); color: var(--color-amber-900); }
+.fst .fst-tab--shipped { color: var(--color-success); }
+.fst .fst-tab--escaped { color: var(--color-warning-strong); font-weight: 600; }
+.fst--compact .fst-tab--shipped { color: var(--color-fg-muted); }
+.fst .fst-tab--spec .fst-n { color: var(--color-fg); }
 .fst .fst-tab.is-active { background: var(--color-fg); color: var(--color-surface); }
 .fst-n { font-weight: 700; font-variant-numeric: tabular-nums; }
 

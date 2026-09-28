@@ -1,10 +1,10 @@
 <script setup>
-// The Features table (1c): a stage track per feature, task progress, round
-// pips and defects; a row expands to its blamed defects and fix tasks.
+// The Features table (1c): a stage bar per feature, task progress, round
+// pips and defects; a row expands to its active tasks, blamed defects and fix tasks.
 import { ref } from 'vue'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
-import StageTrack from './StageTrack.vue'
+import StageSegments from './StageSegments.vue'
 import FeatureExpansion from './FeatureExpansion.vue'
 import { ago } from '../../utils/pipelineFormat'
 import { money } from '../../utils/ledgerFormat'
@@ -22,11 +22,8 @@ function toggle(id) {
   expanded.value = next
 }
 
-// A pip per round; the rounds after the ship that escaped are the late ones.
 function pips(row) {
-  const n = Math.max(0, row.rounds || 0)
-  const late = row.stage === 'escaped' ? Math.min(n, Math.max(1, row.defects?.escapes || 0)) : 0
-  return Array.from({ length: Math.min(n, 8) }, (_, i) => i >= Math.min(n, 8) - late)
+  return Math.min(Math.max(0, row.rounds || 0), 8)
 }
 
 function cost(row) {
@@ -71,7 +68,7 @@ function cost(row) {
               <span class="ftt-meta">{{ row.external_ref || 'no ref' }} · {{ cost(row) }}</span>
             </span>
           </span>
-          <span role="cell"><StageTrack :stage="row.stage" /></span>
+          <span role="cell"><StageSegments :stage="row.stage" /></span>
           <span role="cell" class="ftt-tasks">
             <router-link
               v-if="row.tasks"
@@ -83,7 +80,7 @@ function cost(row) {
             <span class="ftt-track"><span class="ftt-fill tone-success" :style="{ width: `${row.tasks ? (100 * row.tasks_done) / row.tasks : 0}%` }" /></span>
           </span>
           <span role="cell" class="ftt-pips" data-testid="feature-rounds" :aria-label="`${row.rounds} rounds`">
-            <span v-for="(late, i) in pips(row)" :key="i" class="ftt-pip" :class="late ? 'tone-warning' : 'ftt-pip--done'" />
+            <span v-for="i in pips(row)" :key="i" class="ftt-pip" />
           </span>
           <span role="cell" class="num" :class="{ 'is-warn': row.defects.open }">
             <router-link
@@ -135,8 +132,7 @@ function cost(row) {
 .ftt-link { color: inherit; text-decoration: none; }
 .ftt-link:hover { text-decoration: underline; }
 .ftt-pips { display: flex; gap: 4px; flex-wrap: wrap; }
-.ftt-pip { width: 8px; height: 8px; border-radius: 999px; }
-.ftt-pip--done { background: var(--color-fg-subtle); }
+.ftt-pip { width: 8px; height: 8px; border-radius: 999px; background: var(--color-border-strong); }
 .num { text-align: right; font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .is-warn { color: var(--color-warning-strong); font-weight: 600; }
 .muted { color: var(--color-fg-muted); }
