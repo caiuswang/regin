@@ -46,6 +46,13 @@ def _now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+def _area_of(slug: str) -> str:
+    from lib.prompts.registry import get_surface
+
+    surface = get_surface(slug)
+    return surface.area if surface else "other"
+
+
 def _row_to_dict(row: PromptTemplate) -> dict[str, Any]:
     return {
         "id": row.id,
@@ -60,6 +67,7 @@ def _row_to_dict(row: PromptTemplate) -> dict[str, Any]:
         "tags": _decode_list(row.tags),
         "agent": row.agent or None,
         "builtin": bool(row.builtin),
+        "area": _area_of(row.slug),
         "created_at": row.created_at,
         "updated_at": row.updated_at,
     }

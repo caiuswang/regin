@@ -12,7 +12,7 @@ const TABS = [
   { value: 'skeletons', label: 'Agent prompts' },
   { value: 'fragments', label: 'Fragments' },
 ]
-const tab = useTabRoute({ default: 'skeletons', valid: ['skeletons', 'fragments'] })
+const tab = useTabRoute({ default: 'skeletons', valid: ['skeletons', 'fragments'], resets: ['category'] })
 </script>
 
 <template>

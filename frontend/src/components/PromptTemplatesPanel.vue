@@ -4,8 +4,10 @@ import api from '../api'
 import Badge from './Badge.vue'
 import Card from './Card.vue'
 import Button from './ui/Button.vue'
+import PromptCategoryBar from './PromptCategoryBar.vue'
 import PromptFragmentEditor from './PromptFragmentEditor.vue'
 import { useConfirm } from '../composables/useConfirm'
+import { usePromptCategory } from '../composables/usePromptCategory'
 
 const { confirm } = useConfirm()
 
@@ -25,6 +27,8 @@ const sortedTemplates = computed(() =>
     return (a.label || '').localeCompare(b.label || '')
   }),
 )
+
+const { chips, category, filtered: visibleTemplates, total, showBar } = usePromptCategory(sortedTemplates)
 
 const editingTemplate = computed(() =>
   editing.value && editing.value !== '__new__'
@@ -118,6 +122,8 @@ onMounted(load)
 
     <div v-if="error" class="alert alert-info">{{ error }}</div>
 
+    <PromptCategoryBar v-if="showBar" v-model="category" :chips="chips" :total="total" />
+
     <Card :no-padding="true">
       <div class="overflow-x-auto">
       <table class="tbl">
@@ -129,7 +135,7 @@ onMounted(load)
           </tr>
         </thead>
         <tbody>
-          <template v-for="t in sortedTemplates" :key="t.slug">
+          <template v-for="t in visibleTemplates" :key="t.slug">
             <tr :class="{ 'row-editing': editing === t.slug, 'tbl-row-active': editing === t.slug }">
               <td>
                 <div class="flex items-center gap-2">

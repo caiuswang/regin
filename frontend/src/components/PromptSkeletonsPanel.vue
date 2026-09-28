@@ -5,9 +5,11 @@ import api from '../api'
 import Badge from './Badge.vue'
 import Card from './Card.vue'
 import Button from './ui/Button.vue'
+import PromptCategoryBar from './PromptCategoryBar.vue'
 import PromptSkeletonEditor from './PromptSkeletonEditor.vue'
 import SurfaceAgentPicker from './SurfaceAgentPicker.vue'
 import { useConfirm } from '../composables/useConfirm'
+import { areaColor, areaLabel, rowArea, usePromptCategory } from '../composables/usePromptCategory'
 
 const { confirm } = useConfirm()
 const route = useRoute()
@@ -26,57 +28,21 @@ const saveError = ref('')
 // (the tokenizer reads the inner }} as an interpolation close), so build it here.
 const VAR_SYNTAX = '{{variable}}'
 
-const AREA_LABELS = {
-  'topic-proposal': 'Topic proposal',
-  'topic-graph': 'Topic graph',
-  memory: 'Memory',
-  grader: 'Grader',
-  'task-run': 'Task run',
-  defect: 'Defect',
-}
-
-function areaOf(slug) {
-  if (slug.startsWith('task-run')) return 'task-run'
-  if (slug.startsWith('defect')) return 'defect'
-  if (slug.startsWith('topic-proposal')) return 'topic-proposal'
-  if (slug.startsWith('grader')) return 'grader'
-  if (slug.startsWith('memory')) return 'memory'
-  if (slug.startsWith('topic')) return 'topic-graph'
-  return 'other'
-}
-
-function areaLabelOf(s) {
-  return AREA_LABELS[areaOf(s.slug)] || 'Other'
-}
-
-// Categorical color per area so same-category cards cohere at a glance in the
-// flat grid (a color legend stands in for the section separators the uniform
-// tiling can't have). Soft badge palette — grouping cue, not a loud accent.
-const AREA_COLORS = {
-  grader: 'purple',
-  memory: 'blue',
-  'topic-graph': 'yellow',
-  'topic-proposal': 'green',
-  'task-run': 'cyan',
-  defect: 'red',
-}
-
-function areaColorOf(s) {
-  return AREA_COLORS[areaOf(s.slug)] || 'gray'
-}
-
 // One flat, uniformly-tiled grid — NOT a separate grid per area. Grouping by
 // area fragmented the grid so small groups (Grader: 2) left whole empty
 // columns while large ones (Memory: 6) wrapped raggedly. Sorting by (area,
-// label) keeps each category visually clustered — the slug prefix + the card
-// eyebrow still name the area — while the grid stays dense at any width.
+// label) keeps each category visually clustered while the grid stays dense at
+// any width; the category chips narrow it instead of sectioning it.
 const sortedSkeletons = computed(() =>
   [...skeletons.value].sort(
     (a, b) =>
-      areaLabelOf(a).localeCompare(areaLabelOf(b)) ||
+      areaLabel(rowArea(a)).localeCompare(areaLabel(rowArea(b))) ||
       (a.label || '').localeCompare(b.label || ''),
   ),
 )
+
+const { chips, category, filtered: visibleSkeletons, reveal, total, showBar } =
+  usePromptCategory(sortedSkeletons)
 
 async function load() {
   loading.value = true
@@ -171,7 +137,9 @@ async function resetToDefault(skeleton) {
 // editor and scrolls it into view (the pipeline's `configure →` link).
 async function openFromRoute() {
   const want = route.query.surface
-  if (!want || !skeletons.value.some((s) => s.slug === want)) return
+  const target = want && skeletons.value.find((s) => s.slug === want)
+  if (!target) return
+  await reveal(target)
   editingSlug.value = want
   await nextTick()
   document.getElementById(`sk-${want}`)?.scrollIntoView({ block: 'center' })
@@ -213,9 +181,11 @@ onMounted(async () => {
       </ul>
     </Card>
 
+    <PromptCategoryBar v-if="showBar" v-model="category" :chips="chips" :total="total" />
+
     <div class="prompt-grid">
       <div
-        v-for="s in sortedSkeletons"
+        v-for="s in visibleSkeletons"
         :id="`sk-${s.slug}`"
         :key="s.slug"
         class="prompt-card"
@@ -223,7 +193,7 @@ onMounted(async () => {
       >
         <div class="prompt-card-main">
           <div class="card-eyebrow">
-            <Badge :color="areaColorOf(s)" :label="areaLabelOf(s)" />
+            <Badge :color="areaColor(rowArea(s))" :label="areaLabel(rowArea(s))" />
             <Badge v-if="!s.builtin" color="gray" label="custom" />
           </div>
           <div class="font-medium mt-1">{{ s.label }}</div>

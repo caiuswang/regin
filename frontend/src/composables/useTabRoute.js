@@ -9,18 +9,23 @@ import { useRoute, useRouter } from 'vue-router'
 // URLs stay clean, and unknown values (stale links, typos) fall back to it when
 // a `valid` allow-list is given. Uses router.push so the browser Back button
 // steps through subtab history, matching the existing RulesView convention.
-export function useTabRoute({ param = 'tab', default: def = '', valid = null } = {}) {
+//
+// `resets` names sibling params scoped to one tab's content (a filter that only
+// means something inside that tab); switching tabs drops them.
+export function useTabRoute({ param = 'tab', default: def = '', valid = null, resets = [] } = {}) {
   const route = useRoute()
   const router = useRouter()
+  function current() {
+    const v = route.query[param]
+    if (v == null) return def
+    if (valid && !valid.includes(v)) return def
+    return v
+  }
   return computed({
-    get() {
-      const v = route.query[param]
-      if (v == null) return def
-      if (valid && !valid.includes(v)) return def
-      return v
-    },
+    get: current,
     set(v) {
       const q = { ...route.query }
+      if (v !== current()) for (const r of resets) delete q[r]
       if (v === def || v == null) delete q[param]
       else q[param] = v
       router.push({ query: q })
