@@ -48,3 +48,39 @@ def test_abandoned_is_not_spec(tmp_db):
 
     assert events.stage(feature.id) == events.STAGE_ABANDONED
     assert events.stage(feature.id) != events.STAGE_SPEC
+
+
+def test_a_clean_reship_after_a_fixed_escape_reads_shipped(tmp_db,
+                                                           defect_row):
+    """`escaped` asks about the CURRENT ship claim. A defect blamed on an
+    earlier ship was paid for by the round that followed it; it stays an
+    escape in the all-time count, but it does not make the new claim wrong."""
+    from lib.defects import escapes
+
+    feature = store.create("shipped, escaped, fixed, re-shipped")
+    events.append(feature.id, events.SHIPPED, declared_by=events.OPERATOR)
+    defect_row(feature_id=feature.id, symptom="it leaked", status="closed")
+    assert events.stage(feature.id) == events.STAGE_ESCAPED
+
+    events.on_run_start(feature.id, run_id=1)
+    events.append(feature.id, events.SHIPPED, declared_by=events.OPERATOR)
+
+    assert events.stage(feature.id) == events.STAGE_SHIPPED
+    assert escapes.counts_for(feature.id).escapes == 1
+    assert events.rounds(feature.id) == 2
+
+
+def test_index_and_ledger_agree_on_a_clean_reship(tmp_db, defect_row):
+    """The index computes stage in SQL; it must reach the ledger's answer."""
+    from lib.features import index, ledger
+
+    feature = store.create("re-shipped in the index")
+    events.append(feature.id, events.SHIPPED, declared_by=events.OPERATOR)
+    defect_row(feature_id=feature.id, symptom="it leaked", status="closed")
+    events.on_run_start(feature.id, run_id=1)
+    events.append(feature.id, events.SHIPPED, declared_by=events.OPERATOR)
+
+    row = {r.id: r for r in index.page().items}[feature.id]
+    assert row.stage == events.STAGE_SHIPPED
+    assert row.escapes == 1
+    assert ledger.build(feature.id).stage == events.STAGE_SHIPPED

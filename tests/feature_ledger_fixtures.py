@@ -140,11 +140,10 @@ def tracker_issue(monkeypatch):
     import lib.features.sync as sync_mod
     monkeypatch.setattr(sync_mod.registry, "resolve_ref", _resolve)
 
-    def _set(key: str, *, state_category="started", rounds=1, title="t"):
+    def _set(key: str, *, state_category="started", title="t"):
         issues[key] = ExternalIssue(
             provider="linear", key=key, url=f"https://x/{key}", title=title,
-            state=state_category.title(), state_category=state_category,
-            rounds=rounds)
+            state=state_category.title(), state_category=state_category)
     return _set
 
 

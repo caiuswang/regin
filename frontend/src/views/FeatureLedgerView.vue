@@ -178,6 +178,17 @@ async function undeclare(row) {
   await load()
 }
 
+// Not `load()`: that rebinds the image list, re-fetching every blob and
+// dropping thumbnails the operator just added.
+async function onDefectsChanged() {
+  tasksCard.value?.load()
+  try {
+    ledger.value = await api.get(`/features/${featureId.value}`)
+  } catch (e) {
+    writeFailed.value = `the figures could not be re-read — ${e?.message || e}`
+  }
+}
+
 function onDeclared() {
   declaring.value = false
   load()
@@ -260,7 +271,7 @@ function onDeclared() {
       />
 
       <FeatureDefects :feature="ledger" :can-write="canWrite"
-                      @changed="tasksCard?.load()" />
+                      @changed="onDefectsChanged" />
 
       <section class="card">
         <header class="mb-2 flex items-center justify-between gap-3">

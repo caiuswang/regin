@@ -211,3 +211,38 @@ test('a run-lane row offers no un-declare and names its task', async ({ page }) 
   await expect(page.locator('a.ledger-tag')).toHaveAttribute('href', '/tasks/44')
   await expect(page.locator('.ev-undeclare')).toHaveCount(0)
 })
+
+test('the defects figure reads as a tally, not a fraction', async ({ page }) => {
+  await stub(page, ledger({ defects: { open: 0, total: 3, escapes: 0 } }))
+  await page.goto('/features/242')
+
+  const tile = page.getByTestId('figure-defects')
+  await expect(tile).toContainText('all 3 closed')
+  await expect(tile).not.toContainText('0 / 3')
+})
+
+test('reporting a defect re-reads the figures above it', async ({ page }) => {
+  let reported = false
+  await page.route(/\/api\/features\/[^/?]+$/, (route) => route.fulfill({
+    json: ledger({ defects: reported
+      ? { open: 1, total: 3, escapes: 0 }
+      : { open: 0, total: 2, escapes: 0 } }),
+  }))
+  await page.route(/\/api\/defects(\?.*)?$/, (route) => {
+    if (route.request().method() === 'POST') {
+      reported = true
+      return route.fulfill({ json: { ok: true, outcome: 'opened',
+        defect: { id: 901, status: 'open', round: 1, symptom: 'it broke' } } })
+    }
+    return route.fulfill({ json: { items: [], pagination: { total: 0 } } })
+  })
+  await page.goto('/features/242')
+  const tile = page.getByTestId('figure-defects')
+  await expect(tile).toContainText('all 2 closed')
+
+  await page.getByTestId('feature-report-defect').click()
+  await page.getByTestId('feature-defect-symptom').fill('it broke')
+  await page.getByTestId('feature-defect-submit').click()
+
+  await expect(tile).toContainText('1 open of 3')
+})

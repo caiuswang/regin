@@ -206,7 +206,9 @@ task_facts AS (
 # read by clock depends on the timestamp's precision.
 _LAST_EVENT = """
 last_event AS (
-    SELECT e.feature_id, e.kind
+    SELECT e.feature_id, e.id, e.kind,
+           (SELECT COUNT(*) FROM defects d
+            WHERE d.blamed_event_id = e.id) AS escapes_now
     FROM feature_events e
     WHERE e.id = (SELECT MAX(x.id) FROM feature_events x
                   WHERE x.feature_id = e.feature_id)
@@ -244,7 +246,7 @@ rows AS (
            COALESCE(df.total, 0) AS total_defects,
            COALESCE(df.open_count, 0) AS open_defects,
            COALESCE(df.escapes, 0) AS escapes,
-           {events_module.stage_sql('le.kind', 'df.escapes')} AS stage,
+           {events_module.stage_sql('le.kind', 'le.escapes_now')} AS stage,
            COALESCE(
                NULLIF(MAX(REPLACE(COALESCE(sf.last_session, ''), 'T', ' '),
                           REPLACE(COALESCE(df.last_defect, ''), 'T', ' ')), ''),

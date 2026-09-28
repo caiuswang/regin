@@ -8,7 +8,7 @@ import Input from '../ui/Input.vue'
 import FeatureBlamePicker from './FeatureBlamePicker.vue'
 import { useDefectTriage, VERBS } from '../../composables/useDefectTriage'
 import { invalidatePipelineCounts } from '../../composables/usePipelineCounts'
-import { defectRef, monthDay } from '../../utils/pipelineFormat'
+import { defectRef, monthDay, reopenedLabel } from '../../utils/pipelineFormat'
 
 const props = defineProps({
   scope: { type: String, default: '' },
@@ -105,8 +105,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape))
             <router-link class="ts-id focus-visible:outline-2 focus-visible:outline-blue-500"
                          :to="`/defects/${focused.id}`" @click="close"
             >{{ defectRef(focused.id) }}</router-link>
-            <span>round {{ focused.round }}</span>
-            <span>·</span>
+            <template v-if="reopenedLabel(focused.round)">
+              <span>{{ reopenedLabel(focused.round) }}</span>
+              <span>·</span>
+            </template>
             <span>{{ monthDay(focused.opened_at) }}</span>
           </div>
           <p class="ts-symptom">{{ focused.symptom }}</p>

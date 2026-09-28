@@ -11,6 +11,7 @@ import Icon from '../ui/Icon.vue'
 import DefectActions from './DefectActions.vue'
 import DefectImages from './DefectImages.vue'
 import { shortDate } from '../../utils/ledgerFormat'
+import { reopenedLabel } from '../../utils/pipelineFormat'
 
 const props = defineProps({
   defect: { type: Object, required: true },
@@ -47,7 +48,7 @@ const open = ref(!props.collapsible)
       <span class="ledger-tag"
             :class="defect.status === 'open' ? 'ledger-tag-amber' : 'ledger-tag-green'"
       >{{ defect.status }}</span>
-      <span class="ledger-tag">round {{ defect.round }}</span>
+      <span v-if="reopenedLabel(defect.round)" class="ledger-tag">{{ reopenedLabel(defect.round) }}</span>
       <!-- How it left triage, and only when it did. Separate from `status`
            because a declined report and a fixed bug are both closed, and only
            one of them was ever looked at. -->

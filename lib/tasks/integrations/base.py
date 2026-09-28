@@ -98,10 +98,6 @@ class ExternalIssue:
     labels: tuple[str, ...] = ()
     description: Optional[str] = None
     updated_at: Optional[str] = None
-    # Rounds-to-done: one build, plus every completion the work was later
-    # moved out of. Read from the tracker's own recorded state history, so it
-    # is a declared fact rather than anything inferred here.
-    rounds: int = 1
     extra: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
@@ -111,7 +107,7 @@ class ExternalIssue:
             "state_category": self.state_category, "priority": self.priority,
             "assignee": self.assignee, "labels": list(self.labels),
             "description": self.description, "updated_at": self.updated_at,
-            "rounds": self.rounds, "extra": dict(self.extra),
+            "extra": dict(self.extra),
         }
 
 

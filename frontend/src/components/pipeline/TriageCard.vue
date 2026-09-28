@@ -6,7 +6,7 @@ import Button from '../ui/Button.vue'
 import Input from '../ui/Input.vue'
 import FeatureBlamePicker from './FeatureBlamePicker.vue'
 import { VERBS, VERB_ORDER } from '../../composables/useDefectTriage'
-import { defectRef, monthDay } from '../../utils/pipelineFormat'
+import { defectRef, monthDay, reopenedLabel } from '../../utils/pipelineFormat'
 
 const props = defineProps({
   defect: { type: Object, required: true },
@@ -56,7 +56,7 @@ defineExpose({ focus: () => card.value?.focus() })
         :data-testid="`triage-permalink-${defect.id}`"
         @click.stop
       >{{ defectRef(defect.id) }}</router-link>
-      <span class="tc-round">round {{ defect.round }}</span>
+      <span v-if="reopenedLabel(defect.round)" class="tc-round">{{ reopenedLabel(defect.round) }}</span>
       <span class="tc-spacer" />
       <span class="tc-when" :title="defect.opened_at">{{ monthDay(defect.opened_at) }}</span>
     </div>

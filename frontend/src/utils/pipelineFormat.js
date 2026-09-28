@@ -106,3 +106,20 @@ export function projectAttention(row) {
     row.open_defects ? `${row.open_defects} open defect${row.open_defects === 1 ? '' : 's'}` : '',
   ].filter(Boolean).join(' · ')
 }
+
+//: A feature's defects as one phrase. `open / total` read as a progress
+//: fraction — "0 / 3" looked like nothing fixed when all three were closed.
+export function defectTally(defects) {
+  const total = Number(defects?.total || 0)
+  const open = Number(defects?.open || 0)
+  if (!total) return 'none'
+  return open ? `${open} open of ${total}` : `all ${total} closed`
+}
+
+//: `Defect.round` counts reopenings of ONE defect; it is not the feature's
+//: round, and "round 1" on every card read as though it were. Blank until
+//: the defect has actually been reopened.
+export function reopenedLabel(round) {
+  const reopens = Number(round || 1) - 1
+  return reopens > 0 ? `reopened ${reopens}×` : ''
+}

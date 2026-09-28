@@ -381,7 +381,7 @@ test('tasks, defects and sessions rows share one row grammar', async ({ page }) 
     return [s.fontSize, s.borderTopLeftRadius, s.paddingLeft, s.paddingTop]
   })
   const taskTag = taskRow.getByTestId('feature-task-fixes-71-149')
-  const defectTag = defectRow.getByText('round 1', { exact: true })
+  const defectTag = defectRow.locator('.ledger-tag').first()
   const sessionTag = sessionRow.getByRole('link', { name: 'task #205' })
   const tagWant = await tag(taskTag)
   expect(await tag(defectTag)).toEqual(tagWant)

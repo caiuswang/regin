@@ -62,6 +62,14 @@ def is_escape(blamed_event_id: Optional[int]) -> bool:
     return row is not None and row.kind == SHIPPED
 
 
+def against(event_id: int) -> int:
+    """Defects blamed against one event — the stage's escape question, asked
+    of the feature's current ship claim only."""
+    with SessionLocal() as session:
+        return len(session.exec(
+            select(Defect.id).where(Defect.blamed_event_id == event_id)).all())
+
+
 @dataclass(frozen=True)
 class EscapeCounts:
     """Escapes for one feature.

@@ -9,11 +9,9 @@ Everything vendor-shaped stops in this file: the priority integers, the
 `state.type` vocabulary, the `labels.nodes` envelope. What leaves is an
 `ExternalIssue`.
 
-`stateHistory` rides the same query rather than a second round trip. It is a
-native Linear field (`IssueStateSpanConnection`, confirmed by introspecting the
-schema, not assumed), and it is the only reliable source for rounds-to-done:
-reopening an issue *clears* `completedAt`, so the current row cannot tell a
-feature that was right first time from one reopened and re-completed.
+Rounds are not read here. A tracked feature's rounds come from its own
+`feature_events`, which a Refresh folds the issue's current state into
+(`lib.features.events.on_sync`) — a Done → In Progress becomes a `restarted`.
 """
 
 from __future__ import annotations
@@ -24,7 +22,6 @@ import urllib.error
 import urllib.request
 from typing import Optional
 
-from lib.defects import rounds
 from lib.settings import settings
 from lib.tasks.integrations.base import (
     ExternalIssue, ExternalRef, IntegrationError, IssueTrackerProvider,
@@ -61,7 +58,6 @@ query ReginIssue($id: String!) {
     labels { nodes { name } }
     team { key name }
     project { name }
-    stateHistory { nodes { startedAt endedAt state { name type } } }
   }
 }
 """
@@ -220,8 +216,6 @@ class LinearProvider(IssueTrackerProvider):
             labels=_labels(node),
             description=clamp_description(node.get("description")),
             updated_at=node.get("updatedAt"),
-            rounds=rounds.from_state_history(
-                (node.get("stateHistory") or {}).get("nodes")),
             extra=_extra(node),
         )
 

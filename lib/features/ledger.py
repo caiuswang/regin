@@ -180,7 +180,7 @@ def build(feature_id: int) -> Ledger:
         sync_error=feature.sync_error,
         project_id=feature.project_id,
         project_name=feature_store.project_name(feature.project_id),
-        stage=events_module.stage(feature_id, escapes=escapes.escapes),
+        stage=events_module.stage(feature_id),
         rounds=events_module.rounds(feature_id),
         claimed_at=events_module.claimed_at(feature_id),
         cost=cost,

@@ -6,7 +6,7 @@ import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
 import StageSegments from './StageSegments.vue'
 import FeatureExpansion from './FeatureExpansion.vue'
-import { ago } from '../../utils/pipelineFormat'
+import { ago, defectTally } from '../../utils/pipelineFormat'
 import { money } from '../../utils/ledgerFormat'
 import { defectsLink, tasksLink } from '../../utils/featureLinks'
 
@@ -88,8 +88,8 @@ function cost(row) {
               :to="defectsLink(row.id)"
               class="ftt-link focus-visible:outline-2 focus-visible:outline-blue-500"
               :data-testid="`feature-defects-link-${row.id}`"
-            >{{ row.defects.open }} / {{ row.defects.total }}</router-link>
-            <span v-else>0 / 0</span>
+            >{{ defectTally(row.defects) }}</router-link>
+            <span v-else>{{ defectTally(row.defects) }}</span>
           </span>
           <span role="cell" class="num muted">{{ ago(row.last_activity) }}</span>
         </div>

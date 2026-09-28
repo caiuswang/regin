@@ -17,6 +17,7 @@
 import { computed, nextTick } from 'vue'
 import Icon from '../ui/Icon.vue'
 import { duration, gapList, gapTotal, money, num, percent } from '../../utils/ledgerFormat'
+import { defectTally } from '../../utils/pipelineFormat'
 import { DEFECTS_ANCHOR, SESSIONS_ANCHOR, defectsLink, reveal, revealSessions } from '../../utils/featureLinks'
 
 const props = defineProps({
@@ -69,9 +70,9 @@ const tiles = computed(() => {
     }),
     tile({
       key: 'defects', label: 'defects', qualifier: 'local',
-      glyph: '', value: `${l.defects.open} / ${l.defects.total}`,
+      glyph: '', value: defectTally(l.defects),
       empty: !l.defects.total,
-      sub: `open / total · ${l.defects.escapes} escaped`,
+      sub: `${l.defects.escapes} escaped — blamed after a ship`,
       gaps: l.defects.gaps, qualifies: l.defects.total,
       // A count with no way through to what it counts is how a defect stays
       // reported and unread. The list is this page's own, so the click has

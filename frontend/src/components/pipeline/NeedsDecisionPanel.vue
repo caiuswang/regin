@@ -6,7 +6,7 @@
 import { computed } from 'vue'
 import api from '../../api'
 import Button from '../ui/Button.vue'
-import { defectRef, monthDay } from '../../utils/pipelineFormat'
+import { defectRef, monthDay, reopenedLabel } from '../../utils/pipelineFormat'
 
 const props = defineProps({
   decision: { type: Object, required: true },
@@ -47,7 +47,7 @@ const newest = computed(() => props.decision.rows[0] || null)
           {{ defectRef(row.id) }}
         </router-link>
         <p class="nd-symptom" :title="row.symptom" data-testid="needs-decision-symptom">{{ row.symptom }}</p>
-        <span class="nd-meta">round {{ row.round }} · {{ monthDay(row.opened_at) }}</span>
+        <span class="nd-meta">{{ [reopenedLabel(row.round), monthDay(row.opened_at)].filter(Boolean).join(' · ') }}</span>
         <Button v-if="canWrite" size="sm" variant="secondary" class="nd-act"
                 :data-testid="`needs-decision-attribute-${row.id}`"
                 @click="$router.push(featuresTo(row.id))"

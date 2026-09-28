@@ -107,6 +107,24 @@ def test_sync_is_idempotent_on_unchanged_state(tmp_db):
     assert len(events.history(feature.id)) == before
 
 
+@pytest.mark.parametrize("path,rounds", [
+    ((STATE_COMPLETED, STATE_STARTED), 2),
+    ((STATE_COMPLETED, STATE_BACKLOG, STATE_STARTED), 2),
+    ((STATE_COMPLETED, STATE_STARTED, STATE_COMPLETED, STATE_STARTED), 3),
+    ((STATE_STARTED, STATE_BACKLOG, STATE_STARTED), 1),
+])
+def test_a_tracker_walk_back_from_done_is_a_round(tmp_db, path, rounds):
+    """Leaving a completed state on the tracker is the same fact as a run
+    starting over a shipped feature — one round, however many states the
+    issue passes through on its way back to work."""
+    feature = store.create("a remote feature", origin="linear",
+                           external_ref="CAI-2")
+    for state in path:
+        events.on_sync(feature.id, state, provider="linear")
+
+    assert events.rounds(feature.id) == rounds
+
+
 def test_unknown_remote_state_writes_no_event(tmp_db):
     """A word regin does not carry is recorded as an error, never guessed."""
     feature = store.create("a remote feature", origin="linear",

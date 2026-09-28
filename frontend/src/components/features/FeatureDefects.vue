@@ -32,8 +32,8 @@ const props = defineProps({
   feature: { type: Object, default: null },
   canWrite: { type: Boolean, default: false },
 })
-// A row's write can file a task under this feature, so the page's task list
-// is stale the moment one lands — it re-reads on this.
+// Any write here moves the page's figures (open/total, escapes, stage) and a
+// row's write can file a task, so the page re-reads both on this.
 const emit = defineEmits(['changed'])
 
 const open = ref(false)
@@ -135,6 +135,7 @@ async function submit() {
   symptom.value = ''
   open.value = false
   await load()
+  emit('changed')
 }
 
 async function onRowChanged(message) {

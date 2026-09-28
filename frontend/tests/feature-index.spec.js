@@ -206,6 +206,6 @@ test('a count of nothing is not a link', async ({ page }) => {
   await page.goto('/features')
 
   await expect(page.getByTestId('feature-tasks-link-206')).toHaveCount(0)
-  await expect(page.getByTestId('feature-row-206')).toContainText('0 / 0')
+  await expect(page.getByTestId('feature-row-206')).toContainText('none')
   await expect(page.getByTestId('feature-defects-link-7')).toHaveCount(0)
 })

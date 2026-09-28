@@ -18,6 +18,6 @@ Writes go through `lib.defects.store`; nothing else should touch the table.
 
 from lib.defects.store import DefectError
 
-__all__ = ["DefectError", "escapes", "store", "tracker"]
+__all__ = ["DefectError", "escapes", "store"]
 
-from lib.defects import escapes, store, tracker  # noqa: E402  (after DefectError)
+from lib.defects import escapes, store  # noqa: E402  (after DefectError)

@@ -97,6 +97,14 @@ _KIND_OF_STATE = {
 }
 
 
+#: A tracker leaving a completed state for one of these is a walk-back — the
+#: same fact as a run starting over a shipped feature, so it is a `restarted`
+#: and costs the round. Folded as the plain kind, a Done → In Progress on the
+#: tracker moved the stage and never reached `rounds`.
+_WALK_BACK_KINDS = frozenset({BUILD_STARTED, SPECCED})
+_CLAIMED = frozenset({STAGE_SHIPPED, STAGE_ESCAPED})
+
+
 def run_declarer(run_id: int) -> str:
     """`declared_by` for an event a run's start wrote."""
     return f"run:{int(run_id)}"
@@ -224,17 +232,23 @@ def stage_rank_sql(stage_col: str) -> str:
     return f"CASE {arms} ELSE {len(STAGES)} END"
 
 
-def stage(feature_id: int, *, escapes: Optional[int] = None) -> str:
-    """Where the feature stands: the last event's kind, plus one question.
+def stage(feature_id: int) -> str:
+    """Where the feature stands: the last event's kind, plus one question —
+    was a defect blamed against *that* ship claim.
 
-    `escapes` is a parameter so a page rendering many features can pass the
-    count it already has rather than re-reading the defect ledger per row.
+    Only the current claim counts. A defect blamed on an earlier ship was paid
+    for by the round that followed it; it stays in the all-time escape figure,
+    but reading it here would pin a cleanly re-shipped feature at `escaped`
+    for good.
     """
     row = last(feature_id)
-    if row is not None and row.kind == SHIPPED and escapes is None:
+    if row is None:
+        return STAGE_SPEC
+    escapes = 0
+    if row.kind == SHIPPED:
         from lib.defects import escapes as escapes_module  # noqa: PLC0415
-        escapes = escapes_module.counts_for(feature_id).escapes
-    return stage_from(row.kind if row else None, escapes or 0)
+        escapes = escapes_module.against(row.id)
+    return stage_from(row.kind, escapes)
 
 
 def on_run_start(feature_id: int, run_id: int, *,
@@ -269,6 +283,8 @@ def on_sync(feature_id: int, state_category: str, *,
     current = last(feature_id)
     if current is not None and current.kind == kind:
         return None
+    if kind in _WALK_BACK_KINDS and stage(feature_id) in _CLAIMED:
+        kind = RESTARTED
     return append(feature_id, kind, declared_by=sync_declarer(provider))
 
 
