@@ -31,11 +31,12 @@ from lib.orm.models.tasks import AgentTask, AgentTaskDep, AgentTaskRun, PRIORITY
 from lib.features import store as features
 tag = sys.argv[1]
 feature = features.create(f"{tag} lane feature")
+settled = features.create(f"{tag} settled feature")
 
-def task(title, status, prio="none", feature_id=None):
+def task(title, status, prio="none", feature_id=None, mark=tag):
     with SessionLocal() as s:
         row = AgentTask(title=f"{tag} {title}", status=status, source="test",
-                        tags_json=json.dumps([tag]), priority=prio,
+                        tags_json=json.dumps([mark]), priority=prio,
                         priority_rank=PRIORITY_ORDER[prio], feature_id=feature_id)
         s.add(row); s.commit(); s.refresh(row)
         return row.id
@@ -53,7 +54,8 @@ ids = {"running": task("running", "running", "high"),
        "g_done": task("g done", "done", feature_id=feature.id),
        "g_run": task("g run", "running", feature_id=feature.id),
        "g_wait": task("g wait", "armed", feature_id=feature.id),
-       "feature": feature.id}
+       "s_done": task("s done", "done", feature_id=settled.id, mark=f"{tag}s"),
+       "feature": feature.id, "settled": settled.id}
 dep(ids["blocked"], ids["running"])
 dep(ids["g_run"], ids["g_done"])
 dep(ids["g_wait"], ids["g_run"])
@@ -169,8 +171,13 @@ test('test_tasks_list_board_graph_views', async ({ page }) => {
   await expect(lane).toHaveCount(0)
   await page.getByTestId('task-chip-remove-priority').click()
   await expect(lane.getByTestId('graph-lane-count')).toHaveText('1 / 3')
-  await page.goto(`/tasks?view=graph&tag=${tag}&priority=medium`)
+  await page.goto(`/tasks?view=graph&tag=${tag}&priority=medium&open=0`)
   await expect(page.getByTestId('task-graph-empty')).toHaveText('No tasks match these filters.')
+  // A feature whose steps are all done: they match, open chains hides them.
+  await page.goto(`/tasks?view=graph&feature_id=${ids.settled}`)
+  await expect(page.getByTestId('task-graph-empty')).toContainText('No open chains match these filters')
+  await page.getByTestId('task-chip-remove-open').click()
+  await expect(page.getByTestId(`graph-node-${ids.s_done}`)).toBeVisible()
 })
 
 test('test_pipeline_mobile_layouts', async ({ page }) => {

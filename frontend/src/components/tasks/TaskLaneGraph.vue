@@ -104,7 +104,8 @@ defineExpose({ reload: graph.load })
       on, pick a project, or narrow the filters.
     </p>
     <p v-else-if="!layout.nodes.length" class="tlg-note" data-testid="task-graph-empty">
-      <template v-if="narrowed">No tasks match these filters.</template>
+      <template v-if="narrowed && open">No open chains match these filters — turn off “Open chains only” to see finished tasks.</template>
+      <template v-else-if="narrowed">No tasks match these filters.</template>
       <template v-else>{{ open ? 'No open chains to draw.' : 'No tasks to draw yet.' }}</template>
     </p>
     <template v-else>
