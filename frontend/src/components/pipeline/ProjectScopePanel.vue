@@ -3,7 +3,7 @@
 // and the project's five most active features sit under it.
 import Button from '../ui/Button.vue'
 import SegmentBar from './SegmentBar.vue'
-import { ago, stageParts, STAGE_TONE } from '../../utils/pipelineFormat'
+import { ago, loopBar } from '../../utils/pipelineFormat'
 import { money } from '../../utils/ledgerFormat'
 
 defineProps({
@@ -27,7 +27,7 @@ const emit = defineEmits(['all'])
         <h2 id="ps-title" class="ps-name">{{ head.breadcrumb[1] }}</h2>
       </div>
       <div class="ps-progress">
-        <SegmentBar :parts="stageParts(head.stage_bar)" :height="10" />
+        <SegmentBar :parts="loopBar(head.stage_bar)" :height="6" />
         <span class="ps-pct">{{ head.shipped_pct == null ? 'nothing live' : `${head.shipped_pct}% shipped` }}</span>
       </div>
       <dl class="ps-figs">
@@ -57,13 +57,11 @@ const emit = defineEmits(['all'])
             <router-link :to="`/features/${f.id}`" class="focus-visible:outline-2 focus-visible:outline-blue-500">{{ f.title }}</router-link>
           </td>
           <td>
-            <span class="ps-stage" :class="`text-tone-${STAGE_TONE[f.stage] === 'idle' ? 'muted' : STAGE_TONE[f.stage]}`">
-              <span class="ps-dot" :class="`tone-${STAGE_TONE[f.stage] || 'idle'}`" />{{ f.stage }}
-            </span>
+            <span class="ps-stage" :class="{ 'is-warn': f.stage === 'escaped' }">{{ f.stage }}</span>
           </td>
           <td>
             <span class="ps-tasks">
-              <span class="ps-track"><span class="ps-fill tone-success" :style="{ width: `${f.tasks ? (100 * f.tasks_done) / f.tasks : 0}%` }" /></span>
+              <span class="ps-track"><span class="ps-fill tone-settled" :style="{ width: `${f.tasks ? (100 * f.tasks_done) / f.tasks : 0}%` }" /></span>
               {{ f.tasks_done }} / {{ f.tasks }}
             </span>
           </td>
@@ -73,7 +71,7 @@ const emit = defineEmits(['all'])
       </tbody>
     </table>
     <footer class="pl-panel__foot">
-      <span>Showing {{ features.rows.length }} of {{ features.total }} · most active first</span>
+      <span>Showing {{ features.rows.length }} of {{ features.total }}</span>
       <router-link :to="featuresTo" class="pl-panel__link focus-visible:outline-2 focus-visible:outline-blue-500"
                    data-testid="project-features-all"
       >All {{ features.total }} in Features →</router-link>
@@ -109,10 +107,9 @@ const emit = defineEmits(['all'])
 .ps-title a { color: var(--color-fg); text-decoration: none; font-weight: 500; }
 .ps-title a:hover { text-decoration: underline; }
 .ps-id { margin-right: 0.4rem; font-size: 12px; color: var(--color-fg-faint); }
-.ps-stage { display: inline-flex; align-items: center; gap: 0.35rem; font-weight: 600; font-size: 12.5px; }
-.ps-dot { width: 7px; height: 7px; border-radius: 999px; }
+.ps-stage { font-size: 12.5px; color: var(--color-fg-muted); }
 .ps-tasks { display: inline-flex; align-items: center; gap: 0.6rem; font-variant-numeric: tabular-nums; }
-.ps-track { width: 7rem; height: 4px; border-radius: 999px; background: var(--color-surface-3); overflow: hidden; }
+.ps-track { width: 7rem; height: 4px; border-radius: 999px; background: var(--color-border); overflow: hidden; }
 .ps-fill { display: block; height: 100%; }
 .ps-empty { color: var(--color-fg-muted); }
 

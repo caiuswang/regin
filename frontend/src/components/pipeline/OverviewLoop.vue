@@ -1,30 +1,41 @@
 <script setup>
 // Tasks → Features → Defects, the loop the three tabs read (designs 1a, 1d,
-// 2a). Every number is the server's; a stage's parts sum to its total.
+// 2a — the Quiet loop). Every part stays in the bar and its accessible name;
+// the facts line prints only the counts that move or ask for a decision.
 import { computed } from 'vue'
 import Icon from '../ui/Icon.vue'
 import SegmentBar from './SegmentBar.vue'
-import { PART_TONE } from '../../utils/pipelineFormat'
+import { loopParts } from '../../utils/pipelineFormat'
 
 const props = defineProps({
   loop: { type: Object, required: true },
+  ready: { type: Number, default: 0 },
   compact: { type: Boolean, default: false },
-  scoped: { type: Boolean, default: false },
+  featuresTo: { type: Function, required: true },
 })
 
-const stages = computed(() => (props.loop.stages || []).map(stage => ({
-  ...stage,
-  parts: stage.parts.map(p => ({ ...p, tone: PART_TONE[p.key] || 'idle' })),
-  hint: stage.hint || (props.scoped ? scopedHint(stage) : ''),
-})))
-
-// 1d's per-stage hint; the Tasks one is the server's own sentence.
-function scopedHint(stage) {
-  const part = key => stage.parts.find(p => p.key === key)?.n || 0
-  if (stage.label === 'Features' && part('escaped')) return `${part('escaped')} escaped`
-  if (stage.label === 'Defects' && part('triage')) return `${part('triage')} to triage`
-  return ''
+const FACTS = {
+  Tasks: [['running', 'running'], ['ready', 'ready'], ['failed', 'failed', 'danger']],
+  Features: [['building', 'building'], ['spec', 'in spec'], ['escaped', 'escaped', 'warn']],
+  Defects: [['open', 'open'], ['triage', 'to triage', 'warn']],
 }
+
+function linkOf(key) {
+  if (key === 'escaped') return props.featuresTo(null, 'escaped')
+  if (key === 'triage') return props.featuresTo()
+  return null
+}
+
+function factsOf(stage) {
+  const n = key => (key === 'ready' ? props.ready : stage.parts.find(p => p.key === key)?.n || 0)
+  return (FACTS[stage.label] || [])
+    .map(([key, words, tone]) => ({ key, words, tone, n: n(key), to: linkOf(key) }))
+    .filter(f => f.n > 0)
+}
+
+const stages = computed(() => (props.loop.stages || []).map(stage => ({
+  ...stage, parts: loopParts(stage.parts), facts: factsOf(stage),
+})))
 
 const note = computed(() => {
   const n = props.loop.fix_tasks || 0
@@ -36,30 +47,35 @@ const note = computed(() => {
 <template>
   <section class="ol" :class="{ 'ol--compact': compact }" data-testid="overview-loop" aria-label="The loop">
     <div class="ol-stages">
-      <template v-for="(stage, i) in stages" :key="stage.label">
-        <article class="ol-stage" :data-testid="`loop-${stage.label.toLowerCase()}`">
-          <header class="ol-stage__head">
-            <h2 class="ol-stage__label">{{ stage.label }}</h2>
-            <span class="ol-spacer" />
-            <span v-if="stage.hint" class="ol-stage__hint">{{ stage.hint }}</span>
-            <span class="ol-stage__total" data-testid="loop-total">{{ stage.total }}</span>
-          </header>
-          <SegmentBar :parts="stage.parts" :height="compact ? 6 : 8" />
-          <dl v-if="!compact && !scoped" class="ol-legend">
-            <div
-              v-for="part in stage.parts"
-              :key="part.key"
-              class="ol-part"
-              :class="{ [`hl-${part.tone}`]: part.highlighted && part.n }"
-              :data-testid="`loop-part-${part.key}`"
-            >
-              <dt><span class="ol-dot" :class="`tone-${part.tone}`" />{{ part.label }}</dt>
-              <dd>{{ part.n }}</dd>
-            </div>
-          </dl>
-        </article>
-        <Icon v-if="!compact && i < stages.length - 1" name="arrow-right" :size="14" class="ol-arrow" />
-      </template>
+      <article
+        v-for="stage in stages"
+        :key="stage.label"
+        class="ol-stage"
+        :data-testid="`loop-${stage.label.toLowerCase()}`"
+      >
+        <header class="ol-stage__head">
+          <h2 class="ol-stage__label">{{ stage.label }}</h2>
+          <span class="ol-stage__total" data-testid="loop-total">{{ stage.total }}</span>
+        </header>
+        <SegmentBar :parts="stage.parts" :height="6" data-testid="loop-bar" />
+        <p class="ol-facts" data-testid="loop-facts">
+          <template v-for="fact in stage.facts" :key="fact.key">
+            <router-link
+              v-if="fact.to"
+              :to="fact.to"
+              class="ol-fact ol-fact--link focus-visible:outline-2 focus-visible:outline-blue-500"
+              :class="fact.tone && `is-${fact.tone}`"
+              :data-testid="`loop-fact-${fact.key}`"
+            >{{ fact.n }} {{ fact.words }}</router-link>
+            <span
+              v-else
+              class="ol-fact"
+              :class="fact.tone && `is-${fact.tone}`"
+              :data-testid="`loop-fact-${fact.key}`"
+            ><b>{{ fact.n }}</b> {{ fact.words }}</span>
+          </template>
+        </p>
+      </article>
     </div>
     <p v-if="note" class="ol-note" data-testid="loop-note">
       <Icon name="rotate-ccw" :size="12" /> {{ note }}
@@ -68,56 +84,36 @@ const note = computed(() => {
 </template>
 
 <style scoped>
-.ol { display: flex; flex-direction: column; gap: 0.5rem; }
-.ol-stages { display: flex; align-items: stretch; gap: 0.6rem; }
-.ol-stage {
-    flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 0.7rem;
+.ol {
     border: 1px solid var(--color-border); border-radius: var(--radius-xl);
-    background: var(--color-surface); padding: 1rem 1.1rem;
-}
-.ol-stage__head { display: flex; align-items: baseline; gap: 0.6rem; }
-.ol-stage__label {
-    font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
-    text-transform: uppercase; color: var(--color-fg-muted);
-}
-.ol-spacer { flex: 1; }
-.ol-stage__hint { font-size: 12px; color: var(--color-fg-muted); }
-.ol-stage__total { font-size: 22px; font-weight: 700; color: var(--color-fg); font-variant-numeric: tabular-nums; }
-.ol-legend { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.25rem 0.9rem; }
-.ol-part {
-    display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
-    padding: 0.15rem 0.35rem; border-radius: var(--radius-md); font-size: 12.5px;
-}
-.ol-part dt { display: flex; align-items: center; gap: 0.4rem; color: var(--color-fg-muted); min-width: 0; }
-.ol-part dd { font-weight: 600; font-variant-numeric: tabular-nums; color: var(--color-fg); }
-.ol-part.hl-danger { background: var(--color-danger-soft); }
-.ol-part.hl-warning { background: var(--color-amber-200); }
-.ol-part.hl-orange { background: var(--color-warning-soft); }
-.ol-dot { width: 8px; height: 8px; border-radius: 999px; flex: none; }
-.ol-arrow { align-self: center; flex: none; color: var(--color-fg-faint); }
-.ol-note {
-    display: flex; align-items: center; justify-content: center; gap: 0.35rem;
-    font-size: 12.5px; color: var(--color-danger);
-}
-
-.ol--compact .ol-stages {
-    flex-direction: column; gap: 0;
-    border: 1px solid var(--color-border); border-radius: var(--radius-xl) var(--radius-xl) 0 0;
     background: var(--color-surface); overflow: hidden;
 }
-.ol--compact .ol-stage { border: 0; border-radius: 0; padding: 0.8rem 1rem; gap: 0.5rem; }
-.ol--compact .ol-stage + .ol-stage { border-top: 1px solid var(--color-border); }
-.ol--compact .ol-note {
-    justify-content: flex-start; margin-top: -0.5rem; padding: 0.55rem 1rem;
-    border: 1px solid var(--color-border); border-top: 0;
-    border-radius: 0 0 var(--radius-xl) var(--radius-xl);
-    background: var(--color-danger-soft);
+.ol-stages { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.ol-stage { min-width: 0; display: flex; flex-direction: column; gap: 0.625rem; padding: 1rem 1.125rem; }
+.ol-stage + .ol-stage { border-left: 1px solid var(--color-border); }
+.ol-stage__head { display: flex; align-items: baseline; gap: 0.5rem; }
+.ol-stage__label { font-size: 13px; font-weight: 600; color: var(--color-fg-muted); }
+.ol-stage__total {
+    margin-left: auto; font-size: 22px; font-weight: 700; letter-spacing: -0.01em;
+    color: var(--color-fg); font-variant-numeric: tabular-nums;
 }
-.ol--compact:not(:has(.ol-note)) .ol-stages { border-radius: var(--radius-xl); }
+.ol-facts {
+    display: flex; flex-wrap: wrap; column-gap: 0.875rem; row-gap: 0.125rem; min-height: 1.1rem;
+    font-size: 12.5px; color: var(--color-fg-muted); font-variant-numeric: tabular-nums;
+}
+.ol-fact b { font-weight: 600; color: var(--color-fg); }
+.ol-fact.is-danger { font-weight: 600; color: var(--color-danger); }
+.ol-fact.is-warn { font-weight: 600; color: var(--color-warning-strong); }
+.ol-fact--link { text-decoration: none; }
+.ol-fact--link:hover { text-decoration: underline; }
+.ol-note {
+    display: flex; align-items: center; gap: 0.35rem;
+    padding: 0.5rem 1.125rem; border-top: 1px solid var(--color-border-subtle);
+    font-size: 12px; color: var(--color-fg-subtle);
+}
 
-@media (max-width: 1023.98px) {
-    .ol:not(.ol--compact) .ol-stages { flex-wrap: wrap; }
-    .ol:not(.ol--compact) .ol-stage { flex-basis: 16rem; }
-    .ol:not(.ol--compact) .ol-arrow { display: none; }
-}
+.ol--compact .ol-stages { grid-template-columns: minmax(0, 1fr); }
+.ol--compact .ol-stage { padding: 0.75rem 0.875rem; gap: 0.5rem; }
+.ol--compact .ol-stage + .ol-stage { border-left: 0; border-top: 1px solid var(--color-border-subtle); }
+.ol--compact .ol-note { padding: 0.5rem 0.875rem; }
 </style>

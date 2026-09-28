@@ -1,6 +1,6 @@
 <script setup>
-// The Pipeline's landing tab (designs 1a, 1d, 2a): the loop, what to run
-// next, what needs a decision, what escaped, and the projects — all from one
+// The Pipeline's landing tab (designs 1a, 1d, 2a — the Quiet loop): the loop,
+// what to run next, what needs a decision, and the projects — all from one
 // `GET /api/pipeline/overview?project=` read under the shell's scope.
 import { computed, onActivated, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -10,7 +10,6 @@ import Icon from '../components/ui/Icon.vue'
 import OverviewLoop from '../components/pipeline/OverviewLoop.vue'
 import RunNextPanel from '../components/pipeline/RunNextPanel.vue'
 import NeedsDecisionPanel from '../components/pipeline/NeedsDecisionPanel.vue'
-import EscapedPanel from '../components/pipeline/EscapedPanel.vue'
 import ProjectsPanel from '../components/pipeline/ProjectsPanel.vue'
 import ProjectScopePanel from '../components/pipeline/ProjectScopePanel.vue'
 import TriageSheet from '../components/pipeline/TriageSheet.vue'
@@ -62,21 +61,22 @@ function changed() {
 }
 
 const tasksTo = computed(() => ({ path: '/tasks', query: scopeQuery(scope.value) }))
-function featuresTo(triageId) {
+function featuresTo(triageId, stage) {
   const query = { ...scopeQuery(scope.value) }
   if (triageId != null) query.triage = String(triageId)
+  if (stage) query.stage = stage
   return { path: '/features', query }
 }
 
 const composing = ref(false)
 const triaging = ref(false)
 const canWrite = computed(() => api.getStoredUser()?.role !== 'viewer')
-const projectsPanel = ref(null)
 const picker = () => document.querySelector('[data-testid="pipeline-project"]')
 
 useTaskShortcuts({
   c: () => { if (canWrite.value) composing.value = true },
-  '/': () => projectsPanel.value?.focusSearch(),
+  // The Overview has no search of its own; the chip's picker owns it.
+  '/': () => picker()?.click(),
 })
 
 watch(() => (route.path === '/overview' ? scope.value : null), (s) => { if (s != null) load() })
@@ -111,7 +111,7 @@ onActivated(() => { if (arrived) load(); arrived = true })
 
     <template v-else>
       <p v-if="error" class="ov-stale" role="status">Showing the last good read — {{ error }}</p>
-      <OverviewLoop :loop="data.loop" :compact="!isMdUp" :scoped="!!data.project_head" />
+      <OverviewLoop :loop="data.loop" :ready="data.run_next.ready" :compact="!isMdUp" :features-to="featuresTo" />
 
       <ProjectScopePanel
         v-if="data.project_head && isMdUp"
@@ -123,22 +123,18 @@ onActivated(() => { if (arrived) load(); arrived = true })
 
       <div class="ov-grid" :class="{ 'is-busy': loading }">
         <RunNextPanel :run-next="data.run_next" :running="data.running" :compact="!isMdUp" :tasks-to="tasksTo" @ran="changed" />
-        <div class="ov-side">
-          <NeedsDecisionPanel
-            :decision="data.needs_decision"
-            :compact="!isMdUp"
-            :features-to="featuresTo"
-            @changed="changed"
-            @triage="triaging = true"
-          />
-          <EscapedPanel v-if="isMdUp" :rows="data.escaped" />
-        </div>
+        <NeedsDecisionPanel
+          :decision="data.needs_decision"
+          :compact="!isMdUp"
+          :features-to="featuresTo"
+          @triage="triaging = true"
+        />
       </div>
 
       <ProjectsPanel
-        v-if="data.projects && isMdUp"
-        ref="projectsPanel"
+        v-if="data.projects"
         :panel="data.projects"
+        :compact="!isMdUp"
         @pick="setScope"
         @all="picker()?.click()"
       />
@@ -158,10 +154,9 @@ onActivated(() => { if (arrived) load(); arrived = true })
 .ov { display: flex; flex-direction: column; gap: 1.25rem; min-width: 0; }
 .ov-grid {
     display: grid; gap: 1.25rem; align-items: start;
-    grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 .ov-grid.is-busy { opacity: 0.7; }
-.ov-side { display: flex; flex-direction: column; gap: 1.25rem; min-width: 0; }
 .ov-loading, .ov-stale { font-size: 12.5px; color: var(--color-fg-muted); }
 .ov-error {
     display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
@@ -179,6 +174,6 @@ onActivated(() => { if (arrived) load(); arrived = true })
 }
 @media (max-width: 767.98px) {
     .ov { gap: 0.9rem; padding-bottom: 5rem; }
-    .ov-grid, .ov-side { gap: 0.9rem; }
+    .ov-grid { gap: 0.9rem; }
 }
 </style>

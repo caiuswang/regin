@@ -4501,6 +4501,10 @@ a.ledger-tag:hover { text-decoration: underline; }
 .tone-success { background: var(--color-success); }
 .tone-warning { background: var(--color-amber-400); }
 .tone-danger { background: var(--color-danger); }
+.tone-unstarted { background: var(--color-border); }
+.tone-flight { background: var(--color-fg-faint); }
+.tone-settled { background: var(--color-border-strong); }
+.tone-human { background: var(--color-warning); }
 .text-tone-muted { color: var(--color-fg-muted); }
 .text-tone-info { color: var(--color-info); }
 .text-tone-success { color: var(--color-success); }
@@ -4526,8 +4530,7 @@ a.ledger-tag:hover { text-decoration: underline; }
     font-size: 12.5px; color: var(--color-fg-muted);
 }
 .pl-panel__refusal {
-    margin: 0 1.1rem 0.8rem; border-radius: var(--radius-lg); background: var(--color-danger-soft);
-    padding: 0.35rem 0.6rem; font-size: 11.5px; color: var(--color-danger);
+    margin: 0 1.1rem 0.8rem; font-size: 11.5px; color: var(--color-danger);
 }
 .pl-panel__foot {
     display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
