@@ -8,12 +8,23 @@ export const STAGE_TONE = {
   spec: 'idle', building: 'info', shipped: 'success', escaped: 'warning',
 }
 
-//: Loop part key → tone. The keys are `lib/pipeline/overview.py`'s.
-export const PART_TONE = {
-  idea: 'idle', armed: 'info', queued: 'orange', running: 'agent',
-  done: 'success', failed: 'danger',
-  spec: 'idle', building: 'info', shipped: 'success', escaped: 'warning',
-  triage: 'orange', open: 'danger', closed: 'success',
+//: The Overview's bar fills (spec · Loop facts): neutral by how far a part has
+//: got, and coloured only where a human must act or something failed. Keys are
+//: `lib/pipeline/overview.py`'s loop parts and a stage bar's stages.
+export const LOOP_FILL = {
+  idea: 'unstarted', spec: 'unstarted',
+  armed: 'flight', queued: 'flight', running: 'flight', building: 'flight', open: 'flight',
+  done: 'settled', shipped: 'settled', closed: 'settled',
+  escaped: 'human', triage: 'human',
+  failed: 'danger',
+}
+
+export function loopParts(parts) {
+  return (parts || []).map(p => ({ ...p, tone: LOOP_FILL[p.key] || 'unstarted' }))
+}
+
+export function loopBar(bar) {
+  return STAGES.map(key => ({ key, label: key, n: Number(bar?.[key] || 0), tone: LOOP_FILL[key] }))
 }
 
 export function stageParts(bar) {
@@ -81,14 +92,17 @@ export function runningMeta(row) {
   return parts.join(' · ')
 }
 
-/** "1 escaped · active 2h ago" — a project row's status line. */
-export function projectStatusLine(row) {
+/** "active 2h ago" — a project row's activity line. */
+export function projectActivity(row) {
   const active = row.last_activity ? ago(row.last_activity) : null
-  const when = active && active !== '—'
-    ? (active === 'just now' ? 'active just now' : `active ${active} ago`)
-    : null
-  const lead = row.escaped ? `${row.escaped} escaped` : null
-  const line = [lead, when].filter(Boolean).join(' · ')
-  if (!line) return 'No activity yet'
-  return line.charAt(0).toUpperCase() + line.slice(1)
+  if (!active || active === '—') return 'no activity yet'
+  return active === 'just now' ? 'active just now' : `active ${active} ago`
+}
+
+/** "3 escaped · 4 open defects" — what asks for a look; '' when nothing does. */
+export function projectAttention(row) {
+  return [
+    row.escaped ? `${row.escaped} escaped` : '',
+    row.open_defects ? `${row.open_defects} open defect${row.open_defects === 1 ? '' : 's'}` : '',
+  ].filter(Boolean).join(' · ')
 }

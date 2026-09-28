@@ -1,6 +1,6 @@
 <script setup>
 // "Run next" (1a / 2a): armed and queued tasks, dependency-clear first. A row
-// shows the one action it needs — ▶ Run, or the task it waits on, dimmed.
+// shows the one action it needs — Run, or the task it waits on, dimmed.
 // On desktop the card opens with "Running now" while any agent is working;
 // the mobile 2a design does not draw it.
 import { computed, ref } from 'vue'
@@ -8,8 +8,6 @@ import api from '../../api'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
 import RunningNow from './RunningNow.vue'
-import TaskPriorityIcon from '../tasks/TaskPriorityIcon.vue'
-import TaskStatusIcon from '../tasks/TaskStatusIcon.vue'
 import { runNextSub } from '../../utils/pipelineFormat'
 
 const props = defineProps({
@@ -48,10 +46,10 @@ async function run(row) {
     <RunningNow v-if="!compact && running?.total" :running="running" />
     <header class="pl-panel__head" :class="{ 'rn-head--after': !compact && running?.total }">
       <h2 id="rn-title" class="pl-panel__title">Run next</h2>
-      <span v-if="!compact" class="pl-panel__sub">Armed and queued · dependency-clear first</span>
+      <span class="pl-panel__sub" data-testid="run-next-count">{{ runNext.total }}</span>
       <router-link :to="tasksTo" class="pl-panel__link focus-visible:outline-2 focus-visible:outline-blue-500"
                    data-testid="run-next-all"
-      >{{ compact ? `All ${runNext.total}` : `All ${runNext.total} in Tasks →` }}</router-link>
+      >All in Tasks →</router-link>
     </header>
     <p v-if="!rows.length" class="pl-panel__empty" data-testid="run-next-empty">
       {{ compact && runNext.total ? 'Nothing is dependency-clear yet.' : 'Nothing armed or queued — arm an idea to see it here.' }}
@@ -64,8 +62,6 @@ async function run(row) {
         :class="{ 'is-waiting': row.action.kind === 'wait' }"
         :data-testid="`run-next-row-${row.id}`"
       >
-        <TaskPriorityIcon v-if="!compact" :value="row.priority" />
-        <TaskStatusIcon :status="row.status" />
         <span v-if="!compact" class="rn-id">#{{ row.id }}</span>
         <router-link :to="`/tasks/${row.id}`" class="rn-main focus-visible:outline-2 focus-visible:outline-blue-500">
           <span class="rn-title">{{ row.title }}</span>
@@ -78,6 +74,7 @@ async function run(row) {
         <Button
           v-else-if="canWrite"
           size="sm"
+          variant="secondary"
           class="rn-run"
           :class="{ 'rn-run--compact': compact }"
           :disabled="busy === row.id"
@@ -101,12 +98,15 @@ async function run(row) {
     padding: 0.6rem 1.1rem; border-top: 1px solid var(--color-border-subtle);
 }
 .rn-row.is-waiting { opacity: 0.55; }
-.rn-id { font-size: 12px; color: var(--color-fg-faint); font-variant-numeric: tabular-nums; flex: none; }
+.rn-id { min-width: 2.25rem; font-size: 12px; color: var(--color-fg-faint); font-variant-numeric: tabular-nums; flex: none; }
 .rn-main { flex: 1; min-width: 0; display: flex; flex-direction: column; text-decoration: none; }
 .rn-title { font-size: 13.5px; font-weight: 500; color: var(--color-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rn-sub { font-size: 11.5px; color: var(--color-fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rn-main:hover .rn-title { text-decoration: underline; }
 .rn-wait { display: inline-flex; align-items: center; gap: 0.3rem; flex: none; font-size: 12px; color: var(--color-fg-muted); }
-.rn-row .rn-run { flex: none; background: var(--color-info-soft); color: var(--color-info); }
+.rn-row .rn-run {
+    flex: none; gap: 0.3rem; color: var(--color-primary);
+    background: var(--color-surface); border-color: var(--color-border);
+}
 .rn-row .rn-run--compact { width: 44px; height: 44px; }
 </style>

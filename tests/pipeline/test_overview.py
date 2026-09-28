@@ -183,7 +183,7 @@ def test_overview_project_scope_filters_every_panel(flask_client,
     assert (features["total"], len(listed)) == (6, 5)
     assert core_project not in listed
     assert [r["title"] for r in scoped["run_next"]["rows"]] == ["core task"]
-    assert _stages(scoped)["Tasks"]["hint"] == "1 ready · 0 running"
+    assert scoped["run_next"]["ready"] == 1
 
 
 def test_overview_refuses_an_unknown_scope(flask_client):
@@ -229,8 +229,8 @@ def test_projects_attention_sort(flask_client, native_task, feature_row,
         "escaped", "buggy", "busy-new"]
     assert [row["name"] for row in panel["rows"]] == [
         "escaped", "buggy", "busy-new", "busy-old"]
-    assert (panel["completed_hidden"], panel["quiet"], panel["total"]) == (
-        1, 1, 6)
+    # Completed projects count as quiet: "done" and "calm" are the two.
+    assert (panel["active"], panel["quiet"], panel["total"]) == (4, 2, 6)
     assert (first["escaped"], first["open_defects"],
             first["stage_bar"]["escaped"]) == (1, 1, 1)
 
@@ -243,23 +243,29 @@ def test_projects_panel_caps_rows_and_counts_the_rest(tmp_db, native_task):
 
     panel = projects.panel()
 
-    assert (len(panel["rows"]), panel["more"], panel["quiet"]) == (
-        projects.PANEL_ROWS, 3, 0)
+    assert (len(panel["rows"]), panel["active"], panel["quiet"]) == (
+        projects.PANEL_ROWS, 8, 0)
 
 
-def test_escaped_panel_is_uncapped_and_newest_escape_first(
-        flask_client, monkeypatch, feature_row, defect_row):
-    from lib.pipeline import overview as overview_module
+def test_overview_payload_has_no_escaped_list(flask_client, feature_row,
+                                              defect_row):
+    """The Escaped panel is gone: an escape is a loop part, not a list."""
+    _repo(1, "core")
+    for title in ("walked back", "also walked back"):
+        row = feature_row(title, stage=events.SHIPPED)
+        _file_feature(row.id, 1)
+        defect_row(row.id)
 
-    monkeypatch.setattr(overview_module, "MAX_PAGE_SIZE", 2)
-    for day in ("03", "01", "05", "02", "04"):
-        row = feature_row(f"escaped {day}", stage=events.SHIPPED)
-        defect_row(row.id, opened_at=f"2026-09-{day} 10:00:00")
-
-    titles = [e["title"] for e in _overview(flask_client)["escaped"]]
-
-    assert titles == ["escaped 05", "escaped 04", "escaped 03", "escaped 02",
-                      "escaped 01"]
+    for scope in (None, "none", "1"):
+        body = _overview(flask_client, scope)
+        assert "escaped" not in body
+        assert "hint" not in _stages(body)["Tasks"]
+    escaped = {p["key"]: p["n"]
+               for p in _stages(_overview(flask_client))["Features"]["parts"]}
+    assert escaped["escaped"] == 2
+    panel = _overview(flask_client)["projects"]
+    assert set(panel) == {"sort", "total", "active", "quiet", "rows"}
+    assert (panel["active"], panel["quiet"], panel["total"]) == (1, 0, 1)
 
 
 def _live_attempt(task_id: int, started_at: str, trace_id=None, attempt=1):

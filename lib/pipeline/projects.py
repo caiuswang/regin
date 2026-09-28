@@ -387,40 +387,30 @@ def panel_row(summary: Summary) -> dict:
             "open_defects": summary.defects_open}
 
 
-def _completed(summary: Summary) -> bool:
-    return (status_of(summary.by_stage) == STATUS_COMPLETED
-            and not summary.defects_open and not summary.open_tasks)
-
-
 def _quiet(summary: Summary) -> bool:
     """Nothing asks for a look: no walked-back ship, no open defect, no open
-    task. Completed projects are counted apart, not as quiet."""
+    task. A completed project is quiet too."""
     return not (summary.escaped or summary.defects_open or summary.open_tasks)
 
 
 def panel(limit: int = PANEL_ROWS) -> dict:
     """The Overview's Projects panel under the attention sort.
 
-    | project                                   | goes to          |
-    |-------------------------------------------|------------------|
-    | completed, nothing open                   | `completed_hidden` |
-    | nothing open, not completed               | `quiet`          |
-    | anything else                             | `rows` (≤ limit), then `more` |
+    | project                        | goes to                                      |
+    |--------------------------------|----------------------------------------------|
+    | nothing open (incl. completed) | counted in `quiet`, never listed             |
+    | anything else                  | counted in `active`; first `limit` in `rows` |
 
-    "No project" is a bucket, not a project, and is not a row here.
+    "No project" is a bucket, not a project, and is not counted here.
     """
     collected = _collect()
     collected.pop(None, None)
     summaries = list(collected.values())
-    completed = [s for s in summaries if _completed(s)]
-    rest = [s for s in summaries if not _completed(s)]
-    quiet = [s for s in rest if _quiet(s)]
-    active = _sorted([s for s in rest if not _quiet(s)], "attention:desc")
+    active = _sorted([s for s in summaries if not _quiet(s)], "attention:desc")
     log.read("project_panel_read", total=len(summaries), active=len(active))
     return {"sort": "attention", "total": len(summaries),
-            "rows": [panel_row(s) for s in active[:limit]],
-            "more": max(0, len(active) - limit),
-            "quiet": len(quiet), "completed_hidden": len(completed)}
+            "active": len(active), "quiet": len(summaries) - len(active),
+            "rows": [panel_row(s) for s in active[:limit]]}
 
 
 def summary_for(scope: int | str) -> Summary:

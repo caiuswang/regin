@@ -6,7 +6,6 @@
 | running         | running tasks, feature steps included              | latest attempt started, desc            | 6   |
 | run_next        | armed or queued tasks, feature steps included      | dependency-clear first, priority, id    | 6   |
 | needs_decision  | the triage queue (`defects.store.in_queue`)        | newest first                            | 3   |
-| escaped         | features at stage `escaped`                        | most recent escape first                | —   |
 | projects        | scope `all` only — `projects.panel`                | attention                               | 5   |
 | project_head / project_features | scope = one project                | last activity                           | 5   |
 
@@ -34,7 +33,7 @@ from lib.features import events as events_module
 from lib.features import index as feature_index
 from lib.orm import SessionLocal
 from lib.orm.models.defects import STATUS_CLOSED, STATUS_OPEN, Defect
-from lib.orm.models.features import Feature, FeatureEvent, SHIPPED
+from lib.orm.models.features import Feature
 from lib.orm.models.trace import Session as TraceSession, TurnUsage
 from lib.orm.models.tasks import (
     AgentTask, TASK_KIND_FIX, TASK_STATUS_ARMED,
@@ -48,7 +47,6 @@ from lib.tasks import next_step
 from lib.tasks import query as task_query
 from lib.tasks import rows as task_rows
 from lib.tasks import store as task_store
-from lib.utils.pagination import MAX_PAGE_SIZE
 
 log = get_activity_logger("features")
 
@@ -93,14 +91,8 @@ def _tasks_stage(session, scope) -> dict:
     by_status = dict(session.exec(task_query.population_stmt(
         select(AgentTask.status, func.count(AgentTask.id)),
         *_project_args(scope)).group_by(AgentTask.status)).all())
-    stage = _stage("Tasks", [(key, label, int(by_status.get(key, 0)))
-                             for key, label in _TASK_PARTS])
-    if isinstance(scope, int):
-        ready = session.exec(counts_module.tasks_stmt(scope).where(
-            next_step.membership(next_step.GROUP_READY))).one()
-        stage["hint"] = (f"{ready} ready · "
-                         f"{by_status.get(TASK_STATUS_RUNNING, 0)} running")
-    return stage
+    return _stage("Tasks", [(key, label, int(by_status.get(key, 0)))
+                            for key, label in _TASK_PARTS])
 
 
 def _features_stage(scope) -> dict:
@@ -250,45 +242,9 @@ def _needs_decision(session, scope) -> dict:
                      for d in rows]}
 
 
-def _last_escapes(session, feature_ids: list[int]) -> dict[int, str]:
-    if not feature_ids:
-        return {}
-    return dict(session.exec(
-        select(Defect.feature_id, func.max(Defect.opened_at))
-        .join(FeatureEvent, FeatureEvent.id == Defect.blamed_event_id)
-        .where(FeatureEvent.kind == SHIPPED,
-               Defect.feature_id.in_(feature_ids))
-        .group_by(Defect.feature_id)).all())
-
-
 def _feature_filters(scope, **extra) -> dict:
     project_id, unassigned = _project_args(scope)
     return {"project_id": project_id, "unassigned": unassigned, **extra}
-
-
-def _every_escaped(scope) -> list:
-    """Every escaped feature under `scope` — the panel is uncapped, so it
-    pages the index rather than trusting one page to hold them all."""
-    filters = _feature_filters(scope, stage=events_module.STAGE_ESCAPED)
-    found, matched = feature_index.rows(filters, size=MAX_PAGE_SIZE)
-    while len(found) < matched:
-        more, _ = feature_index.rows(filters, size=MAX_PAGE_SIZE,
-                                     page_index=len(found) // MAX_PAGE_SIZE)
-        if not more:
-            break
-        found.extend(more)
-    return found
-
-
-def _escaped(session, scope) -> list[dict]:
-    found = _every_escaped(scope)
-    last = _last_escapes(session, [row.id for row in found])
-    ordered = sorted(found, key=lambda row: (last.get(row.id) or "", row.id),
-                     reverse=True)
-    return [{"feature_id": row.id, "title": row.title, "rounds": row.rounds,
-             "defects_open": row.open_defects,
-             "defects_total": row.total_defects, "escapes": row.escapes,
-             "last_escape_at": last.get(row.id)} for row in ordered]
 
 
 def _project_head(scope: int) -> dict:
@@ -323,8 +279,7 @@ def overview(scope: int | str = SCOPE_ALL) -> dict:
         body = {"scope": str(scope), "loop": _loop(session, scope),
                 "running": _running(session, scope),
                 "run_next": _run_next(session, scope),
-                "needs_decision": _needs_decision(session, scope),
-                "escaped": _escaped(session, scope)}
+                "needs_decision": _needs_decision(session, scope)}
     if scope == SCOPE_ALL:
         body["projects"] = projects_module.panel()
     if head is not None:

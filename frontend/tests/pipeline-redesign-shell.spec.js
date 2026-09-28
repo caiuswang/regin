@@ -56,10 +56,10 @@ const PANEL_ROW = (id, name, extra) => ({
   stage_bar: { spec: 2, building: 5, shipped: 6, escaped: 1 }, features: 14, open_tasks: 38, open_defects: 6, ...extra,
 })
 
-function overview({ empty = false, project = null } = {}) {
+function overview({ empty = false, project = null, loop = LOOP } = {}) {
   const body = {
     scope: project ? String(project) : 'all',
-    loop: LOOP,
+    loop,
     running: empty ? { total: 0, rows: [] } : RUNNING,
     run_next: empty ? { total: 0, ready: 0, rows: [] } : {
       total: 9, ready: 4,
@@ -70,13 +70,12 @@ function overview({ empty = false, project = null } = {}) {
       ],
     },
     needs_decision: empty ? { waiting: 0, rows: [] } : { waiting: 3, rows: TRIAGE },
-    escaped: empty ? [] : [
-      { feature_id: 31, title: 'Live tail reconnect', rounds: 4, defects_open: 3, defects_total: 5, escapes: 2, last_escape_at: '2026-09-25' },
-    ],
   }
   if (!project) {
-    body.projects = { sort: 'attention', total: 32, more: 0, quiet: 19, completed_hidden: 8,
-      rows: [PANEL_ROW(3, 'regin-core', { escaped: 1 }), PANEL_ROW(4, 'regin-web', { open_defects: 3 })] }
+    body.projects = empty
+      ? { sort: 'attention', total: 32, active: 0, quiet: 32, rows: [] }
+      : { sort: 'attention', total: 32, active: 2, quiet: 30,
+          rows: [PANEL_ROW(3, 'regin-core', { escaped: 1 }), PANEL_ROW(4, 'regin-web', { open_defects: 3 })] }
   } else {
     body.project_head = { id: project, name: 'regin-core', breadcrumb: ['All projects', 'regin-core'],
       stage_bar: { spec: 2, building: 5, shipped: 6, escaped: 1 }, shipped_pct: 57,
@@ -130,7 +129,7 @@ async function stubPipeline(page, opts = {}) {
     if (p === '/api/pipeline/counts') return json(route, { counts: COUNTS })
     if (p === '/api/pipeline/overview') {
       const project = url.searchParams.get('project')
-      return json(route, overview({ empty: state.empty, project: project ? Number(project) : null }))
+      return json(route, overview({ empty: state.empty, loop: state.loop, project: project ? Number(project) : null }))
     }
     if (p === '/api/pipeline/projects') {
       return json(route, { items: [
@@ -256,8 +255,9 @@ test('test_pipeline_hotkeys', async ({ page }) => {
   await expect(page.getByTestId('project-picker-search')).toHaveAttribute('placeholder', 'Find among 32 projects')
   await page.keyboard.press('Escape')
 
+  // The Overview has no search of its own: "/" opens the chip's picker.
   await page.keyboard.press('/')
-  await expect(page.getByTestId('projects-search')).toBeFocused()
+  await expect(page.getByTestId('project-picker-search')).toBeFocused()
   await page.keyboard.press('Escape')
   await page.locator('body').click({ position: { x: 5, y: 5 } })
 
@@ -276,12 +276,13 @@ test('test_overview_panels_and_empty_states', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto('/overview')
 
-  // Loop totals: the parts sum to the total, and Tasks/Features match the tabs.
+  // Loop totals: the parts (read off the bar's accessible name) sum to the
+  // total, and Tasks/Features match the tabs.
   for (const [stage, tab] of [['tasks', 128], ['features', 24], ['defects', null]]) {
     const card = page.getByTestId(`loop-${stage}`)
     const total = Number(await card.getByTestId('loop-total').innerText())
-    const parts = await card.locator('dd').allInnerTexts()
-    expect(parts.map(Number).reduce((a, b) => a + b, 0)).toBe(total)
+    const name = await card.getByTestId('loop-bar').getAttribute('aria-label')
+    expect(name.split(', ').map(p => Number(p.split(' ').pop())).reduce((a, b) => a + b, 0)).toBe(total)
     if (tab != null) {
       await expect(page.getByTestId(`pipeline-count-${stage}`)).toHaveText(String(total))
       expect(total).toBe(tab)
@@ -291,7 +292,7 @@ test('test_overview_panels_and_empty_states', async ({ page }) => {
 
   // Running now heads the Run next card: newest attempt first, one Watch per row.
   const runningNow = page.getByTestId('running-now')
-  await expect(page.getByTestId('running-now-count')).toHaveText('2 agents working')
+  await expect(page.getByTestId('running-now-count')).toHaveText('2')
   await expect(runningNow.getByRole('link', { name: 'Open Live →' })).toHaveAttribute('href', '/live')
   await expect(runningNow.locator('li')).toHaveCount(2)
   const retry = page.getByTestId('running-now-row-414')
@@ -317,13 +318,11 @@ test('test_overview_panels_and_empty_states', async ({ page }) => {
   expect(Number(await waiting.evaluate(el => getComputedStyle(el).opacity))).toBeLessThan(1)
   await expect(waiting.getByRole('button')).toHaveCount(0)
   await expect(page.getByTestId('run-next-run-412')).toBeVisible()
-  await expect(page.getByTestId('run-next-all')).toHaveText('All 9 in Tasks →')
+  await expect(page.getByTestId('run-next-count')).toHaveText('9')
+  await expect(page.getByTestId('run-next-all')).toHaveText('All in Tasks →')
   await expect(page.getByTestId('needs-decision-row-94')).toContainText('D-94')
   await expect(page.getByTestId('needs-decision-attribute-94')).toBeVisible()
-  await expect(page.getByTestId('needs-decision-decline-94')).toBeVisible()
-  await expect(page.getByTestId('escaped-row-31')).toContainText('3 open · 5')
-  await expect(page.getByTestId('projects-foot')).toContainText('Showing 2 of 32')
-  await expect(page.getByTestId('projects-foot')).toContainText('19 quiet')
+  await expect(page.getByTestId('projects-panel').locator('li')).toHaveCount(2)
 
   // Pick a project: the Projects panel becomes the breadcrumb head + ≤5 features.
   await page.getByTestId('pipeline-project').click()
@@ -346,7 +345,235 @@ test('test_overview_panels_and_empty_states', async ({ page }) => {
   await expect(page.getByTestId('run-next-empty')).toBeVisible()
   await expect(page.getByTestId('running-now')).toHaveCount(0)
   await expect(page.getByTestId('needs-decision-empty')).toBeVisible()
-  await expect(page.getByTestId('escaped-empty')).toBeVisible()
+  await expect(page.getByTestId('projects-empty')).toHaveText('All 32 projects quiet')
+  await expect(page.getByTestId('projects-counts')).toHaveText('0 active · 32 quiet')
+  await expect(page.getByTestId('loop-note')).toBeVisible()
+})
+
+test('test_overview_quiet_loop_facts_and_links', async ({ page }) => {
+  const state = await stubPipeline(page)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto('/overview')
+
+  // One card, three columns: no arrows, no legend, no per-stage cards.
+  const loop = page.getByTestId('overview-loop')
+  await expect(loop.locator('article')).toHaveCount(3)
+  await expect(loop.locator('svg.lucide-arrow-right, dl, dt, .ol-dot')).toHaveCount(0)
+  const tops = await loop.locator('article').evaluateAll(els => els.map(e => Math.round(e.getBoundingClientRect().top)))
+  expect(new Set(tops).size).toBe(1)
+  await expect(page.getByTestId('loop-tasks').locator('h2')).toHaveCSS('text-transform', 'none')
+
+  // Facts: only what moves or asks for a decision; zero facts dropped.
+  const facts = stage => page.getByTestId(`loop-${stage}`).locator('[data-testid^="loop-fact-"]')
+  await expect(facts('tasks')).toHaveText(['2 running', '4 ready', '4 failed'])
+  await expect(facts('features')).toHaveText(['7 building', '5 in spec', '2 escaped'])
+  await expect(facts('defects')).toHaveText(['6 open', '3 to triage'])
+  const colourOf = id => page.getByTestId(id).evaluate(el => getComputedStyle(el).color)
+  const token = name => page.evaluate((n) => {
+    const probe = document.createElement('span')
+    probe.style.color = `var(${n})`
+    document.body.appendChild(probe)
+    const c = getComputedStyle(probe).color
+    probe.remove()
+    return c
+  }, name)
+  expect(await colourOf('loop-fact-failed')).toBe(await token('--color-danger'))
+  expect(await colourOf('loop-fact-escaped')).toBe(await token('--color-warning-strong'))
+  expect(await colourOf('loop-fact-triage')).toBe(await token('--color-warning-strong'))
+  expect(await colourOf('loop-fact-running')).toBe(await token('--color-fg-muted'))
+
+  // I11: every part is still in the bar's accessible name.
+  await expect(page.getByTestId('loop-tasks').getByTestId('loop-bar'))
+    .toHaveAttribute('aria-label', 'Ideas 42, Armed 6, Queued 3, Running 2, Done 71, Failed 4')
+  // Bars are neutral except the parts that need a human or failed.
+  const fills = await page.getByTestId('loop-tasks').locator('[data-part]').evaluateAll(els =>
+    Object.fromEntries(els.map(e => [e.dataset.part, getComputedStyle(e).backgroundColor])))
+  expect(fills.failed).toBe(await page.evaluate(() => {
+    const p = document.createElement('span'); p.style.backgroundColor = 'var(--color-danger)'
+    document.body.appendChild(p); const c = getComputedStyle(p).backgroundColor; p.remove(); return c
+  }))
+  expect(fills.done).not.toBe(fills.failed)
+
+  // Loop note: the card's footer row, subtle text, no fill.
+  const note = page.getByTestId('loop-note')
+  expect(await note.evaluate(el => getComputedStyle(el).color)).toBe(await token('--color-fg-subtle'))
+  expect(await note.evaluate(el => getComputedStyle(el).backgroundColor)).toBe('rgba(0, 0, 0, 0)')
+
+  // No caption sentence under any panel heading.
+  await expect(page.getByText('Armed and queued · dependency-clear first')).toHaveCount(0)
+  await expect(page.getByText('Reports nobody has routed')).toHaveCount(0)
+  await expect(page.getByText(/Needs attention first/)).toHaveCount(0)
+
+  // Decision rows: one action, Attribute; a one-line symptom; "Triage all →".
+  const row = page.getByTestId('needs-decision-row-94')
+  await expect(row.getByRole('button')).toHaveCount(1)
+  await expect(row.getByRole('button')).toHaveText('Attribute')
+  const symptom = row.getByTestId('needs-decision-symptom')
+  expect(await symptom.evaluate(el => getComputedStyle(el).whiteSpace)).toBe('nowrap')
+  await expect(page.getByTestId('needs-decision-count')).toHaveText('3')
+  await expect(page.getByTestId('needs-decision-triage')).toHaveText('Triage all →')
+
+  // Projects panel: counts in the header, no search/sort/legend/footer.
+  await expect(page.getByTestId('projects-counts')).toHaveText('2 active · 30 quiet')
+  await expect(page.getByTestId('projects-all')).toHaveText('All 32 projects →')
+  const projects = page.getByTestId('projects-panel')
+  await expect(projects.locator('input, [role="group"], footer')).toHaveCount(0)
+  await expect(page.getByTestId('projects-attention-3')).toHaveText('1 escaped · 6 open defects')
+  expect(await colourOf('projects-attention-3')).toBe(await token('--color-warning-strong'))
+  await page.getByTestId('projects-all').click()
+  await expect(page.getByTestId('project-picker')).toBeVisible()
+  await page.keyboard.press('Escape')
+
+  // Run and Watch are bordered neutral buttons with primary text.
+  const primary = await token('--color-primary')
+  const border = await page.evaluate(() => {
+    const p = document.createElement('span'); p.style.color = 'var(--color-border)'
+    document.body.appendChild(p); const c = getComputedStyle(p).color; p.remove(); return c
+  })
+  for (const id of ['run-next-run-412', 'running-now-watch-414', 'needs-decision-attribute-94']) {
+    const look = await page.getByTestId(id).evaluate(el => {
+      const cs = getComputedStyle(el)
+      return { color: cs.color, width: cs.borderTopWidth, border: cs.borderTopColor }
+    })
+    if (id !== 'needs-decision-attribute-94') expect(look.color, id).toBe(primary)
+    expect(look.width, id).not.toBe('0px')
+    expect(look.border, id).toBe(border)
+  }
+
+  // "N escaped" opens Features on the Escaped stage; "N to triage" the rail.
+  await page.getByTestId('loop-fact-escaped').click()
+  await expect(page).toHaveURL(/\/features\?stage=escaped/)
+  await expect(page.getByTestId('feature-stage-tabs').getByRole('tab', { selected: true })).toContainText('Escaped')
+  await page.goBack()
+  await page.getByTestId('loop-fact-triage').click()
+  await expect(page).toHaveURL(/\/features$/)
+
+  // A stage with nothing failed drops the failed fact.
+  state.loop = { ...LOOP, stages: [{ ...LOOP.stages[0], total: 124, parts: LOOP.stages[0].parts.map(p =>
+    (p.key === 'failed' ? { ...p, n: 0 } : p)) }, LOOP.stages[1], LOOP.stages[2]] }
+  await page.goto('/overview')
+  await expect(facts('tasks')).toHaveText(['2 running', '4 ready'])
+  await expect(page.getByTestId('loop-fact-failed')).toHaveCount(0)
+})
+
+// I10: /overview draws only blue (links, action text), violet (the live
+// marker), amber (a human must decide) and red (failed) — measured against the
+// resolved tokens, not by hue: warning-strong and orange sit ~1° apart.
+async function colourBudgetViolations(page) {
+  return page.evaluate(() => {
+    const resolve = (prop, value) => {
+      const probe = document.createElement('span')
+      probe.style[prop] = value
+      document.body.appendChild(probe)
+      const c = getComputedStyle(probe)[prop]
+      probe.remove()
+      return c
+    }
+    const allowed = new Set(['--color-primary', '--color-agent', '--color-warning', '--color-warning-strong',
+      '--color-danger'].map(t => resolve('color', `var(${t})`)))
+    // A tint is a *-soft token or a light ramp step: at chroma ~0.014 blue-50
+    // is indistinguishable from slate-200 by measurement, so name them.
+    const RAMPS = ['amber', 'orange', 'yellow', 'red', 'rose', 'pink', 'fuchsia', 'purple', 'violet', 'indigo',
+      'blue', 'sky', 'cyan', 'teal', 'emerald', 'green', 'lime']
+    const tints = new Set([
+      ...['info', 'success', 'warning', 'danger', 'agent', 'orange', 'primary'].map(t => `--color-${t}-soft`),
+      ...RAMPS.flatMap(r => [50, 100, 200, 300].map(n => `--color-${r}-${n}`)),
+    ].map(t => resolve('backgroundColor', `var(${t})`)).filter(c => c !== 'rgba(0, 0, 0, 0)'))
+    // Tailwind v4 tokens compute to oklch(); the slate neutrals carry a little
+    // chroma (≤0.05), so "chromatic" means clearly more than that.
+    const chromatic = (c) => {
+      if (!c.includes('(') || c.startsWith('url(')) return false   // none, transparent, a paint server
+      const num = x => Number(x)
+      let m = c.match(/^rgba?\(([\d.]+),? ([\d.]+),? ([\d.]+)(?:,? \/? ?([\d.]+))?\)$/)
+      if (m) {
+        if (m[4] !== undefined && num(m[4]) === 0) return false
+        const [r, g, b] = [m[1], m[2], m[3]].map(num)
+        return Math.max(r, g, b) - Math.min(r, g, b) > 60
+      }
+      m = c.match(/^oklch\(([\d.]+) ([\d.]+) ([\d.]+|none)(?: \/ ([\d.]+))?\)$/)
+      if (m) return !(m[4] !== undefined && num(m[4]) === 0) && num(m[2]) > 0.08
+      m = c.match(/^oklab\(([\d.]+) (-?[\d.]+) (-?[\d.]+)(?: \/ ([\d.]+))?\)$/)
+      if (m) return !(m[4] !== undefined && num(m[4]) === 0) && Math.hypot(num(m[2]), num(m[3])) > 0.08
+      m = c.match(/^color\(srgb ([\d.]+) ([\d.]+) ([\d.]+)(?: \/ ([\d.]+))?\)$/)
+      if (m) {
+        if (m[4] !== undefined && num(m[4]) === 0) return false
+        const [r, g, b] = [m[1], m[2], m[3]].map(num)
+        return Math.max(r, g, b) - Math.min(r, g, b) > 0.235
+      }
+      return true
+    }
+    const root = document.querySelector('.content-scroll') || document.body
+    const bad = []
+    // Blue is a family, not one token: the shell's primary button paints a
+    // blue-800→500 gradient. Blue sits far from every other hue, so it can be
+    // judged by hue; amber, orange and red cannot, so they match tokens exactly.
+    const blue = (c) => {
+      const lch = c.match(/^oklch\([\d.]+ [\d.]+ ([\d.]+)/)
+      if (lch) return Number(lch[1]) >= 250 && Number(lch[1]) <= 275
+      const m = c.match(/^rgba?\(([\d.]+),? ([\d.]+),? ([\d.]+)/)
+      if (!m) return false
+      const [r, g, b] = [m[1], m[2], m[3]].map(Number)
+      const max = Math.max(r, g, b), min = Math.min(r, g, b)
+      if (max !== b || max === min) return false
+      const hue = 60 * ((r - g) / (max - min) + 4)
+      return hue >= 205 && hue <= 240
+    }
+    const ok = c => allowed.has(c) || blue(c)
+    const COLOUR_FN = /(?:rgba?|oklch|oklab|color)\([^()]*\)/g
+    const check = (name, cs, isSvg) => {
+      const props = ['color', 'backgroundColor', 'borderTopColor', 'borderRightColor', 'borderBottomColor',
+        'borderLeftColor', 'textDecorationColor']
+      if (isSvg) props.push('fill', 'stroke')
+      for (const prop of props) {
+        const value = cs[prop]
+        if (chromatic(value) && !ok(value)) bad.push(`${name} ${prop}=${value}`)
+      }
+      for (const prop of ['boxShadow', 'backgroundImage']) {
+        for (const value of cs[prop].match(COLOUR_FN) || []) {
+          if (chromatic(value) && !ok(value)) bad.push(`${name} ${prop} has ${value}`)
+        }
+      }
+      if (tints.has(cs.backgroundColor)) bad.push(`${name} tinted background ${cs.backgroundColor}`)
+    }
+    for (const el of root.querySelectorAll('*')) {
+      if (!el.checkVisibility()) continue
+      const name = `${el.tagName.toLowerCase()}${el.dataset.testid ? `[${el.dataset.testid}]` : ''}.${[...el.classList].slice(-2).join('.')}`
+      check(name, getComputedStyle(el), el instanceof SVGElement)
+      for (const pseudo of ['::before', '::after']) {
+        const cs = getComputedStyle(el, pseudo)
+        if (cs.content !== 'none' && cs.content !== 'normal') check(`${name}${pseudo}`, cs, false)
+      }
+    }
+    return [...new Set(bad)]
+  })
+}
+
+test('test_overview_colour_budget', async ({ page }) => {
+  await stubPipeline(page)
+  const cases = [
+    [1440, '/overview', 'projects-panel'],
+    [1440, '/overview?project=3', 'project-head'],
+    [390, '/overview', 'projects-panel'],
+  ]
+  for (const theme of ['light', 'dark']) {
+    await page.addInitScript((t) => localStorage.setItem('regin_theme', t), theme)
+    for (const [width, path, ready] of cases) {
+      await page.setViewportSize({ width, height: 900 })
+      await page.goto(path)
+      await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
+      await expect(page.getByTestId(ready)).toBeVisible()
+      expect(await colourBudgetViolations(page), `${path} @ ${width} ${theme}`).toEqual([])
+    }
+  }
+  // The live marker's ring is the one soft tint on the page.
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto('/overview')
+  const ring = await page.locator('.rnw-dot').first().evaluate(el => getComputedStyle(el).boxShadow)
+  const agentSoft = await page.evaluate(() => {
+    const p = document.createElement('span'); p.style.color = 'var(--color-agent-soft)'
+    document.body.appendChild(p); const c = getComputedStyle(p).color; p.remove(); return c
+  })
+  expect(ring).toContain(agentSoft)
 })
 
 test('test_features_stage_tabs_expand_and_triage_keys', async ({ page }) => {
