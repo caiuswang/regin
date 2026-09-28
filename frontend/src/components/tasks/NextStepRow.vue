@@ -6,6 +6,7 @@
 // are always visible, never revealed on hover. A row waiting on a dependency
 // is dimmed and its primary is the link to what it waits on.
 import { computed } from 'vue'
+import Checkbox from '../ui/Checkbox.vue'
 import TaskFacts from './TaskFacts.vue'
 import TaskPrimaryAction from './TaskPrimaryAction.vue'
 import TaskPriorityIcon from './TaskPriorityIcon.vue'
@@ -19,8 +20,9 @@ const props = defineProps({
   busy: { type: Boolean, default: false },
   refusal: { type: Object, default: null },
   canWrite: { type: Boolean, default: true },
+  selected: { type: Boolean, default: false },
 })
-const emit = defineEmits(['verb'])
+const emit = defineEmits(['verb', 'select'])
 
 const waiting = computed(() => !!props.task.waits_on)
 </script>
@@ -29,9 +31,17 @@ const waiting = computed(() => !!props.task.waits_on)
   <li
     :id="`task-${task.id}`"
     class="nsr"
-    :class="{ 'is-waiting': waiting }"
+    :class="{ 'is-waiting': waiting, 'is-selectable': canWrite }"
     :data-testid="`next-step-row-${task.id}`"
   >
+    <Checkbox
+      v-if="canWrite"
+      class="nsr-sel"
+      :model-value="selected"
+      :aria-label="`Select #${task.id}`"
+      data-testid="task-select"
+      @update:model-value="emit('select', task)"
+    />
     <TaskPriorityIcon class="nsr-prio" :value="task.priority" />
     <TaskStatusIcon class="nsr-status" :status="task.status" />
     <div class="nsr-main">
@@ -67,6 +77,11 @@ const waiting = computed(() => !!props.task.waits_on)
     padding: 0.4375rem 0;
     border-top: 1px solid var(--color-border-subtle);
 }
+.nsr.is-selectable {
+    grid-template-columns: 1.25rem 1.25rem 1.25rem 3rem minmax(0, 1fr) auto auto 3.5rem;
+    grid-template-areas: "sel prio status id main facts action day";
+}
+.nsr-sel { grid-area: sel; }
 .nsr-prio { grid-area: prio; }
 .nsr-status { grid-area: status; }
 .nsr-main {
@@ -136,6 +151,11 @@ const waiting = computed(() => !!props.task.waits_on)
         row-gap: 0.125rem;
         padding: 0.75rem 0;
     }
+    .nsr.is-selectable {
+        grid-template-columns: 1.25rem 1.25rem minmax(0, 1fr) auto;
+        grid-template-areas: "sel status main action" "sel status meta action";
+    }
+    .nsr-sel { align-self: start; margin-top: 0.1875rem; }
     .nsr-prio,
     .nsr-sub,
     .nsr-day { display: none; }

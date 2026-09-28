@@ -301,6 +301,8 @@ def api_bulk_update_tasks():
         result = store.bulk_update(ids, fields)
     except store.BulkFieldRejected as exc:
         return jsonify({"error": str(exc), "field": exc.field}), 400
+    except feature_store_error() as exc:
+        return jsonify({"error": str(exc), "field": "feature_id"}), 400
     return jsonify(result)
 
 

@@ -619,7 +619,7 @@ def list_tasks(status: Optional[str] = None, limit: int = 50) -> list[dict]:
 # What a bulk action may set. Deliberately a subset of the single-task edit
 # surface: title and body are per-task text, and nothing about selecting fifty
 # rows makes overwriting fifty titles a sensible request.
-BULK_FIELDS = frozenset({"status", "priority", "project_id"})
+BULK_FIELDS = frozenset({"status", "priority", "project_id", "feature_id"})
 
 BULK_MAX = 500
 
@@ -635,6 +635,7 @@ def bulk_update(task_ids: list[int], fields: dict) -> dict:
     unknown_fields = sorted(set(fields) - BULK_FIELDS)
     if unknown_fields:
         raise BulkFieldRejected(unknown_fields[0])
+    _require_bulk_feature(fields)
     changed: list[int] = []
     rejected: list[dict] = []
     moved: list[tuple[int, Optional[str], str]] = []
@@ -656,9 +657,23 @@ def bulk_update(task_ids: list[int], fields: dict) -> dict:
         session.commit()
     for task_id, left, now in moved:
         _after_status(task_id, left, now)
+        if "feature_id" in fields:
+            _apply_feature(task_id, fields["feature_id"])
     log.write("task_bulk_updated", count=len(changed),
               rejected=len(rejected), changed=sorted(fields))
     return {"changed": changed, "rejected": rejected}
+
+
+def _require_bulk_feature(fields: dict) -> None:
+    """Refuse an unknown feature before any row moves.
+
+    Checked once up front rather than per row: every row names the same
+    feature, so it is the request that is wrong, not one row of it.
+    """
+    from lib.features import store as feature_store  # noqa: PLC0415
+
+    if fields.get("feature_id") is not None:
+        feature_store.require(fields["feature_id"])
 
 
 def _apply_bulk_fields(session, row: AgentTask,

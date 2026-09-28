@@ -264,6 +264,35 @@ def test_bulk_files_tasks_under_a_project(flask_client):
     assert _ids(flask_client, f"?project_id={pid}") == [b["id"], a["id"]]
 
 
+def test_bulk_sets_and_clears_the_feature(flask_client):
+    from lib.features import store as feature_store
+
+    feature = feature_store.create("bulk target")
+    a = _task(flask_client, title="a")
+    b = _task(flask_client, title="b")
+
+    resp = flask_client.post("/api/tasks/bulk",
+                             json={"ids": [a["id"], b["id"]],
+                                   "feature_id": feature.id}, headers=EDITOR)
+    assert sorted(resp.get_json()["changed"]) == sorted([a["id"], b["id"]])
+    assert [t.id for t in feature_store.tasks_of(feature.id)] == \
+        sorted([a["id"], b["id"]])
+
+    flask_client.post("/api/tasks/bulk",
+                      json={"ids": [a["id"]], "feature_id": None},
+                      headers=EDITOR)
+    assert [t.id for t in feature_store.tasks_of(feature.id)] == [b["id"]]
+
+
+def test_bulk_refuses_an_unknown_feature_before_moving_any_row(flask_client):
+    a = _task(flask_client, title="a")
+    resp = flask_client.post("/api/tasks/bulk",
+                             json={"ids": [a["id"]], "feature_id": 999999},
+                             headers=EDITOR)
+    assert resp.status_code == 400
+    assert resp.get_json()["field"] == "feature_id"
+
+
 def test_bulk_refuses_a_field_it_does_not_own(flask_client):
     a = _task(flask_client, title="a")
     resp = flask_client.post("/api/tasks/bulk",

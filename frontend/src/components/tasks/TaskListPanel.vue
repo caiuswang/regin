@@ -248,6 +248,7 @@ defineExpose({ reload: afterWrite })
       @restore="applyBulk({ status: 'idea' })"
       @priority="v => applyBulk({ priority: v })"
       @project="v => applyBulk({ project_id: v === 'none' ? null : Number(v) })"
+      @feature="id => applyBulk({ feature_id: id })"
     />
 
     <div v-if="selection.visible.value.length" class="tl-selectall">
