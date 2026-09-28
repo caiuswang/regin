@@ -35,6 +35,7 @@ import { useAttachedImages } from '../composables/useAttachedImages.js'
 import { useTaskMutations } from '../composables/useTasks.js'
 import { rememberedQuery } from '../composables/usePipelineTabState'
 import { useDetailBack } from '../composables/useDetailBack'
+import { usePipelineLive } from '../composables/usePipelineEvents'
 
 const router = useRouter()
 const route = useRoute()
@@ -108,15 +109,17 @@ const shelfVerb = computed(() => {
   return ['restore', 'archive'].find(v => menu.includes(v)) || ''
 })
 
-async function load() {
-  loading.value = true
+// `quiet` keeps the page on screen: an event re-read must not flash "Loading…".
+async function load({ quiet = false } = {}) {
+  if (!quiet) loading.value = true
   error.value = ''
   try {
     const data = await api.get(`/tasks/${id.value}`)
     task.value = data.task
     // The detail read already carries `task.images` (`_one_with_images`), so
     // binding here costs no extra round trip for the list — only the bytes.
-    bindImages(data.task)
+    // Not on a quiet re-read: binding resets the strip and re-fetches every blob.
+    if (!quiet) bindImages(data.task)
     // Both off the same read. A second request would be a round trip to learn
     // something the row's own route already knows.
     feature.value = data.feature || null
@@ -141,7 +144,8 @@ async function deleteTask() {
   if (await remove(task.value)) back.leave()
 }
 
-watch(id, load)
+watch(id, () => load())
+usePipelineLive(() => load({ quiet: true }))
 onMounted(() => { ensureProjects(); load() })
 </script>
 

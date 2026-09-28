@@ -24,6 +24,7 @@ import PageControls from '../components/PageControls.vue'
 import PipelineCreateButton from '../components/pipeline/PipelineCreateButton.vue'
 import { usePipelineCreate } from '../composables/usePipelineCreate'
 import { usePipelineCounts } from '../composables/usePipelineCounts'
+import { usePipelineLive } from '../composables/usePipelineEvents'
 import FeatureStageTabs from '../components/pipeline/FeatureStageTabs.vue'
 import FeatureTrackTable from '../components/pipeline/FeatureTrackTable.vue'
 import FeatureCard from '../components/pipeline/FeatureCard.vue'
@@ -112,6 +113,8 @@ const railFolded = ref(false)
 
 // A write made elsewhere — a defect reported from the header's "New ▾", a
 // capture — moves this tab's rows and its triage queue too.
+usePipelineLive(() => Promise.all([reload(), rail.value?.load?.()]))
+
 watch(revision, () => {
   if (route.path !== '/features') return
   reload()

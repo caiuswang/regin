@@ -155,6 +155,18 @@ def _default_feature_config(monkeypatch):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _pipeline_frames_stay_in_process(monkeypatch):
+    """A CliRunner test runs the CLI root callback, which switches this worker
+    to loopback delivery — a POST to whatever real dashboard listens on
+    `settings.web_port`. The test process is its own server, so the loopback
+    is short-circuited to the in-process hub, and the mode is restored."""
+    from lib.pipeline import live
+    monkeypatch.setattr(live, "_loopback_mode", False)
+    monkeypatch.setattr(live, "_loopback", live.broadcast)
+    yield
+
+
 # ── Config isolation ──────────────────────────────────────────
 
 @pytest.fixture

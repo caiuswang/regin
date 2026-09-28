@@ -15,6 +15,7 @@ import { usePage } from '../composables/usePage'
 import { listStatusState, useListQuery } from '../composables/useListQuery'
 import { useFlash } from '../composables/useFlash'
 import { invalidatePipelineCounts } from '../composables/usePipelineCounts'
+import { usePipelineLive } from '../composables/usePipelineEvents'
 import Button from '../components/ui/Button.vue'
 import Icon from '../components/ui/Icon.vue'
 import ListStatus from '../components/ListStatus.vue'
@@ -100,6 +101,7 @@ async function reload() {
   pageSize.value = state.value.size
   await load()
 }
+usePipelineLive(reload)
 watch(() => (route.path === '/defects' ? JSON.stringify(route.query) : null),
   (key) => { if (key != null) reload() }, { immediate: true })
 

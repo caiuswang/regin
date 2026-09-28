@@ -27,6 +27,7 @@ from sqlmodel import select
 from lib.activity_log import get_activity_logger
 from lib.defects import query as defect_query
 from lib.orm import SessionLocal
+from lib.pipeline import live  # noqa: F401  (registers the `pipeline` frames on commit)
 from lib.orm.models.defects import (
     STATUS_CLOSED, STATUS_OPEN, SYMPTOM_MAX, TRIAGE_DECLINED, TRIAGE_SNOOZED,
     Defect, DefectImage,

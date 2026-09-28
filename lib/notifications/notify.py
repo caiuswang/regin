@@ -77,6 +77,17 @@ def notify_successor(predecessor_trace_id: str | None) -> None:
     _trigger({"successor": {"trace_id": str(predecessor_trace_id)}})
 
 
+def notify_pipeline(frames: list[dict]) -> None:
+    """Hand `pipeline` frames written by this process to the server's streams.
+
+    Unlike the triggers above, the frames are carried: they name only an
+    entity and an id, the server re-validates both, and every view re-reads
+    the row itself, so a forged frame can cost a re-read and nothing more.
+    """
+    if frames:
+        _trigger({"pipeline": frames})
+
+
 def _trigger(body: dict) -> None:
     try:
         _post_notify(_web_port(), body)
@@ -111,4 +122,4 @@ def _is_listening(port: int) -> bool:
 
 
 __all__ = ["notify_counts_changed", "notify_message", "notify_resolved",
-           "notify_successor"]
+           "notify_successor", "notify_pipeline"]

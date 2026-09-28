@@ -23,6 +23,7 @@ from sqlmodel import delete, select
 
 from lib.activity_log import get_activity_logger
 from lib.orm import SessionLocal
+from lib.pipeline import live  # noqa: F401  (registers the `pipeline` frames on commit)
 from lib.orm.models.features import Feature
 from lib.orm.models.sync import Repo
 from lib.orm.models.tasks import (

@@ -19,6 +19,7 @@ import { invalidatePipelineCounts, markPipelineRead, usePipelineCounts } from '.
 import { scopeOf, scopeQuery, usePipelineScope, SCOPE_ALL } from '../composables/usePipelineScope'
 import { useTaskShortcuts } from '../composables/useTaskShortcuts'
 import { useBreakpoint } from '../composables/useBreakpoint'
+import { usePipelineLive } from '../composables/usePipelineEvents'
 
 const route = useRoute()
 const isCurrentTab = usePipelineTabActive()
@@ -84,6 +85,7 @@ watch(revision, () => { if (route.path === '/overview') load() })
 // `mounted` then `activated` both fire on the first arrival inside KeepAlive,
 // so the guard is armed by the activation itself.
 let arrived = false
+usePipelineLive(load)
 onMounted(load)
 onActivated(() => { if (arrived) load(); arrived = true })
 </script>
