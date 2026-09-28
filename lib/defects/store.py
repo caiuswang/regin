@@ -552,7 +552,7 @@ def every() -> list[Defect]:
         return list(rows)
 
 
-def unattributed() -> list[Defect]:
+def unattributed(status: Optional[str] = None) -> list[Defect]:
     """Newest first, the one direction every scope reads in.
 
     These four helpers used to disagree — `every()` descending, the other
@@ -561,11 +561,11 @@ def unattributed() -> list[Defect]:
     for internal counts, and they hold the same order so the two surfaces
     cannot describe the ledger differently.
     """
+    stmt = select(Defect).where(Defect.feature_id.is_(None))
+    if status:
+        stmt = stmt.where(Defect.status == status)
     with SessionLocal() as session:
-        rows = session.exec(
-            select(Defect).where(Defect.feature_id.is_(None))
-            .order_by(Defect.id.desc())).all()
-        return list(rows)
+        return list(session.exec(stmt.order_by(Defect.id.desc())).all())
 
 
 # ── The list ──────────────────────────────────────────────────

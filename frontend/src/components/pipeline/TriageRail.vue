@@ -76,14 +76,14 @@ function focusRequested() {
   if (index >= 0) focus(index)
 }
 
-// Everything unattributed that is not in the queue — a snoozed report, say.
+// Everything open and unattributed that is not in the queue — a snoozed report, say.
 const older = computed(() => Math.max(0, props.unattributed - total.value))
 const showOlder = ref(false)
 const olderRows = ref([])
 async function toggleOlder() {
   showOlder.value = !showOlder.value
   if (!showOlder.value) return
-  const body = await api.get('/defects?scope=unattributed&sort=opened:desc&size=50')
+  const body = await api.get('/defects?scope=unattributed&status=open&sort=opened:desc&size=50')
   const queued = new Set(items.value.map(d => d.id))
   olderRows.value = (body.items || []).filter(d => !queued.has(d.id))
 }

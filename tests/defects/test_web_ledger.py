@@ -71,14 +71,19 @@ def test_the_unattributed_list_is_readable_from_the_browser(flask_client):
 
 
 def test_the_counter_and_the_list_report_the_same_number(flask_client):
-    """1.2 — `/features`' counter and `/defects` read one function."""
+    """1.2 — `/features`' counter and the triage rail's `/defects` list agree,
+    and neither counts a closed report: it has nothing left to route."""
     for n in range(3):
         store.record(f"symptom {n}", session_id=f"t-{n}")
+    fixed = store.record("long since fixed", session_id="t-closed")
+    store.close(fixed.id, missing_check="a test")
 
     counter = flask_client.get("/api/features").get_json()
-    listed = flask_client.get("/api/defects?scope=unattributed").get_json()
+    listed = flask_client.get(
+        "/api/defects?scope=unattributed&status=open").get_json()
 
     assert counter["extras"]["unattributed_defects"] == len(listed["items"]) == 3
+    assert fixed.id not in {item["id"] for item in listed["items"]}
 
 
 def test_a_feature_scope_lists_that_features_defects(flask_client,

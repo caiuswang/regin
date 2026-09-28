@@ -33,6 +33,7 @@ from lib.features import cost as cost_module
 from lib.features import events as events_module
 from lib.orm import SessionLocal
 from lib.orm.models import tasks as task_model
+from lib.orm.models.defects import STATUS_OPEN
 from lib.tasks.query import (
     FilterRejected, Q_MAX, like_pattern, parse_int,
 )
@@ -456,7 +457,10 @@ def page(q: str = "", *, filters: Optional[dict] = None,
                 # `feature_id IS NULL` count in this module's SQL: two readers
                 # of one predicate is how a header and the page it links to
                 # come to report different numbers.
-                unattributed_defects=len(defect_store.unattributed()),
+                # Open only: a closed report needs no routing, so counting it
+                # here listed long-fixed defects under the triage rail.
+                unattributed_defects=len(
+                    defect_store.unattributed(status=STATUS_OPEN)),
                 matched=matched, page=page_index, size=size,
                 stage_counts=stage_counts(spec),
                 sort=f"{sort_key}:{sort_dir.lower()}",
