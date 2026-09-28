@@ -13,8 +13,8 @@
 export const LANE_W = 196
 export const NODE_W = 188
 export const NODE_H = 72
-export const COL_GAP = 24
-export const ROW_GAP = 14
+export const COL_GAP = 40
+export const ROW_GAP = 18
 export const LANE_PAD = 20
 // Tall enough for the lane head (ref, two title lines, bar, count) when the
 // lane holds a single row of nodes.
@@ -69,6 +69,26 @@ function bands(lanes, nodes, row) {
   })
 }
 
+export const BEND_R = 6
+
+// Orthogonal polyline → SVG path with every bend rounded. The radius shrinks
+// to half the shorter adjoining segment, so a short jog never overshoots.
+function rounded(points) {
+  let d = `M${points[0][0]},${points[0][1]}`
+  for (let i = 1; i < points.length - 1; i++) {
+    const [px, py] = points[i - 1]
+    const [x, y] = points[i]
+    const [nx, ny] = points[i + 1]
+    const r = Math.min(BEND_R, Math.hypot(x - px, y - py) / 2, Math.hypot(nx - x, ny - y) / 2)
+    if (r < 0.5) { d += ` L${x},${y}`; continue }
+    const inX = Math.sign(x - px), inY = Math.sign(y - py)
+    const outX = Math.sign(nx - x), outY = Math.sign(ny - y)
+    d += ` L${x - inX * r},${y - inY * r} Q${x},${y} ${x + outX * r},${y + outY * r}`
+  }
+  const [lx, ly] = points[points.length - 1]
+  return `${d} L${lx},${ly}`
+}
+
 // An edge that skips a column must not cross the nodes standing in it: it
 // turns down in the gutter after its source, runs across in the empty band
 // above its target's row (the row gap, or the lane padding for row 0), and
@@ -81,12 +101,12 @@ function edgePath(from, to) {
   const y2 = to.y + NODE_H / 2
   if (x2 - x1 <= COL_GAP) {
     const mid = x1 + COL_GAP / 2
-    return `M${x1},${y1} H${mid} V${y2} H${x2}`
+    return rounded([[x1, y1], [mid, y1], [mid, y2], [x2, y2]])
   }
   const out = x1 + COL_GAP / 2
   const inn = x2 - COL_GAP / 2
   const channel = to.y - (to.row > 0 ? ROW_GAP : LANE_PAD) / 2
-  return `M${x1},${y1} H${out} V${channel} H${inn} V${y2} H${x2}`
+  return rounded([[x1, y1], [out, y1], [out, channel], [inn, channel], [inn, y2], [x2, y2]])
 }
 
 /**
@@ -112,6 +132,8 @@ export function layoutLanes(lanes = [], nodes = [], edges = []) {
       const from = placed.get(e.depends_on_id)
       return {
         key: `${e.task_id}-${e.depends_on_id}`,
+        from: e.depends_on_id,
+        to: e.task_id,
         kind: e.kind || 'requires',
         blocking: !!e.blocking,
         settled: from.status === 'done',

@@ -46,8 +46,22 @@ function tag(node) {
   return node.blocked && node.status !== 'running' ? 'blocked' : node.status
 }
 
+// The card under the pointer (or keyboard focus): its own edges light up and
+// every other edge recedes, so one task's chain reads out of the tangle.
+const hovered = ref(null)
+
 function nodeClass(node) {
   return [`tlg-node tlg-${tag(node)}`, { 'is-found': matches.value.has(node.id) }]
+}
+
+function edgeClass(edge) {
+  const lit = hovered.value != null && (edge.from === hovered.value || edge.to === hovered.value)
+  return {
+    'is-blocking': edge.blocking,
+    'is-settled': edge.settled && !edge.blocking,
+    'is-lit': lit,
+    'is-dim': hovered.value != null && !lit,
+  }
 }
 
 function progress(lane) {
@@ -135,12 +149,27 @@ defineExpose({ reload: graph.load })
               </div>
             </div>
             <svg class="tlg-edges" :width="layout.width" :height="layout.height" aria-hidden="true">
+              <defs>
+                <marker
+                  id="tlg-arrow"
+                  viewBox="0 0 8 8"
+                  refX="7"
+                  refY="4"
+                  markerWidth="7"
+                  markerHeight="7"
+                  markerUnits="userSpaceOnUse"
+                  orient="auto"
+                >
+                  <path d="M1,1 L7,4 L1,7" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+                </marker>
+              </defs>
               <path
                 v-for="edge in layout.edges"
                 :key="edge.key"
                 :d="edge.path"
                 class="tlg-edge"
-                :class="{ 'is-blocking': edge.blocking, 'is-settled': edge.settled && !edge.blocking }"
+                :class="edgeClass(edge)"
+                marker-end="url(#tlg-arrow)"
                 :data-testid="`graph-edge-${edge.key}`"
                 :data-kind="edge.kind"
                 :data-blocking="edge.blocking ? '' : undefined"
@@ -154,6 +183,10 @@ defineExpose({ reload: graph.load })
               :style="{ left: `${node.x}px`, top: `${node.y}px`, width: `${NODE_W}px`, height: `${NODE_H}px` }"
               :data-testid="`graph-node-${node.id}`"
               :data-column="node.column"
+              @mouseenter="hovered = node.id"
+              @mouseleave="hovered = null"
+              @focus="hovered = node.id"
+              @blur="hovered = null"
             >
               <span class="tlg-node-top">
                 <TaskStatusIcon :status="node.status" :size="12" />
@@ -268,30 +301,64 @@ defineExpose({ reload: graph.load })
     fill: none;
     stroke: var(--color-border-strong);
     stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    transition: opacity 120ms ease, stroke-width 120ms ease;
 }
-.tlg-edge.is-settled { stroke: var(--color-success); }
+.tlg-edge.is-settled {
+    stroke: var(--color-success);
+    stroke-opacity: 0.55;
+}
 .tlg-edge.is-blocking {
     stroke: var(--color-warning);
-    stroke-width: 2;
+    stroke-width: 1.75;
     stroke-dasharray: 5 4;
 }
+.tlg-edge.is-lit { stroke-width: 2.25; stroke-opacity: 1; }
+.tlg-edge.is-dim { opacity: 0.18; }
+/* The status is a 3px stripe on the card's leading edge rather than a whole
+   tinted border: colour marks the state without outlining every box. */
 .tlg-node {
+    --tlg-accent: var(--color-border-strong);
     position: absolute;
     display: flex;
     flex-direction: column;
     gap: 0.3125rem;
-    padding: 0.5rem 0.625rem;
+    padding: 0.5rem 0.625rem 0.5rem 0.8125rem;
+    overflow: hidden;
     color: var(--color-fg);
     background: var(--color-surface);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-lg);
+    box-shadow: 0 1px 2px color-mix(in srgb, var(--color-fg) 6%, transparent);
+    transition: border-color 120ms ease, box-shadow 120ms ease;
 }
-.tlg-node:hover { text-decoration: none; border-color: var(--color-border-strong); }
+.tlg-node::before {
+    content: '';
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 3px;
+    background: var(--tlg-accent);
+}
+.tlg-node:hover {
+    text-decoration: none;
+    border-color: var(--color-border-strong);
+    box-shadow: 0 4px 12px color-mix(in srgb, var(--color-fg) 12%, transparent);
+}
 .tlg-node:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 2px; }
 /* The contents fade, never the card: a translucent surface shows every edge behind it. */
 .tlg-done > * { opacity: 0.6; }
-.tlg-running { border-color: var(--color-agent); box-shadow: 0 0 0 1px var(--color-agent); }
-.tlg-blocked { border-color: var(--color-warning); }
+.tlg-done { --tlg-accent: var(--color-success); }
+.tlg-done::before { opacity: 0.45; }
+.tlg-armed { --tlg-accent: var(--color-info); }
+.tlg-queued,
+.tlg-blocked { --tlg-accent: var(--color-warning); }
+.tlg-failed { --tlg-accent: var(--color-danger); }
+.tlg-running {
+    --tlg-accent: var(--color-agent);
+    border-color: var(--color-agent);
+    box-shadow: 0 0 0 1px var(--color-agent), 0 0 0 4px var(--color-agent-soft);
+}
 .tlg-node.is-found { box-shadow: 0 0 0 3px var(--color-ring); }
 .tlg-node-top {
     display: flex;
