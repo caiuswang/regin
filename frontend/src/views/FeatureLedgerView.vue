@@ -77,20 +77,25 @@ const canWrite = computed(() => user?.role !== 'viewer')
 // `verbs` is the server's R2 table for this stage; the page only draws it.
 const offers = (verb) => canWrite.value && (ledger.value?.verbs || []).includes(verb)
 
+// An event re-read can still be in flight when the route moves to another
+// feature, so every answer is checked against the id it was asked for.
 async function load({ quiet = false } = {}) {
+  const want = featureId.value
   if (!quiet) loading.value = true
   loadError.value = ''
   try {
-    ledger.value = await api.get(`/features/${featureId.value}`)
+    const body = await api.get(`/features/${want}`)
+    if (want !== featureId.value) return
+    ledger.value = body
     // Here and not on every `ledger` reassignment: a ship, a refresh or a
     // project edit returns the same attachments, and rebinding on each would
     // re-fetch every blob and blow away thumbnails the operator just added.
     // A quiet (event) re-read is the same case.
     if (!quiet) bindImages(ledger.value)
   } catch (e) {
-    loadError.value = e?.message || String(e)
+    if (want === featureId.value) loadError.value = e?.message || String(e)
   } finally {
-    loading.value = false
+    if (want === featureId.value) loading.value = false
   }
 }
 watch(featureId, () => load(), { immediate: true })

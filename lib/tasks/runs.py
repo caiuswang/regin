@@ -52,6 +52,7 @@ from lib.orm.models.comments import (
     AUTHOR_AGENT, COMMENT_BODY_MAX, RESOLUTION_OPEN, RESOLUTION_RESOLVED,
     SUBJECT_TASK)
 from lib.orm.models.agent_runs import AgentRun
+from lib.pipeline import live
 from lib.orm.models.tasks import (
     AgentTask, AgentTaskRun, RUN_STATUS_ARMED, RUN_STATUS_DONE,
     RUN_STATUS_FAILED, RUN_STATUS_RUNNING, RUN_STATUS_STARTING,
@@ -978,6 +979,7 @@ def _claim_verify(run_id: int) -> tuple[str, str, dict]:
             row = session.get(AgentTaskRun, run_id)
             command = (row.verify_cmd or "").strip() if row is not None else ""
             params = store._decode_params(row.params_json) if row else {}
+            task_id = row.task_id if row is not None else None
     except Exception:  # noqa: BLE001 — a gate we cannot read is one we must not skip
         # Standing down, not settling. Invariant 4 is written over the row, not
         # over what this reader managed to load: an attempt whose `verify_cmd`
@@ -994,6 +996,8 @@ def _claim_verify(run_id: int) -> tuple[str, str, dict]:
                 .where(AgentTaskRun.id == run_id,
                        AgentTaskRun.verify_exit_code.is_(None))
                 .values(verify_exit_code=verify.NOT_RUN)).rowcount
+            if claimed:
+                live.mark(session, "task", task_id)
             session.commit()
     except Exception:  # noqa: BLE001 — a gate we cannot stake is one we must not skip
         # Standing down is the only safe answer once a command has been read:
@@ -1075,6 +1079,8 @@ def reopen_for_agent_report(run_id: int) -> bool:
                    AgentTaskRun.settled_by.is_distinct_from(SETTLED_BY_AGENT))
             .values(status=RUN_STATUS_RUNNING, ended_at=None, exit_reason=None,
                     verify_exit_code=None, settled_by=None)).rowcount
+        if reopened:
+            live.mark(session, "task", task_id)
         session.commit()
     if not reopened:
         return False

@@ -110,11 +110,15 @@ const shelfVerb = computed(() => {
 })
 
 // `quiet` keeps the page on screen: an event re-read must not flash "Loading…".
+// An event re-read can still be in flight when the route moves to another
+// task, so every answer is checked against the id it was asked for.
 async function load({ quiet = false } = {}) {
+  const want = id.value
   if (!quiet) loading.value = true
   error.value = ''
   try {
-    const data = await api.get(`/tasks/${id.value}`)
+    const data = await api.get(`/tasks/${want}`)
+    if (want !== id.value) return
     task.value = data.task
     // The detail read already carries `task.images` (`_one_with_images`), so
     // binding here costs no extra round trip for the list — only the bytes.
@@ -126,11 +130,12 @@ async function load({ quiet = false } = {}) {
     armed.value = data.armed || null
     await syncLiveness([data.task])
   } catch (e) {
+    if (want !== id.value) return
     error.value = e.status === 404
-      ? `No task ${taskRef({ id: id.value })}.`
+      ? `No task ${taskRef({ id: want })}.`
       : (e.message || String(e))
   } finally {
-    loading.value = false
+    if (want === id.value) loading.value = false
   }
 }
 
