@@ -47,5 +47,9 @@ export function revealSessions() {
   reveal(SESSIONS_ANCHOR)
 }
 
+//: The spec and task cards — where a feature's `next_step` sends a reader.
+export const SPEC_ANCHOR = 'feature-spec'
+export const TASKS_ANCHOR = 'feature-tasks'
+
 //: The anchors a ledger arrival may carry, and so may reveal.
-export const LEDGER_ANCHORS = [SESSIONS_ANCHOR, DEFECTS_ANCHOR]
+export const LEDGER_ANCHORS = [SESSIONS_ANCHOR, DEFECTS_ANCHOR, SPEC_ANCHOR, TASKS_ANCHOR]

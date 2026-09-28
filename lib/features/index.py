@@ -21,7 +21,7 @@ rows in this database.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from typing import Optional
 
 from sqlmodel import text
@@ -31,6 +31,7 @@ from lib.defects import store as defect_store
 from lib.features import attribution as attribution_module
 from lib.features import cost as cost_module
 from lib.features import events as events_module
+from lib.features import next_step as next_step_module
 from lib.orm import SessionLocal
 from lib.orm.models import tasks as task_model
 from lib.orm.models.defects import STATUS_OPEN
@@ -66,6 +67,11 @@ class FeatureRow:
     escapes: int
     last_activity: Optional[str]
     tasks_done: int = 0
+    #: R2's reading, attached per page by `_with_next_steps` — one task
+    #: statement for the page, never one per row.
+    next_step: Optional[dict] = None
+    body: Optional[str] = field(default=None, repr=False)
+    blamed_now: int = 0
 
     def to_dict(self) -> dict:
         return {"id": self.id, "title": self.title, "origin": self.origin,
@@ -78,7 +84,8 @@ class FeatureRow:
                 "defects": {"total": self.total_defects,
                             "open": self.open_defects,
                             "escapes": self.escapes},
-                "last_activity": self.last_activity}
+                "last_activity": self.last_activity,
+                **({"next_step": self.next_step} if self.next_step else {})}
 
 
 @dataclass(frozen=True)
@@ -248,6 +255,7 @@ rows AS (
            COALESCE(df.open_count, 0) AS open_defects,
            COALESCE(df.escapes, 0) AS escapes,
            {events_module.stage_sql('le.kind', 'le.escapes_now')} AS stage,
+           COALESCE(le.escapes_now, 0) AS blamed_now,
            COALESCE(
                NULLIF(MAX(REPLACE(COALESCE(sf.last_session, ''), 'T', ' '),
                           REPLACE(COALESCE(df.last_defect, ''), 'T', ' ')), ''),
@@ -265,6 +273,7 @@ rows AS (
 _OUTER = """
 SELECT id, title, origin, external_ref, stage, rounds, sessions, tasks,
        tasks_done, cost_usd, no_usage, total_defects, open_defects, escapes, activity,
+       body, blamed_now,
        COUNT(*) OVER () AS matched
 FROM rows"""
 
@@ -404,7 +413,7 @@ def _row_from(record) -> FeatureRow:
     """One database record as the index renders it."""
     (feature_id, title, origin, external_ref, stage, rounds, sessions, tasks,
      tasks_done, cost_usd, no_usage, total, open_count, escapes, activity,
-     _matched) = record
+     body, blamed_now, _matched) = record
     return FeatureRow(
         id=feature_id, title=title, origin=origin, external_ref=external_ref,
         stage=stage,
@@ -415,7 +424,16 @@ def _row_from(record) -> FeatureRow:
         cost_usd=None if cost_usd is None else float(cost_usd),
         no_usage_captured=int(no_usage or 0),
         total_defects=int(total or 0), open_defects=int(open_count or 0),
-        escapes=int(escapes or 0), last_activity=activity)
+        escapes=int(escapes or 0), last_activity=activity,
+        body=body, blamed_now=int(blamed_now or 0))
+
+
+def _with_next_steps(items: list[FeatureRow]) -> list[FeatureRow]:
+    facts = next_step_module.task_facts(row.id for row in items)
+    return [replace(row, next_step=next_step_module.compute(
+        row.id, stage=row.stage, body=row.body,
+        open_defects=row.open_defects, blamed_now=row.blamed_now,
+        facts=facts[row.id]).to_dict()) for row in items]
 
 
 def _spec_from(q: str, filters) -> dict:
@@ -444,7 +462,7 @@ def page(q: str = "", *, filters: Optional[dict] = None,
     with SessionLocal() as session:
         rows = session.exec(text(query_sql(spec)).bindparams(**binds)).all()
 
-    items = [_row_from(record) for record in rows]
+    items = _with_next_steps([_row_from(record) for record in rows])
     matched = int(rows[0][-1]) if rows else _matched_total(spec)
     population = _population_total(spec)
     sort_key, sort_dir = parse_sort(spec.get("sort", ""))

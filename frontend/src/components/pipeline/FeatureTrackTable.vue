@@ -6,6 +6,7 @@ import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
 import StageSegments from './StageSegments.vue'
 import FeatureExpansion from './FeatureExpansion.vue'
+import FeatureNextStep from '../features/FeatureNextStep.vue'
 import { ago, defectTally } from '../../utils/pipelineFormat'
 import { money } from '../../utils/ledgerFormat'
 import { defectsLink, tasksLink } from '../../utils/featureLinks'
@@ -66,6 +67,7 @@ function cost(row) {
             <span class="ftt-name">
               <router-link :to="`/features/${row.id}`" class="ftt-title focus-visible:outline-2 focus-visible:outline-blue-500">{{ row.title }}</router-link>
               <span class="ftt-meta">{{ row.external_ref || 'no ref' }} · {{ cost(row) }}</span>
+              <FeatureNextStep :step="row.next_step" />
             </span>
           </span>
           <span role="cell"><StageSegments :stage="row.stage" /></span>

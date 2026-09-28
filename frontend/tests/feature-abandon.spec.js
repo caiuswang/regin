@@ -29,8 +29,16 @@ function ledger(overrides = {}) {
     defects: { open: 0, total: 0, escapes: 0 },
     coverage: { declared_sessions: 0, all_sessions: 0,
                 declared_usd: 0, all_usd: 0 },
+    verbs: ['ship', 'abandon'],
+    ship_check: { allowed: true, open_tasks: [], open_defects: [], warnings: [] },
+    next_step: null,
+    slice_tasks: 0,
     ...overrides,
   }
+}
+
+async function confirmShip(page) {
+  await page.getByRole('button', { name: 'Ship', exact: true }).last().click()
 }
 
 async function stubLedger(page, body = ledger()) {
@@ -47,7 +55,8 @@ test('test_abandon_is_reachable_from_the_ui', async ({ page }) => {
       json: ledger({ stage: { stage: 'abandoned',
                               blurb: 'taken down or dropped — not a walked-back completion',
                               rounds: 2, claimed_at: null,
-                              open_defects: 0, escapes: 0 } }),
+                              open_defects: 0, escapes: 0 },
+                      verbs: ['reopen'] }),
     })
   })
 
@@ -90,6 +99,7 @@ test('an already-abandoned feature offers no second abandon', async ({ page }) =
   await stubLedger(page, ledger({
     stage: { stage: 'abandoned', blurb: 'taken down or dropped',
              rounds: 2, claimed_at: null, open_defects: 0, escapes: 0 },
+    verbs: ['reopen'],
   }))
 
   await page.goto('/features/242')
@@ -106,6 +116,7 @@ test('a refused ship names the refusal and leaves the page standing',
 
     await page.goto('/features/242')
     await page.getByTestId('ship-feature').click()
+    await confirmShip(page)
 
     await expect(page.getByRole('alert')).toContainText('no feature 242')
     // The page that fired the write is still the page: every figure below the
@@ -125,6 +136,7 @@ test('a ship in flight disables the row it was fired from', async ({ page }) => 
 
   await page.goto('/features/242')
   await page.getByTestId('ship-feature').click()
+  await confirmShip(page)
 
   // An append-only log takes a second event from a second click, so the
   // control has to be shut for the duration of the first.
@@ -143,6 +155,7 @@ test('a write that cannot be sent frees the controls and says so',
 
     await page.goto('/features/242')
     await page.getByTestId('ship-feature').click()
+    await confirmShip(page)
 
     await expect(page.getByRole('alert')).toContainText('could not be sent')
     await expect(page.getByTestId('ship-feature')).toBeEnabled()

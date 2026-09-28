@@ -24,6 +24,7 @@ import { useBusyAction } from '../composables/useBusyAction'
 import { useConfirm } from '../composables/useConfirm'
 import { rememberedQuery } from '../composables/usePipelineTabState'
 import { LEDGER_ANCHORS, reveal } from '../utils/featureLinks'
+import { reopenMessage, shipMessage } from '../utils/featureConfirm'
 import Button from '../components/ui/Button.vue'
 import Icon from '../components/ui/Icon.vue'
 import DeclareSessionDialog from '../components/features/DeclareSessionDialog.vue'
@@ -69,6 +70,8 @@ const user = api.getStoredUser()
 // the payload, which would make the payload vary by role.
 const canOpenTrace = computed(() => user?.role === 'admin')
 const canWrite = computed(() => user?.role !== 'viewer')
+// `verbs` is the server's R2 table for this stage; the page only draws it.
+const offers = (verb) => canWrite.value && (ledger.value?.verbs || []).includes(verb)
 
 async function load() {
   loading.value = true
@@ -151,7 +154,17 @@ async function write(action, path) {
   }
 }
 
-function ship() { return write('ship', '/ship') }
+async function ship() {
+  const agreed = await confirm(
+    'Ship', shipMessage(ledger.value?.title, ledger.value?.ship_check))
+  if (agreed) await write('ship', '/ship')
+}
+
+async function reopen() {
+  const agreed = await confirm(
+    'Reopen', reopenMessage(ledger.value?.title, ledger.value?.stage?.stage))
+  if (agreed) await write('reopen', '/reopen')
+}
 
 // Confirmed, because it is the one act on this page that ends a feature's
 // life: `abandoned` is a stage nothing walks back, and the endpoint has been
@@ -167,7 +180,15 @@ async function abandon() {
   await write('abandon', '/abandon')
 }
 
+// Confirmed: withdrawing a declaration also drops the primary flag, which
+// moves this session's money to whichever feature holds it next.
 async function undeclare(row) {
+  const agreed = await confirm(
+    'Unattribute',
+    `Withdraw ${row.short_trace || row.trace_id} from this feature?\n\n`
+    + 'Its cost stops counting here, and a primary declaration is cleared.',
+    true)
+  if (!agreed) return
   const body = await api.del(
     `/features/${featureId.value}`
     + `/attribute/${encodeURIComponent(row.trace_id)}`)
@@ -220,12 +241,17 @@ function onDeclared() {
         :failed="refreshFailed || ledger.sync_error"
         :live="ledger.stage_live"
         :can-refresh="canWrite && !ledger.stage_live"
-        :can-ship="canWrite && ledger.stage.stage !== 'shipped'"
-        :can-abandon="canWrite && ledger.stage.stage !== 'abandoned'"
+        :can-ship="offers('ship')"
+        :can-abandon="offers('abandon')"
+        :can-reopen="offers('reopen')"
+        :can-rename="canWrite && ledger.stage_live"
+        :next-step="ledger.next_step"
         :busy="busyAction"
         @refresh="refreshStage"
         @ship="ship"
         @abandon="abandon"
+        @reopen="reopen"
+        @renamed="ledger = $event"
       />
 
       <!-- Beside the control that failed, never a toast: a refused ship has to
@@ -267,6 +293,7 @@ function onDeclared() {
       <FeatureTasks
         ref="tasksCard"
         :feature-id="ledger.id" :can-write="canWrite"
+        :has-slices="ledger.slice_tasks > 0"
         :project-id="ledger.project_id"
       />
 

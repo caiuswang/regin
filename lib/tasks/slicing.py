@@ -27,7 +27,7 @@ import re
 from typing import Iterable, Optional, Sequence
 
 from lib.activity_log import get_activity_logger
-from lib.tasks.slice_table import SliceRow, parse_slice_table
+from lib.tasks.slice_table import SliceRow, SliceTableError, parse_slice_table
 
 log = get_activity_logger("tasks")
 
@@ -174,29 +174,38 @@ def acceptance_test_names(body: str) -> list[str]:
     return list(seen)
 
 
+def _acceptance_missing(body: str) -> tuple[list[str], list[str]]:
+    """(test names, what is missing) — exactly one of the two is non-empty."""
+    if not (body or "").strip():
+        return [], ["the spec is empty"]
+    if acceptance_section(body) is None:
+        return [], [
+            "no Acceptance section — a spec is sliceable when it says, in a "
+            "section named Acceptance, what would falsify it"]
+    names = acceptance_test_names(body)
+    if names:
+        return names, []
+    return [], [
+        "the Acceptance section names no test — a slice's Tests column "
+        "holds test names (test_…), not descriptions of behaviour"]
+
+
+def _acceptance_refusal(missing: list[str]) -> SlicingRefusal:
+    return SlicingRefusal(
+        "this spec cannot be sliced: " + "; ".join(missing), missing=missing)
+
+
 def check_spec_is_sliceable(body: str) -> list[str]:
     """Refuse a spec that names no falsifiable acceptance item.
 
     Returns the test names when the spec is sliceable, so the caller that
     checked does not have to scan the document twice.
     """
-    missing: list[str] = []
-    if not (body or "").strip():
-        missing.append("the spec is empty")
-    elif acceptance_section(body) is None:
-        missing.append(
-            "no Acceptance section — a spec is sliceable when it says, in a "
-            "section named Acceptance, what would falsify it")
-    else:
-        names = acceptance_test_names(body)
-        if names:
-            return names
-        missing.append(
-            "the Acceptance section names no test — a slice's Tests column "
-            "holds test names (test_…), not descriptions of behaviour")
+    names, missing = _acceptance_missing(body)
+    if names:
+        return names
     log.write("slicing_refused", reason="acceptance", missing=len(missing))
-    raise SlicingRefusal(
-        "this spec cannot be sliced: " + "; ".join(missing), missing=missing)
+    raise _acceptance_refusal(missing)
 
 
 def _claims_schema(row: SliceRow) -> bool:
@@ -213,6 +222,16 @@ def slices_owning_schema(rows: Iterable[SliceRow]) -> list[str]:
     return [row.n for row in rows if _claims_schema(row)]
 
 
+def _schema_refusal(owners: list[str]) -> SlicingRefusal:
+    return SlicingRefusal(
+        "a schema change belongs to one slice, but "
+        + ", ".join(owners)
+        + " all claim one — give the migration to a single slice and let the "
+          "others depend on it",
+        missing=["two slices own one schema change"],
+        rows=owners)
+
+
 def check_schema_ownership(rows: Sequence[SliceRow]) -> Optional[str]:
     """Refuse a table in which two slices own one schema change.
 
@@ -222,13 +241,7 @@ def check_schema_ownership(rows: Sequence[SliceRow]) -> Optional[str]:
     if len(owners) <= 1:
         return owners[0] if owners else None
     log.write("slicing_refused", reason="schema", slices=",".join(owners))
-    raise SlicingRefusal(
-        "a schema change belongs to one slice, but "
-        + ", ".join(owners)
-        + " all claim one — give the migration to a single slice and let the "
-          "others depend on it",
-        missing=["two slices own one schema change"],
-        rows=owners)
+    raise _schema_refusal(owners)
 
 
 def check_slicing(spec_body: str) -> list[SliceRow]:
@@ -242,6 +255,26 @@ def check_slicing(spec_body: str) -> list[SliceRow]:
     rows = parse_slice_table(spec_body)
     check_schema_ownership(rows)
     return rows
+
+
+def preview(spec_body: str) -> tuple[list[SliceRow], Optional[SlicingRefusal]]:
+    """`check_slicing`'s verdict as a value, without the refusal log.
+
+    For readers that ask on every page render — the feature index's
+    `next_step` — where a `slicing_refused` activity row per read would
+    record a page view as if an operator had tried to slice.
+    """
+    _, missing = _acceptance_missing(spec_body)
+    if missing:
+        return [], _acceptance_refusal(missing)
+    try:
+        rows = parse_slice_table(spec_body)
+    except SliceTableError as exc:
+        return [], SlicingRefusal(str(exc), missing=[str(exc)])
+    owners = slices_owning_schema(rows)
+    if len(owners) > 1:
+        return rows, _schema_refusal(owners)
+    return rows, None
 
 
 _HEADERS = ("#", "Slice", "Delivers", "Spec refs", "Tests", "Schema",

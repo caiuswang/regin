@@ -209,13 +209,66 @@ def project_name(project_id: Optional[int]) -> Optional[str]:
     return repo.name if repo else None
 
 
-# ── the operator's two declarations ───────────────────────────
+# ── the operator's three declarations ─────────────────────────
+
+class VerbRefused(FeatureError):
+    """A lifecycle verb the feature's stage does not offer. Nothing appended."""
+
+
+#: Which operator verbs each stage offers. The one table the API, the CLI and
+#: the ledger's buttons all read, so no surface decides a stage rule itself.
+VERBS: dict[str, tuple[str, ...]] = {
+    events_module.STAGE_SPEC: ("ship", "abandon"),
+    events_module.STAGE_BUILDING: ("ship", "abandon"),
+    events_module.STAGE_SHIPPED: ("reopen", "abandon"),
+    events_module.STAGE_ESCAPED: ("reopen", "abandon"),
+    events_module.STAGE_ABANDONED: ("reopen",),
+}
+
+#: Ship on an escaped feature used to append a second `shipped` with no
+#: `restarted` between them, so the walk-back cost no round and rounds-to-done
+#: under-counted. The remedy is the verb that does append one.
+_SHIP_REFUSAL = {
+    events_module.STAGE_SHIPPED: "#{id} is already shipped",
+    events_module.STAGE_ESCAPED: "#{id} is escaped — reopen first",
+    events_module.STAGE_ABANDONED: "#{id} is abandoned — reopen first",
+}
+
+#: Reopening from a claim is a walk-back and costs the round; reopening an
+#: abandoned feature walks nothing back, so it returns to spec for free.
+_REOPEN_KIND = {
+    events_module.STAGE_SHIPPED: events_module.RESTARTED,
+    events_module.STAGE_ESCAPED: events_module.RESTARTED,
+    events_module.STAGE_ABANDONED: events_module.SPECCED,
+}
+
+
+def verbs(stage_name: str) -> tuple[str, ...]:
+    return VERBS.get(stage_name, ())
+
 
 def ship(feature_id: int, *, declared_by: str = OPERATOR,
          trace_id: Optional[str] = None):
     """The done-claim. This is the boundary later defects are blamed against."""
     require(feature_id)
+    refusal = _SHIP_REFUSAL.get(events_module.stage(feature_id))
+    if refusal:
+        raise VerbRefused(refusal.format(id=feature_id))
     return events_module.append(feature_id, events_module.SHIPPED,
+                                declared_by=declared_by, trace_id=trace_id)
+
+
+def reopen(feature_id: int, *, declared_by: str = OPERATOR,
+           trace_id: Optional[str] = None):
+    """Walk a shipped/escaped feature back (+1 round), or return an abandoned
+    one to spec (no round)."""
+    require(feature_id)
+    current = events_module.stage(feature_id)
+    kind = _REOPEN_KIND.get(current)
+    if kind is None:
+        raise VerbRefused(
+            f"#{feature_id} is {current} — there is nothing to reopen")
+    return events_module.append(feature_id, kind,
                                 declared_by=declared_by, trace_id=trace_id)
 
 
@@ -223,6 +276,8 @@ def abandon(feature_id: int, *, declared_by: str = OPERATOR,
             trace_id: Optional[str] = None):
     """Take the feature down. Costs no round — nothing was walked back."""
     require(feature_id)
+    if events_module.stage(feature_id) == events_module.STAGE_ABANDONED:
+        raise VerbRefused(f"#{feature_id} is already abandoned")
     return events_module.append(feature_id, events_module.ABANDONED,
                                 declared_by=declared_by, trace_id=trace_id)
 
