@@ -1107,8 +1107,8 @@ def _dedup_cross_source(spans: list[dict]) -> list[dict]:
         return spans
     spans = _mark_queued_sdk_placeholders(spans)
     merged, buckets = _bucket_by_cross_source_key(spans)
-    for rows in buckets.values():
-        merged.extend(_reconcile_bucket(rows))
+    for key, rows in buckets.items():
+        merged.extend(_reconcile_bucket(key, rows))
     return sorted(merged, key=lambda s: (s.get('start_time') or '',
                                          s.get('id') or 0))
 
@@ -1216,12 +1216,33 @@ def _settled(rows: list[dict]) -> list[dict]:
     return resolved or rows
 
 
-def _reconcile_bucket(rows: list[dict]) -> list[dict]:
+def _collapse_one_message(hooks: list[dict], sdks: list[dict]) -> list[dict]:
+    """One API message's rows from both writers, as ONE writer's rows.
+
+    The writers cut a message at different grain: the SDK stream stores a row
+    per content BLOCK, the transcript writer one row per MESSAGE
+    (`thinking_blocks: 2`). Positional pairing matched the SDK's first block —
+    often an empty one — to the whole-message row and left the second block
+    rendered as a duplicate card. The bucket key is the message id itself, so
+    every row here is the same emission: keep the preferred writer's rows and
+    let each dropped row fill what the survivor left vague.
+    """
+    keep, _ = _prefer_cross_source(hooks[0], sdks[0])
+    kept, dropped = (hooks, sdks) if keep is hooks[0] else (sdks, hooks)
+    head = kept[0]
+    for row in dropped:
+        head = _fill_vague_attrs(head, row)
+    return [head, *kept[1:]]
+
+
+def _reconcile_bucket(key: tuple, rows: list[dict]) -> list[dict]:
     """The surviving rows for one cross-source key."""
     hooks = _settled([r for r in rows if r.get(_ORIGIN_KEY) == 'hook'])
     sdks = _settled([r for r in rows if r.get(_ORIGIN_KEY) != 'hook'])
     if not hooks or not sdks:
         return rows
+    if key[0] == 'cls' and key[1] in _CROSS_SOURCE_MESSAGE_NAMES:
+        return _collapse_one_message(hooks, sdks)
     # Positional pairing for BOTH kinds. A `tool_use_id` identifies the call,
     # not the row: one call legitimately leaves several rows per writer (real
     # traces carry up to 31 under one id), and collapsing only the first pair

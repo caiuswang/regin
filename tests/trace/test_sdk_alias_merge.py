@@ -111,6 +111,57 @@ def test_thinking_dedups_on_the_shared_message_id():
     assert [s['span_id'] for s in merged] == ['hook-th']
 
 
+def test_one_message_split_per_block_by_the_sdk_renders_once():
+    """The SDK stream stores one row per thinking BLOCK; the transcript writer
+    one row per MESSAGE (`thinking_blocks: 2`). Pairing them 1:1 matched the
+    empty first block to the transcript row and left the second block standing
+    as a duplicate card beside it (144 messages in one store)."""
+    mid = {'message_id': 'msg_split'}
+    rows = [
+        _row('think-511cf260', 'assistant.thinking',
+             {**mid, 'thinking_blocks': 2, 'thinking_text': 'Only #159…'},
+             origin='hook', start='2026-09-28T08:00:39.490000', id=1),
+        _row('086d1171', 'assistant.thinking', {**mid, 'thinking_blocks': 1},
+             origin='sdk', start='2026-09-28T08:00:39.495134', id=2),
+        _row('b6adc8ab', 'assistant.thinking',
+             {**mid, 'thinking_blocks': 1, 'thinking_text': 'Only #159…'},
+             origin='sdk', start='2026-09-28T08:00:39.523589', id=3),
+    ]
+    merged = merge_spans(rows)
+    assert [s['span_id'] for s in merged] == ['think-511cf260']
+    assert merged[0]['attributes']['thinking_text'] == 'Only #159…'
+
+
+def test_a_textless_message_row_takes_the_text_from_any_sdk_block():
+    mid = {'message_id': 'msg_split'}
+    rows = [
+        _row('think-1', 'assistant.thinking', {**mid, 'thinking_blocks': 2},
+             origin='hook', start='2026-09-28T08:00:39.49', id=1),
+        _row('sdk-empty', 'assistant.thinking', dict(mid),
+             origin='sdk', start='2026-09-28T08:00:39.50', id=2),
+        _row('sdk-text', 'assistant.thinking',
+             {**mid, 'thinking_text': 'the reasoning'},
+             origin='sdk', start='2026-09-28T08:00:39.52', id=3),
+    ]
+    merged = merge_spans(rows)
+    assert [s['span_id'] for s in merged] == ['think-1']
+    assert merged[0]['attributes']['thinking_text'] == 'the reasoning'
+
+
+def test_sdk_blocks_with_no_hook_twin_yet_all_stay_live():
+    mid = {'message_id': 'msg_live'}
+    rows = [
+        _row('hook-other', 'assistant_response', {'message_id': 'msg_0'},
+             origin='hook', start='2026-09-28T08:00:00', id=1),
+        _row('sdk-b1', 'assistant.thinking', dict(mid),
+             origin='sdk', start='2026-09-28T08:00:01', id=2),
+        _row('sdk-b2', 'assistant.thinking', {**mid, 'thinking_text': 't'},
+             origin='sdk', start='2026-09-28T08:00:02', id=3),
+    ]
+    assert [s['span_id'] for s in merge_spans(rows)] == [
+        'hook-other', 'sdk-b1', 'sdk-b2']
+
+
 def test_two_genuinely_separate_thinking_blocks_both_survive():
     """Same shape, even the same instant — two message ids are two thoughts."""
     shape = {'thinking_signature_bytes': 512, 'thinking_blocks': 1,
