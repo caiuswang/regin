@@ -100,6 +100,13 @@ function act(verb) {
   return verb === 'delete' ? deleteTask() : actOn(verb, task.value)
 }
 
+// Archive/Restore sits in the header as well as in ⋯, but only where the
+// server's menu for this state offers it — a running task cannot be archived.
+const shelfVerb = computed(() => {
+  const menu = task.value?.menu || []
+  return ['restore', 'archive'].find(v => menu.includes(v)) || ''
+})
+
 async function load() {
   loading.value = true
   error.value = ''
@@ -170,6 +177,16 @@ onMounted(() => { ensureProjects(); load() })
         <Button variant="ghost" data-testid="task-detail-runs" @click="sheet = 'runs'">
           <Icon name="list" :size="13" />
           <span>Runs</span>
+        </Button>
+        <Button
+          v-if="canWrite && shelfVerb"
+          variant="ghost"
+          :disabled="busyId === task.id"
+          :data-testid="`task-detail-${shelfVerb}`"
+          @click="act(shelfVerb)"
+        >
+          <Icon :name="shelfVerb === 'archive' ? 'archive' : 'refresh-cw'" :size="13" />
+          <span>{{ shelfVerb === 'archive' ? 'Archive' : 'Restore' }}</span>
         </Button>
         <TaskVerbMenu v-if="canWrite" :task="task" :busy="busyId === task.id" @verb="act" />
       </div>
@@ -286,7 +303,7 @@ onMounted(() => { ensureProjects(); load() })
 
       <TaskEditSheet
         v-if="sheet === 'edit'"
-        :task="task"
+        :task="{ ...task, feature_title: featureTitle }"
         @close="sheet = ''"
         @saved="() => { sheet = ''; load() }"
       />

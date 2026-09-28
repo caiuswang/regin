@@ -5,13 +5,18 @@
 // hidden. Each group pages on its own; Ideas opens on three.
 import { computed, ref, watch } from 'vue'
 import api from '../../api'
+import BulkRejected from './BulkRejected.vue'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
 import NextStepRow from './NextStepRow.vue'
 import RunAllReport from './RunAllReport.vue'
+import TaskBulkBar from './TaskBulkBar.vue'
 import TaskSheets from './TaskSheets.vue'
 import { useConfirm } from '../../composables/useConfirm.js'
 import { useFlash } from '../../composables/useFlash.js'
+import { useProjects } from '../../composables/useProjects.js'
+import { useTaskMutations } from '../../composables/useTasks.js'
+import { useTaskSelection } from '../../composables/useTaskSelection.js'
 import { useNextStep } from '../../composables/useTaskViews.js'
 import { useTaskVerbs } from '../../composables/useTaskVerbs.js'
 import { invalidatePipelineCounts } from '../../composables/usePipelineCounts.js'
@@ -30,6 +35,10 @@ const sheet = ref(null)
 const runningAll = ref(false)
 const runAllReport = ref(null)
 const canWrite = api.getStoredUser()?.role !== 'viewer'
+const selection = useTaskSelection()
+const { bulk, bulkRemove } = useTaskMutations()
+const { items: projects, ensure: ensureProjects } = useProjects()
+const bulkRejected = ref([])
 
 const groups = computed(() => (feed.body.value?.groups || []).filter(g => g.n > 0))
 const empty = computed(() => feed.body.value && !groups.value.length)
@@ -82,6 +91,39 @@ async function runAll(group) {
   }
 }
 
+function titleOf(id) {
+  for (const group of feed.body.value?.groups || []) {
+    const row = group.rows.find(r => r.id === id)
+    if (row) return row.title
+  }
+  return ''
+}
+
+function nameRejected(result) {
+  bulkRejected.value = (result.rejected || []).map(r => ({ ...r, title: titleOf(r.id) }))
+}
+
+async function applyBulk(fields) {
+  const result = await bulk([...selection.ids.value], fields)
+  if (!result) return
+  nameRejected(result)
+  selection.clear()
+  await afterWrite()
+}
+
+async function deleteSelected() {
+  const ids = [...selection.ids.value]
+  const ok = await confirm('Delete tasks',
+    `Delete ${ids.map(id => `#${id} “${titleOf(id)}”`).join(', ')} and their run `
+    + 'history, images and links? This cannot be undone.', true)
+  if (!ok) return
+  const result = await bulkRemove(ids)
+  if (!result) return
+  nameRejected(result)
+  selection.clear()
+  await afterWrite()
+}
+
 function toggle(key) {
   collapsed.value = { ...collapsed.value, [key]: !collapsed.value[key] }
 }
@@ -91,13 +133,31 @@ async function sheetDone() {
   await afterWrite()
 }
 
-watch(() => JSON.stringify(props.params), reload, { immediate: true })
+watch(() => JSON.stringify(props.params), () => {
+  selection.clear()
+  reload()
+}, { immediate: true })
+if (canWrite) ensureProjects()
 
 defineExpose({ reload })
 </script>
 
 <template>
   <div class="nsl" data-testid="next-step-list">
+    <TaskBulkBar
+      v-if="selection.count.value"
+      class="nsl-bar"
+      :count="selection.count.value"
+      :projects="projects"
+      :restorable="false"
+      @clear="selection.clear()"
+      @archive="applyBulk({ status: 'archived' })"
+      @delete="deleteSelected"
+      @priority="v => applyBulk({ priority: v })"
+      @project="v => applyBulk({ project_id: v === 'none' ? null : Number(v) })"
+      @feature="id => applyBulk({ feature_id: id })"
+    />
+    <BulkRejected v-if="bulkRejected.length" :rows="bulkRejected" @dismiss="bulkRejected = []" />
     <p v-if="feed.error.value" class="nsl-note" role="alert" data-testid="next-step-error">
       Could not read the task list — {{ feed.error.value }}
       <Button variant="link" size="sm" @click="reload">Retry</Button>
@@ -151,7 +211,9 @@ defineExpose({ reload })
             :busy="busyId === task.id || runningAll"
             :refusal="refusals[task.id] || null"
             :can-write="canWrite"
+            :selected="selection.ids.value.has(task.id)"
             @verb="act"
+            @select="selection.toggle"
           />
         </ul>
         <Button
@@ -170,6 +232,7 @@ defineExpose({ reload })
 </template>
 
 <style scoped>
+.nsl-bar { position: sticky; top: 0; z-index: 2; }
 .nsl-note {
     padding: 1.25rem 0;
     font-size: 0.8125rem;

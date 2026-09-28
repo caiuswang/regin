@@ -21,6 +21,9 @@ const props = defineProps({
   label: { type: String, default: 'Blame a feature' },
   testid: { type: String, default: 'feature-picker' },
   size: { type: Number, default: 20 },
+  // The feature the model already names, so an edit form opens on its chip
+  // rather than on an empty search that reads as "no feature".
+  current: { type: Object, default: null },
 })
 const model = defineModel({ type: String, default: '' })
 const emit = defineEmits(['picked'])
@@ -32,7 +35,7 @@ const total = ref(0)
 const error = ref('')
 const loading = ref(false)
 const active = ref(0)
-const chosen = ref(null)
+const chosen = ref(props.current && model.value ? props.current : null)
 const field = ref(null)
 let issued = 0
 

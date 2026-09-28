@@ -21,6 +21,8 @@ function draftFrom(task) {
     // Same round-trip for the feature: '' is "under no feature", and clearing
     // it is the detach — an act, not an omission.
     feature_id: task.feature_id == null ? '' : String(task.feature_id),
+    kind: task.kind || 'task',
+    assignee: task.assignee == null ? '' : String(task.assignee),
   }
 }
 
@@ -66,6 +68,8 @@ export function useTaskEdit(task) {
       feature_id: draft.value.feature_id
         ? Number(draft.value.feature_id)
         : null,
+      kind: draft.value.kind,
+      assignee: draft.value.assignee ? Number(draft.value.assignee) : null,
     })
     saving.value = false
     if (result.ok === false) {

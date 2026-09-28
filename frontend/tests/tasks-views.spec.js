@@ -506,3 +506,194 @@ test('mark done confirm names the open defects a fix task closes', async ({ page
   await expect(head.getByTestId('task-action-arm')).toHaveCount(0)
   await expect(page.getByText('done', { exact: true })).toBeVisible()
 })
+
+// ── Feature #119 S5: task editing & bulk (R4c) ──────────────────────────────
+
+// Ideas plus one running task, and a live feature to file them under.
+function seedEditing(tag) {
+  const script = `
+import json, sys
+sys.path.insert(0, ".")
+from lib.orm import SessionLocal
+from lib.orm.models.tasks import AgentTask
+from lib.features import store as features
+tag = sys.argv[1]
+feature = features.create(f"{tag} target feature")
+ids = {"feature": feature.id, "ideas": []}
+with SessionLocal() as s:
+    for status in ("idea", "idea", "idea", "running"):
+        row = AgentTask(title=f"{tag} {status} {len(ids['ideas'])}", status=status,
+                        source="test", tags_json=json.dumps([tag]))
+        s.add(row); s.flush()
+        if status == "running":
+            ids["running"] = row.id
+        else:
+            ids["ideas"].append(row.id)
+    s.commit()
+print(json.dumps(ids))
+`
+  const out = execFileSync(PY, ['-c', script, tag], { cwd: ROOT, encoding: 'utf8' })
+  return JSON.parse(out.trim().split('\n').pop())
+}
+
+const readTask = (page, id) => page.evaluate(async (tid) => {
+  const token = localStorage.getItem('regin_auth_token')
+  const r = await fetch(`/api/tasks/${tid}`, { headers: { Authorization: `Bearer ${token}` } })
+  return (await r.json()).task
+}, id)
+
+async function pickOption(page, trigger, name) {
+  await trigger.click()
+  await page.getByRole('option', { name, exact: true }).click()
+}
+
+test('test_task_edit_sheet_sets_kind_assignee_feature', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const tag = mark()
+  const ids = seedEditing(tag)
+  const id = ids.ideas[0]
+
+  await page.goto(`/tasks/${id}`)
+  const head = page.getByTestId('task-detail-actions')
+  await openMenu(page, head)
+  await page.getByTestId('task-verb-edit').click()
+  const sheet = page.getByTestId('task-edit-form')
+  await expect(sheet).toBeVisible()
+
+  await pickOption(page, sheet.getByTestId('task-edit-kind'), 'build')
+  await sheet.getByTestId('task-edit-assignee').click()
+  const options = page.getByRole('option')
+  await expect(options.nth(1)).toBeVisible()
+  await options.filter({ hasNotText: 'Unassigned' }).first().click()
+
+  // The picker searches the server's feature index, not a preloaded page.
+  await sheet.getByTestId('task-edit-feature').fill(tag)
+  await sheet.getByTestId(`task-edit-feature-option-${ids.feature}`).click()
+  await expect(sheet.getByTestId('task-edit-feature-chosen')).toContainText(`#${ids.feature}`)
+  await page.getByTestId('task-edit-save').click()
+  await expect(sheet).toHaveCount(0)
+
+  await expect(page.getByTestId('task-detail-feature')).toHaveText(`#${ids.feature} ${tag} target feature`)
+  await expect(page.getByTestId('task-kind-chip')).toHaveText('build')
+  const saved = await readTask(page, id)
+  expect(saved.kind).toBe('build')
+  expect(typeof saved.assignee).toBe('number')
+  expect(saved.feature_id).toBe(ids.feature)
+
+  // Re-opening shows the feature it is filed under; clearing it detaches.
+  await openMenu(page, head)
+  await page.getByTestId('task-verb-edit').click()
+  await expect(sheet.getByTestId('task-edit-feature-chosen'))
+    .toContainText(`#${ids.feature} ${tag} target feature`)
+  await sheet.getByTestId('task-edit-feature-clear').click()
+  await pickOption(page, sheet.getByTestId('task-edit-assignee'), 'Unassigned')
+  await page.getByTestId('task-edit-save').click()
+  await expect(sheet).toHaveCount(0)
+  await expect(page.getByTestId('task-detail-feature')).toHaveCount(0)
+  const cleared = await readTask(page, id)
+  expect(cleared.feature_id).toBeNull()
+  expect(cleared.assignee).toBeNull()
+  expect(cleared.kind).toBe('build')
+})
+
+test('test_task_detail_archive_and_viewer_gating', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const tag = mark()
+  const ids = seedEditing(tag)
+  const id = ids.ideas[0]
+
+  await page.goto(`/tasks/${id}`)
+  const head = page.getByTestId('task-detail-actions')
+  await head.getByTestId('task-detail-archive').click()
+  await expect(page.getByText('archived', { exact: true })).toBeVisible()
+  await expect(head.getByTestId('task-detail-archive')).toHaveCount(0)
+  await head.getByTestId('task-detail-restore').click()
+  await expect(page.getByText('idea', { exact: true })).toBeVisible()
+  await expect(head.getByTestId('task-detail-archive')).toBeVisible()
+
+  // The header offers Archive only where the state's menu does.
+  await page.goto(`/tasks/${ids.running}`)
+  await expect(head.getByTestId('task-menu')).toBeVisible()
+  await expect(head.getByTestId('task-detail-archive')).toHaveCount(0)
+
+  // A viewer reads the page and holds no write control on it.
+  await page.addInitScript(() => {
+    const raw = localStorage.getItem('regin_auth_user')
+    if (!raw) return
+    const user = JSON.parse(raw)
+    user.role = 'viewer'
+    localStorage.setItem('regin_auth_user', JSON.stringify(user))
+  })
+  await page.goto(`/tasks/${id}`)
+  await expect(page.getByTestId('task-detail-runs')).toBeVisible()
+  for (const testid of ['task-action-arm', 'task-menu', 'task-detail-archive',
+    'task-detail-restore', 'task-body-edit', 'task-comment-draft',
+    'task-place-feature']) {
+    await expect(page.getByTestId(testid)).toHaveCount(0)
+  }
+
+  // The list draws no selection for a viewer either.
+  await page.goto(`/tasks?tag=${tag}`)
+  await expect(page.getByTestId(`next-step-row-${id}`)).toBeVisible()
+  await expect(page.getByTestId('task-select')).toHaveCount(0)
+})
+
+test('test_tasks_bulk_bar_on_grouped_list', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const tag = mark()
+  const ids = seedEditing(tag)
+  const [a, b, c] = ids.ideas
+  const row = id => page.getByTestId(`next-step-row-${id}`)
+
+  await page.goto(`/tasks?tag=${tag}`)
+  await expect(row(a)).toBeVisible()
+  await expect(page.getByTestId('task-bulk')).toHaveCount(0)
+  await row(a).getByTestId('task-select').click()
+  await row(b).getByTestId('task-select').click()
+  const bar = page.getByTestId('task-bulk')
+  await expect(bar).toContainText('2 selected')
+  // The open backlog has nothing archived to restore.
+  await expect(bar.getByTestId('task-bulk-restore')).toHaveCount(0)
+
+  // Set feature: one request, both rows filed under it.
+  await bar.getByTestId('task-bulk-feature').fill(tag)
+  await bar.getByTestId(`task-bulk-feature-option-${ids.feature}`).click()
+  await expect(page.getByTestId('task-bulk')).toHaveCount(0)
+  await expect.poll(async () => (await readTask(page, a)).feature_id).toBe(ids.feature)
+  expect((await readTask(page, b)).feature_id).toBe(ids.feature)
+  expect((await readTask(page, c)).feature_id).toBeNull()
+
+  // Priority through the bar.
+  await row(a).getByTestId('task-select').click()
+  await pickOption(page, page.getByTestId('task-bulk-priority'), 'High')
+  await expect.poll(async () => (await readTask(page, a)).priority).toBe('high')
+
+  // Archive: a row the server refuses is named with its reason, not counted.
+  // No agent can be made live here, so the refusal is the server's shape,
+  // injected for the running row while the rest go through for real.
+  const refusal = 'the task has a live run — stop it before archiving'
+  await page.route('**/api/tasks/bulk', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue()
+    const body = route.request().postDataJSON()
+    const rest = body.ids.filter(i => i !== ids.running)
+    const res = await route.fetch({ postData: JSON.stringify({ ...body, ids: rest }) })
+    const json = await res.json()
+    return route.fulfill({ json: { ...json, rejected: [...json.rejected, { id: ids.running, reason: refusal }] } })
+  })
+  await row(c).getByTestId('task-select').click()
+  await row(ids.running).getByTestId('task-select').click()
+  await page.getByTestId('task-bulk-archive').click()
+  const rejected = page.getByTestId('task-bulk-rejected')
+  await expect(rejected.getByTestId(`task-bulk-rejected-${ids.running}`))
+    .toHaveText(`#${ids.running} ${tag} running 3 — ${refusal}`)
+  await expect(rejected.getByTestId(`task-bulk-rejected-${c}`)).toHaveCount(0)
+  await expect(row(c)).toHaveCount(0)
+  await expect(row(ids.running)).toBeVisible()
+
+  // Delete asks first, naming the rows.
+  await row(b).getByTestId('task-select').click()
+  await page.getByTestId('task-bulk-delete').click()
+  await expect(page.getByText(`Delete #${b} “${tag} idea 1”`)).toBeVisible()
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(row(b)).toBeVisible()
+})

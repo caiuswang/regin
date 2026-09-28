@@ -5,7 +5,9 @@
 // normal outcome — a selection of forty ideas and two running tasks archives
 // the forty. The caller reports what the server changed, never what was
 // selected.
+import { ref } from 'vue'
 import Button from '../ui/Button.vue'
+import FeaturePicker from '../pipeline/FeaturePicker.vue'
 import Icon from '../ui/Icon.vue'
 import Select from '../ui/Select.vue'
 import { PRIORITIES } from '../../utils/taskMeta.js'
@@ -13,9 +15,19 @@ import { PRIORITIES } from '../../utils/taskMeta.js'
 defineProps({
   count: { type: Number, default: 0 },
   projects: { type: Array, default: () => [] },
+  // The open-backlog list holds no archived row, so it has nothing to restore.
+  restorable: { type: Boolean, default: true },
 })
 const emit = defineEmits(['clear', 'archive', 'restore', 'priority', 'project',
-                          'delete'])
+                          'feature', 'delete'])
+
+// The picker is a one-shot: a pick applies, then the field empties for the
+// next selection rather than claiming the rows still share that feature.
+const feature = ref('')
+function pickFeature(row) {
+  feature.value = ''
+  emit('feature', row.id)
+}
 
 const priorityOptions = [
   { value: '', label: 'Set priority…' },
@@ -49,6 +61,14 @@ function apply(event, value) {
       data-testid="task-bulk-project"
       @update:model-value="v => apply('project', v)"
     />
+    <FeaturePicker
+      v-model="feature"
+      class="tb-feature"
+      label="File the selection under a feature"
+      placeholder="Set feature…"
+      testid="task-bulk-feature"
+      @picked="pickFeature"
+    />
 
     <Button
       variant="ghost"
@@ -60,6 +80,7 @@ function apply(event, value) {
       <span>Archive</span>
     </Button>
     <Button
+      v-if="restorable"
       variant="ghost"
       size="sm"
       data-testid="task-bulk-restore"
@@ -104,6 +125,7 @@ function apply(event, value) {
     border-radius: var(--radius-lg);
     background: var(--color-info-soft);
 }
+.tb-feature { flex: 0 1 14rem; }
 .tb-danger { color: var(--color-danger); }
 .tb-count {
     font-size: 0.8125rem;

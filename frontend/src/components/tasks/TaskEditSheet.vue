@@ -10,6 +10,7 @@
 import { onMounted, ref } from 'vue'
 import Button from '../ui/Button.vue'
 import Dialog from '../ui/Dialog.vue'
+import FeaturePicker from '../pipeline/FeaturePicker.vue'
 import Input from '../ui/Input.vue'
 import Select from '../ui/Select.vue'
 import TaskImageStrip from './TaskImageStrip.vue'
@@ -17,6 +18,7 @@ import Textarea from '../ui/Textarea.vue'
 import { PRIORITIES } from '../../utils/taskMeta.js'
 import { imageFilesFrom } from '../../utils/imageFiles'
 import { useProjects } from '../../composables/useProjects.js'
+import { useUsers } from '../../composables/useUsers.js'
 import { useAttachedImages } from '../../composables/useAttachedImages.js'
 import { caretTarget, withCaretInsert } from '../../utils/caret'
 import { imageRefBlock } from '../../utils/taskBodyImages'
@@ -29,6 +31,15 @@ const emit = defineEmits(['close', 'saved'])
 
 const { draft, saving, editError, save } = useTaskEdit(props.task)
 const { items: projects, ensure: ensureProjects } = useProjects()
+const { items: users, ensure: ensureUsers } = useUsers()
+
+// A fix step is owned by its defect and only `fix_items.create_for` makes one,
+// so the sheet neither turns a task into a fix nor a fix into anything else.
+const isFix = props.task.kind === 'fix'
+const KIND_OPTIONS = (isFix ? ['fix'] : ['task', 'spec', 'build'])
+  .map(k => ({ value: k, label: k }))
+const currentFeature = props.task.feature_id == null ? null
+  : { id: props.task.feature_id, title: props.task.feature_title || '' }
 const {
   items: imageItems, busy: imageBusy, error: imageError,
   bind: bindImages, add: addImages, remove: removeImage,
@@ -37,6 +48,7 @@ const {
 onMounted(() => {
   bindImages(props.task)
   ensureProjects()
+  ensureUsers()
 })
 
 // Paste and drop are bound on the form rather than on the strip: an operator
@@ -140,6 +152,40 @@ async function submit() {
             data-testid="task-edit-project"
           />
         </div>
+      </div>
+      <div class="task-edit-row">
+        <div class="task-edit-col">
+          <span class="field-label">Kind</span>
+          <Select
+            v-model="draft.kind"
+            block
+            :options="KIND_OPTIONS"
+            :disabled="isFix"
+            aria-label="Task kind"
+            data-testid="task-edit-kind"
+          />
+        </div>
+        <div class="task-edit-col">
+          <span class="field-label">Assignee</span>
+          <Select
+            v-model="draft.assignee"
+            block
+            :options="[{ value: '', label: 'Unassigned' },
+                       ...users.map(u => ({ value: String(u.id), label: u.name }))]"
+            aria-label="Task assignee"
+            data-testid="task-edit-assignee"
+          />
+        </div>
+      </div>
+      <div>
+        <span class="field-label">Feature</span>
+        <FeaturePicker
+          v-model="draft.feature_id"
+          :current="currentFeature"
+          label="The feature this task is a step of"
+          placeholder="No feature — search to file it under one"
+          testid="task-edit-feature"
+        />
       </div>
       <div>
         <span class="field-label">Images</span>
