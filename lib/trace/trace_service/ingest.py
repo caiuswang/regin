@@ -11,6 +11,7 @@ can monkey-patch `lib.orm.engine.get_connection`.
 from __future__ import annotations
 
 import json
+import re
 
 from lib.activity_log import get_activity_logger as _get_activity_logger
 from lib.trace.pending_spans import is_pending_span_id
@@ -843,12 +844,37 @@ def _update_time_bounds(bucket: dict, start, end) -> None:
         bucket['last_seen'] = end
 
 
+_SLASH_INVOCATION_RE = re.compile(r'^/[a-zA-Z][\w-]*(\s.*)?$')
+
+
+def _skip_slash_invocation(text: object) -> object:
+    """`text` with a leading bare `/skill args` line dropped, when content follows.
+
+    A task armed with a skill puts the invocation on its own first line
+    (`lib/tasks/runs.py::_invocation`) ahead of the actual idea; taking that
+    line as the title collapses every such session's title to the skill name
+    (e.g. every `/goal-verified-treenav` run reads the same). Dropped only
+    when a non-blank line follows, so a bare command with nothing after it
+    (never spawned with a body) still gets a title.
+    """
+    if not isinstance(text, str):
+        return text
+    lines = text.splitlines()
+    idx = next((i for i, ln in enumerate(lines) if ln.strip()), None)
+    if idx is None or not _SLASH_INVOCATION_RE.match(lines[idx].strip()):
+        return text
+    rest = '\n'.join(lines[idx + 1:])
+    return rest if any(ln.strip() for ln in rest.splitlines()) else text
+
+
 def _handle_prompt_title(bucket: dict, attrs: dict, start) -> None:
     """Earliest prompt by start_time becomes the 'first_prompt' title.
 
     A leading `regin-tags:` auto-tag marker line is stripped first so the
-    title reflects the real instruction, not the metadata line."""
-    trimmed = _trim_title(strip_prompt_tag_marker(attrs.get('text')))
+    title reflects the real instruction, not the metadata line; a leading
+    bare skill invocation is skipped next for the same reason."""
+    trimmed = _trim_title(
+        _skip_slash_invocation(strip_prompt_tag_marker(attrs.get('text'))))
     if not trimmed:
         return
     if bucket['_title_start'] is None or (start and start < bucket['_title_start']):

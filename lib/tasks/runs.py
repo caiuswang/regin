@@ -751,6 +751,24 @@ def _next_attempt(session, task_id: int) -> int:
     return last + 1
 
 
+def _auto_tag_feature(trace_id: str, feature_id: Optional[int]) -> None:
+    """Stamp a task-launched session with its `feature-<id>` tag.
+
+    Written at launch rather than waiting on ingest: `session_tags` carries
+    no FK to `sessions`, so the row lands regardless of ingestion order, and
+    the manual rename-and-tag pass this used to require becomes unnecessary.
+    """
+    if feature_id is None:
+        return
+    from lib.orm.models.trace import SessionTag  # noqa: PLC0415
+
+    tag = f"feature-{feature_id}"
+    with SessionLocal() as session:
+        if session.get(SessionTag, (trace_id, tag)) is None:
+            session.add(SessionTag(trace_id=trace_id, tag=tag, source="auto"))
+            session.commit()
+
+
 def _attach_trace(run_id: int, trace_id: str) -> dict:
     with SessionLocal() as session:
         row = session.get(AgentTaskRun, run_id)
@@ -837,6 +855,7 @@ def start_run(task_id: int) -> Optional[dict]:
         from lib.features import events as feature_events  # noqa: PLC0415
         feature_events.on_run_start(task["feature_id"], row["id"],
                                     trace_id=handle.trace_id)
+    _auto_tag_feature(handle.trace_id, task.get("feature_id"))
     _resolve_stuck(task_id)
     # Registered last: a run that ends before this point fires the callback the
     # moment it is added, and it must not race the writes above.
