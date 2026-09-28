@@ -288,7 +288,8 @@ defineExpose({ reload: graph.load })
 }
 .tlg-node:hover { text-decoration: none; border-color: var(--color-border-strong); }
 .tlg-node:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 2px; }
-.tlg-done { opacity: 0.6; }
+/* The contents fade, never the card: a translucent surface shows every edge behind it. */
+.tlg-done > * { opacity: 0.6; }
 .tlg-running { border-color: var(--color-agent); box-shadow: 0 0 0 1px var(--color-agent); }
 .tlg-blocked { border-color: var(--color-warning); }
 .tlg-node.is-found { box-shadow: 0 0 0 3px var(--color-ring); }

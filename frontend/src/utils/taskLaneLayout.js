@@ -69,13 +69,24 @@ function bands(lanes, nodes, row) {
   })
 }
 
+// An edge that skips a column must not cross the nodes standing in it: it
+// turns down in the gutter after its source, runs across in the empty band
+// above its target's row (the row gap, or the lane padding for row 0), and
+// turns back in the gutter before its target. Only gutters and row gaps are
+// guaranteed free of nodes, because every lane shares one column/row grid.
 function edgePath(from, to) {
   const x1 = from.x + NODE_W
   const y1 = from.y + NODE_H / 2
   const x2 = to.x
   const y2 = to.y + NODE_H / 2
-  const mid = x1 + Math.max(COL_GAP / 2, (x2 - x1) / 2)
-  return `M${x1},${y1} H${mid} V${y2} H${x2}`
+  if (x2 - x1 <= COL_GAP) {
+    const mid = x1 + COL_GAP / 2
+    return `M${x1},${y1} H${mid} V${y2} H${x2}`
+  }
+  const out = x1 + COL_GAP / 2
+  const inn = x2 - COL_GAP / 2
+  const channel = to.y - (to.row > 0 ? ROW_GAP : LANE_PAD) / 2
+  return `M${x1},${y1} H${out} V${channel} H${inn} V${y2} H${x2}`
 }
 
 /**
@@ -91,6 +102,7 @@ export function layoutLanes(lanes = [], nodes = [], edges = []) {
   const placed = new Map(nodes.map(n => [n.id, {
     ...n,
     column: depth.get(n.id),
+    row: row.get(n.id),
     x: LANE_W + COL_GAP + depth.get(n.id) * (NODE_W + COL_GAP),
     y: (top.get(laneKey(n.feature_id)) ?? 0) + LANE_PAD + row.get(n.id) * (NODE_H + ROW_GAP),
   }]))
