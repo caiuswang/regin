@@ -190,17 +190,32 @@ def new_cmd(
     ref: Optional[str] = typer.Option(
         None, "--ref", help="Adopt an existing tracker issue instead. The "
                             "title comes from the fetch, not from you."),
+    session: Optional[str] = typer.Option(
+        None, "--session", help="This session's trace id — recorded on the "
+                                "`specced` event as the run that minted it"),
+    project: Optional[str] = typer.Option(
+        None, "--project", help="Registered repo name to file this under "
+                                "(see `regin repos`)"),
 ) -> None:
-    """Declare a feature. The row and its `specced` event, in one transaction."""
+    """Declare a feature. The row and its `specced` event, in one transaction.
+
+    `--session` records who minted the feature, not who builds it: it writes
+    no attribution, because `attribute` is the only writer of one.
+    """
+    from cli.commands.tasks import _project_id  # noqa: PLC0415
+    project_id = _project_id(project)
+    session = session or None
     if ref is not None:
         from lib.tasks.integrations import IntegrationError  # noqa: PLC0415
         try:
-            row = sync_module.adopt(ref)
+            row = sync_module.adopt(ref, project_id=project_id,
+                                    trace_id=session)
         except IntegrationError as exc:
             typer.echo(str(exc), err=True)
             raise typer.Exit(2)
     else:
-        row = feature_store.create(title, body=body)
+        row = feature_store.create(title, body=body, trace_id=session,
+                                   project_id=project_id)
     typer.echo(f"#{row.id}  {row.title}  {events.stage(row.id)}")
 
 

@@ -91,7 +91,8 @@ def _record(feature_id: int, **fields) -> None:
 
 
 def adopt(text_ref: str, *, provider_id: str = "",
-          project_id: Optional[int] = None) -> Feature:
+          project_id: Optional[int] = None,
+          trace_id: Optional[str] = None) -> Feature:
     """Create a feature from a reference an operator pasted.
 
     The title comes from the fetch rather than from the operator: they are
@@ -100,9 +101,9 @@ def adopt(text_ref: str, *, provider_id: str = "",
     operator's assertion about where this is tracked does not depend on the
     remote being up — carrying the reason, with a title of the raw reference.
 
-    `project_id` files a NEW row only. Re-adopting an issue already here
-    returns it as it stands: its project was declared once, and a second
-    adopt is not an edit.
+    `project_id` and `trace_id` apply to a NEW row only. Re-adopting an issue
+    already here returns it as it stands: its project and minting session were
+    declared once, and a second adopt is not an edit.
     """
     feature_store.check_project(project_id)
     provider, ref = registry.resolve_ref(text_ref, provider_id)
@@ -116,12 +117,14 @@ def adopt(text_ref: str, *, provider_id: str = "",
                                     external_ref=ref.key,
                                     external_url=ref.url,
                                     sync_error=str(exc),
-                                    project_id=project_id)
+                                    project_id=project_id,
+                                    trace_id=trace_id)
     feature = feature_store.create(issue.title or ref.key,
                                    body=issue.description,
                                    origin=ref.provider, external_ref=ref.key,
                                    external_url=issue.url or ref.url,
-                                   project_id=project_id)
+                                   project_id=project_id,
+                                   trace_id=trace_id)
     _record(feature.id, synced_at=_now(), sync_error=None)
     events_module.on_sync(feature.id, issue.state_category,
                           provider=ref.provider)
