@@ -156,9 +156,10 @@ test('an unattributed defect cannot file one, and says why', async ({ page }) =>
 
   await page.goto('/defects/7')
   const row = page.locator('li.card', { hasText: 'the gutter folds' })
+  // #119 R5: an unattributed defect's menu offers Attribute, not a fix task.
   await row.getByTestId('defect-more-7').click()
-  await expect(page.getByTestId('defect-fix-create-row-7'))
-    .toHaveAttribute('aria-disabled', 'true')
+  await expect(page.getByRole('menuitem', { name: 'Attribute' })).toBeVisible()
+  await expect(page.getByTestId('defect-fix-create-row-7')).toHaveCount(0)
   await expect(row.getByTestId('defect-fix-create-blocked-7'))
     .toContainText('Attribute it to a feature')
 })

@@ -22,8 +22,8 @@ const props = defineProps({
   // A row in a list of rows (the feature page's ledger grammar) rather than
   // a free-standing card.
   flat: { type: Boolean, default: false },
-  // A list row: two lines at rest (the head, then the symptom's first line),
-  // with the full wording, evidence and actions behind a per-row disclosure.
+  // A list row: the head, the symptom's first line and the row's verbs at
+  // rest, with the full wording and evidence behind a per-row disclosure.
   // The permalink and the expanded row still carry the symptom unclamped.
   collapsible: { type: Boolean, default: false },
 })
@@ -119,10 +119,12 @@ const open = ref(!props.collapsible)
         <dd class="mono">{{ defect.blamed_event_kind }}</dd>
       </template>
     </dl>
+    </template>
 
+    <!-- Outside the disclosure: a collapsed row still offers its state's
+         verbs, so no action waits behind a second click. -->
     <DefectActions :defect="defect" :can-write="canWrite"
                    @changed="(msg, info) => $emit('changed', msg, info)" />
-    </template>
   </li>
 </template>
 

@@ -1,13 +1,14 @@
 <script setup>
 // The Features tab's triage rail (design 1c): reports nobody has routed, and
-// A / D / X / S to route them. The chords are live only while focus is inside
+// A / ⇧A / D / X / S to route them. The chords are live only while focus is inside
 // the rail and not in a text field, so they never fire from the table beside it.
 import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import api from '../../api'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
 import TriageCard from './TriageCard.vue'
-import { useDefectTriage, VERBS } from '../../composables/useDefectTriage'
+import DefectRefusal from '../defects/DefectRefusal.vue'
+import { chordOf, useDefectTriage } from '../../composables/useDefectTriage'
 import { invalidatePipelineCounts } from '../../composables/usePipelineCounts'
 import { isProjectScope } from '../../composables/usePipelineScope'
 import { defectRef } from '../../utils/pipelineFormat'
@@ -26,17 +27,19 @@ const emit = defineEmits(['changed', 'update:folded'])
 const triage = useDefectTriage()
 const allProjects = computed(() => isProjectScope(props.scope))
 const {
-  items, total, loading, busy, error, refusal, cursor, pending, blamed,
-  load, move, focus, begin, submit, cancel,
+  items, total, loading, busy, error, refusal, notice, cursor, pending, blamed,
+  load, reach, move, focus, begin, submit, cancel, remedy,
 } = triage
 
 const cards = ref([])
 const rail = ref(null)
 
+// A partial Accept (attributed, fix task refused) still moved a row out of
+// the queue, so it refreshes the counts too.
 async function after(message) {
-  if (!message) return
+  if (!message && !notice.value) return
   invalidatePipelineCounts()
-  emit('changed', message)
+  emit('changed', message || '')
 }
 
 async function verb(chord) {
@@ -47,6 +50,14 @@ async function onSubmit(chord, value) {
   after(await submit(chord, value))
 }
 
+async function onRemedy(r) {
+  after(await remedy(r))
+}
+
+async function onNoticeRemedy(r) {
+  after(await remedy(r, notice))
+}
+
 function isTyping(el) {
   const tag = (el?.tagName || '').toLowerCase()
   return tag === 'input' || tag === 'textarea' || tag === 'select' || el?.isContentEditable
@@ -55,10 +66,11 @@ function isTyping(el) {
 function onKeydown(event) {
   if (props.folded) return
   if (event.metaKey || event.ctrlKey || event.altKey || isTyping(event.target)) return
+  const chord = chordOf(event)
   const key = event.key.length === 1 ? event.key.toUpperCase() : event.key
-  if (VERBS[key]) {
+  if (chord) {
     event.preventDefault()
-    verb(key)
+    verb(chord)
   } else if (key === 'J' || key === 'ArrowDown') {
     event.preventDefault()
     move(1)
@@ -72,10 +84,17 @@ function onKeydown(event) {
   }
 }
 
-function focusRequested() {
-  if (props.focusId == null) return
-  const index = items.value.findIndex(d => String(d.id) === String(props.focusId))
-  if (index >= 0) focus(index)
+// Arriving at `?triage=<id>` puts the cursor AND keyboard focus on that card,
+// so A / D / X / S work without a click first.
+async function focusRequested() {
+  if (props.focusId == null || props.folded) return
+  const index = await reach(props.focusId)
+  if (index < 0) return
+  focus(index)
+  await nextTick()
+  cards.value[index]?.focus()
+  rail.value?.querySelector(`[data-testid="triage-card-${props.focusId}"]`)
+    ?.scrollIntoView?.({ block: 'nearest' })
 }
 
 // Everything open and unattributed that is not in the queue — a snoozed report,
@@ -119,7 +138,15 @@ onMounted(async () => {
   focusRequested()
 })
 onBeforeUnmount(() => rail.value?.removeEventListener('keydown', onKeydown))
-onActivated(() => { if (arrived) load(); arrived = true })
+// Coming back to the same `?triage=<id>` fires no watcher, so the arrival
+// focus is re-applied here.
+onActivated(async () => {
+  if (arrived) {
+    await load()
+    await focusRequested()
+  }
+  arrived = true
+})
 
 defineExpose({ load })
 </script>
@@ -172,6 +199,8 @@ defineExpose({ load })
       </Button>
     </header>
 
+    <DefectRefusal v-if="notice" :refusal="notice" :busy="busy"
+                   testid="triage-notice" @remedy="onNoticeRemedy" />
     <p v-if="loading" class="tr-muted">Loading…</p>
     <p v-else-if="error" class="tr-refusal" role="alert">{{ error }}</p>
     <p v-else-if="!items.length" class="tr-empty" data-testid="triage-empty">
@@ -186,12 +215,13 @@ defineExpose({ load })
         :defect="defect"
         :focused="i === cursor"
         :pending="i === cursor ? pending : ''"
-        :refusal="i === cursor ? refusal : ''"
+        :refusal="i === cursor ? refusal : null"
         :busy="busy"
         @focus="focus(i)"
         @verb="verb"
         @submit="onSubmit"
         @cancel="cancel"
+        @remedy="onRemedy"
       />
     </ul>
 
@@ -213,6 +243,8 @@ defineExpose({ load })
         </router-link>
       </li>
     </ul>
+    <router-link to="/defects" class="tr-all focus-visible:outline-2 focus-visible:outline-blue-500"
+                 data-testid="triage-all-defects">All defects →</router-link>
     </template>
   </section>
 </template>
@@ -270,5 +302,7 @@ defineExpose({ load })
     display: block; color: var(--color-fg-muted); text-decoration: none;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.tr-all { align-self: flex-start; font-size: 12px; color: var(--color-primary); text-decoration: none; }
+.tr-all:hover { text-decoration: underline; }
 .tr-older-link b { font-family: var(--font-mono, monospace); color: var(--color-fg); }
 </style>

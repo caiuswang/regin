@@ -1,10 +1,13 @@
 <script setup>
 // One defect on the Features triage rail. The focused card carries the blame
-// picker, the four verbs and whichever verb is collecting a field.
+// picker, the verbs and whichever verb is collecting a field.
 import { computed, nextTick, ref, watch } from 'vue'
 import Button from '../ui/Button.vue'
 import Input from '../ui/Input.vue'
-import FeatureBlamePicker from './FeatureBlamePicker.vue'
+import FeaturePicker from './FeaturePicker.vue'
+import DefectImages from '../defects/DefectImages.vue'
+import DefectMergePicker from '../defects/DefectMergePicker.vue'
+import DefectRefusal from '../defects/DefectRefusal.vue'
 import { VERBS, VERB_ORDER } from '../../composables/useDefectTriage'
 import { defectRef, monthDay, reopenedLabel } from '../../utils/pipelineFormat'
 
@@ -12,16 +15,21 @@ const props = defineProps({
   defect: { type: Object, required: true },
   focused: { type: Boolean, default: false },
   pending: { type: String, default: '' },
-  refusal: { type: String, default: '' },
+  refusal: { type: Object, default: null },
   busy: { type: Boolean, default: false },
 })
 const blamed = defineModel('blamed', { type: String, default: '' })
-const emit = defineEmits(['focus', 'verb', 'submit', 'cancel'])
+const emit = defineEmits(['focus', 'verb', 'submit', 'cancel', 'remedy'])
 
 const value = ref('')
 const field = ref(null)
 const card = ref(null)
 const problem = computed(() => (props.pending ? VERBS[props.pending].invalid(value.value) : ''))
+
+// A picked feature hands focus back to the card, so A works at once.
+function picked() {
+  card.value?.focus()
+}
 
 watch(() => props.pending, async (verb) => {
   value.value = ''
@@ -64,9 +72,10 @@ defineExpose({ focus: () => card.value?.focus() })
     <p v-if="defect.suspect_paths?.length" class="tc-paths" title="Where it was seen, not who caused it">
       {{ defect.suspect_paths.join(' · ') }}
     </p>
+    <DefectImages v-if="defect.images?.length" :defect="defect" />
 
     <template v-if="focused">
-      <FeatureBlamePicker v-model="blamed" :disabled="busy" />
+      <FeaturePicker v-model="blamed" :disabled="busy" testid="triage-blame" @picked="picked" />
       <div class="tc-verbs" role="group" aria-label="Triage verbs">
         <Button
           v-for="chord in VERB_ORDER"
@@ -74,17 +83,25 @@ defineExpose({ focus: () => card.value?.focus() })
           size="sm"
           :variant="chord === 'A' ? 'secondary' : 'ghost'"
           class="tc-verb"
-          :class="{ 'tc-verb--accept': chord === 'A', 'is-ready': chord === 'A' && blamed }"
+          :class="{ 'tc-verb--accept': chord === 'A', 'tc-verb--wide': chord === 'A' || chord === 'Shift+A',
+                    'is-ready': chord === 'A' && blamed }"
           :disabled="busy"
           :aria-keyshortcuts="chord"
           :data-testid="`triage-verb-${VERBS[chord].key}`"
           @click.stop="emit('verb', chord)"
         >
-          <kbd>{{ chord }}</kbd>{{ VERBS[chord].label }}
+          <kbd>{{ VERBS[chord].kbd || chord }}</kbd>{{ VERBS[chord].label }}
         </Button>
       </div>
+      <div v-if="pending && VERBS[pending].picker" :data-testid="`triage-prompt-${VERBS[pending].key}`">
+        <DefectMergePicker
+          :defect="defect" :busy="busy"
+          @confirm="id => emit('submit', pending, String(id))"
+          @cancel="emit('cancel')"
+        />
+      </div>
       <form
-        v-if="pending"
+        v-else-if="pending"
         class="tc-prompt"
         :data-testid="`triage-prompt-${VERBS[pending].key}`"
         @submit.prevent="emit('submit', pending, value)"
@@ -109,9 +126,8 @@ defineExpose({ focus: () => card.value?.focus() })
           :data-testid="`triage-submit-${VERBS[pending].key}`"
         >{{ pending === 'X' ? 'Confirm decline' : VERBS[pending].label }}</Button>
       </form>
-      <p v-if="refusal" class="tc-refusal" role="alert" :data-testid="`triage-refusal-${defect.id}`">
-        {{ refusal }}
-      </p>
+      <DefectRefusal v-if="refusal" :refusal="refusal" :busy="busy"
+                     :testid="`triage-refusal-${defect.id}`" @remedy="r => emit('remedy', r)" />
     </template>
   </li>
 </template>
@@ -134,15 +150,13 @@ defineExpose({ focus: () => card.value?.focus() })
 .tc-spacer { flex: 1; }
 .tc-symptom { font-size: 13px; line-height: 1.5; color: var(--color-fg); overflow-wrap: anywhere; }
 .tc-paths { font-family: var(--font-mono, monospace); font-size: 11px; color: var(--color-fg-muted); overflow-wrap: anywhere; }
-.tc-verbs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.35rem; }
+.tc-verbs { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 0.35rem; }
+.tc-verbs .tc-verb { grid-column: span 2; }
+.tc-verbs .tc-verb--wide { grid-column: span 3; }
 .tc-verbs .tc-verb { gap: 0.3rem; padding: 0 0.3rem; background: var(--color-surface-2); }
 .tc-verbs .tc-verb--accept { background: var(--color-info-soft); color: var(--color-info); }
 .tc-verbs .tc-verb--accept.is-ready { background: var(--color-info); color: var(--color-primary-fg); }
 .tc-verb kbd { font-family: var(--font-mono, monospace); font-size: 10px; opacity: 0.7; }
 .tc-prompt { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
 .tc-prompt .tc-input { flex: 1 1 10rem; min-width: 0; }
-.tc-refusal {
-    border-radius: var(--radius-lg); background: var(--color-danger-soft);
-    padding: 0.35rem 0.6rem; font-size: 11.5px; color: var(--color-danger);
-}
 </style>

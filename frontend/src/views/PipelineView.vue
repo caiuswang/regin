@@ -21,8 +21,8 @@ const router = useRouter()
 const TABS = [
   { path: '/overview', key: 'overview', label: 'Overview', counted: false },
   { path: '/tasks', key: 'tasks', label: 'Tasks', counted: true },
-  // A defect's page is reached from the triage rail, so it lights Features.
-  { path: '/features', key: 'features', label: 'Features', counted: true, also: ['/defects/'] },
+  // Defects are reached from the triage rail, so their pages light Features.
+  { path: '/features', key: 'features', label: 'Features', counted: true, also: ['/defects'] },
 ]
 
 function isActive(tab) {

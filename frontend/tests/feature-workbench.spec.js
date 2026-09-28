@@ -312,18 +312,34 @@ test('every secondary action is still reachable from the row menu',
     const row = page.getByTestId('feature-defects-list').locator('li', { hasText: '#149' })
     const more = row.getByTestId('defect-more-149')
 
-    for (const [label, which, field, value] of [
-      ['Re-attribute', 'attribute', 'feature_id', 81],
-      ['Link existing task', 'fix-item', 'task_id', 12],
-      ['Merge into…', 'merge', 'into', 17],
-    ]) {
-      await more.click()
-      await page.getByRole('menuitem', { name: label }).click()
-      await row.locator(`#f-149`).fill(String(value))
-      await row.getByTestId(`defect-${which}-submit-149`).click()
-      await expect.poll(() => posted.length).toBeGreaterThan(0)
-      expect(posted.pop()).toEqual([`/api/defects/149/${which}`, { [field]: value }])
-    }
+    await page.route(/\/api\/features\?/, route => route.fulfill({ json: {
+      items: [{ id: 81, title: 'The ledger', stage: 'building' }], pagination: { total: 1 } } }))
+    await page.route(/\/api\/defects\?status=open/, route => route.fulfill({ json: {
+      items: [defect({ id: 17 })], pagination: { total: 1 } } }))
+
+    await more.click()
+    await page.getByRole('menuitem', { name: 'Link existing task' }).click()
+    await row.locator('#f-149').fill('12')
+    await row.getByTestId('defect-fix-item-submit-149').click()
+    await expect.poll(() => posted.length).toBeGreaterThan(0)
+    expect(posted.pop()).toEqual(['/api/defects/149/fix-item', { task_id: 12 }])
+
+    // The feature is picked from a server search, never typed as an id.
+    await more.click()
+    await page.getByRole('menuitem', { name: 'Re-attribute' }).click()
+    await row.getByTestId('defect-attribute-picker-149').click()
+    await row.getByTestId('defect-attribute-picker-149-option-81').click()
+    await row.getByTestId('defect-attribute-submit-149').click()
+    await expect.poll(() => posted.length).toBeGreaterThan(0)
+    expect(posted.pop()).toEqual(['/api/defects/149/attribute', { feature_id: 81 }])
+
+    // The keeper is picked, previewed, then confirmed.
+    await more.click()
+    await page.getByRole('menuitem', { name: 'Merge into…' }).click()
+    await row.getByTestId('merge-option-17').click()
+    await row.getByTestId('merge-confirm').click()
+    await expect.poll(() => posted.length).toBeGreaterThan(0)
+    expect(posted.pop()).toEqual(['/api/defects/149/merge', { into: 17 }])
 
     await more.click()
     await page.getByRole('menuitem', { name: 'Create fix task' }).click()

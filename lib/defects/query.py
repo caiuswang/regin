@@ -40,6 +40,15 @@ SCOPE_FIX_ITEM = "fix-item"
 #: or snoozed defect has left it while remaining unattributed forever.
 ASKABLE_SCOPES = (SCOPE_ALL, SCOPE_UNATTRIBUTED, SCOPE_TRIAGE)
 
+#: Where a defect sits on the triage axis, as a list facet. `queue` is the
+#: `scope=triage` predicate; `snoozed` is a snooze no write has ended yet;
+#: `declined` is every declined report. Attributed and closed-as-fixed rows
+#: are on none of them.
+TRIAGE_QUEUE = "queue"
+TRIAGE_SNOOZED = "snoozed"
+TRIAGE_DECLINED = "declined"
+TRIAGES = (TRIAGE_QUEUE, TRIAGE_SNOOZED, TRIAGE_DECLINED)
+
 STATUSES = (STATUS_OPEN, STATUS_CLOSED)
 STATUS_ANY = "all"
 
@@ -81,6 +90,7 @@ class DefectQuery:
     fix_task_id: Optional[int] = None
     unattributed: bool = False
     triage: bool = False
+    triage_position: Optional[str] = None
     status: Optional[str] = None
     q: str = ""
     project_id: Optional[int] = None
@@ -115,6 +125,15 @@ def parse_status(raw) -> Optional[str]:
         return None
     if value not in STATUSES:
         raise QueryError(f"unknown status: {value}")
+    return value
+
+
+def parse_triage(raw) -> Optional[str]:
+    value = (raw or "").strip()
+    if not value:
+        return None
+    if value not in TRIAGES:
+        raise QueryError(f"unknown triage: {value}")
     return value
 
 
@@ -153,7 +172,8 @@ def from_args(args) -> DefectQuery:
     project_id, project_none = parse_project(args.get("project"))
     triage = (scope == SCOPE_TRIAGE
               and feature_id is None and fix_task_id is None)
-    if triage:
+    position = parse_triage(args.get("triage"))
+    if triage or position is not None:
         # An unattributed defect has no project, so a project scope would
         # empty the queue. Dropped rather than inferred from the reporting
         # session's repo: a guessed parent is worse than a gap.
@@ -167,6 +187,7 @@ def from_args(args) -> DefectQuery:
         unattributed=(scope == SCOPE_UNATTRIBUTED
                       and feature_id is None and fix_task_id is None),
         triage=triage,
+        triage_position=position,
         status=parse_status(args.get("status")),
         q=(args.get("q") or "").strip()[:Q_MAX],
         project_id=project_id,

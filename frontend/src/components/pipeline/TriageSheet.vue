@@ -1,11 +1,15 @@
 <script setup>
 // Triage as a bottom sheet (design 2d): one report at a time, ‹ › to page, and
-// the four verbs as big buttons. Accept here also authors the fix task.
+// the verbs as big buttons. Accept authors the fix task, exactly as A does on
+// the rail (D6); Accept only is the secondary.
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
 import Input from '../ui/Input.vue'
-import FeatureBlamePicker from './FeatureBlamePicker.vue'
+import FeaturePicker from './FeaturePicker.vue'
+import DefectImages from '../defects/DefectImages.vue'
+import DefectMergePicker from '../defects/DefectMergePicker.vue'
+import DefectRefusal from '../defects/DefectRefusal.vue'
 import { useDefectTriage, VERBS } from '../../composables/useDefectTriage'
 import { invalidatePipelineCounts } from '../../composables/usePipelineCounts'
 import { isProjectScope } from '../../composables/usePipelineScope'
@@ -18,8 +22,8 @@ const open = defineModel('open', { type: Boolean, default: false })
 const emit = defineEmits(['changed'])
 
 const {
-  items, total, loading, busy, error, refusal, cursor, pending, blamed, focused,
-  load, move, begin, submit, cancel, acceptAndFix,
+  items, total, loading, busy, error, refusal, notice, cursor, pending, blamed, focused,
+  load, move, begin, submit, cancel, remedy,
 } = useDefectTriage()
 const allProjects = computed(() => isProjectScope(props.scope))
 
@@ -52,15 +56,17 @@ watch(pending, async (verb) => {
 })
 
 function after(message) {
-  if (!message) return
+  if (!message && !notice.value) return
   invalidatePipelineCounts()
-  emit('changed', message)
-  if (!items.value.length) open.value = false
+  emit('changed', message || '')
+  if (message && !items.value.length) open.value = false
 }
 
-async function accept() { after(await acceptAndFix()) }
 async function verb(chord) { after(await begin(chord)) }
 async function confirm() { after(await submit(pending.value, value.value)) }
+async function keep(id) { after(await submit('D', String(id))) }
+async function onRemedy(r) { after(await remedy(r)) }
+async function onNoticeRemedy(r) { after(await remedy(r, notice)) }
 
 function close() {
   cancel()
@@ -99,6 +105,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape))
           ><Icon name="chevron-right" :size="16" /></Button>
         </header>
 
+        <DefectRefusal v-if="notice" :refusal="notice" :busy="busy"
+                       testid="triage-sheet-notice" @remedy="onNoticeRemedy" />
         <p v-if="loading" class="ts-muted">Loading…</p>
         <p v-else-if="error" class="ts-refusal" role="alert">{{ error }}</p>
         <p v-else-if="!focused" class="ts-muted">Nothing waiting on a routing decision.</p>
@@ -115,26 +123,34 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape))
           </div>
           <p class="ts-symptom">{{ focused.symptom }}</p>
           <pre v-if="focused.suspect_paths?.length" class="ts-paths">{{ focused.suspect_paths.join('\n') }}</pre>
+          <DefectImages v-if="focused.images?.length" :key="`img-${focused.id}`" :defect="focused" />
           <div class="ts-field">
             <span class="ts-label">Blame a feature</span>
-            <FeatureBlamePicker :key="focused.id" v-model="blamed" placeholder="Choose…" :disabled="busy" />
+            <FeaturePicker :key="focused.id" v-model="blamed" placeholder="Search features…" :disabled="busy"
+                           testid="triage-sheet-blame" />
           </div>
-          <form v-if="pending" class="ts-prompt" @submit.prevent="confirm">
+          <DefectMergePicker v-if="pending && VERBS[pending].picker" :key="`mp-${focused.id}`"
+                             :defect="focused" :busy="busy" @confirm="keep" @cancel="cancel" />
+          <form v-else-if="pending" class="ts-prompt" @submit.prevent="confirm">
             <label class="sr-only" for="ts-field">{{ VERBS[pending].prompt }}</label>
             <Input id="ts-field" ref="field" v-model="value" :placeholder="VERBS[pending].prompt"
                    :disabled="busy" class="ts-input"
             />
             <Button type="submit" :variant="pending === 'X' ? 'danger' : 'primary'" class="ts-big"
                     :disabled="busy || !!problem" :data-testid="`triage-sheet-confirm-${VERBS[pending].key}`"
-            >{{ pending === 'X' ? 'Confirm decline' : 'Mark duplicate' }}</Button>
+            >Confirm decline</Button>
           </form>
-          <p v-if="refusal" class="ts-refusal" role="alert" data-testid="triage-sheet-refusal">{{ refusal }}</p>
+          <DefectRefusal v-if="refusal" :refusal="refusal" :busy="busy"
+                         testid="triage-sheet-refusal" @remedy="onRemedy" />
         </div>
 
         <footer v-if="focused" class="ts-actions">
           <Button variant="primary" class="ts-big ts-accept" :disabled="busy"
-                  data-testid="triage-sheet-accept" @click="accept"
+                  data-testid="triage-sheet-accept" @click="verb('A')"
           >Accept &amp; create fix task</Button>
+          <Button variant="secondary" class="ts-big ts-accept-only" :disabled="busy"
+                  data-testid="triage-sheet-accept-only" @click="verb('Shift+A')"
+          >Accept only</Button>
           <Button variant="secondary" class="ts-big" :disabled="busy"
                   data-testid="triage-sheet-duplicate" @click="verb('D')"
           >Duplicate</Button>
@@ -192,6 +208,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape))
     border-radius: var(--radius-lg); background: var(--color-danger-soft);
     padding: 0.4rem 0.65rem; font-size: 12px; color: var(--color-danger);
 }
+.ts-actions .ts-accept-only { grid-column: 1 / -1; }
 .ts-muted { font-size: 13px; color: var(--color-fg-muted); }
 .ts-actions {
     display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.5rem;

@@ -29,6 +29,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 ROUTER = ROOT / "frontend/src/router.js"
 ROW = ROOT / "frontend/src/components/defects/DefectRow.vue"
 ACTIONS = ROOT / "frontend/src/components/defects/DefectActions.vue"
+FORMS = ROOT / "frontend/src/components/defects/defectForms.js"
+FORM = ROOT / "frontend/src/components/defects/DefectActionForm.vue"
 
 
 def _body(source: str, name: str) -> str:
@@ -93,18 +95,17 @@ def test_close_without_missing_check_is_refused_client_side(flask_client):
     The store owns the rule and still enforces it — this is the same rule
     stated where the operator can act on it, rather than a second rulebook.
     """
-    source = ACTIONS.read_text()
-    assert "invalid:" in source, "each form states what it cannot send"
+    close = FORMS.read_text().split("  close: {")[1].split("\n  },")[0]
+    assert "invalid:" in close, "each form states what it cannot send"
 
-    body = _body(source, "submit")
-    guard = body.index("if (problem.value)")
-    post = body.index("api.post(")
+    body = _body(ACTIONS.read_text(), "submit")
+    guard = body.index("spec.invalid(raw)")
+    post = body.index("spec.send(")
     assert guard < post, "the guard must precede the post it prevents"
-    assert "problem.value" in body.split("api.post(")[0]
 
     # The submit is unreachable while the field cannot be sent, so an empty
     # close cannot be posted by clicking either.
-    assert ':disabled="busy || !!problem"' in source
+    assert ':disabled="busy || !!problem"' in FORM.read_text()
 
     # And the server has not stopped refusing it: the client guard is a
     # courtesy, never the control.

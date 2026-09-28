@@ -216,11 +216,11 @@ test('test_pipeline_shell_three_tabs_one_line_header', async ({ page }) => {
 
 test('test_pipeline_retired_tabs_are_gone', async ({ page }) => {
   await stubPipeline(page)
-  for (const path of ['/defects', '/projects', '/projects/3']) {
+  for (const path of ['/projects', '/projects/3']) {
     await page.goto(path)
     await expect(page.locator('.page-title')).toHaveText('Page not found')
   }
-  for (const file of ['views/DefectsView.vue', 'views/ProjectsView.vue', 'views/ProjectPanelView.vue', 'components/projects']) {
+  for (const file of ['views/ProjectsView.vue', 'views/ProjectPanelView.vue', 'components/projects']) {
     expect(existsSync(join(SRC, file)), file).toBe(false)
   }
   await page.setViewportSize({ width: 1440, height: 900 })
@@ -230,6 +230,11 @@ test('test_pipeline_retired_tabs_are_gone', async ({ page }) => {
   await expect(page.getByTestId('defect-detail')).toBeVisible()
   await expect(page.getByTestId('pipeline-tabs')).toBeVisible()
   await expect(page.getByTestId('pipeline-tab-features')).toHaveClass(/is-active/)
+  // #119 D2: the defects list is back as a child of the shell, not a tab.
+  await page.goto('/defects')
+  await expect(page.getByTestId('defects-list-page')).toBeVisible()
+  await expect(page.getByTestId('pipeline-tab-features')).toHaveClass(/is-active/)
+  await expect(page.getByTestId('pipeline-tabs').locator('a')).toHaveCount(3)
 })
 
 test('test_pipeline_hotkeys', async ({ page }) => {
@@ -633,7 +638,7 @@ test('test_features_stage_tabs_expand_and_triage_keys', async ({ page }) => {
 
   // Triage keys: A is refused with no feature blamed; X + confirm declines.
   await expect(page.getByTestId('triage-count')).toHaveText('3')
-  await page.getByTestId('triage-card-94').click()
+  await page.getByTestId('triage-card-94').click({ position: { x: 8, y: 8 } })
   await page.keyboard.press('a')
   await expect(page.getByTestId('triage-refusal-94')).toContainText('Blame a feature first')
   expect(state.posts).toEqual([])
@@ -647,17 +652,21 @@ test('test_features_stage_tabs_expand_and_triage_keys', async ({ page }) => {
 
   // Blamed, Accept goes through with the picked feature — and a chord typed
   // into the Dup field is text, not a verb.
-  await page.getByTestId('triage-card-93').click()
+  await page.getByTestId('triage-card-93').click({ position: { x: 8, y: 8 } })
   await page.keyboard.press('d')
   await page.getByTestId('triage-prompt-duplicate').getByRole('textbox').fill('a')
   await expect(page.getByTestId('triage-refusal-93')).toHaveCount(0)
   await page.keyboard.press('Escape')
   await page.getByTestId('triage-blame').click()
   await page.getByRole('option', { name: '#44 Project progress rollups' }).click()
-  await page.getByTestId('triage-card-93').click()
+  await page.getByTestId('triage-card-93').click({ position: { x: 8, y: 8 } })
   await page.keyboard.press('a')
   await expect(page.getByTestId('triage-count')).toHaveText('1')
-  expect(state.posts.at(-1)).toEqual({ path: '/api/defects/93/attribute', body: { feature_id: 44 } })
+  // D6: Accept attributes and authors the fix task.
+  expect(state.posts.slice(-2)).toEqual([
+    { path: '/api/defects/93/attribute', body: { feature_id: 44 } },
+    { path: '/api/defects/93/fix-item', body: { create: true } },
+  ])
 })
 
 test('test_features_triage_rail_folds', async ({ page }) => {
@@ -671,7 +680,7 @@ test('test_features_triage_rail_folds', async ({ page }) => {
 
   // The header button folds the rail to a strip that still counts the queue,
   // and the table takes the column it gave up. A prompt left open is dropped.
-  await page.getByTestId('triage-card-94').click()
+  await page.getByTestId('triage-card-94').click({ position: { x: 8, y: 8 } })
   await page.keyboard.press('x')
   await expect(page.getByTestId('triage-prompt-decline')).toBeVisible()
   await page.getByTestId('triage-fold').click()
