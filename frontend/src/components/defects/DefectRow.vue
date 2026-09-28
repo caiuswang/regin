@@ -121,7 +121,7 @@ const open = ref(!props.collapsible)
     </dl>
 
     <DefectActions :defect="defect" :can-write="canWrite"
-                   @changed="(msg) => $emit('changed', msg)" />
+                   @changed="(msg, info) => $emit('changed', msg, info)" />
     </template>
   </li>
 </template>

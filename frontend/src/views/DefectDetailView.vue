@@ -7,7 +7,7 @@
 // with, and it resolves through the id the ledger already has rather than
 // through a re-run of the query the reader happened to be in.
 import { computed, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import api from '../api'
 import { usePipelineHeaderPublisher } from '../composables/usePipelineHeader'
 import { rememberedQuery } from '../composables/usePipelineTabState'
@@ -15,6 +15,7 @@ import { useFlash } from '../composables/useFlash'
 import DefectRow from '../components/defects/DefectRow.vue'
 
 const route = useRoute()
+const router = useRouter()
 const publish = usePipelineHeaderPublisher()
 const { flash } = useFlash()
 
@@ -48,10 +49,15 @@ async function load() {
 watch(() => route.params.id, () => { defect.value = null; load() },
       { immediate: true })
 
-// A write here re-reads this one row rather than the list it came from: the
-// address is the id, so nothing about the page's identity can change under it.
-function onChanged(message) {
+// A write here re-reads this one row rather than the list it came from. A
+// merge is the one write that deletes the row this address names, so it moves
+// to the keeper instead of re-reading an id that no longer exists.
+function onChanged(message, info) {
   if (message) flash(message)
+  if (info?.keeper && String(info.keeper) !== String(route.params.id)) {
+    router.replace(`/defects/${info.keeper}`)
+    return
+  }
   load()
 }
 </script>

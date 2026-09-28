@@ -193,14 +193,14 @@ async function submit() {
       />
 
       <label class="live-launch-lbl" for="task-arm-verify">
-        verify command <span class="task-arm-note">— recorded, not yet run</span>
+        verify command <span class="task-arm-note">Gate — exit 0 marks the task done</span>
       </label>
       <Input
         id="task-arm-verify"
         v-model="draft.verify_cmd"
         data-testid="task-arm-verify"
         placeholder="e.g. .venv/bin/python -m pytest -q"
-        aria-label="Verify command (recorded, not yet run)"
+        aria-label="Verify command (gate — exit 0 marks the task done)"
       />
 
       <label class="live-launch-check">

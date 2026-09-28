@@ -304,9 +304,12 @@ onMounted(() => { ensureProjects(); load() })
         @close="sheet = ''"
         @saved="() => { sheet = ''; load() }"
       />
+      <!-- The pending attempt rides in with the task: without it the sheet
+           seeds from the last arm remembered in this browser, and re-arming
+           would silently re-aim the attempt at another task's branch. -->
       <TaskArmSheet
         v-else-if="sheet === 'arm'"
-        :task="task"
+        :task="{ ...task, armed }"
         @close="sheet = ''"
         @armed="() => { sheet = ''; load() }"
       />

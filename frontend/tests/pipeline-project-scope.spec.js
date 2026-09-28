@@ -157,38 +157,29 @@ test('test_feature_project_null_listed_under_none_scope — chosen, not typed',
     expect(last(seen).get('project_id')).toBe('none')
   })
 
-// Defects are reached through the Features triage rail now; the rail asks
-// under the shell's scope exactly as the list it replaced did.
-test('test_defect_project_follows_feature', async ({ page }) => {
-  await stubFeatures(page)
-  const seen = await stubDefects(page)
-
-  await page.goto('/features?project=7')
-  const rail = page.getByTestId('triage-rail')
-  await expect(rail.getByText('the rail clips')).toBeVisible()
-  await expect(rail.getByText('the gutter folds')).toHaveCount(0)
-  expect(triageAsked(seen).get('project')).toBe('7')
-})
-
-test('test_unattributed_defect_has_no_project', async ({ page }) => {
+// Defects are reached through the Features triage rail. The queue holds only
+// unattributed defects, which have no project, so the rail reads it under no
+// scope and says so under a named one (feature #119, D1) — scoped, it was
+// empty under every project.
+test('test_triage_rail_ignores_project_scope', async ({ page }) => {
   await stubFeatures(page)
   const seen = await stubDefects(page)
   const rail = page.getByTestId('triage-rail')
 
-  // Under "All" it is there, and under "No project" it is still there: having
-  // no project is not the same as being filtered out of the page.
   await page.goto('/features')
   await expect(rail.getByText('the gutter folds')).toBeVisible()
-  expect(triageAsked(seen).get('project')).toBeNull()
+  await expect(rail.getByTestId('triage-all-projects')).toHaveCount(0)
 
   await chooseScope(page, 'No project')
   await expect(rail.getByText('the gutter folds')).toBeVisible()
-  await expect.poll(() => triageAsked(seen).get('project')).toBe('none')
+  await expect(rail.getByTestId('triage-all-projects')).toHaveCount(0)
 
-  // And under a named project it is not, because it is in none of them.
   await chooseScope(page, 'regin')
-  await expect(rail.getByText('the gutter folds')).toHaveCount(0)
-  await expect.poll(() => triageAsked(seen).get('project')).toBe('7')
+  await expect(page).toHaveURL(/project=7/)
+  await expect(rail.getByText('the gutter folds')).toBeVisible()
+  await expect(rail.getByTestId('triage-all-projects')).toHaveText('all projects')
+  expect(seen.filter(p => p.get('scope') === 'triage')
+    .every(p => p.get('project') === null)).toBe(true)
 })
 
 test('test_no_row_is_invisible_under_every_scope', async ({ page }) => {

@@ -35,6 +35,11 @@ export function scopeParam(raw) {
   return value && value !== SCOPE_ALL ? value : ''
 }
 
+/** True when the scope names one project by id — not `all`, not `none`. */
+export function isProjectScope(raw) {
+  return /^\d+$/.test(scopeParam(raw))
+}
+
 /** The remembered scope, or `all`. */
 export function storedScope() {
   try {

@@ -334,3 +334,20 @@ def test_overview_running_now_caps_rows_and_follows_scope(flask_client,
 
 def test_overview_running_now_empty(flask_client):
     assert _overview(flask_client)["running"] == {"total": 0, "rows": []}
+
+
+def test_triage_queue_ignores_project_scope(flask_client, core_project,
+                                            defect_row):
+    unattributed = defect_row(None, symptom="nobody routed this")
+    queue_url = "/api/defects?scope=triage&sort=opened:desc"
+
+    for scope in (7, "none", None):
+        overview = _overview(flask_client, scope)["needs_decision"]
+        suffix = f"&project={scope}" if scope is not None else ""
+        listed = flask_client.get(queue_url + suffix).get_json()
+
+        assert [r["symptom"] for r in overview["rows"]] == [unattributed]
+        assert [r["symptom"] for r in listed["items"]] == [unattributed]
+        assert overview["waiting"] == listed["pagination"]["total"] == 1
+        assert overview["all_projects"] is (scope == 7)
+        assert "project" not in listed["applied"]["filters"]

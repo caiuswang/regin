@@ -8,6 +8,7 @@ import Input from '../ui/Input.vue'
 import FeatureBlamePicker from './FeatureBlamePicker.vue'
 import { useDefectTriage, VERBS } from '../../composables/useDefectTriage'
 import { invalidatePipelineCounts } from '../../composables/usePipelineCounts'
+import { isProjectScope } from '../../composables/usePipelineScope'
 import { defectRef, monthDay, reopenedLabel } from '../../utils/pipelineFormat'
 
 const props = defineProps({
@@ -19,7 +20,8 @@ const emit = defineEmits(['changed'])
 const {
   items, total, loading, busy, error, refusal, cursor, pending, blamed, focused,
   load, move, begin, submit, cancel, acceptAndFix,
-} = useDefectTriage(() => props.scope)
+} = useDefectTriage()
+const allProjects = computed(() => isProjectScope(props.scope))
 
 const value = ref('')
 const field = ref(null)
@@ -86,7 +88,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape))
         <header class="ts-head">
           <h2 id="ts-title" class="ts-title">Triage</h2>
           <span v-if="items.length" class="ts-pos" data-testid="triage-sheet-position">
-            {{ cursor + 1 }} of {{ total }}
+            {{ cursor + 1 }} of {{ total }}<template v-if="allProjects"> · all projects</template>
           </span>
           <span class="ts-spacer" />
           <Button variant="secondary" size="icon" class="ts-page" aria-label="Previous report"

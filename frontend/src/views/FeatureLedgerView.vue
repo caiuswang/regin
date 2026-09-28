@@ -52,6 +52,7 @@ const refreshFailed = ref('')
 const tasksCard = ref(null)
 const declaring = ref(false)
 const writeFailed = ref('')
+const undeclareFailed = ref('')
 const { busyAction, startBusy, stopBusy } = useBusyAction()
 // One list for the two cards that show it. The spec editor writes
 // `![](image:N)` references into prose the Images card holds the bytes for, so
@@ -167,12 +168,20 @@ async function abandon() {
   await write('abandon', '/abandon')
 }
 
+// A refusal renders in the Sessions card beside the row's control. Routed
+// through `loadError` it replaced the whole page, ledger included.
 async function undeclare(row) {
-  const body = await api.del(
-    `/features/${featureId.value}`
-    + `/attribute/${encodeURIComponent(row.trace_id)}`)
-  if (body?.ok === false) {
-    loadError.value = body.msg
+  undeclareFailed.value = ''
+  try {
+    const body = await api.del(
+      `/features/${featureId.value}`
+      + `/attribute/${encodeURIComponent(row.trace_id)}`)
+    if (body?.ok === false) {
+      undeclareFailed.value = body.msg || 'the un-declare was refused'
+      return
+    }
+  } catch (e) {
+    undeclareFailed.value = `the un-declare could not be sent — ${e?.message || e}`
     return
   }
   await load()
@@ -252,6 +261,9 @@ function onDeclared() {
         :images="imageItems"
         :can-write="canWrite"
         :attach="addImages"
+        :tracked="!ledger.stage_live"
+        :tracker="ledger.origin"
+        :external-url="ledger.external_url"
         @saved="ledger = $event"
       />
 
@@ -294,6 +306,12 @@ function onDeclared() {
              size of the thing it is missing. The two must reconcile — a
              qualifier that disagrees with its own evidence is the defect this
              page exists to prevent. -->
+        <p
+          v-if="undeclareFailed"
+          class="mb-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700"
+          role="alert"
+          data-testid="undeclare-refusal"
+        >{{ undeclareFailed }}</p>
         <FeatureEvidence
           :rows="ledger.sessions.rows"
           :gaps="ledger.sessions.gaps"

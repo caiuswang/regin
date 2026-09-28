@@ -192,7 +192,8 @@ async function submit() {
     // The row the operator was looking at no longer exists — the store
     // deletes the duplicate — and the response carries the keeper. Naming the
     // survivor is the only honest sentence here.
-    emit('changed', `#${props.defect.id} folded into #${body.defect.id}.`)
+    emit('changed', `#${props.defect.id} folded into #${body.defect.id}.`,
+         { keeper: body.defect.id })
     return
   }
   // Only a close raises the offer, and only when nothing is pointed at yet:

@@ -151,6 +151,13 @@ def from_args(args) -> DefectQuery:
     feature_id = row_id(args.get("feature_id"))
     fix_task_id = row_id(args.get("fix_item"))
     project_id, project_none = parse_project(args.get("project"))
+    triage = (scope == SCOPE_TRIAGE
+              and feature_id is None and fix_task_id is None)
+    if triage:
+        # An unattributed defect has no project, so a project scope would
+        # empty the queue. Dropped rather than inferred from the reporting
+        # session's repo: a guessed parent is worse than a gap.
+        project_id, project_none = None, False
     return DefectQuery(
         feature_id=feature_id,
         fix_task_id=fix_task_id,
@@ -159,8 +166,7 @@ def from_args(args) -> DefectQuery:
         # an empty list is a worse answer than the one the link asked for.
         unattributed=(scope == SCOPE_UNATTRIBUTED
                       and feature_id is None and fix_task_id is None),
-        triage=(scope == SCOPE_TRIAGE
-                and feature_id is None and fix_task_id is None),
+        triage=triage,
         status=parse_status(args.get("status")),
         q=(args.get("q") or "").strip()[:Q_MAX],
         project_id=project_id,

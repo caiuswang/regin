@@ -9,6 +9,7 @@ import Icon from '../ui/Icon.vue'
 import TriageCard from './TriageCard.vue'
 import { useDefectTriage, VERBS } from '../../composables/useDefectTriage'
 import { invalidatePipelineCounts } from '../../composables/usePipelineCounts'
+import { isProjectScope } from '../../composables/usePipelineScope'
 import { defectRef } from '../../utils/pipelineFormat'
 
 const props = defineProps({
@@ -22,7 +23,8 @@ const props = defineProps({
 })
 const emit = defineEmits(['changed', 'update:folded'])
 
-const triage = useDefectTriage(() => props.scope)
+const triage = useDefectTriage()
+const allProjects = computed(() => isProjectScope(props.scope))
 const {
   items, total, loading, busy, error, refusal, cursor, pending, blamed,
   load, move, focus, begin, submit, cancel,
@@ -76,7 +78,8 @@ function focusRequested() {
   if (index >= 0) focus(index)
 }
 
-// Everything open and unattributed that is not in the queue — a snoozed report, say.
+// Everything open and unattributed that is not in the queue — a snoozed report,
+// say. Both terms are unscoped, so the difference is never negative by accident.
 const older = computed(() => Math.max(0, props.unattributed - total.value))
 const showOlder = ref(false)
 const olderRows = ref([])
@@ -104,7 +107,6 @@ watch(() => props.folded, (folded) => {
   nextTick(() => (folded ? unfoldButton.value : foldButton.value)?.$el?.focus())
 })
 
-watch(() => props.scope, load)
 watch(() => props.focusId, focusRequested)
 // Inside a `<KeepAlive>` Vue fires `mounted` and THEN `activated` on the first
 // arrival, so the guard is armed by the activation itself.
@@ -151,7 +153,9 @@ defineExpose({ load })
     <header class="tr-head">
       <h2 class="tr-title">Triage</h2>
       <span class="tr-caption">
-        <span data-testid="triage-count">{{ total }}</span> waiting · no feature is preselected
+        <span data-testid="triage-count">{{ total }}</span> waiting ·
+        <span v-if="allProjects" data-testid="triage-all-projects">all projects</span>
+        <template v-else>no feature is preselected</template>
       </span>
       <Button
         ref="foldButton"

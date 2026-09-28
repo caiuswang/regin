@@ -15,6 +15,11 @@
 // paste attaches the bytes AND writes the `![](image:N)` reference at the
 // caret. The syntax is otherwise unguessable, and an attachment the prose
 // cannot name is a picture beside the spec rather than a picture in it.
+//
+// A tracked feature's spec lives in its issue, and Refresh overwrites
+// `features.body` with the issue's text — so an edit here would be lost on the
+// next refresh. The card is read-only there and points at the tracker instead;
+// the stage line's Refresh is what pulls the issue's text back in.
 import { computed, ref } from 'vue'
 import api from '../../api'
 import Button from '../ui/Button.vue'
@@ -35,8 +40,16 @@ const props = defineProps({
   // Returns the `idx` of every image it attached, which is what the reference
   // written back into the text is made of.
   attach: { type: Function, default: null },
+  tracked: { type: Boolean, default: false },
+  tracker: { type: String, default: '' },
+  externalUrl: { type: String, default: null },
 })
 const emit = defineEmits(['saved'])
+
+const trackerLabel = computed(() => {
+  const name = props.tracker || 'the tracker'
+  return name.charAt(0).toUpperCase() + name.slice(1)
+})
 
 const editing = ref(false)
 // Source is the editing mode, for the reason the file header states. Preview
@@ -104,8 +117,17 @@ async function onDrop(e) {
         <h2 class="card-header fs-title">Spec</h2>
         <p class="fs-sub">what this feature was declared to deliver</p>
       </div>
+      <div v-if="tracked" class="fs-actions" data-testid="feature-spec-tracked">
+        <a
+          v-if="externalUrl"
+          class="fs-tracker-link focus-visible:outline-2 focus-visible:outline-blue-500"
+          :href="externalUrl" target="_blank" rel="noopener"
+          data-testid="feature-spec-tracker-link"
+        >Edit in {{ trackerLabel }} →</a>
+        <span v-else class="fs-sub">read-only — edit it in {{ trackerLabel }}</span>
+      </div>
       <Button
-        v-if="!editing && canWrite"
+        v-else-if="!editing && canWrite"
         variant="ghost" size="sm" data-testid="feature-spec-edit" @click="start"
       >
         <Icon name="pencil" :size="13" />
@@ -130,7 +152,7 @@ async function onDrop(e) {
       </div>
     </div>
 
-    <template v-if="editing">
+    <template v-if="editing && !tracked">
       <Textarea
         v-show="!previewing"
         ref="area"
@@ -153,11 +175,16 @@ async function onDrop(e) {
       </p>
     </template>
 
-    <MarkdownContent v-else-if="body" class="fs-body" :markdown="rendered" />
-    <p v-else class="fs-empty" data-testid="feature-spec-empty">
-      Declared with no spec. Without one there is nothing for the acceptance
-      list to be checked against.
-    </p>
+    <template v-else>
+      <p v-if="tracked" class="fs-hint" data-testid="feature-spec-tracked-hint">
+        The text of the {{ trackerLabel }} issue. Refresh on the stage line pulls it again.
+      </p>
+      <MarkdownContent v-if="body" class="fs-body" :markdown="rendered" />
+      <p v-else class="fs-empty" data-testid="feature-spec-empty">
+        Declared with no spec. Without one there is nothing for the acceptance
+        list to be checked against.
+      </p>
+    </template>
   </Card>
 </template>
 
@@ -168,7 +195,9 @@ async function onDrop(e) {
 }
 .fs-title { margin-bottom: 0; }
 .fs-sub { font-size: 11.5px; color: var(--color-fg-subtle); }
-.fs-actions { display: flex; gap: 0.375rem; }
+.fs-actions { display: flex; align-items: center; gap: 0.375rem; }
+.fs-tracker-link { font-size: 12px; color: var(--color-primary); text-decoration: none; }
+.fs-tracker-link:hover { text-decoration: underline; }
 .fs-area {
     margin-top: 0.75rem;
     font-family: var(--font-mono, ui-monospace, monospace);

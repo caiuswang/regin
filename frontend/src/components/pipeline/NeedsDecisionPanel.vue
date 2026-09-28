@@ -22,7 +22,7 @@ const newest = computed(() => props.decision.rows[0] || null)
 <template>
   <section v-if="compact" class="nd-card" data-testid="needs-decision">
     <div class="nd-card__text">
-      <strong>{{ decision.waiting }} defect{{ decision.waiting === 1 ? '' : 's' }} need{{ decision.waiting === 1 ? 's' : '' }} a decision</strong>
+      <strong>{{ decision.waiting }} defect{{ decision.waiting === 1 ? '' : 's' }} need{{ decision.waiting === 1 ? 's' : '' }} a decision<template v-if="decision.all_projects"> · all projects</template></strong>
       <span v-if="newest">Newest: {{ defectRef(newest.id) }} · {{ monthDay(newest.opened_at) }}</span>
     </div>
     <Button v-if="decision.waiting" variant="secondary" class="nd-card__go" data-testid="needs-decision-triage"
@@ -34,6 +34,7 @@ const newest = computed(() => props.decision.rows[0] || null)
     <header class="pl-panel__head">
       <h2 id="nd-title" class="pl-panel__title">Needs a decision</h2>
       <span class="pl-panel__sub" data-testid="needs-decision-count">{{ decision.waiting }}</span>
+      <span v-if="decision.all_projects" class="pl-panel__sub" data-testid="needs-decision-all-projects">· all projects</span>
       <router-link :to="featuresTo()" class="pl-panel__link focus-visible:outline-2 focus-visible:outline-blue-500"
                    data-testid="needs-decision-triage"
       >Triage all →</router-link>

@@ -5,7 +5,7 @@
 | loop            | the three tab populations, split into their parts  | fixed                                   | —   |
 | running         | running tasks, feature steps included              | latest attempt started, desc            | 6   |
 | run_next        | armed or queued tasks, feature steps included      | dependency-clear first, priority, id    | 6   |
-| needs_decision  | the triage queue (`defects.store.in_queue`)        | newest first                            | 3   |
+| needs_decision  | the triage queue (`defects.store.in_queue`), unscoped | newest first                         | 3   |
 | projects        | scope `all` only — `projects.panel`                | attention                               | 5   |
 | project_head / project_features | scope = one project                | last activity                           | 5   |
 
@@ -33,7 +33,6 @@ from lib.features import events as events_module
 from lib.features import index as feature_index
 from lib.orm import SessionLocal
 from lib.orm.models.defects import STATUS_CLOSED, STATUS_OPEN, Defect
-from lib.orm.models.features import Feature
 from lib.orm.models.trace import Session as TraceSession, TurnUsage
 from lib.orm.models.tasks import (
     AgentTask, TASK_KIND_FIX, TASK_STATUS_ARMED,
@@ -216,25 +215,21 @@ def _running(session, scope) -> dict:
             "rows": [_running_row(t, facts) for t in tasks]}
 
 
-def _defects_scoped(stmt, scope):
-    if scope == SCOPE_ALL:
-        return stmt
-    stmt = stmt.outerjoin(Feature, Defect.feature_id == Feature.id)
-    if scope == SCOPE_NONE:
-        return stmt.where(Feature.project_id.is_(None))
-    return stmt.where(Feature.project_id == scope)
-
-
 def _needs_decision(session, scope) -> dict:
-    queued = _defects_scoped(select(Defect), scope).where(
-        defect_store.in_queue())
+    """The triage queue, under no project scope.
+
+    A defect in the queue has no feature, so it has no project either: scoping
+    it to one would empty the panel under every project. `all_projects` tells
+    the surface that the scope it shows was not applied here.
+    """
+    queued = select(Defect).where(defect_store.in_queue())
     rows = session.exec(queued.order_by(Defect.opened_at.desc(),
                                         Defect.id.desc())
                         .limit(NEEDS_DECISION_CAP)).all()
-    waiting = session.exec(_defects_scoped(
-        select(func.count(Defect.id)), scope)
-        .where(defect_store.in_queue())).one()
+    waiting = session.exec(select(func.count(Defect.id))
+                           .where(defect_store.in_queue())).one()
     return {"waiting": int(waiting),
+            "all_projects": isinstance(scope, int),
             "rows": [{"id": d.id, "round": d.round, "opened_at": d.opened_at,
                       "symptom": d.symptom,
                       "paths": (json.loads(d.suspect_paths_json)

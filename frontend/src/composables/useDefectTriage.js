@@ -1,6 +1,5 @@
 import { computed, ref } from 'vue'
 import api from '../api'
-import { scopeParam } from './usePipelineScope'
 
 // The triage queue's four terminal verbs, and the cursor that walks them.
 //
@@ -60,10 +59,9 @@ export const VERBS = {
 
 export const VERB_ORDER = ['A', 'D', 'X', 'S']
 
-/**
- * @param {() => string} scopeOf — the shell's `?project=` value, read per load.
- */
-export function useDefectTriage(scopeOf = () => '') {
+// The queue is read under no project scope: a defect in it has no feature and
+// so no project, and the server drops a project scope on `scope=triage` anyway.
+export function useDefectTriage() {
   const items = ref([])
   const total = ref(0)
   const loading = ref(true)
@@ -85,8 +83,6 @@ export function useDefectTriage(scopeOf = () => '') {
     error.value = ''
     try {
       const params = new URLSearchParams({ scope: 'triage', sort: 'opened:desc', size: '50' })
-      const project = scopeParam(scopeOf())
-      if (project) params.set('project', project)
       const body = await api.get(`/defects?${params}`)
       if (mine !== issued) return
       items.value = body.items || []
