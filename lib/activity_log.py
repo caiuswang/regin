@@ -93,12 +93,11 @@ class _RotatingSink:
         self._max_bytes = max_bytes
         self._retention_days = retention_days
         # loguru's own FileSink creates the destination file synchronously
-        # in __init__. Match that eagerly: under `enqueue=True` (the
-        # production default), write() runs on a background thread, so
-        # without this touch, `regin.log` wouldn't exist until that thread
-        # first drains the queue -- a real window where a CLI command
-        # invoked immediately after (e.g. `regin logs tail` as the very
-        # first command) sees no file at all.
+        # in __init__. Match that eagerly: under `enqueue=True`, write()
+        # runs on a background thread, so without this touch, `regin.log`
+        # wouldn't exist until that thread first drains the queue -- a real
+        # window where a CLI command invoked immediately after (e.g.
+        # `regin logs tail` as the very first command) sees no file at all.
         self._path.touch(exist_ok=True)
 
     def write(self, message: str) -> None:
@@ -170,7 +169,7 @@ def _log_level() -> str:
 def configure_activity_log(
     *,
     log_dir: Path | None = None,
-    enqueue: bool = True,
+    enqueue: bool = False,
     force: bool = False,
 ) -> None:
     """Idempotent. Registers one loguru sink (`<log_dir>/regin.log`),
@@ -179,9 +178,13 @@ def configure_activity_log(
 
     Args:
         log_dir: override the resolved log directory. Useful for tests.
-        enqueue: route writes through a multiprocessing queue for
-            multi-process safety. Set False in tests to make writes
-            synchronous and assertable without `logger.complete()`.
+        enqueue: route writes through a multiprocessing queue. Off by
+            default: the sink's flock already makes cross-process writes
+            safe, and the queue allocates two POSIX named semaphores per
+            process that leak whenever the process group is SIGKILLed
+            (hook timeouts, killed test workers) -- enough short-lived
+            hook processes exhaust macOS's `kern.posix.sem.max` and every
+            later import fails with ENOSPC.
         force: rebuild the sink even if already configured. Required
             when settings or `log_dir` change at runtime.
     """
