@@ -1,18 +1,19 @@
 <script setup>
 // The Tasks tab's default reading: the open backlog grouped by what each task
-// needs next — Ready to run, Running, Blocked, Ideas — every header counted by
-// the server (`/api/tasks?group=next_step`), done and failed counted and
+// needs next — Ready to run, Running, Blocked, Failed, Ideas — every header
+// counted by the server (`/api/tasks?group=next_step`), done counted and
 // hidden. Each group pages on its own; Ideas opens on three.
 import { computed, ref, watch } from 'vue'
 import api from '../../api'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
 import NextStepRow from './NextStepRow.vue'
-import TaskArmSheet from './TaskArmSheet.vue'
+import RunAllReport from './RunAllReport.vue'
+import TaskSheets from './TaskSheets.vue'
 import { useConfirm } from '../../composables/useConfirm.js'
 import { useFlash } from '../../composables/useFlash.js'
 import { useNextStep } from '../../composables/useTaskViews.js'
-import { useTaskExec } from '../../composables/useTaskExec.js'
+import { useTaskVerbs } from '../../composables/useTaskVerbs.js'
 import { invalidatePipelineCounts } from '../../composables/usePipelineCounts.js'
 
 const props = defineProps({
@@ -25,8 +26,10 @@ const feed = useNextStep(params)
 const { confirm } = useConfirm()
 const { flash } = useFlash()
 const collapsed = ref({})
-const arming = ref(null)
+const sheet = ref(null)
 const runningAll = ref(false)
+const runAllReport = ref(null)
+const canWrite = api.getStoredUser()?.role !== 'viewer'
 
 const groups = computed(() => (feed.body.value?.groups || []).filter(g => g.n > 0))
 const empty = computed(() => feed.body.value && !groups.value.length)
@@ -43,7 +46,9 @@ async function afterWrite() {
   await reload()
 }
 
-const { refusals, busyId, control } = useTaskExec(afterWrite)
+const { refusals, busyId, act } = useTaskVerbs(afterWrite, {
+  openSheet: (kind, task) => { sheet.value = { kind, task } },
+})
 
 function moreLabel(group) {
   return group.key === 'ideas'
@@ -56,14 +61,21 @@ async function runAll(group) {
     `Start ${group.n} ${group.n === 1 ? 'run' : 'runs'} — every task in Ready to run?`)
   if (!ok) return
   runningAll.value = true
+  runAllReport.value = null
   try {
-    const ids = await feed.readyIds()
-    const results = []
-    for (const id of ids) results.push(await api.post(`/tasks/${id}/run`))
-    const refused = results.filter(r => r.ok === false).length
-    flash(refused
-      ? `${ids.length - refused} started · ${refused} refused`
-      : `${ids.length} ${ids.length === 1 ? 'run' : 'runs'} started`, refused ? 'error' : undefined)
+    const ids = await feed.readyRows()
+    const refused = []
+    for (const { id, title } of ids) {
+      const result = await api.post(`/tasks/${id}/run`)
+      if (result.ok === false) {
+        refused.push({ id, title, message: result.msg || 'the run was refused',
+                       blocking: result.body?.blocking || [] })
+      }
+    }
+    runAllReport.value = { started: ids.length - refused.length, refused }
+    flash(refused.length
+      ? `${ids.length - refused.length} started · ${refused.length} refused`
+      : `${ids.length} ${ids.length === 1 ? 'run' : 'runs'} started`, refused.length ? 'error' : undefined)
   } finally {
     runningAll.value = false
     await afterWrite()
@@ -74,8 +86,8 @@ function toggle(key) {
   collapsed.value = { ...collapsed.value, [key]: !collapsed.value[key] }
 }
 
-async function armed() {
-  arming.value = null
+async function sheetDone() {
+  sheet.value = null
   await afterWrite()
 }
 
@@ -116,7 +128,7 @@ defineExpose({ reload })
         </Button>
         <span v-if="group.hint" class="nsl-hint">{{ group.hint }}</span>
         <Button
-          v-if="group.key === 'ready'"
+          v-if="group.key === 'ready' && canWrite"
           variant="link"
           size="sm"
           class="nsl-bulk"
@@ -125,6 +137,11 @@ defineExpose({ reload })
           @click="runAll(group)"
         >Run all {{ group.n }}</Button>
       </header>
+      <RunAllReport
+        v-if="group.key === 'ready' && runAllReport?.refused.length"
+        :report="runAllReport"
+        @dismiss="runAllReport = null"
+      />
       <template v-if="!collapsed[group.key]">
         <ul class="nsl-rows">
           <NextStepRow
@@ -133,8 +150,8 @@ defineExpose({ reload })
             :task="task"
             :busy="busyId === task.id || runningAll"
             :refusal="refusals[task.id] || null"
-            @run="t => control(t, 'run')"
-            @arm="t => (arming = t)"
+            :can-write="canWrite"
+            @verb="act"
           />
         </ul>
         <Button
@@ -148,7 +165,7 @@ defineExpose({ reload })
       </template>
     </section>
 
-    <TaskArmSheet v-if="arming" :task="arming" @close="arming = null" @armed="armed" />
+    <TaskSheets :sheet="sheet" @close="sheet = null" @done="sheetDone" />
   </div>
 </template>
 

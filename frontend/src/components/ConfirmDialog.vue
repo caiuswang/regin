@@ -25,6 +25,11 @@ function onKeydown(e) {
         <div class="px-5 pt-5 pb-3">
           <h3 class="text-base font-semibold text-gray-900 mb-1">{{ dialog.title }}</h3>
           <p class="text-sm text-gray-500 whitespace-pre-line">{{ dialog.message }}</p>
+          <ul v-if="dialog.links.length" class="mt-2 flex flex-wrap gap-2 text-sm" data-testid="confirm-links">
+            <li v-for="link in dialog.links" :key="link.to">
+              <router-link :to="link.to" class="text-blue-600 underline" @click="cancel">{{ link.label }}</router-link>
+            </li>
+          </ul>
         </div>
         <div class="flex justify-end gap-2 px-5 pb-4">
           <Button variant="secondary" @click="cancel">Cancel</Button>

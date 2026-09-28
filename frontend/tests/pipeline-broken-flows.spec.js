@@ -112,6 +112,8 @@ test('test_task_detail_rearm_prefills_pending_params', async ({ page }) => {
     kind: 'task', created_at: '2026-09-01T00:00:00Z',
     updated_at: '2026-09-01T00:00:00Z', tags: [], project_id: null,
     feature_id: null, run_count: 0, images: [], comments: [], deps: [],
+    action: 'run', waits_on: null,
+    menu: ['disarm', 'arm', 'edit', 'deps', 'mark_done', 'archive', 'delete'],
   }
   const armed = {
     status: 'armed', attempt: 1, verify_cmd: 'pytest tests/pipeline', autorun: false,
@@ -128,7 +130,8 @@ test('test_task_detail_rearm_prefills_pending_params', async ({ page }) => {
     route.fulfill({ json: { branches: ['main'], default_base: 'main' } }))
 
   await page.goto('/tasks/51')
-  await page.getByTestId('task-detail-arm').click()
+  await page.getByTestId('task-detail-actions').getByTestId('task-menu').click()
+  await page.getByTestId('task-verb-arm').click()
 
   await expect(page.getByTestId('task-arm-form')).toBeVisible()
   await expect(page.getByTestId('live-launch-worktree-branch')).toHaveValue('x')

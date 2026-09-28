@@ -27,6 +27,7 @@ from lib.orm.models.tasks import (
     AgentTask, AgentTaskDep, DEP_KIND_AFTER, DEP_KIND_REQUIRES, DEP_KINDS,
     TASK_STATUS_ARMED, TASK_STATUS_DONE, TASK_STATUS_FAILED,
 )
+from lib.tasks import verbs
 from lib.tasks.capture import CaptureRejected
 
 log = get_activity_logger("tasks")
@@ -346,6 +347,8 @@ def node(task: AgentTask, blocked_by: list[int]) -> dict:
         "blocked": bool(blocked_by),
         "blocked_by": blocked_by,
         "runnable": task.status == TASK_STATUS_ARMED and not blocked_by,
+        "action": verbs.primary(task.status, blocked_by),
+        "waits_on": blocked_by[0] if blocked_by else None,
     }
 
 

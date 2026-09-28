@@ -10,32 +10,22 @@ from __future__ import annotations
 from sqlmodel import func, select
 
 from lib.orm import SessionLocal
-from lib.orm.models.defects import Defect
+from lib.orm.models.defects import STATUS_OPEN, Defect
 from lib.orm.models.features import Feature
 from lib.orm.models.tasks import (
     AgentTask, AgentTaskDep, AgentTaskRun, RUN_OPEN_STATUSES, RUN_STATUS_ARMED,
-    TASK_STATUS_ARCHIVED, TASK_STATUS_ARMED, TASK_STATUS_IDEA,
-    TASK_STATUS_QUEUED, TASK_STATUS_RUNNING,
+    TASK_STATUS_ARCHIVED, TASK_STATUS_RUNNING,
 )
 from lib.tasks import deps as deps_module
+from lib.tasks import verbs
 
-ACTION_RUN = "run"
-ACTION_WATCH = "watch"
-ACTION_ARM = "arm"
-
-_RUNNABLE = (TASK_STATUS_ARMED, TASK_STATUS_QUEUED)
+ACTION_RUN = verbs.RUN
 
 
 def next_action(status: str, blocked_by: list[int]):
     """The one action a row offers. `None` is a row with nothing to do: a
     settled task, or one still waiting on a dependency."""
-    if status == TASK_STATUS_RUNNING:
-        return ACTION_WATCH
-    if status == TASK_STATUS_IDEA:
-        return ACTION_ARM
-    if status in _RUNNABLE and not blocked_by:
-        return ACTION_RUN
-    return None
+    return verbs.primary(status, blocked_by)
 
 
 def _ids(tasks: list[dict]) -> list[int]:
@@ -65,18 +55,25 @@ def fix_defects(tasks: list[dict]) -> list[dict]:
 
     The pointer lives on the defect (`defects.fix_task_id`), so without this
     a task created from a defect cannot name the defect it closes.
+
+    `fixes_open_defects` is the subset still open — what Mark done names in
+    its confirm, because marking the task done never closes them.
     """
     ids = _ids(tasks)
     by_task: dict[int, list[int]] = {}
+    open_by_task: dict[int, list[int]] = {}
     if ids:
         with SessionLocal() as session:
-            for defect_id, task_id in session.exec(
-                    select(Defect.id, Defect.fix_task_id)
+            for defect_id, task_id, status in session.exec(
+                    select(Defect.id, Defect.fix_task_id, Defect.status)
                     .where(Defect.fix_task_id.in_(ids))
                     .order_by(Defect.id)).all():
                 by_task.setdefault(task_id, []).append(defect_id)
+                if status == STATUS_OPEN:
+                    open_by_task.setdefault(task_id, []).append(defect_id)
     for task in tasks:
         task["fixes_defects"] = by_task.get(task["id"], [])
+        task["fixes_open_defects"] = open_by_task.get(task["id"], [])
     return tasks
 
 
@@ -124,7 +121,7 @@ def _unmet_by_task(ids: list[int]) -> tuple[dict[int, list[int]], dict]:
 
 
 def dependencies(tasks: list[dict]) -> list[dict]:
-    """`blocked_by`, `waits_on` and the row's one `action`.
+    """`blocked_by`, `waits_on`, the row's one `action` and its `menu`.
 
     `waits_on` names the lowest-numbered unmet dependency and its status, so a
     row can read "waits on #408 (running)" without a second read.
@@ -138,6 +135,7 @@ def dependencies(tasks: list[dict]) -> list[dict]:
                              "status": status.get(blocked_by[0])}
                             if blocked_by else None)
         task["action"] = next_action(task["status"], blocked_by)
+        task["menu"] = verbs.menu(task["status"], blocked_by)
     return tasks
 
 

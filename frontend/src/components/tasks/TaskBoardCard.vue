@@ -1,16 +1,25 @@
 <script setup>
 // A board card: priority and id, the live run or the attempt count, the title,
-// its feature, and what it fixes or waits on. The whole card opens the task.
-// A card waiting on a dependency is dimmed; a running one wears the agent ring.
+// its feature, what it fixes or waits on, and the row's primary action and ⋯
+// menu (feature #119 R4a). The whole card still opens the task: the title's
+// link is stretched over the card, and the controls sit above it — a button
+// inside an anchor is not a button a keyboard or a screen reader can reach.
 import { computed } from 'vue'
 import Icon from '../ui/Icon.vue'
 import TaskFacts from './TaskFacts.vue'
+import TaskPrimaryAction from './TaskPrimaryAction.vue'
 import TaskPriorityIcon from './TaskPriorityIcon.vue'
+import TaskRefusal from './TaskRefusal.vue'
+import TaskVerbMenu from './TaskVerbMenu.vue'
 import { liveFor } from '../../utils/taskMeta.js'
 
 const props = defineProps({
   task: { type: Object, required: true },
+  busy: { type: Boolean, default: false },
+  refusal: { type: Object, default: null },
+  canWrite: { type: Boolean, default: true },
 })
+const emit = defineEmits(['verb'])
 
 const corner = computed(() => {
   const t = props.task
@@ -20,11 +29,12 @@ const corner = computed(() => {
   }
   return ''
 })
+const hasControls = computed(() => !!props.task.action || !!props.task.waits_on
+  || (props.canWrite && (props.task.menu || []).length > 0))
 </script>
 
 <template>
-  <router-link
-    :to="`/tasks/${task.id}`"
+  <div
     class="tbc"
     :class="{ 'is-waiting': !!task.waits_on, 'is-live': !!task.live }"
     :data-testid="`board-card-${task.id}`"
@@ -36,18 +46,30 @@ const corner = computed(() => {
         <span v-if="task.live" class="tbc-dot" aria-hidden="true" />{{ corner }}
       </span>
     </span>
-    <span class="tbc-title">{{ task.title }}</span>
+    <router-link :to="`/tasks/${task.id}`" class="tbc-title">{{ task.title }}</router-link>
     <span v-if="task.feature_id != null" class="tbc-feature">
       <Icon name="flag" :size="11" />#{{ task.feature_id }} {{ task.feature_title }}
     </span>
-    <span v-if="task.fixes_defects?.length || task.waits_on" class="tbc-facts">
-      <TaskFacts :task="task" :show-live="false" />
+    <span v-if="task.fixes_defects?.length" class="tbc-facts">
+      <TaskFacts :task="task" :show-live="false" :show-waits="false" />
     </span>
-  </router-link>
+    <span v-if="hasControls" class="tbc-actions">
+      <TaskPrimaryAction
+        :task="task" :busy="busy" :can-write="canWrite"
+        @verb="v => emit('verb', v, task)"
+      />
+      <TaskVerbMenu
+        v-if="canWrite" class="tbc-menu" :task="task" :busy="busy"
+        @verb="v => emit('verb', v, task)"
+      />
+    </span>
+    <TaskRefusal v-if="refusal" class="tbc-refusal" :refusal="refusal" />
+  </div>
 </template>
 
 <style scoped>
 .tbc {
+    position: relative;
     display: flex;
     flex-direction: column;
     gap: 0.4375rem;
@@ -57,8 +79,8 @@ const corner = computed(() => {
     border: 1px solid var(--color-border);
     border-radius: var(--radius-lg);
 }
-.tbc:hover { text-decoration: none; border-color: var(--color-border-strong); }
-.tbc:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 2px; }
+.tbc:hover { border-color: var(--color-border-strong); }
+.tbc:focus-within { outline: 2px solid var(--color-ring); outline-offset: 2px; }
 .tbc.is-waiting { opacity: 0.65; }
 .tbc.is-live {
     border-color: var(--color-agent);
@@ -90,6 +112,7 @@ const corner = computed(() => {
     border-radius: 999px;
 }
 .tbc-title {
+    color: var(--color-fg);
     font-size: 0.8125rem;
     font-weight: 600;
     line-height: 1.35;
@@ -115,4 +138,24 @@ const corner = computed(() => {
     flex-wrap: wrap;
     gap: 0.3125rem;
 }
+.tbc-title:hover { text-decoration: none; }
+.tbc-title:focus-visible { outline: none; }
+.tbc-title::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+}
+.tbc-actions,
+.tbc :deep(.task-refusal) {
+    position: relative;
+    z-index: 1;
+}
+.tbc-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+.tbc-actions .tbc-menu { margin-left: auto; }
+.tbc .tbc-refusal { margin-top: 0; }
 </style>

@@ -16,8 +16,8 @@ const COUNTS = { tasks: 128, features: 24, defects: 40 }
 const part = (key, label, n, highlighted = false) => ({ key, label, n, highlighted })
 const LOOP = {
   stages: [
-    { label: 'Tasks', total: 128, parts: [part('idea', 'Ideas', 42), part('armed', 'Armed', 6),
-      part('queued', 'Queued', 3), part('running', 'Running', 2), part('done', 'Done', 71),
+    { label: 'Tasks', total: 128, parts: [part('idea', 'Ideas', 42), part('armed', 'Armed', 9),
+      part('running', 'Running', 2), part('done', 'Done', 71),
       part('failed', 'Failed', 4, true)] },
     { label: 'Features', total: 24, parts: [part('spec', 'Spec', 5), part('building', 'Building', 7),
       part('shipped', 'Shipped', 10), part('escaped', 'Escaped', 2, true)] },
@@ -297,6 +297,8 @@ test('test_overview_panels_and_empty_states', async ({ page }) => {
   await expect(page.getByTestId('running-now-row-408')).toContainText('#38 Span search facets · step 3 of 7')
   await expect(page.getByTestId('running-now-row-408')).not.toContainText('attempt')
   await expect(page.getByTestId('running-now-watch-408')).toHaveAttribute('href', '/tasks/408')
+  // R4a: a running row offers Stop beside Watch (feature #119).
+  await expect(page.getByTestId('running-now-stop-414')).toBeVisible()
   const runningBox = await runningNow.boundingBox()
   const runNextHead = await page.getByTestId('run-next').locator('#rn-title').boundingBox()
   expect(runningBox.y + runningBox.height).toBeLessThanOrEqual(runNextHead.y)
@@ -308,6 +310,7 @@ test('test_overview_panels_and_empty_states', async ({ page }) => {
   // Run next: a waiting row is dimmed, names what it waits on, has no Run.
   const waiting = page.getByTestId('run-next-row-409')
   await expect(page.getByTestId('run-next-wait-409')).toHaveText(/waits on #408 \(running\)/)
+  await expect(page.getByTestId('run-next-wait-409')).toHaveAttribute('href', '/tasks/408')
   await expect(waiting).toHaveClass(/is-waiting/)
   expect(Number(await waiting.evaluate(el => getComputedStyle(el).opacity))).toBeLessThan(1)
   await expect(waiting.getByRole('button')).toHaveCount(0)
@@ -378,7 +381,7 @@ test('test_overview_quiet_loop_facts_and_links', async ({ page }) => {
 
   // I11: every part is still in the bar's accessible name.
   await expect(page.getByTestId('loop-tasks').getByTestId('loop-bar'))
-    .toHaveAttribute('aria-label', 'Ideas 42, Armed 6, Queued 3, Running 2, Done 71, Failed 4')
+    .toHaveAttribute('aria-label', 'Ideas 42, Armed 9, Running 2, Done 71, Failed 4')
   // Bars are neutral except the parts that need a human or failed.
   const fills = await page.getByTestId('loop-tasks').locator('[data-part]').evaluateAll(els =>
     Object.fromEntries(els.map(e => [e.dataset.part, getComputedStyle(e).backgroundColor])))

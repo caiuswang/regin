@@ -31,7 +31,6 @@ export const STATUS_FILTERS = [
   { key: '', label: 'All' },
   { key: 'idea', label: 'Ideas' },
   { key: 'armed', label: 'Armed' },
-  { key: 'queued', label: 'Queued' },
   { key: 'running', label: 'Running' },
   { key: 'done', label: 'Done' },
   { key: 'failed', label: 'Failed' },

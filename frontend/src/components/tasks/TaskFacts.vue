@@ -9,10 +9,12 @@ import { liveFor, waitsLabel } from '../../utils/taskMeta.js'
 const props = defineProps({
   task: { type: Object, required: true },
   showLive: { type: Boolean, default: true },
+  // Off where the row's primary action already is the waits-on link.
+  showWaits: { type: Boolean, default: true },
 })
 
 const fixes = computed(() => props.task.fixes_defects || [])
-const waits = computed(() => waitsLabel(props.task))
+const waits = computed(() => (props.showWaits ? waitsLabel(props.task) : ''))
 const live = computed(() => (props.showLive && props.task.live
   ? `live · ${liveFor(props.task.live.started_at)}` : ''))
 </script>

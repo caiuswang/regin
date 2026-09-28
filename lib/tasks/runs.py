@@ -190,6 +190,25 @@ def armed_attempt(task_id: int) -> Optional[dict]:
         return _serialize(row) if row is not None else None
 
 
+def drop_armed(task_id: int) -> Optional[int]:
+    """Delete the pending attempt, returning its id; None when there was none.
+
+    Only the `armed` row goes: it never started, so no history is lost, while
+    every launched attempt stays for the run history.
+    """
+    with SessionLocal() as session:
+        row = session.exec(
+            select(AgentTaskRun)
+            .where(AgentTaskRun.task_id == task_id,
+                   AgentTaskRun.status == RUN_STATUS_ARMED)).first()
+        if row is None:
+            return None
+        run_id = row.id
+        session.delete(row)
+        session.commit()
+    return run_id
+
+
 def open_attempt(task_id: int, *, params: Optional[dict] = None,
                  verify_cmd: Optional[str] = None,
                  autorun: int = 0) -> dict:

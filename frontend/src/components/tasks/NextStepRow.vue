@@ -1,29 +1,28 @@
 <script setup>
 // One row of the next-step list: priority, status, id, title over its feature
-// line, the facts, the ONE action the row needs, and its day.
+// line, the facts, the row's primary action and ⋯ menu, and its day.
 //
-// The action is the server's (`row.action`): run, watch, arm or none. It is
-// always visible — never revealed on hover — and a row waiting on a
-// dependency is dimmed and offers nothing, because pressing Run there is a
-// 409 the operator would have to read to learn what the row already knows.
+// Both come from the server (`row.action`, `row.menu` — feature #119 R4a) and
+// are always visible, never revealed on hover. A row waiting on a dependency
+// is dimmed and its primary is the link to what it waits on.
 import { computed } from 'vue'
-import Button from '../ui/Button.vue'
-import Icon from '../ui/Icon.vue'
 import TaskFacts from './TaskFacts.vue'
+import TaskPrimaryAction from './TaskPrimaryAction.vue'
 import TaskPriorityIcon from './TaskPriorityIcon.vue'
+import TaskRefusal from './TaskRefusal.vue'
 import TaskStatusIcon from './TaskStatusIcon.vue'
+import TaskVerbMenu from './TaskVerbMenu.vue'
 import { taskDay, taskSub } from '../../utils/taskMeta.js'
 
 const props = defineProps({
   task: { type: Object, required: true },
   busy: { type: Boolean, default: false },
   refusal: { type: Object, default: null },
+  canWrite: { type: Boolean, default: true },
 })
-const emit = defineEmits(['run', 'arm'])
+const emit = defineEmits(['verb'])
 
 const waiting = computed(() => !!props.task.waits_on)
-const watchTo = computed(() => (props.task.live?.trace_id
-  ? `/trace/sessions/${props.task.live.trace_id}` : `/tasks/${props.task.id}`))
 </script>
 
 <template>
@@ -41,48 +40,26 @@ const watchTo = computed(() => (props.task.live?.trace_id
     </div>
     <div class="nsr-meta">
       <span class="nsr-id">#{{ task.id }}</span>
-      <span class="nsr-facts"><TaskFacts :task="task" /></span>
+      <span class="nsr-facts"><TaskFacts :task="task" :show-waits="false" /></span>
     </div>
     <div class="nsr-action">
-      <Button
-        v-if="task.action === 'run'"
-        variant="secondary"
-        size="sm"
-        class="nsr-btn nsr-run"
-        :disabled="busy"
-        :aria-label="`Run ${task.title}`"
-        data-testid="task-action-run"
-        @click="emit('run', task)"
-      >
-        <Icon name="play" :size="12" class="nsr-play" />
-        <span class="nsr-run-label">Run</span>
-      </Button>
-      <router-link
-        v-else-if="task.action === 'watch'"
-        :to="watchTo"
-        class="nsr-btn nsr-watch"
-        :aria-label="`Watch ${task.title}`"
-        data-testid="task-action-watch"
-      >Watch</router-link>
-      <Button
-        v-else-if="task.action === 'arm'"
-        variant="secondary"
-        size="sm"
-        class="nsr-btn"
-        :aria-label="`Arm ${task.title}`"
-        data-testid="task-action-arm"
-        @click="emit('arm', task)"
-      >Arm</Button>
+      <TaskPrimaryAction
+        :task="task"
+        :busy="busy"
+        :can-write="canWrite"
+        @verb="v => emit('verb', v, task)"
+      />
+      <TaskVerbMenu v-if="canWrite" :task="task" :busy="busy" @verb="v => emit('verb', v, task)" />
     </div>
     <span class="nsr-day">{{ taskDay(task.created_at) }}</span>
-    <p v-if="refusal" class="nsr-refusal" role="alert">{{ refusal.message }}</p>
+    <TaskRefusal v-if="refusal" class="nsr-refusal" :refusal="refusal" />
   </li>
 </template>
 
 <style scoped>
 .nsr {
     display: grid;
-    grid-template-columns: 1.25rem 1.25rem 3rem minmax(0, 1fr) auto 4.75rem 3.5rem;
+    grid-template-columns: 1.25rem 1.25rem 3rem minmax(0, 1fr) auto auto 3.5rem;
     grid-template-areas: "prio status id main facts action day";
     align-items: center;
     column-gap: 0.625rem;
@@ -133,7 +110,10 @@ const watchTo = computed(() => (props.task.live?.trace_id
 .nsr-action {
     grid-area: action;
     display: flex;
+    align-items: center;
     justify-content: flex-end;
+    gap: 0.25rem;
+    min-width: 4.75rem;
 }
 .nsr-day {
     grid-area: day;
@@ -142,29 +122,10 @@ const watchTo = computed(() => (props.task.live?.trace_id
     text-align: right;
     white-space: nowrap;
 }
-.nsr .nsr-run {
-    color: var(--color-primary);
-    background: var(--color-info-soft);
-}
-.nsr-watch {
-    display: inline-flex;
-    align-items: center;
-    height: 1.75rem;
-    padding: 0 0.625rem;
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: var(--color-agent);
-    background: var(--color-agent-soft);
-    border-radius: var(--radius-lg);
-}
-.nsr-watch:hover { text-decoration: none; filter: brightness(0.97); }
-.nsr-watch:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 2px; }
-.nsr-play { fill: currentColor; }
 .nsr.is-waiting { opacity: 0.65; }
-.nsr-refusal {
+.nsr .nsr-refusal {
     grid-column: main / -1;
-    font-size: 0.75rem;
-    color: var(--color-danger);
+    margin-top: 0.25rem;
 }
 
 @media (max-width: 767px) {
@@ -188,11 +149,5 @@ const watchTo = computed(() => (props.task.live?.trace_id
         gap: 0.375rem;
     }
     .nsr-facts { justify-content: flex-start; }
-    .nsr-run-label { display: none; }
-    .nsr .nsr-btn {
-        min-width: 2.75rem;
-        min-height: 2.75rem;
-        justify-content: center;
-    }
 }
 </style>

@@ -5,15 +5,19 @@ const dialog = reactive({
   title: 'Confirm',
   message: 'Are you sure?',
   danger: false,
+  links: [],
   resolve: null,
 })
 
-function confirm(title, message, danger = false) {
+// `links` ({ to, label }) are the objects the message names, rendered as
+// router links under it so a confirm that names a defect lets you open it.
+function confirm(title, message, danger = false, { links = [] } = {}) {
   return new Promise((resolve) => {
     dialog.visible = true
     dialog.title = title || 'Confirm'
     dialog.message = message || 'Are you sure?'
     dialog.danger = danger
+    dialog.links = links
     dialog.resolve = resolve
   })
 }
