@@ -193,6 +193,7 @@ test('the arm sheet prefills a slice from its proposal before the remembered pre
     kind: 'build', created_at: '2026-09-01T00:00:00Z',
     updated_at: '2026-09-01T00:00:00Z', tags: [], project_id: null,
     feature_id: FID, run_count: 0, images: [], comments: [], deps: [],
+    action: 'arm', waits_on: null, menu: ['edit', 'deps', 'mark_done', 'archive', 'delete'],
   }
   await page.route(/\/api\/tasks\/72(\?|$)/, route =>
     route.fulfill({ json: { task, feature: null, armed: null } }))
@@ -208,7 +209,7 @@ test('the arm sheet prefills a slice from its proposal before the remembered pre
     route.fulfill({ json: { branches: ['f242/integration'], default_base: 'main' } }))
 
   await page.goto('/tasks/72')
-  await page.getByTestId('task-detail-arm').click()
+  await page.getByTestId('task-detail-actions').getByTestId('task-action-arm').click()
 
   await expect(page.getByTestId('task-arm-form')).toBeVisible()
   await expect(page.getByTestId('live-launch-worktree-branch')).toHaveValue('f242/s2')
