@@ -34,7 +34,9 @@ from lib.features import store as feature_store
 from lib.features import sync as sync_module
 from lib.orm import SessionLocal
 from lib.orm.models.tasks import BODY_MAX
+from lib.tasks import feature_slices
 from lib.tasks.integrations import IntegrationError
+from lib.tasks.transcribe import TranscribeRefused
 from lib.tasks.query import FilterRejected
 from lib.utils.pagination import clamp_page, clamp_size
 from web.blueprints.image_payload import decoded_image, wanted_idx
@@ -289,6 +291,65 @@ def api_feature_refresh(feature_id):
             "figure is local")
         return jsonify(body), 502
     return jsonify(body)
+
+
+# ── slices ───────────────────────────────────────────────────
+# Each route wraps the `lib/tasks/feature_slices` function its CLI twin
+# calls, so the ledger and a terminal cannot slice one spec two ways.
+
+def _slices_call(fn, *args, ok_status: int = 200):
+    """Run one slicing verb: 404 no feature, 409 refused by state, 400 bad
+    request. Every refusal carries the lib's own sentence."""
+    try:
+        result = fn(*args)
+    except feature_store.FeatureError as exc:
+        return jsonify({"error": str(exc)}), 404
+    except (feature_slices.SlicesRefused, TranscribeRefused) as exc:
+        return jsonify({"error": str(exc)}), 409
+    except feature_slices.SlicesRejected as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(result), ok_status
+
+
+@features_bp.route("/api/features/<int:feature_id>/slices")
+def api_feature_slices(feature_id: int):
+    """The `SlicesReport`: the refusal verbatim, or the rows and their tasks."""
+    return _slices_call(feature_slices.report, feature_id)
+
+
+@features_bp.route("/api/features/<int:feature_id>/slices/tail",
+                   methods=["POST"])
+@require_editor
+def api_feature_slices_tail(feature_id: int):
+    """Append integrate → migrate → verify to the spec's table, once."""
+    base = (_payload().get("base") or "").strip() or None
+
+    def append(fid):
+        feature_slices.append_tail(fid, base=base)
+        return {"slices": feature_slices.report(fid),
+                "ledger": _ledger_body(fid)}
+    return _slices_call(append, feature_id)
+
+
+@features_bp.route("/api/features/<int:feature_id>/transcribe",
+                   methods=["POST"])
+@require_editor
+def api_feature_transcribe(feature_id: int):
+    """Land the table as idea tasks and edges. Arms nothing."""
+    def run(fid):
+        return feature_slices.transcription_summary(
+            feature_slices.transcribe_feature(fid))
+    return _slices_call(run, feature_id)
+
+
+@features_bp.route("/api/features/<int:feature_id>/arm-slices",
+                   methods=["POST"])
+@require_editor
+def api_feature_arm_slices(feature_id: int):
+    """Arm many idea slices in one request; refusals are named per task and
+    nothing is run."""
+    return _slices_call(feature_slices.arm_slices, feature_id,
+                        _payload().get("items"))
 
 
 # ── images ───────────────────────────────────────────────────

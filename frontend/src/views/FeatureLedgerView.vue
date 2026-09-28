@@ -33,6 +33,7 @@ import FeatureEvidence from '../components/features/FeatureEvidence.vue'
 import FeatureFigures from '../components/features/FeatureFigures.vue'
 import FeatureProject from '../components/features/FeatureProject.vue'
 import FeatureImages from '../components/features/FeatureImages.vue'
+import FeatureSlices from '../components/features/FeatureSlices.vue'
 import FeatureSpec from '../components/features/FeatureSpec.vue'
 import FeatureStageLine from '../components/features/FeatureStageLine.vue'
 import FeatureTasks from '../components/features/FeatureTasks.vue'
@@ -208,6 +209,17 @@ async function undeclare(row) {
   await load()
 }
 
+// A tail append answers with the ledger it wrote; a transcribe or an arm
+// changes only the task-side figures, which a re-read picks up.
+async function onSlicesChanged(fresh) {
+  if (fresh) {
+    ledger.value = fresh
+    tasksCard.value?.load()
+    return
+  }
+  await onDefectsChanged()
+}
+
 // Not `load()`: that rebinds the image list, re-fetching every blob and
 // dropping thumbnails the operator just added.
 async function onDefectsChanged() {
@@ -291,6 +303,15 @@ function onDeclared() {
         :tracker="ledger.origin"
         :external-url="ledger.external_url"
         @saved="ledger = $event"
+      />
+
+      <FeatureSlices
+        :feature-id="ledger.id"
+        :body="ledger.body || ''"
+        :can-write="canWrite"
+        :tracked="!ledger.stage_live"
+        :project-id="ledger.project_id"
+        @changed="onSlicesChanged"
       />
 
       <FeatureImages

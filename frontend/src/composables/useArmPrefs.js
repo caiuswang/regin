@@ -68,23 +68,46 @@ export function hasRecalledValues(draft) {
   return REMEMBERED.some(field => !!draft[field])
 }
 
-/** The draft the sheet opens with, plus whether it came from the last arm.
- *
- * A task that already carries a pending attempt wins outright: those are the
- * parameters this task's next run will actually spend, and overwriting them
- * with another task's would silently re-aim an attempt the operator is only
- * reopening to read.
- */
-export function seededArmDraft(task) {
-  const draft = armDraft(task)
-  if (task?.armed?.params) return { draft, recalled: false }
+// R4b: once the plan (a slice's arm-proposal) or history (the last attempt)
+// has spoken, the remembered prefs may only say HOW to run — skill and model.
+// Everything else they carry was another task's, and a verify command or cwd
+// borrowed from it would silently outrank nothing and aim this one elsewhere.
+const HOW_ONLY = ['model', 'skill', 'skillArgs']
+
+/** A slice row's proposal (`GET /tasks/<id>/arm-proposal`) as an attempt. */
+export function proposalAttempt(proposal) {
+  if (!proposal) return null
+  return {
+    params: {
+      worktree: proposal.branch ? { branch: proposal.branch, base: proposal.base || '' } : null,
+      skill: proposal.skill ? { name: proposal.skill } : null,
+    },
+    verify_cmd: proposal.verify_cmd || null,
+  }
+}
+
+function isEmpty(value) {
+  return value === '' || value === false || value == null
+}
+
+// First non-empty source wins, per field. `useWorktree` follows the branch
+// it gates, so a proposal's branch switches the worktree on with it.
+function fillEmpty(draft, attempt) {
+  const from = armDraft({ armed: attempt })
+  for (const [field, value] of Object.entries(from)) {
+    if (isEmpty(draft[field]) && !isEmpty(value)) draft[field] = value
+  }
+}
+
+function fillFromStored(draft, task, fields) {
   const stored = read()
-  if (!stored) return { draft, recalled: false }
+  if (!stored) return false
   let recalled = false
-  for (const field of REMEMBERED) {
+  for (const field of fields) {
     // A filed task's directory is its project's repo (`projectCwd`), never the
     // last task's: that is how a task filed under repo B came to run in A.
     if (field === 'cwd' && task?.project_id != null) continue
+    if (!isEmpty(draft[field])) continue
     const value = stored[field]
     // The sentinel names a slot in the form, not a model — refuse it on the way
     // in as well as on the way out, so a store written before `rememberArm`
@@ -102,7 +125,31 @@ export function seededArmDraft(task) {
       recalled = true
     }
   }
+  return recalled
+}
+
+/** The draft the sheet opens with, plus whether any of it came from the last arm.
+ *
+ * R4b, per field, first non-empty source wins:
+ *   1. the task's pending attempt — the parameters its next run will actually
+ *      spend; when present it wins outright, since re-seeding it from anything
+ *      else would silently re-aim an attempt the operator only reopened to read;
+ *   2. the slice row's arm-proposal;
+ *   3. the last attempt's parameters;
+ *   4. the remembered prefs — only skill/model once 2 or 3 spoke, and never
+ *      branch/base (they are not remembered at all).
+ */
+export function prefilledArmDraft(task, { proposal = null, lastRun = null } = {}) {
+  const draft = armDraft(task)
+  if (task?.armed?.params) return { draft, recalled: false }
+  const higher = [proposalAttempt(proposal), lastRun].filter(Boolean)
+  for (const attempt of higher) fillEmpty(draft, attempt)
+  const recalled = fillFromStored(draft, task, higher.length ? HOW_ONLY : REMEMBERED)
   return { draft, recalled }
+}
+
+export function seededArmDraft(task) {
+  return prefilledArmDraft(task)
 }
 
 /** The working directory a task's project seeds, or null to leave it alone.

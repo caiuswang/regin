@@ -110,6 +110,25 @@ def slice_key(feature_id: int, n: str) -> str:
     return f"{feature_id}:{n}"
 
 
+def slice_of(task: AgentTask) -> Optional[tuple[int, str]]:
+    """`(feature_id, "S<n>")` for a transcribed slice task, else None.
+
+    Read off the identity transcription wrote, never off the title: a title
+    is a sentence a human edits.
+    """
+    if task.source != TRANSCRIBE_SOURCE or task.feature_id is None:
+        return None
+    prefix = f"{task.feature_id}:"
+    key = task.external_id or ""
+    if not key.startswith(prefix):
+        return None
+    return task.feature_id, key[len(prefix):]
+
+
+def default_branch_prefix(feature_id: int) -> str:
+    return f"f{feature_id}/"
+
+
 def slice_body(row: SliceRow) -> str:
     """The four sections of R3. A row missing one never reaches here — the
     parser refuses it as a missing column, which names the column."""
@@ -180,7 +199,14 @@ def _refuse_two_schema_slices(rows: list[SliceRow]) -> None:
             + ", ".join(owners) + " each claim one")
 
 
-def _existing(feature_id: int, rows: list[SliceRow]) -> dict[str, AgentTask]:
+def check_graph(rows: list[SliceRow]) -> None:
+    """The table-wide refusals transcription raises before any write."""
+    _refuse_unknown_and_cyclic(rows)
+    _refuse_two_schema_slices(rows)
+
+
+def existing_slices(feature_id: int,
+                    rows: list[SliceRow]) -> dict[str, AgentTask]:
     """The feature's already-transcribed slices, keyed by slice id."""
     keys = {slice_key(feature_id, row.n): row.n for row in rows}
     with SessionLocal() as session:
@@ -191,7 +217,7 @@ def _existing(feature_id: int, rows: list[SliceRow]) -> dict[str, AgentTask]:
     return {keys[row.external_id]: row for row in found}
 
 
-def _branch_for(row: SliceRow, branch_prefix: str) -> str:
+def branch_for(row: SliceRow, branch_prefix: str) -> str:
     return f"{branch_prefix}{row.n.lower()}"
 
 
@@ -199,7 +225,7 @@ def _write_one(row: SliceRow, existing: Optional[AgentTask], *,
                feature_id: int, branch_prefix: str,
                default_verify: Optional[str]) -> SliceOutcome:
     title, body = slice_title(row), slice_body(row)
-    arm = arm_proposal(row, branch=_branch_for(row, branch_prefix),
+    arm = arm_proposal(row, branch=branch_for(row, branch_prefix),
                        default_verify=default_verify)
     if existing is None:
         view, _ = store.capture_task(
@@ -284,10 +310,9 @@ def transcribe(feature_id: int, body: str, *, branch_prefix: str,
         rows = parse_slice_table(body)
     except SliceTableError as exc:
         raise TranscribeRefused(str(exc), exc.row, exc.column) from exc
-    _refuse_unknown_and_cyclic(rows)
-    _refuse_two_schema_slices(rows)
+    check_graph(rows)
 
-    existing = _existing(feature_id, rows)
+    existing = existing_slices(feature_id, rows)
     outcomes: dict[str, SliceOutcome] = {}
     for row in rows:
         outcomes[row.n] = _write_one(

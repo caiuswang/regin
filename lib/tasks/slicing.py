@@ -27,7 +27,8 @@ import re
 from typing import Iterable, Optional, Sequence
 
 from lib.activity_log import get_activity_logger
-from lib.tasks.slice_table import SliceRow, SliceTableError, parse_slice_table
+from lib.tasks.slice_table import (
+    SliceRow, SliceTableError, parse_slice_table, table_bounds)
 
 log = get_activity_logger("tasks")
 
@@ -298,6 +299,26 @@ def _cell(value: str, row_id: str, column: str) -> str:
     return value or "—"
 
 
+def _row_values(row: SliceRow) -> dict[str, str]:
+    """A row's cells keyed by column id — the one place a row becomes text."""
+    return {
+        "n": row.n,
+        "title": row.title,
+        "delivers": row.delivers,
+        "spec_refs": ", ".join(row.spec_refs),
+        "tests": ", ".join(row.tests),
+        "schema": "yes" if row.owns_schema_change else "",
+        "depends_on": ", ".join(row.depends_on),
+        "base": row.base,
+        "skill": row.skill,
+        "verify_cmd": row.verify_cmd or "",
+    }
+
+
+_COLUMN_ORDER = ("n", "title", "delivers", "spec_refs", "tests", "schema",
+                 "depends_on", "base", "skill", "verify_cmd")
+
+
 def render_slice_table(rows: Sequence[SliceRow], base: str) -> str:
     """The table as it goes into `features.body`, with its Base heading.
 
@@ -310,22 +331,31 @@ def render_slice_table(rows: Sequence[SliceRow], base: str) -> str:
     lines = [f"**Base: `{base}`**", "",
              "| " + " | ".join(_HEADERS) + " |",
              "|" + "---|" * len(_HEADERS)]
-    columns = ("n", "title", "delivers", "spec_refs", "tests", "schema",
-               "depends_on", "base", "skill", "verify_cmd")
     for row in rows:
-        values = (
-            row.n,
-            row.title,
-            row.delivers,
-            ", ".join(row.spec_refs),
-            ", ".join(row.tests),
-            "yes" if row.owns_schema_change else "",
-            ", ".join(row.depends_on),
-            row.base,
-            row.skill,
-            row.verify_cmd or "",
-        )
+        values = _row_values(row)
         lines.append("| " + " | ".join(
-            _cell(value, row.n, column)
-            for value, column in zip(values, columns)) + " |")
+            _cell(values[column], row.n, column)
+            for column in _COLUMN_ORDER) + " |")
     return "\n".join(lines)
+
+
+def append_rows(body: str, rows: Sequence[SliceRow]) -> str:
+    """`body` with `rows` added under the last row of its slice table.
+
+    Written in the table's own column order, so a spec whose author ordered
+    or named the columns differently gets rows its parser reads back the same
+    way. A column the table does not have is dropped — its reader falls back
+    to that column's default, exactly as for the rows already there.
+    """
+    bounds = table_bounds(body)
+    by_index = {index: column for column, index in bounds.columns.items()}
+    rendered = []
+    for row in rows:
+        values = _row_values(row)
+        cells = [_cell(values.get(by_index.get(i, ""), ""), row.n,
+                       by_index.get(i, header))
+                 for i, header in enumerate(bounds.header)]
+        rendered.append("| " + " | ".join(cells) + " |")
+    lines = body.splitlines()
+    lines[bounds.last_line + 1:bounds.last_line + 1] = rendered
+    return "\n".join(lines) + ("\n" if body.endswith("\n") else "")
