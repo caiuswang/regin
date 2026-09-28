@@ -10,11 +10,11 @@ import { computed, nextTick, ref, watch } from 'vue'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
 import TaskStatusIcon from './TaskStatusIcon.vue'
-import { useLaneGraph } from '../../composables/useTaskViews.js'
+import { GRAPH_FILTERS, useLaneGraph } from '../../composables/useTaskViews.js'
 import { LANE_W, NODE_H, NODE_W, layoutLanes } from '../../utils/taskLaneLayout.js'
 
 const props = defineProps({
-  project: { type: String, default: '' },
+  params: { type: Object, required: true },
   open: { type: Boolean, default: true },
   find: { type: String, default: '' },
 })
@@ -23,7 +23,8 @@ const ZOOM_STEP = 0.2
 const ZOOM_MIN = 0.4
 const ZOOM_MAX = 1.6
 
-const scope = computed(() => ({ project: props.project, open: props.open }))
+const scope = computed(() => ({ params: props.params, open: props.open }))
+const narrowed = computed(() => GRAPH_FILTERS.some(k => k !== 'project_id' && props.params[k]))
 const graph = useLaneGraph(scope)
 const zoom = ref(1)
 const viewport = ref(null)
@@ -100,10 +101,11 @@ defineExpose({ reload: graph.load })
     <p v-else-if="!graph.body.value" class="tlg-note">Loading the graph…</p>
     <p v-else-if="graph.body.value.truncated" class="tlg-note" role="status" data-testid="task-graph-truncated">
       {{ graph.body.value.total_nodes }} tasks is too many to draw. Keep “Open chains only”
-      on, or pick a project.
+      on, pick a project, or narrow the filters.
     </p>
     <p v-else-if="!layout.nodes.length" class="tlg-note" data-testid="task-graph-empty">
-      {{ open ? 'No open chains to draw.' : 'No tasks to draw yet.' }}
+      <template v-if="narrowed">No tasks match these filters.</template>
+      <template v-else>{{ open ? 'No open chains to draw.' : 'No tasks to draw yet.' }}</template>
     </p>
     <template v-else>
       <div ref="viewport" class="tlg-viewport">

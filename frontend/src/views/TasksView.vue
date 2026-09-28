@@ -189,9 +189,9 @@ onBeforeUnmount(() => window.removeEventListener(TASK_CAPTURED_EVENT, afterWrite
       @view="setView"
     />
     <TaskLaneGraph
-      v-else-if="view === 'graph'"
+      v-else-if="view === 'graph' && params"
       ref="body"
-      :project="query.project.value"
+      :params="params"
       :open="query.state.value.open !== '0'"
       :find="find"
     />

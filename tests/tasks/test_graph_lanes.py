@@ -121,3 +121,60 @@ def test_priority_filter_takes_a_comma_list(flask_client, native_task):
     assert {g["key"]: g["n"] for g in grouped["groups"]}["ideas"] == 2
     assert refused.status_code == 400
     assert refused.get_json()["field"] == "priority"
+
+
+def _set_priority(task_id: int, priority: str):
+    from sqlmodel import text
+    with SessionLocal() as session:
+        session.exec(text("UPDATE agent_tasks SET priority = :p"
+                          " WHERE id = :i").bindparams(p=priority, i=task_id))
+        session.commit()
+
+
+def test_lane_graph_takes_the_feeds_filters(flask_client, native_task,
+                                            feature_row):
+    feature = feature_row("filtered")
+    tagged = native_task(title="tagged", tags_json='["release"]',
+                         source="cli", assignee=3, feature_id=feature.id)
+    other = native_task(title="other", source="linear")
+    _set_priority(tagged, "high")
+    _set_priority(other, "low")
+
+    def ids(qs):
+        return [n["id"] for n in _lanes(flask_client, f"lanes=1&{qs}")["nodes"]]
+
+    assert ids("priority=urgent,high") == [tagged]
+    assert ids("tag=release") == [tagged]
+    assert ids("source=linear") == [other]
+    assert ids(f"feature_id={feature.id}") == [tagged]
+    assert ids("assignee=3") == [tagged]
+    assert ids("root_only=1") == [other]
+    refused = flask_client.get("/api/tasks/graph?lanes=1&priority=bogus")
+    assert refused.status_code == 400
+    assert refused.get_json()["field"] == "priority"
+
+
+def test_filtered_graph_counts_what_it_draws_and_keeps_blocking_real(
+        flask_client, native_task, feature_row):
+    feature = feature_row("chain")
+    running, armed = _chain(native_task, feature.id, ["running", "armed"])
+    _set_priority(armed, "high")
+
+    body = _lanes(flask_client, "lanes=1&priority=high")
+
+    assert [n["id"] for n in body["nodes"]] == [armed]
+    assert body["nodes"][0]["blocked"]
+    assert body["edges"] == []
+    assert body["lanes"] == [{"feature_id": feature.id, "title": "chain",
+                              "done": 0, "total": 1}]
+    assert body["chains"] == 1
+
+
+def test_filtered_graph_never_draws_archived(flask_client, native_task):
+    native_task(title="gone", status="archived", source="cli")
+    live = native_task(title="live", source="cli")
+
+    body = _lanes(flask_client,
+                  "lanes=1&open=0&source=cli&status=archived&include_archived=1")
+
+    assert [n["id"] for n in body["nodes"]] == [live]

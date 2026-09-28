@@ -649,15 +649,15 @@ def api_set_task_deps(task_id: int):
 
 def _lane_graph(cap):
     """`lanes=1`: the Graph view's drawing — feature lanes, open chains, and
-    the footer's counts, all counted here over what is drawn."""
+    the footer's counts, all counted here over what is drawn, under the same
+    filters the list and board take."""
     try:
         filters = query.parse_filters(request.args)
     except query.FilterRejected as exc:
         return _rejected_filter(exc)
     return jsonify(graph_lanes.read(graph_lanes.LaneQuery(
         open_only=(request.args.get("open") or "1").strip() != "0",
-        project_id=filters["project_id"], unassigned=filters["unassigned"],
-        cap=cap)))
+        filters=filters, cap=cap)))
 
 
 @tasks_bp.route('/api/tasks/graph', methods=['GET'])

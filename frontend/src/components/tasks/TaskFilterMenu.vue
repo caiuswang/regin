@@ -2,8 +2,8 @@
 // The one "Filter" button behind the chips. What it offers depends on the
 // reading: the next-step list and the board own the status axis (a status
 // filter there would contradict the column a task sits in) and never show
-// archived, the flat and legacy-grouped list takes both, and the graph has
-// one switch of its own.
+// archived, the flat and legacy-grouped list takes both, and the graph takes
+// the grouped reading's filters plus its own "Open chains only" switch.
 //
 // Toggles and priority apply on click; the free-text fields apply on submit,
 // because each is a URL write and a history entry per keystroke is noise.
@@ -71,16 +71,7 @@ function apply() {
       </Button>
     </template>
 
-    <div v-if="mode === 'graph'" class="tfm">
-      <Checkbox
-        :model-value="state.open !== '0'"
-        label="Open chains only"
-        data-testid="task-filter-open"
-        @update:model-value="v => emit('patch', { open: v ? '' : '0' })"
-      />
-    </div>
-
-    <form v-else class="tfm" @submit.prevent="apply()">
+    <form class="tfm" @submit.prevent="apply()">
       <fieldset class="tfm-field">
         <legend class="tfm-label">Priority</legend>
         <span class="tfm-row">
@@ -107,6 +98,13 @@ function apply() {
       <div class="tfm-field">
         <span class="tfm-label">Show</span>
         <span class="tfm-row">
+          <Checkbox
+            v-if="mode === 'graph'"
+            :model-value="state.open !== '0'"
+            label="Open chains only"
+            data-testid="task-filter-open"
+            @update:model-value="v => emit('patch', { open: v ? '' : '0' })"
+          />
           <Checkbox
             :model-value="state.unfeatured !== '1'"
             label="Feature steps"

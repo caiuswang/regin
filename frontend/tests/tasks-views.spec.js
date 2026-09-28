@@ -154,6 +154,23 @@ test('test_tasks_list_board_graph_views', async ({ page }) => {
   await page.getByTestId('task-chip-remove-open').click()
   await expect(page).toHaveURL(/open=0/)
   await expect(page.getByTestId('graph-footer')).toHaveText(/^\d+ chains?$/)
+
+  // The graph takes the list's filters too (defect #189): the tag it arrived
+  // under is a chip, and a priority from the Filter menu narrows the drawing.
+  await expect(page.getByTestId('task-chip-tag')).toContainText(tag)
+  await page.getByTestId('task-filter-button').click()
+  await expect(page.getByTestId('task-filter-open')).toBeVisible()
+  await page.getByTestId('task-filter-priority-high').click()
+  await page.keyboard.press('Escape')
+  await expect(page.getByTestId('task-chip-priority')).toContainText('High')
+  await expect(page.getByTestId(`graph-node-${ids.running}`)).toBeVisible()
+  await expect(page.getByTestId(`graph-node-${ids.blocked}`)).toBeVisible()
+  await expect(page.getByTestId(`graph-node-${ids.ready}`)).toHaveCount(0)
+  await expect(lane).toHaveCount(0)
+  await page.getByTestId('task-chip-remove-priority').click()
+  await expect(lane.getByTestId('graph-lane-count')).toHaveText('1 / 3')
+  await page.goto(`/tasks?view=graph&tag=${tag}&priority=medium`)
+  await expect(page.getByTestId('task-graph-empty')).toHaveText('No tasks match these filters.')
 })
 
 test('test_pipeline_mobile_layouts', async ({ page }) => {

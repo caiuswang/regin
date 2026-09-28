@@ -164,6 +164,12 @@ export function useTaskBoard(params, size = 20) {
 }
 
 /** `GET /api/tasks/graph?lanes=1` — the DAG as feature lanes. */
+// The feed params the Graph view sends. `q` is not one — the graph's search
+// box finds a box in the drawing rather than narrowing it — nor are status,
+// sort and archived, which the lanes decide for themselves.
+export const GRAPH_FILTERS = ['project_id', 'priority', 'tag', 'source',
+  'feature_id', 'assignee', 'root_only']
+
 export function useLaneGraph(scope, cap = 150) {
   const body = ref(null)
   const error = ref('')
@@ -173,9 +179,11 @@ export function useLaneGraph(scope, cap = 150) {
   async function load() {
     const mine = latest.next()
     loading.value = true
-    const { project, open } = scope.value
+    const { params, open } = scope.value
     const qs = new URLSearchParams({ lanes: '1', open: open ? '1' : '0', cap: String(cap) })
-    if (project) qs.set('project_id', project)
+    for (const key of GRAPH_FILTERS) {
+      if (params[key]) qs.set(key, params[key])
+    }
     try {
       const data = await api.get(`/tasks/graph?${qs}`)
       if (latest.stale(mine)) return

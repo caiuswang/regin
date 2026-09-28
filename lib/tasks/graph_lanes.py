@@ -10,6 +10,12 @@ by the browser over whatever it happened to receive:
 | chains         | weakly connected components among the drawn tasks          |
 | lanes_hidden   | feature lanes in scope with no open task (open mode only)   |
 
+The list's filters (priority, tag, source, feature, assignee, feature steps,
+project) narrow the drawn set with the same WHERE clauses the feed uses
+(`lib.tasks.query.apply_filters`), before "Open chains only" runs over what is
+left. Whether an edge blocks is still decided against every task's status: a
+filtered-out dependency that has not finished still holds its task back.
+
 "Open chains only" keeps each connected component holding at least one open
 task, then drops any lane left without an open task of its own. Archived
 tasks are never drawn: archived is reached by asking for it by name, and the
@@ -18,7 +24,7 @@ graph has no such ask.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from sqlmodel import select
@@ -26,11 +32,11 @@ from sqlmodel import select
 from lib.orm import SessionLocal
 from lib.orm.models.features import Feature
 from lib.orm.models.tasks import (
-    AgentTask, AgentTaskDep, TASK_STATUS_ARCHIVED, TASK_STATUS_ARMED,
+    AgentTask, AgentTaskDep, TASK_STATUS_ARMED,
     TASK_STATUS_DONE,
     TASK_STATUS_IDEA, TASK_STATUS_QUEUED, TASK_STATUS_RUNNING,
 )
-from lib.tasks import deps
+from lib.tasks import deps, query
 
 OPEN_STATUSES = (TASK_STATUS_IDEA, TASK_STATUS_ARMED, TASK_STATUS_QUEUED,
                  TASK_STATUS_RUNNING)
@@ -38,21 +44,16 @@ OPEN_STATUSES = (TASK_STATUS_IDEA, TASK_STATUS_ARMED, TASK_STATUS_QUEUED,
 
 @dataclass(frozen=True)
 class LaneQuery:
-    """What the Graph view asks for: open chains or everything, one project,
-    no project, or all of them, and the size past which it will not draw."""
+    """What the Graph view asks for: open chains or everything, the feed's
+    filters (`query.parse_filters`), and the size past which it will not draw."""
 
     open_only: bool = True
-    project_id: Optional[int] = None
-    unassigned: bool = False
+    filters: dict = field(default_factory=lambda: query.parse_filters({}))
     cap: Optional[int] = None
 
 
-def _in_scope(task: AgentTask, ask: LaneQuery) -> bool:
-    if task.status == TASK_STATUS_ARCHIVED:
-        return False
-    if ask.unassigned:
-        return task.project_id is None
-    return ask.project_id is None or task.project_id == ask.project_id
+def _drawable(filters: dict) -> dict:
+    return {**filters, "status": "", "include_archived": False}
 
 
 def _components(ids: set[int], edges) -> list[set[int]]:
@@ -140,16 +141,17 @@ class _Loaded:
 
 def _load(ask: LaneQuery) -> _Loaded:
     with SessionLocal() as session:
-        tasks = session.exec(select(AgentTask)).all()
+        statuses = dict(session.exec(
+            select(AgentTask.id, AgentTask.status)).all())
         edges = [(row.task_id, row.depends_on_id, row.kind)
                  for row in session.exec(select(AgentTaskDep)).all()]
-        scoped = {t.id: t for t in tasks if _in_scope(t, ask)}
+        scoped = {t.id: t for t in session.exec(query.apply_filters(
+            select(AgentTask), _drawable(ask.filters))).all()}
         keep = _open_chains(scoped, edges) if ask.open_only else set(scoped)
         kept = [scoped[i] for i in sorted(keep)]
         titles = _feature_titles(
             session, {t.feature_id for t in kept if t.feature_id})
-    return _Loaded({t.id: t.status for t in tasks}, edges, scoped, keep,
-                   kept, titles)
+    return _Loaded(statuses, edges, scoped, keep, kept, titles)
 
 
 def read(ask: LaneQuery) -> dict:

@@ -18,16 +18,14 @@ const TEXT_CHIPS = [
 
 /**
  * `mode` is the Filter menu's: 'grouped' (next step, board), 'flat', or
- * 'graph'. A chip is only shown for an axis that reading honours — a status
+ * 'graph' (grouped's axes plus "Open chains only"). A chip is only shown for an axis that reading honours — a status
  * chip over the board would name a filter the columns ignore.
  */
 export function taskChips(state, { mode = 'grouped', mobile = false, users = [] } = {}) {
-  if (mode === 'graph') {
-    return state.open === '0' ? [] : [
-      { key: 'open', field: 'Show', value: 'Open chains only', patch: { open: '0' } },
-    ]
-  }
   const chips = []
+  if (mode === 'graph' && state.open !== '0') {
+    chips.push({ key: 'open', field: 'Show', value: 'Open chains only', patch: { open: '0' } })
+  }
   if (state.priority) {
     chips.push({ key: 'priority', field: mobile ? '' : 'Priority',
                  value: priorityChipLabel(state.priority, { compact: mobile }),
