@@ -12,16 +12,16 @@ import Select from '../components/ui/Select.vue'
 import DropdownMenu from '../components/ui/DropdownMenu.vue'
 import NextStepList from '../components/tasks/NextStepList.vue'
 import TaskBoard from '../components/tasks/TaskBoard.vue'
-import TaskComposerDialog from '../components/tasks/TaskComposerDialog.vue'
 import TaskFilterMenu from '../components/tasks/TaskFilterMenu.vue'
 import TaskLaneGraph from '../components/tasks/TaskLaneGraph.vue'
 import TaskListPanel from '../components/tasks/TaskListPanel.vue'
 import TaskToolbar from '../components/tasks/TaskToolbar.vue'
 import TasksScopeBanner from '../components/tasks/TasksScopeBanner.vue'
+import PipelineCreateButton from '../components/pipeline/PipelineCreateButton.vue'
+import { usePipelineCreate } from '../composables/usePipelineCreate'
 import { usePipelineTabActive } from '../composables/usePipelineHeader'
 import { invalidatePipelineCounts } from '../composables/usePipelineCounts.js'
 import { useBreakpoint } from '../composables/useBreakpoint.js'
-import { useProjects } from '../composables/useProjects.js'
 import { TASK_CAPTURED_EVENT } from '../composables/useQuickCapture.js'
 import { useTaskQuery } from '../composables/useTaskQuery'
 import { useTaskShortcuts } from '../composables/useTaskShortcuts.js'
@@ -33,7 +33,6 @@ const route = useRoute()
 const query = useTaskQuery()
 const isCurrentTab = usePipelineTabActive()
 const { isMdUp } = useBreakpoint()
-const { items: projects, ensure: ensureProjects } = useProjects()
 const { items: users, ensure: ensureUsers } = useUsers()
 
 const mobile = computed(() => !isMdUp.value)
@@ -62,7 +61,7 @@ const count = ref('')
 const find = ref('')
 const body = ref(null)
 const toolbar = ref(null)
-const composerOpen = ref(false)
+const { openCreate } = usePipelineCreate()
 
 const groupOptions = GROUPS.map(g => ({
   value: g.value, label: g.value === 'none' ? g.label : `Group: ${g.label}` }))
@@ -87,12 +86,11 @@ async function afterWrite() {
 }
 
 useTaskShortcuts({
-  c: () => { composerOpen.value = true },
+  c: () => openCreate('task'),
   '/': () => toolbar.value?.focusSearch(),
 })
 
 onMounted(() => {
-  ensureProjects()
   ensureUsers()
   window.addEventListener(TASK_CAPTURED_EVENT, afterWrite)
 })
@@ -105,11 +103,7 @@ onBeforeUnmount(() => window.removeEventListener(TASK_CAPTURED_EVENT, afterWrite
 <template>
   <div class="tv space-y-3">
     <Teleport v-if="isCurrentTab" defer to="#pipeline-actions">
-      <Button variant="primary" data-testid="task-new" @click="composerOpen = true">
-        <Icon name="plus" :size="14" />
-        <span>New task</span>
-        <kbd class="tv-kbd">c</kbd>
-      </Button>
+      <PipelineCreateButton kind="task" testid="task-new" />
     </Teleport>
 
     <TaskToolbar
@@ -185,7 +179,7 @@ onBeforeUnmount(() => window.removeEventListener(TASK_CAPTURED_EVENT, afterWrite
       ref="body"
       :params="params"
       @count="v => (count = v)"
-      @compose="composerOpen = true"
+      @compose="openCreate('task')"
       @view="setView"
     />
     <TaskLaneGraph
@@ -196,29 +190,14 @@ onBeforeUnmount(() => window.removeEventListener(TASK_CAPTURED_EVENT, afterWrite
       :find="find"
     />
     <template v-else-if="nextStep">
-      <NextStepList v-if="params" ref="body" :params="params" @count="v => (count = v)" />
+      <NextStepList v-if="params" ref="body" :params="params" :anchor="query.anchor.value" @count="v => (count = v)" />
     </template>
     <TaskListPanel v-else ref="body" @count="v => (count = v)" />
 
-    <TaskComposerDialog
-      v-model:open="composerOpen"
-      :projects="projects"
-      :project="query.project.value"
-      @created="afterWrite"
-    />
   </div>
 </template>
 
 <style scoped>
-.tv-kbd {
-    margin-left: 0.25rem;
-    padding: 0 0.25rem;
-    font-size: 0.6875rem;
-    font-family: var(--font-mono, ui-monospace, monospace);
-    border: 1px solid currentColor;
-    border-radius: var(--radius-sm, 0.25rem);
-    opacity: 0.7;
-}
 .tv-count {
     display: inline-flex;
     align-items: center;

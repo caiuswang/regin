@@ -809,3 +809,352 @@ test('test_features_table_rows_fit_their_own_width', async ({ page }) => {
     await expect(page.locator('.ftt-head .num').last()).toBeVisible()
   }
 })
+
+// ---------------------------------------------------------------------------
+// Feature #119 · S7 (R6) — creation and navigation from the shell.
+// ---------------------------------------------------------------------------
+
+/** Answer one method+path with `body`, leaving every other request alone. */
+async function answer(page, method, pattern, reply) {
+  await page.route(pattern, (route) => {
+    if (route.request().method() !== method) return route.fallback()
+    const body = typeof reply === 'function' ? reply(route.request()) : reply
+    return json(route, body, body?.__status || 200)
+  })
+}
+
+test('test_new_defect_dialog_unattributed_lands_in_triage', async ({ page }) => {
+  const state = await stubPipeline(page)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const posted = []
+  await answer(page, 'POST', '**/api/defects', (req) => {
+    const body = req.postDataJSON()
+    posted.push(body)
+    const made = defect(97, { symptom: body.symptom, suspect_paths: body.suspect_paths })
+    state.triage = [made, ...state.triage]
+    return { outcome: 'opened', defect: made, __status: 201 }
+  })
+  await page.goto('/features')
+  await expect(page.getByTestId('triage-card-94')).toBeVisible()
+
+  await page.getByTestId('pipeline-new').click()
+  await page.getByTestId('pipeline-new-defect').click()
+  await page.getByTestId('new-defect-symptom').fill('Picker loses focus after a search')
+  await page.getByTestId('new-defect-paths').fill('frontend/src/a.vue\n\n  lib/b.py  ')
+  await page.getByTestId('new-defect-submit').click()
+
+  await expect.poll(() => posted.length).toBe(1)
+  expect(posted[0]).toEqual({ symptom: 'Picker loses focus after a search',
+                              suspect_paths: ['frontend/src/a.vue', 'lib/b.py'] })
+  // No feature named → it is a triage report, and the rail re-reads to show it.
+  await expect(page.getByTestId('triage-card-97')).toContainText('Picker loses focus after a search')
+  await expect(page.getByTestId('flash')).toContainText('Defect #97 reported in triage')
+  await expect(page.getByTestId('flash-link')).toHaveAttribute('href', '/defects/97')
+})
+
+test('test_pipeline_create_menu_prefills_scope', async ({ page }) => {
+  await stubPipeline(page)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto('/tasks?project=3')
+
+  // The tab's default is still one click and `c`; the ▾ offers every kind.
+  await page.getByTestId('pipeline-new').click()
+  await expect(page.getByTestId('pipeline-new-task')).toBeVisible()
+  await expect(page.getByTestId('pipeline-new-feature')).toBeVisible()
+  await expect(page.getByTestId('pipeline-new-defect')).toBeVisible()
+  await page.getByTestId('pipeline-new-feature').click()
+  await expect(page.getByTestId('declare-project')).toContainText('regin-core')
+  await page.keyboard.press('Escape')
+
+  await page.getByTestId('pipeline-new').click()
+  await page.getByTestId('pipeline-new-task').click()
+  await expect(page.getByTestId('task-composer-project')).toContainText('regin-core')
+  await page.keyboard.press('Escape')
+
+  // `c` keeps each tab's own default.
+  await page.locator('body').click({ position: { x: 5, y: 5 } })
+  await page.keyboard.press('c')
+  await expect(page.getByTestId('task-title')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await page.getByTestId('pipeline-tab-features').click()
+  await expect(page.locator('#pipeline-actions [data-testid="declare-feature"]')).toBeVisible()
+  await page.locator('body').click({ position: { x: 5, y: 5 } })
+  await page.keyboard.press('c')
+  await expect(page.getByTestId('declare-title')).toBeVisible()
+  await expect(page.getByTestId('declare-project')).toContainText('regin-core')
+})
+
+test('test_quick_capture_carries_scope_and_refreshes_counts', async ({ page }) => {
+  await stubPipeline(page)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  let countReads = 0
+  await page.route('**/api/pipeline/counts*', (route) => {
+    countReads += 1
+    return json(route, { counts: COUNTS })
+  })
+  const posted = []
+  await answer(page, 'POST', '**/api/tasks', (req) => {
+    posted.push(req.postDataJSON())
+    return { task: { id: 901, title: 'captured', status: 'idea' } }
+  })
+  await page.goto('/overview?project=3')
+  await expect(page.getByTestId('overview-loop')).toBeVisible()
+  await expect.poll(() => countReads).toBeGreaterThan(0)
+  const before = countReads
+
+  await page.getByTestId('quick-capture-fab').click()
+  await expect(page.getByTestId('quick-capture-scope')).toContainText('regin-core')
+  await page.getByLabel('Idea title').fill('captured')
+  await page.getByTestId('quick-capture-save').click()
+
+  await expect.poll(() => posted.length).toBe(1)
+  expect(posted[0]).toMatchObject({ title: 'captured', project_id: 3 })
+  await expect.poll(() => countReads).toBeGreaterThan(before)
+  await expect(page.getByTestId('flash-link')).toHaveAttribute('href', '/tasks/901')
+})
+
+test('test_overview_every_fact_links_to_filtered_tab', async ({ page }) => {
+  await stubPipeline(page)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto('/overview')
+
+  const href = id => page.getByTestId(id).getAttribute('href')
+  expect(await href('loop-fact-running')).toBe('/tasks?view=list&group=running')
+  expect(await href('loop-fact-ready')).toBe('/tasks?view=list&group=ready')
+  expect(await href('loop-fact-failed')).toBe('/tasks?view=list&group=failed')
+  expect(await href('loop-fact-building')).toBe('/features?stage=building')
+  expect(await href('loop-fact-spec')).toBe('/features?stage=spec')
+  expect(await href('loop-fact-escaped')).toBe('/features?stage=escaped')
+  expect(await href('loop-fact-open')).toBe('/defects?status=open')
+  expect(await href('loop-fact-triage')).toBe('/features')
+  // Every printed fact is an anchor — none is left as plain text.
+  await expect(page.locator('[data-testid^="loop-fact-"]:not(a)')).toHaveCount(0)
+
+  // Projects panel counts, and Run next.
+  expect(await href('projects-features-3')).toBe('/features?project=3')
+  expect(await href('projects-tasks-3')).toBe('/tasks?project=3')
+  expect(await href('projects-escaped-3')).toBe('/features?project=3&stage=escaped')
+  expect(await href('projects-defects-3')).toBe('/defects?project=3&status=open')
+  expect(await href('run-next-all')).toBe('/tasks?view=list&group=ready')
+  expect(await href('run-next-feature-412')).toBe('/features/38')
+  expect(await href('run-next-wait-409')).toBe('/tasks/408')
+
+  // `group=` is an address: the next-step list, opened and scrolled to it.
+  await page.route('**/api/tasks?*', (route) => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get('group') !== 'next_step') return route.fallback()
+    const rows = n => Array.from({ length: n }, (_, i) => ({ id: 600 + i, title: `row ${i}`, status: 'idea', waits_on: null, live: null }))
+    return json(route, { open: 41, done_hidden: 0, groups: [
+      { key: 'ready', n: 20, more: 0, rows: rows(20) },
+      { key: 'ideas', n: 20, more: 0, rows: rows(20).map(r => ({ ...r, id: r.id + 50 })) },
+      { key: 'failed', n: 1, more: 0, rows: [{ id: 700, title: 'broke', status: 'failed', waits_on: null, live: null }] },
+    ] })
+  })
+  await page.getByTestId('loop-fact-failed').click()
+  await expect(page).toHaveURL(/\/tasks\?view=list&group=failed$/)
+  const failed = page.getByTestId('next-step-group-failed')
+  await expect(failed).toHaveAttribute('data-anchored', 'true')
+  await expect(page.getByTestId('next-step-toggle-failed')).toHaveAttribute('aria-expanded', 'true')
+  await expect(failed).toBeInViewport()
+  await expect(page.getByTestId('task-group')).toContainText('Next step')
+  // An arrival is not a choice: filter changes keep the anchor and never
+  // overwrite the grouping the reader stored.
+  await page.evaluate(() => localStorage.setItem('regin.tasks.group', 'status'))
+  const search = page.getByPlaceholder('Search tasks')
+  await search.fill('b')
+  await search.press('Enter')
+  await search.fill('br')
+  await search.press('Enter')
+  await expect(page).toHaveURL(/q=br/)
+  await expect(page).toHaveURL(/group=failed/)
+  expect(await page.evaluate(() => localStorage.getItem('regin.tasks.group'))).toBe('status')
+
+  // Under a project, the 1d head's counts link to the same tabs, scoped.
+  await page.goto('/overview?project=3')
+  expect(await href('project-head-tasks')).toBe('/tasks?project=3')
+  expect(await href('project-head-defects')).toBe('/defects?project=3&status=open')
+  expect(await href('loop-fact-running')).toBe('/tasks?project=3&view=list&group=running')
+})
+
+async function stubTaskDetail(page) {
+  await page.route(/\/api\/tasks\/\d+(\?|$)/, (route) => {
+    if (route.request().method() !== 'GET') return route.fallback()
+    const id = Number(route.request().url().match(/\/tasks\/(\d+)/)[1])
+    return json(route, { id, title: `task ${id}`, status: 'armed', priority: 'none', body: '',
+      created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z', tags: [],
+      project_id: null, feature_id: null, run_count: 0, images: [], comments: [], deps: [] })
+  })
+}
+
+test('test_detail_back_link_returns_to_origin', async ({ page }) => {
+  await stubPipeline(page)
+  await stubTaskDetail(page)
+  await page.setViewportSize({ width: 1440, height: 900 })
+
+  // Opened from the Overview → back to the Overview, not to /tasks.
+  await page.goto('/overview?project=3')
+  await page.getByTestId('run-next-row-412').getByRole('link', { name: /Retry budget/ }).click()
+  await expect(page).toHaveURL(/\/tasks\/412$/)
+  const back = page.getByTestId('detail-back')
+  await expect(back).toContainText('Overview')
+  await back.click()
+  await expect(page).toHaveURL(/\/overview\?project=3$/)
+
+  // Opened from a filtered list → back to that list, query and all, and Back
+  // is a real history step, so no forward entry is left behind.
+  await page.goto('/features?stage=escaped')
+  await page.getByTestId('triage-permalink-94').click()
+  await expect(page).toHaveURL(/\/defects\/94$/)
+  const defectBack = page.getByTestId('defect-back')
+  await expect(defectBack).toContainText('Features')
+  await defectBack.click()
+  await expect(page).toHaveURL(/\/features\?stage=escaped$/)
+  expect(await page.evaluate(() => window.history.state.forward)).toBe('/defects/94')
+
+  // An in-page anchor on the detail is its own history entry; Back must still
+  // leave the page rather than return to the same one.
+  await page.getByTestId('triage-permalink-94').click()
+  await expect(page).toHaveURL(/\/defects\/94$/)
+  await page.evaluate(() => document.querySelector('#app').__vue_app__
+    .config.globalProperties.$router.push({ path: '/defects/94', hash: '#defect-images' }))
+  await expect(page).toHaveURL(/\/defects\/94#defect-images$/)
+  await expect(defectBack).not.toContainText('Defect #94')
+  await defectBack.click()
+  await expect(page).not.toHaveURL(/\/defects\/94/)
+
+  await page.goto('/tasks/412')
+  // A deep link has no Pipeline route behind it: the parent tab.
+  await expect(back).toContainText('Tasks')
+  await expect(back).toHaveAttribute('href', /^\/tasks/)
+  await back.click()
+  await expect(page).toHaveURL(/\/tasks(\?|$)/)
+})
+
+test('test_project_change_on_detail_goes_to_parent_tab', async ({ page }) => {
+  await stubPipeline(page)
+  await page.setViewportSize({ width: 1440, height: 900 })
+
+  await page.goto('/defects/94')
+  await page.getByTestId('pipeline-project').click()
+  await page.getByTestId('project-picker-row-7').click()
+  await expect(page).toHaveURL(/\/defects\?project=7$/)
+
+  await page.goto('/features/44')
+  await page.getByTestId('pipeline-project').click()
+  await page.getByTestId('project-picker-row-3').click()
+  await expect(page).toHaveURL(/\/features\?project=3$/)
+  await expect(page.getByTestId('pipeline-project')).toContainText('regin-core')
+})
+
+test('test_project_picker_keyboard_and_server_search', async ({ page }) => {
+  const asked = []
+  await stubPipeline(page)
+  await page.route('**/api/pipeline/projects*', (route) => {
+    const url = new URL(route.request().url())
+    asked.push(Object.fromEntries(url.searchParams))
+    const q = url.searchParams.get('q') || ''
+    const pageNo = Number(url.searchParams.get('page') || 0)
+    const all = [
+      { id: 3, scope: '3', name: 'regin-core', features: { by_stage: { escaped: 1 } }, defects: { open: 6 } },
+      { id: 7, scope: '7', name: 'docs-site', features: { by_stage: {} }, defects: { open: 0 } },
+      ...Array.from({ length: 118 }, (_, i) => ({ id: 100 + i, scope: String(100 + i), name: `repo-${100 + i}`,
+                                                  features: { by_stage: {} }, defects: { open: 0 } })),
+    ].filter(r => r.name.includes(q))
+    const size = Number(url.searchParams.get('size') || 50)
+    return json(route, { items: all.slice(pageNo * size, (pageNo + 1) * size),
+                         pagination: { total: all.length, page: pageNo, size }, population: 121 })
+  })
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto('/overview')
+  await expect(page.getByTestId('overview-loop')).toBeVisible()
+
+  // No 100-row cap: the rest of the population is one "more" away.
+  await page.keyboard.press('p')
+  await expect(page.getByTestId('project-picker-search')).toBeFocused()
+  const more = page.getByTestId('project-picker-more')
+  await expect(more).toHaveText('70 more')
+  await more.click()
+  await expect(more).toHaveText('20 more')
+  expect(asked.at(-1).page).toBe('1')
+
+  // Server-side search: the typed text is the request's `q`.
+  await page.getByTestId('project-picker-search').fill('docs')
+  await expect.poll(() => asked.at(-1).q).toBe('docs')
+  await expect(page.locator('.pp-panel .pp-row:not(.pp-row--all)')).toHaveCount(1)
+
+  // ↓ moves off "All projects" onto the row; Enter picks it.
+  await page.getByTestId('project-picker-search').press('ArrowDown')
+  await expect(page.getByTestId('project-picker-row-7')).toHaveClass(/is-active/)
+  await page.getByTestId('project-picker-search').press('ArrowUp')
+  await expect(page.getByTestId('project-picker-all')).toHaveClass(/is-active/)
+  await page.getByTestId('project-picker-search').press('ArrowDown')
+  await page.getByTestId('project-picker-search').press('Enter')
+  await expect(page).toHaveURL(/\/overview\?project=7$/)
+})
+
+test('test_new_feature_dialog_keeps_draft', async ({ page }) => {
+  await stubPipeline(page)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto('/features')
+
+  await page.getByTestId('declare-feature').click()
+  await page.getByTestId('declare-title').fill('half-typed feature')
+  await page.getByTestId('declare-body').fill('## Intent\nstill thinking')
+  await page.keyboard.press('Escape')
+  await expect(page.getByTestId('declare-title')).toHaveCount(0)
+
+  // Reopened — even from another tab's menu — the words are still there.
+  await page.getByTestId('pipeline-tab-tasks').click()
+  await expect(page.locator('#pipeline-actions [data-testid="task-new"]')).toBeVisible()
+  await page.getByTestId('pipeline-new').click()
+  await page.getByTestId('pipeline-new-feature').click()
+  await expect(page.getByTestId('declare-title')).toHaveValue('half-typed feature')
+  await expect(page.getByTestId('declare-body')).toHaveValue('## Intent\nstill thinking')
+
+  // Only a discard ends the draft.
+  await page.getByTestId('declare-discard').click()
+  await expect(page.getByTestId('declare-title')).toHaveCount(0)
+  await page.getByTestId('pipeline-new').click()
+  await page.getByTestId('pipeline-new-feature').click()
+  await expect(page.getByTestId('declare-title')).toHaveValue('')
+  await expect(page.getByTestId('declare-discard')).toHaveCount(0)
+})
+
+test('test_action_toasts_link_the_object', async ({ page }) => {
+  await stubPipeline(page)
+  await answer(page, 'POST', '**/api/tasks/412/run',
+    { ok: true, run: { id: 9, attempt: 2, trace_id: 'tr-9' } })
+  await answer(page, 'POST', '**/api/tasks/414/stop', { ok: true, delivered: true })
+  await answer(page, 'POST', '**/api/tasks', { task: { id: 902, title: 'made', status: 'idea' } })
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto('/overview')
+
+  const flash = page.getByTestId('flash')
+  const link = page.getByTestId('flash-link')
+
+  // Run → "Attempt 2 … started · Watch", linking the run's session.
+  await page.getByTestId('run-next-run-412').click()
+  await expect(flash).toContainText('Attempt 2 of #412 started')
+  await expect(link).toHaveText('Watch')
+  await expect(link).toHaveAttribute('href', '/trace/sessions/tr-9')
+
+  // Stop → names and links the task.
+  await page.getByTestId('running-now-stop-414').click()
+  await page.getByRole('button', { name: /^Stop/ }).last().click()
+  await expect(flash).toContainText('Stopped #414')
+  await expect(link).toHaveAttribute('href', '/tasks/414')
+
+  // Create → links the new task.
+  await page.getByTestId('task-new').click()
+  await page.getByTestId('task-title').fill('made')
+  await page.getByTestId('task-submit').click()
+  await expect(flash).toContainText('Task #902 created')
+  await expect(link).toHaveAttribute('href', '/tasks/902')
+
+  // On a phone too, where Running now is not drawn.
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/overview')
+  await page.getByTestId('run-next-run-412').click()
+  await expect(flash).toBeInViewport()
+  await expect(link).toHaveAttribute('href', '/trace/sessions/tr-9')
+})

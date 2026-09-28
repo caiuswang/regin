@@ -1,6 +1,8 @@
 import { ref } from 'vue'
 import api from '../api'
 import { draftBody, draftError } from './useTasks.js'
+import { invalidatePipelineCounts } from './usePipelineCounts.js'
+import { shellProjectId } from './usePipelineScope.js'
 
 // Broadcast rather than a shared store: the only listener is whichever task
 // feed happens to be mounted, and a capture from the bubble must refresh it
@@ -44,7 +46,12 @@ export function useQuickCapture() {
   async function create() {
     error.value = draftError(draft.value)
     if (error.value) return null
-    const result = await api.post('/tasks', draftBody(draft.value))
+    const body = draftBody(draft.value)
+    // Filed under the project the Pipeline is showing, so the capture lands
+    // in the list the operator was looking at.
+    const scoped = shellProjectId()
+    if (scoped != null && body.project_id == null) body.project_id = scoped
+    const result = await api.post('/tasks', body)
     if (result.ok === false) {
       error.value = result.msg || 'The server refused this idea.'
       return null
@@ -56,6 +63,7 @@ export function useQuickCapture() {
   function captured(task) {
     reset()
     open.value = false
+    invalidatePipelineCounts()
     window.dispatchEvent(new CustomEvent(TASK_CAPTURED_EVENT, { detail: { id: task.id } }))
   }
 

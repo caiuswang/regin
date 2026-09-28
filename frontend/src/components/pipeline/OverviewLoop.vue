@@ -11,7 +11,8 @@ const props = defineProps({
   loop: { type: Object, required: true },
   ready: { type: Number, default: 0 },
   compact: { type: Boolean, default: false },
-  featuresTo: { type: Function, required: true },
+  // The shell's scope as a query (`{ project }` or `{}`), carried by every link.
+  scope: { type: Object, default: () => ({}) },
 })
 
 const FACTS = {
@@ -20,16 +21,21 @@ const FACTS = {
   Defects: [['open', 'open'], ['triage', 'to triage', 'warn']],
 }
 
-function linkOf(key) {
-  if (key === 'escaped') return props.featuresTo(null, 'escaped')
-  if (key === 'triage') return props.featuresTo()
-  return null
+// Every printed fact is a way to exactly its rows: the task groups by the
+// next-step list's own group key, the feature stages by the stage filter.
+// The triage queue is the Features tab's rail, which ignores the scope (D1).
+function linkOf(stage, key) {
+  const scope = props.scope
+  if (stage === 'Tasks') return { path: '/tasks', query: { ...scope, view: 'list', group: key } }
+  if (stage === 'Features') return { path: '/features', query: { ...scope, stage: key } }
+  if (key === 'open') return { path: '/defects', query: { ...scope, status: 'open' } }
+  return { path: '/features', query: { ...scope } }
 }
 
 function factsOf(stage) {
   const n = key => (key === 'ready' ? props.ready : stage.parts.find(p => p.key === key)?.n || 0)
   return (FACTS[stage.label] || [])
-    .map(([key, words, tone]) => ({ key, words, tone, n: n(key), to: linkOf(key) }))
+    .map(([key, words, tone]) => ({ key, words, tone, n: n(key), to: linkOf(stage.label, key) }))
     .filter(f => f.n > 0)
 }
 
@@ -59,21 +65,14 @@ const note = computed(() => {
         </header>
         <SegmentBar :parts="stage.parts" :height="6" data-testid="loop-bar" />
         <p class="ol-facts" data-testid="loop-facts">
-          <template v-for="fact in stage.facts" :key="fact.key">
-            <router-link
-              v-if="fact.to"
-              :to="fact.to"
-              class="ol-fact ol-fact--link focus-visible:outline-2 focus-visible:outline-blue-500"
-              :class="fact.tone && `is-${fact.tone}`"
-              :data-testid="`loop-fact-${fact.key}`"
-            >{{ fact.n }} {{ fact.words }}</router-link>
-            <span
-              v-else
-              class="ol-fact"
-              :class="fact.tone && `is-${fact.tone}`"
-              :data-testid="`loop-fact-${fact.key}`"
-            ><b>{{ fact.n }}</b> {{ fact.words }}</span>
-          </template>
+        <router-link
+          v-for="fact in stage.facts"
+          :key="fact.key"
+          :to="fact.to"
+          class="ol-fact ol-fact--link focus-visible:outline-2 focus-visible:outline-blue-500"
+          :class="fact.tone && `is-${fact.tone}`"
+          :data-testid="`loop-fact-${fact.key}`"
+        ><b>{{ fact.n }}</b> {{ fact.words }}</router-link>
         </p>
       </article>
     </div>
@@ -102,9 +101,10 @@ const note = computed(() => {
     font-size: 12.5px; color: var(--color-fg-muted); font-variant-numeric: tabular-nums;
 }
 .ol-fact b { font-weight: 600; color: var(--color-fg); }
+.ol-fact.is-danger b, .ol-fact.is-warn b { color: inherit; }
 .ol-fact.is-danger { font-weight: 600; color: var(--color-danger); }
 .ol-fact.is-warn { font-weight: 600; color: var(--color-warning-strong); }
-.ol-fact--link { text-decoration: none; }
+.ol-fact--link { color: var(--color-fg-muted); text-decoration: none; }
 .ol-fact--link:hover { text-decoration: underline; }
 .ol-note {
     display: flex; align-items: center; gap: 0.35rem;

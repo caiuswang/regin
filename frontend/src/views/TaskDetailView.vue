@@ -34,6 +34,7 @@ import { useTaskVerbs } from '../composables/useTaskVerbs.js'
 import { useAttachedImages } from '../composables/useAttachedImages.js'
 import { useTaskMutations } from '../composables/useTasks.js'
 import { rememberedQuery } from '../composables/usePipelineTabState'
+import { useDetailBack } from '../composables/useDetailBack'
 
 const router = useRouter()
 const route = useRoute()
@@ -56,7 +57,7 @@ const id = computed(() => Number(route.params.id))
 // carries the query the tab was last left under, so a filter, a search or a
 // scope survives the round trip. An arrival by deep link has none, and the
 // bare path is the right answer there.
-const backTo = computed(() => ({ path: '/tasks', query: rememberedQuery('/tasks') }))
+const back = useDetailBack(() => ({ to: { path: '/tasks', query: rememberedQuery('/tasks') }, label: 'Tasks' }))
 
 const project = computed(() => task.value ? byId(task.value.project_id) : null)
 
@@ -137,7 +138,7 @@ async function deleteTask() {
     `Delete “${task.value.title}” and its run history, images and links? `
     + 'This cannot be undone — archive it instead to keep it.', true)
   if (!ok) return
-  if (await remove(task.value)) router.push(backTo.value)
+  if (await remove(task.value)) back.leave()
 }
 
 watch(id, load)
@@ -149,9 +150,11 @@ onMounted(() => { ensureProjects(); load() })
     <header class="page-header">
       <div class="page-header-text">
         <div class="page-eyebrow">
-          <router-link :to="backTo" class="td-back">
-            <Icon name="chevron-left" :size="12" />
-            Tasks
+          <router-link v-slot="{ href }" :to="back.to.value" custom>
+            <a :href="href" class="td-back focus-visible:outline-2 focus-visible:outline-blue-500" data-testid="detail-back" @click="back.go">
+              <Icon name="chevron-left" :size="12" />
+              {{ back.label.value }}
+            </a>
           </router-link>
         </div>
         <h1 class="page-title">

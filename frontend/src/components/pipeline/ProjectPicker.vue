@@ -24,21 +24,31 @@ const emit = defineEmits(['select'])
 const open = ref(false)
 const q = ref('')
 const items = ref([])
+const total = ref(0)
 const population = ref(null)
 const error = ref('')
 const search = ref(null)
+const active = ref(0)
+const PAGE = 50
+let page = 0
 let issued = 0
 
-async function load() {
+// Paged by the server, not capped: "Load more" asks for the next page of the
+// same attention sort, so project 101 is as reachable as project 1.
+async function load({ more = false } = {}) {
   const mine = ++issued
+  const next = more ? page + 1 : 0
   try {
-    const params = new URLSearchParams({ sort: 'attention', size: '100' })
+    const params = new URLSearchParams({ sort: 'attention', size: String(PAGE), page: String(next) })
     if (q.value.trim()) params.set('q', q.value.trim())
     const body = await api.get(`/pipeline/projects?${params}`)
     if (mine !== issued) return
-    items.value = body.items || []
+    page = next
+    items.value = more ? [...items.value, ...(body.items || [])] : (body.items || [])
+    total.value = body.pagination?.total ?? items.value.length
     population.value = body.population ?? null
     error.value = ''
+    if (!more) active.value = 0
   } catch (e) {
     if (mine === issued) error.value = e?.message || String(e)
   }
@@ -50,6 +60,33 @@ const groups = computed(() => [
   { label: 'Needs attention', rows: items.value.filter(needsAttention) },
   { label: 'Recent', rows: items.value.filter(r => !needsAttention(r)) },
 ].filter(g => g.rows.length))
+const more = computed(() => Math.max(0, total.value - items.value.length))
+
+// The keyboard walks what is drawn, in drawn order: "All projects", then each
+// group's rows. Index 0 is "All projects".
+const order = computed(() => [SCOPE_ALL, ...groups.value.flatMap(g => g.rows.map(scopeOfRow))])
+function scopeOfRow(row) {
+  return row.id == null ? SCOPE_NONE : String(row.id)
+}
+const isActive = scope => order.value[active.value] === scope
+
+async function move(delta) {
+  const n = order.value.length
+  if (!n) return
+  active.value = (active.value + delta + n) % n
+  await nextTick()
+  document.querySelector('.pp-panel .pp-row.is-active')?.scrollIntoView({ block: 'nearest' })
+}
+
+function onKeydown(e) {
+  if (e.key === 'ArrowDown') { e.preventDefault(); move(1) }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); move(-1) }
+  else if (e.key === 'Enter') {
+    e.preventDefault()
+    const scope = order.value[active.value]
+    if (scope != null) pick(scope)
+  }
+}
 
 // "No project" is a bucket, not a project, so it is not one of the N.
 const projectCount = computed(() => (population.value == null ? null : Math.max(0, population.value - 1)))
@@ -61,7 +98,7 @@ watch(open, async (isOpen) => {
   await nextTick()
   search.value?.focus()
 })
-watch(q, load)
+watch(q, () => load())
 
 function pick(scope) {
   open.value = false
@@ -122,13 +159,15 @@ defineExpose({ open: () => { open.value = true } })
             :placeholder="projectCount == null ? 'Find a project' : `Find among ${projectCount} projects`"
             aria-label="Find a project"
             data-testid="project-picker-search"
+            @keydown="onKeydown"
           />
           <kbd>p</kbd>
         </label>
         <Button
           variant="ghost"
           class="pp-row pp-row--all"
-          :class="{ 'is-selected': scope === SCOPE_ALL }"
+          :class="{ 'is-selected': scope === SCOPE_ALL, 'is-active': isActive(SCOPE_ALL) }"
+          :aria-current="isActive(SCOPE_ALL) ? 'true' : undefined"
           data-testid="project-picker-all"
           @click="pick(SCOPE_ALL)"
         >
@@ -145,9 +184,10 @@ defineExpose({ open: () => { open.value = true } })
             :key="row.scope"
             variant="ghost"
             class="pp-row"
-            :class="{ 'is-selected': selected(row) }"
+            :class="{ 'is-selected': selected(row), 'is-active': isActive(scopeOfRow(row)) }"
+            :aria-current="isActive(scopeOfRow(row)) ? 'true' : undefined"
             :data-testid="`project-picker-row-${row.scope}`"
-            @click="pick(row.id == null ? SCOPE_NONE : String(row.id))"
+            @click="pick(scopeOfRow(row))"
           >
             <span class="pp-check"><Icon v-if="selected(row)" name="check" :size="12" /></span>
             <span class="pp-name">{{ row.name || (row.id == null ? 'No project' : `project #${row.id}`) }}</span>
@@ -156,6 +196,14 @@ defineExpose({ open: () => { open.value = true } })
             <span v-else class="pp-none">—</span>
           </Button>
         </div>
+        <Button
+          v-if="more"
+          variant="ghost"
+          size="sm"
+          class="pp-more"
+          data-testid="project-picker-more"
+          @click="load({ more: true })"
+        >{{ more }} more</Button>
         <p v-if="!error && !items.length && q" class="pp-empty">No project matches “{{ q }}”.</p>
       </PopoverContent>
     </PopoverPortal>
@@ -213,8 +261,10 @@ defineExpose({ open: () => { open.value = true } })
     font-size: 13px; font-weight: 400; color: var(--color-fg); border-radius: 0;
 }
 .pp-panel .pp-row:hover { background: var(--color-surface-2); }
+.pp-panel .pp-row.is-active { box-shadow: inset 2px 0 0 var(--color-primary); background: var(--color-surface-2); }
 .pp-panel .pp-row.is-selected { background: var(--color-info-soft); font-weight: 600; }
 .pp-row--all { border-bottom: 1px solid var(--color-border); }
+.pp-panel .pp-more { width: 100%; justify-content: flex-start; padding-left: 2.1rem; font-size: 12px; color: var(--color-fg-muted); }
 .pp-check { width: 12px; flex: none; color: var(--color-info); }
 .pp-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pp-hint { font-size: 11.5px; color: var(--color-fg-faint); }

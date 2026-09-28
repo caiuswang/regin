@@ -11,6 +11,7 @@ import { useRoute, useRouter } from 'vue-router'
 import api from '../api'
 import { usePipelineHeaderPublisher } from '../composables/usePipelineHeader'
 import { rememberedQuery } from '../composables/usePipelineTabState'
+import { useDetailBack } from '../composables/useDetailBack'
 import { useFlash } from '../composables/useFlash'
 import DefectRow from '../components/defects/DefectRow.vue'
 
@@ -27,11 +28,11 @@ const canWrite = computed(() => api.getStoredUser()?.role !== 'viewer')
 // Back to the feature this defect is blamed on, or to the triage rail it is
 // routed from when it is blamed on none — carrying the query the Features tab
 // was last left under.
-const backTo = computed(() => (defect.value?.feature_id
-  ? { path: `/features/${defect.value.feature_id}` }
-  : { path: '/features', query: rememberedQuery('/features') }))
-const backLabel = computed(() => (defect.value?.feature_id
-  ? `← feature #${defect.value.feature_id}` : '← triage'))
+// With no Pipeline route to return to: the feature this defect is blamed on,
+// or the triage rail it is routed from when it is blamed on none.
+const back = useDetailBack(() => (defect.value?.feature_id
+  ? { to: { path: `/features/${defect.value.feature_id}` }, label: `feature #${defect.value.feature_id}` }
+  : { to: { path: '/features', query: rememberedQuery('/features') }, label: 'triage' }))
 
 async function load() {
   loading.value = true
@@ -53,7 +54,10 @@ watch(() => route.params.id, () => { defect.value = null; load() },
 // merge is the one write that deletes the row this address names, so it moves
 // to the keeper instead of re-reading an id that no longer exists.
 function onChanged(message, info) {
-  if (message) flash(message)
+  if (message) {
+    flash(message, 'success', info?.keeper
+      ? { link: { to: `/defects/${info.keeper}`, label: `Open #${info.keeper}` } } : {})
+  }
   if (info?.keeper && String(info.keeper) !== String(route.params.id)) {
     router.replace(`/defects/${info.keeper}`)
     return
@@ -65,7 +69,9 @@ function onChanged(message, info) {
 <template>
   <div class="space-y-4">
     <p class="back">
-      <router-link :to="backTo" data-testid="defect-back">{{ backLabel }}</router-link>
+      <router-link v-slot="{ href }" :to="back.to.value" custom>
+        <a :href="href" class="focus-visible:outline-2 focus-visible:outline-blue-500" data-testid="defect-back" @click="back.go">← {{ back.label.value }}</a>
+      </router-link>
     </p>
 
     <!-- Only before the first row lands: a re-read after a write keeps the row

@@ -7,7 +7,7 @@
 // it: `GET /api/features` is an offset page with stage-blind stage counts, so
 // nothing here filters or counts a loaded array.
 import { computed, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { usePipelineHeaderPublisher, usePipelineTabActive } from '../composables/usePipelineHeader'
 import { scopeParam } from '../composables/usePipelineScope'
 import { usePage } from '../composables/usePage'
@@ -21,7 +21,9 @@ import Input from '../components/ui/Input.vue'
 import Select from '../components/ui/Select.vue'
 import ListStatus from '../components/ListStatus.vue'
 import PageControls from '../components/PageControls.vue'
-import NewFeatureDialog from '../components/features/NewFeatureDialog.vue'
+import PipelineCreateButton from '../components/pipeline/PipelineCreateButton.vue'
+import { usePipelineCreate } from '../composables/usePipelineCreate'
+import { usePipelineCounts } from '../composables/usePipelineCounts'
 import FeatureStageTabs from '../components/pipeline/FeatureStageTabs.vue'
 import FeatureTrackTable from '../components/pipeline/FeatureTrackTable.vue'
 import FeatureCard from '../components/pipeline/FeatureCard.vue'
@@ -29,7 +31,6 @@ import TriageRail from '../components/pipeline/TriageRail.vue'
 import TriageSheet from '../components/pipeline/TriageSheet.vue'
 
 const route = useRoute()
-const router = useRouter()
 const isCurrentTab = usePipelineTabActive()
 const publish = usePipelineHeaderPublisher()
 const { isMdUp } = useBreakpoint()
@@ -66,7 +67,6 @@ const {
 })
 
 const appliedSort = computed(() => applied.value?.sort || state.value.sort)
-const scope = computed(() => scopeParam(route.query.project))
 const status = computed(() => listStatusState({
   loaded: loaded.value, error: error.value, items: items.value,
   total: total.value, population: population.value,
@@ -104,18 +104,23 @@ const draft = ref(state.value.q)
 // Any navigation drops an unsubmitted term: the box describes the rows below.
 watch(() => route.fullPath, () => { draft.value = state.value.q })
 const canWrite = computed(() => api.getStoredUser()?.role !== 'viewer')
-const declaring = ref(false)
+const { openCreate } = usePipelineCreate()
+const { revision } = usePipelineCounts()
 const triaging = ref(false)
 const rail = ref(null)
 const railFolded = ref(false)
 
-function declared(ledger) {
-  if (ledger?.id) router.push(`/features/${ledger.id}`)
-}
+// A write made elsewhere — a defect reported from the header's "New ▾", a
+// capture — moves this tab's rows and its triage queue too.
+watch(revision, () => {
+  if (route.path !== '/features') return
+  reload()
+  rail.value?.load?.()
+})
 
 useTaskShortcuts({
   '/': () => search.value?.focus(),
-  c: () => { if (canWrite.value) declaring.value = true },
+  c: () => { if (canWrite.value) openCreate('feature') },
   ']': () => { if (isMdUp.value) railFolded.value = !railFolded.value },
 })
 </script>
@@ -123,14 +128,8 @@ useTaskShortcuts({
 <template>
   <div class="fv">
     <Teleport v-if="isCurrentTab && canWrite" defer to="#pipeline-actions">
-      <Button variant="primary" data-testid="declare-feature" @click="declaring = true">
-        <Icon name="plus" :size="12" />
-        <span>New feature</span>
-        <kbd class="fv-kbd">c</kbd>
-      </Button>
+      <PipelineCreateButton kind="feature" testid="declare-feature" />
     </Teleport>
-
-    <NewFeatureDialog v-model:open="declaring" :scope="scope" @declared="declared" />
 
     <div class="fv-layout" :class="{ 'fv-layout--folded': isMdUp && railFolded }">
       <div class="fv-main">
@@ -181,7 +180,7 @@ useTaskShortcuts({
           @first-page="list.patch({ page: '0' })"
         >
           <template #create>
-            <Button v-if="canWrite" variant="secondary" size="sm" @click="declaring = true">New feature</Button>
+            <Button v-if="canWrite" variant="secondary" size="sm" @click="openCreate('feature')">New feature</Button>
           </template>
         </ListStatus>
 
@@ -270,11 +269,6 @@ useTaskShortcuts({
 }
 .fv-triage-card span { flex: 1; }
 .fv-triage-card .fv-triage-go { min-height: 44px; background: var(--color-surface); color: var(--color-fg); }
-.fv-kbd {
-    margin-left: 0.25rem; padding: 0 0.25rem; font-size: 0.6875rem;
-    font-family: var(--font-mono, ui-monospace, monospace);
-    border: 1px solid currentColor; border-radius: var(--radius-sm, 0.25rem); opacity: 0.7;
-}
 
 @media (max-width: 1023.98px) {
     .fv-layout { grid-template-columns: minmax(0, 1fr); }

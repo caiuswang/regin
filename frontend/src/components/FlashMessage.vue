@@ -12,8 +12,22 @@ const { state, clear } = useFlash()
     aria-live="polite"
     :class="['alert', state.type === 'success' ? 'alert-success' : state.type === 'error' ? 'alert-error' : 'alert-info']"
     class="flex items-center justify-between"
+    data-testid="flash"
   >
-    <span>{{ state.message }}</span>
+    <span>
+      {{ state.message }}<template v-if="state.link">
+        · <router-link
+          :to="state.link.to"
+          class="flash-link"
+          data-testid="flash-link"
+          @click="clear"
+        >{{ state.link.label }}</router-link>
+      </template>
+    </span>
     <Button variant="ghost" size="icon" class="ml-4" aria-label="Dismiss" @click="clear">&times;</Button>
   </div>
 </template>
+
+<style scoped>
+.flash-link { font-weight: 600; color: inherit; text-decoration: underline; }
+</style>

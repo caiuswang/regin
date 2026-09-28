@@ -28,6 +28,16 @@ const rows = computed(() => (props.compact
   : props.runNext.rows))
 
 const { refusals, busyId, act } = useTaskVerbs(async () => emit('ran'))
+
+// "Run next" is the Ready group of the next-step list; with nothing armed, the
+// ideas waiting to be armed are the place to go.
+const groupTo = group => ({ path: props.tasksTo.path,
+                            query: { ...props.tasksTo.query, view: 'list', group } })
+
+// The feature half of the second line is its own link, so it is not folded
+// into the text `runNextSub` prints.
+const subOf = row => runNextSub({ ...row, feature_id: null })
+  .replace(/^No feature$/, '')
 </script>
 
 <template>
@@ -36,12 +46,17 @@ const { refusals, busyId, act } = useTaskVerbs(async () => emit('ran'))
     <header class="pl-panel__head" :class="{ 'rn-head--after': !compact && running?.total }">
       <h2 id="rn-title" class="pl-panel__title">Run next</h2>
       <span class="pl-panel__sub" data-testid="run-next-count">{{ runNext.total }}</span>
-      <router-link :to="tasksTo" class="pl-panel__link focus-visible:outline-2 focus-visible:outline-blue-500"
+      <router-link :to="groupTo('ready')" class="pl-panel__link focus-visible:outline-2 focus-visible:outline-blue-500"
                    data-testid="run-next-all"
       >All in Tasks →</router-link>
     </header>
     <p v-if="!rows.length" class="pl-panel__empty" data-testid="run-next-empty">
-      {{ compact && runNext.total ? 'Nothing is dependency-clear yet.' : 'Nothing armed — arm an idea to see it here.' }}
+      <template v-if="compact && runNext.total">Nothing is dependency-clear yet.</template>
+      <template v-else>
+        Nothing armed —
+        <router-link :to="groupTo('ideas')" class="rn-link" data-testid="run-next-ideas">arm an idea</router-link>
+        to see it here.
+      </template>
     </p>
     <ul v-else class="rn-rows">
       <li
@@ -52,10 +67,19 @@ const { refusals, busyId, act } = useTaskVerbs(async () => emit('ran'))
         :data-testid="`run-next-row-${row.id}`"
       >
         <span v-if="!compact" class="rn-id">#{{ row.id }}</span>
-        <router-link :to="`/tasks/${row.id}`" class="rn-main focus-visible:outline-2 focus-visible:outline-blue-500">
-          <span class="rn-title">{{ row.title }}</span>
-          <span class="rn-sub">{{ compact ? `#${row.id} · ` : '' }}{{ runNextSub(row) }}</span>
-        </router-link>
+        <span class="rn-main">
+          <router-link :to="`/tasks/${row.id}`" class="rn-title focus-visible:outline-2 focus-visible:outline-blue-500">
+            {{ row.title }}
+          </router-link>
+          <span class="rn-sub">
+            {{ compact ? `#${row.id} · ` : '' }}{{ subOf(row) }}<template v-if="row.feature_id">{{ subOf(row) ? ' · ' : '' }}<router-link
+              :to="`/features/${row.feature_id}`"
+              class="rn-link"
+              :data-testid="`run-next-feature-${row.id}`"
+            >#{{ row.feature_id }} {{ row.feature_title || '' }}</router-link>{{ row.step ? ` · step ${row.step.n} of ${row.step.of}` : '' }}</template>
+            <template v-else-if="!subOf(row)">No feature</template>
+          </span>
+        </span>
         <router-link
           v-if="row.action.kind === 'wait'" :to="`/tasks/${row.action.on}`"
           class="rn-wait focus-visible:outline-2 focus-visible:outline-blue-500" :data-testid="`run-next-wait-${row.id}`"
@@ -98,9 +122,11 @@ const { refusals, busyId, act } = useTaskVerbs(async () => emit('ran'))
 .rn-wait:hover { color: var(--color-fg); text-decoration: underline; }
 .rn-id { min-width: 2.25rem; font-size: 12px; color: var(--color-fg-faint); font-variant-numeric: tabular-nums; flex: none; }
 .rn-main { flex: 1; min-width: 0; display: flex; flex-direction: column; text-decoration: none; }
-.rn-title { font-size: 13.5px; font-weight: 500; color: var(--color-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rn-title { font-size: 13.5px; font-weight: 500; color: var(--color-fg); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rn-sub { font-size: 11.5px; color: var(--color-fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rn-main:hover .rn-title { text-decoration: underline; }
+.rn-title:hover { text-decoration: underline; }
+.rn-link { color: inherit; text-decoration: underline; text-decoration-color: var(--color-border-strong); }
+.rn-link:hover { color: var(--color-fg); }
 .rn-wait { display: inline-flex; align-items: center; gap: 0.3rem; flex: none; font-size: 12px; color: var(--color-fg-muted); }
 .rn-row .rn-run {
     flex: none; gap: 0.3rem; color: var(--color-primary);

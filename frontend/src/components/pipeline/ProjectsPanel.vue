@@ -4,13 +4,17 @@
 // counted; finding or re-sorting projects is the chip picker's job.
 import Button from '../ui/Button.vue'
 import SegmentBar from './SegmentBar.vue'
-import { loopBar, projectActivity, projectAttention } from '../../utils/pipelineFormat'
+import { loopBar, projectActivity } from '../../utils/pipelineFormat'
 
 defineProps({
   panel: { type: Object, required: true },
   compact: { type: Boolean, default: false },
 })
 const emit = defineEmits(['pick', 'all'])
+
+// Each count is a way to its rows: the same tab, under that project.
+const to = (path, id, extra = {}) => ({ path, query: { project: String(id), ...extra } })
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`
 </script>
 
 <template>
@@ -38,10 +42,18 @@ const emit = defineEmits(['pick', 'all'])
         </Button>
         <template v-if="!compact">
           <SegmentBar class="pj-bar" :parts="loopBar(row.stage_bar)" :height="6" />
-          <span class="pj-fig">{{ row.features }} features</span>
-          <span class="pj-fig">{{ row.open_tasks }} open tasks</span>
+          <router-link class="pj-fig pj-link" :to="to('/features', row.id)" :data-testid="`projects-features-${row.id}`">{{ row.features }} features</router-link>
+          <router-link class="pj-fig pj-link" :to="to('/tasks', row.id)" :data-testid="`projects-tasks-${row.id}`">{{ row.open_tasks }} open tasks</router-link>
         </template>
-        <span class="pj-attention" :data-testid="`projects-attention-${row.id}`">{{ projectAttention(row) }}</span>
+        <span class="pj-attention" :data-testid="`projects-attention-${row.id}`">
+          <router-link
+            v-if="row.escaped" class="pj-link" :to="to('/features', row.id, { stage: 'escaped' })"
+            :data-testid="`projects-escaped-${row.id}`"
+          >{{ row.escaped }} escaped</router-link><template v-if="row.escaped && row.open_defects"> · </template><router-link
+            v-if="row.open_defects" class="pj-link" :to="to('/defects', row.id, { status: 'open' })"
+            :data-testid="`projects-defects-${row.id}`"
+          >{{ plural(row.open_defects, 'open defect') }}</router-link>
+        </span>
       </li>
     </ul>
   </section>
@@ -62,6 +74,8 @@ const emit = defineEmits(['pick', 'all'])
 .pj-pick:hover .pj-name { text-decoration: underline; }
 .pj-activity { font-size: 11.5px; font-weight: 400; color: var(--color-fg-subtle); }
 .pj-fig { font-size: 12.5px; color: var(--color-fg-muted); white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; }
+.pj-link { color: inherit; text-decoration: none; }
+.pj-link:hover { text-decoration: underline; }
 .pj-attention { font-size: 12.5px; font-weight: 600; color: var(--color-warning-strong); white-space: nowrap; text-align: right; }
 
 .pj--compact .pj-row { grid-template-columns: minmax(0, 1fr) auto; }

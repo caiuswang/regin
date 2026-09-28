@@ -1,4 +1,4 @@
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 // The project is the ONE axis the three Pipeline tabs share, so it lives in
@@ -50,13 +50,32 @@ export function storedScope() {
 }
 
 /** Remember a scope as the one a bare path restores to. */
-function persistScope(scope) {
+export function persistScope(scope) {
   try {
     if (!scope || scope === SCOPE_ALL) localStorage.removeItem(STORAGE_KEY)
     else localStorage.setItem(STORAGE_KEY, scope)
   } catch {
     // Quota / private browsing. The scope still holds for this visit.
   }
+}
+
+// The scope the mounted Pipeline shell names, or null when no shell is on
+// screen. What a surface outside the shell — the app-wide quick capture —
+// files a new row under, so a capture made while looking at one project lands
+// in it rather than in no project at all.
+const shellScope = ref(null)
+
+export function publishShellScope(scope) {
+  shellScope.value = scope
+}
+
+/** The shell's scope as a project id, or null for all / none / no shell. */
+export function shellProjectId() {
+  return /^\d+$/.test(shellScope.value || '') ? Number(shellScope.value) : null
+}
+
+export function useShellScope() {
+  return shellScope
 }
 
 export function usePipelineScope() {
