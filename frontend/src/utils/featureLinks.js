@@ -17,6 +17,12 @@ export function defectsLink(featureId) {
   return { path: `/features/${featureId}`, hash: `#${DEFECTS_ANCHOR}` }
 }
 
+//: Every defect blamed on a feature, on the `/defects` list page — past the
+//: row cap the feature page itself draws.
+export function defectListLink(featureId) {
+  return { path: '/defects', query: { feature_id: String(featureId) } }
+}
+
 //: The tasks that are a feature's steps. `feature_id` is
 //: `lib/tasks/query.py`'s own parameter name, and it wins over `root_only`
 //: there, so the link shows every task the index counted.

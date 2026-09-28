@@ -47,7 +47,21 @@ DEDUPED = "deduped"
 
 
 class DefectError(ValueError):
-    """A write that would leave the ledger untrustworthy."""
+    """A write that would leave the ledger untrustworthy.
+
+    `remedy` is set when the sentence names another verb as the way out, so a
+    surface can offer that verb as a control instead of making the operator
+    re-type the CLI command the sentence quotes. `args` always carries the
+    `defect_id` the remedy acts on, which is not always the refused one.
+    """
+
+    def __init__(self, message: str, *, remedy: Optional[dict] = None):
+        super().__init__(message)
+        self.remedy = remedy
+
+
+def remedy(verb: str, defect_id: int, **args) -> dict:
+    return {"verb": verb, "args": {"defect_id": defect_id, **args}}
 
 
 def _now() -> str:
@@ -213,7 +227,8 @@ def _dedup_hit(session, found: Defect, paths: list[str]) -> Defect:
         raise DefectError(
             f"#{found.id} reports this symptom and was closed — "
             f"`regin defects reopen {found.id}` if it is back. Re-reporting "
-            "must not move the round by itself.")
+            "must not move the round by itself.",
+            remedy=remedy("reopen", found.id))
     found.suspect_paths_json = _union_paths(found, paths)
     _touch(found)
     session.add(found)
@@ -354,6 +369,66 @@ def snooze(defect_id: int) -> Defect:
         return row
 
 
+def unsnooze(defect_id: int) -> Defect:
+    """Put a snoozed defect back in the queue now, rather than on its next
+    write. Clears the verdict; the round is untouched."""
+    with SessionLocal() as session:
+        row = _get(session, defect_id)
+        if row.triage_state != TRIAGE_SNOOZED or row.status != STATUS_OPEN:
+            raise DefectError(f"#{row.id} is not snoozed")
+        row.triage_state = None
+        row.snooze_watermark = None
+        _touch(row)
+        session.add(row)
+        session.commit()
+        session.refresh(row)
+        log.write("defect_unsnoozed", defect_id=row.id)
+        return row
+
+
+def restore(defect_id: int) -> Defect:
+    """Undo a decline: the report goes back into the queue, open.
+
+    Not `reopen`. A declined report was never claimed fixed, so nothing was
+    walked back and the round stays where it is; `missing_check` is already
+    NULL because a decline never names one.
+    """
+    with SessionLocal() as session:
+        row = _get(session, defect_id)
+        if row.triage_state != TRIAGE_DECLINED:
+            raise DefectError(
+                f"#{row.id} was not declined — only a declined report is "
+                "restored; a closed fix is reopened",
+                remedy=remedy("reopen", row.id)
+                if row.status == STATUS_CLOSED else None)
+        row.status = STATUS_OPEN
+        row.closed_at = None
+        row.missing_check = None
+        row.triage_state = None
+        row.triage_reason = None
+        row.snooze_watermark = None
+        _touch(row)
+        session.add(row)
+        session.commit()
+        session.refresh(row)
+        log.write("defect_restored", defect_id=row.id)
+        return row
+
+
+def queue_position(row: Defect) -> Optional[str]:
+    """Where a row sits on the triage axis as the queue reads it:
+    `queue`, `snoozed` (still held out), `declined`, or None (left by
+    attribution or closure). The Python twin of `in_queue()`."""
+    if row.triage_state == TRIAGE_DECLINED:
+        return defect_query.TRIAGE_DECLINED
+    if row.feature_id is not None or row.status != STATUS_OPEN:
+        return None
+    if row.triage_state == TRIAGE_SNOOZED \
+            and row.snooze_watermark == row.activity_seq:
+        return defect_query.TRIAGE_SNOOZED
+    return defect_query.TRIAGE_QUEUE
+
+
 def attribute(defect_id: int, feature_id: int) -> Defect:
     """Late-bind a defect to the feature that caused it — normally once blame
     on the fix commit names the origin, not at report time.
@@ -373,7 +448,8 @@ def attribute(defect_id: int, feature_id: int) -> Defect:
             raise DefectError(
                 f"#{clash.id} already reports this symptom for feature "
                 f"{feature_id} — `regin defects merge {row.id} --into "
-                f"{clash.id}` if they are the same bug")
+                f"{clash.id}` if they are the same bug",
+                remedy=remedy("merge", row.id, into=clash.id))
         # Re-attribution is a NEW blame against a DIFFERENT feature, so the
         # pointer is re-taken. Write-once is per blame, not per row: keeping
         # the first feature's event would leave the escape verdict describing
@@ -399,30 +475,30 @@ def attribute(defect_id: int, feature_id: int) -> Defect:
         return row
 
 
-def edit(defect_id: int, *, symptom: str) -> Defect:
-    """Rewrite a defect's wording, open or closed.
+def clean_paths(paths: Iterable[str]) -> list[str]:
+    """Stripped, blank-free and first-occurrence unique, in the given order."""
+    return list(dict.fromkeys(p.strip() for p in paths if p.strip()))
+
+
+def edit(defect_id: int, *, symptom: Optional[str] = None,
+         suspect_paths: Optional[Iterable[str]] = None) -> Defect:
+    """Rewrite a defect's wording and/or its suspect paths, open or closed.
 
     The dedup key moves with the wording, so a rewrite that lands on another
     row's key is refused the way `attribute` refuses one: two rows reporting
     the same symptom is a duplicate, and `merge` is the operator's word for it.
+    Paths are replaced, not unioned — this is the correction of a list, and
+    only `record`'s dedup hit and `merge` accumulate.
     """
-    if not symptom.strip():
-        raise DefectError("a defect needs a symptom")
-    _check_symptom(symptom)
-    key = symptom_key(symptom)
+    if symptom is None and suspect_paths is None:
+        raise DefectError("nothing to edit")
     with SessionLocal() as session:
         row = _get(session, defect_id)
-        clash = None
-        if row.feature_id is not None:
-            clash = _existing(session, row.feature_id, key)
-        elif row.reported_by_trace:
-            clash = _existing_in_session(session, row.reported_by_trace, key)
-        if clash is not None and clash.id != row.id:
-            raise DefectError(
-                f"#{clash.id} already reports this symptom — `regin defects "
-                f"merge {row.id} --into {clash.id}` if they are the same bug")
-        row.symptom = symptom.strip()
-        row.symptom_key = key
+        if symptom is not None:
+            _reword(session, row, symptom)
+        if suspect_paths is not None:
+            paths = clean_paths(suspect_paths)
+            row.suspect_paths_json = json.dumps(paths) if paths else None
         _touch(row)
         session.add(row)
         session.commit()
@@ -431,22 +507,45 @@ def edit(defect_id: int, *, symptom: str) -> Defect:
         return row
 
 
+def _reword(session, row: Defect, symptom: str) -> None:
+    if not symptom.strip():
+        raise DefectError("a defect needs a symptom")
+    _check_symptom(symptom)
+    key = symptom_key(symptom)
+    clash = None
+    if row.feature_id is not None:
+        clash = _existing(session, row.feature_id, key)
+    elif row.reported_by_trace:
+        clash = _existing_in_session(session, row.reported_by_trace, key)
+    if clash is not None and clash.id != row.id:
+        raise DefectError(
+            f"#{clash.id} already reports this symptom — `regin defects "
+            f"merge {row.id} --into {clash.id}` if they are the same bug",
+            remedy=remedy("merge", row.id, into=clash.id))
+    row.symptom = symptom.strip()
+    row.symptom_key = key
+
+
 def merge(duplicate_id: int, *, into: int) -> Defect:
     return merge_many([duplicate_id], into=into)
 
 
-def _merge_refusal(dups: list[Defect], keeper: Defect) -> Optional[str]:
+def _merge_refusal(dups: list[Defect],
+                   keeper: Defect) -> Optional[DefectError]:
     fix_tasks = {r.fix_task_id for r in [keeper, *dups] if r.fix_task_id}
     if len(fix_tasks) > 1:
-        return (f"these defects point at different fix items (tasks "
-                f"{', '.join(str(t) for t in sorted(fix_tasks))}) — somebody "
-                "thought they were separate bugs; detach all but one first")
+        return DefectError(
+            f"these defects point at different fix items (tasks "
+            f"{', '.join(str(t) for t in sorted(fix_tasks))}) — somebody "
+            "thought they were separate bugs; detach all but one first")
     still_open = [r.id for r in dups if r.status == STATUS_OPEN]
     if keeper.status == STATUS_CLOSED and still_open:
-        return (f"#{keeper.id} is closed and "
-                f"{', '.join(f'#{i}' for i in still_open)} still open — folding "
-                f"an open bug into a closed one hides it; `regin defects reopen "
-                f"{keeper.id}` first, or keep the open one")
+        return DefectError(
+            f"#{keeper.id} is closed and "
+            f"{', '.join(f'#{i}' for i in still_open)} still open — folding "
+            f"an open bug into a closed one hides it; `regin defects reopen "
+            f"{keeper.id}` first, or keep the open one",
+            remedy=remedy("reopen", keeper.id))
     return None
 
 
@@ -495,7 +594,7 @@ def merge_many(duplicate_ids: Iterable[int], *, into: int) -> Defect:
         dups = [_get(session, i) for i in ids]
         refusal = _merge_refusal(dups, keeper)
         if refusal:
-            raise DefectError(refusal)
+            raise refusal
         for dup in dups:
             keeper.suspect_paths_json = _union_paths(keeper, _paths(dup))
             keeper.fix_task_id = keeper.fix_task_id or dup.fix_task_id
@@ -728,6 +827,20 @@ def in_queue():
                      Defect.activity_seq))))
 
 
+def _triage_position(position: str):
+    from sqlalchemy import and_  # noqa: PLC0415
+
+    if position == defect_query.TRIAGE_QUEUE:
+        return in_queue()
+    if position == defect_query.TRIAGE_SNOOZED:
+        return and_(Defect.feature_id.is_(None),
+                    Defect.status == STATUS_OPEN,
+                    Defect.triage_state == TRIAGE_SNOOZED,
+                    Defect.snooze_watermark.is_not_distinct_from(
+                        Defect.activity_seq))
+    return Defect.triage_state == TRIAGE_DECLINED
+
+
 def _narrowed(stmt, query):
     if query.fix_task_id is not None:
         stmt = stmt.where(Defect.fix_task_id == query.fix_task_id)
@@ -737,6 +850,8 @@ def _narrowed(stmt, query):
         stmt = stmt.where(Defect.feature_id.is_(None))
     if query.triage:
         stmt = stmt.where(in_queue())
+    if query.triage_position:
+        stmt = stmt.where(_triage_position(query.triage_position))
     if query.status:
         stmt = stmt.where(Defect.status == query.status)
     if query.q:

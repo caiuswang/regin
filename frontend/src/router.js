@@ -17,6 +17,7 @@ const PipelineView = () => import('./views/PipelineView.vue')
 const FeaturesView = () => import('./views/FeaturesView.vue')
 const FeatureLedgerView = () => import('./views/FeatureLedgerView.vue')
 const DefectDetailView = () => import('./views/DefectDetailView.vue')
+const DefectsView = () => import('./views/DefectsView.vue')
 const SkillDetailView = () => import('./views/SkillDetailView.vue')
 const PromptTemplatesView = () => import('./views/PromptTemplatesView.vue')
 const PlansView = () => import('./views/PlansView.vue')
@@ -84,6 +85,7 @@ const routes = [
       { path: '/tasks', name: 'tasks', component: TasksView },
       { path: '/features', name: 'features', component: FeaturesView },
       { path: '/features/:id', name: 'feature-ledger', component: FeatureLedgerView },
+      { path: '/defects', name: 'defects', component: DefectsView },
       { path: '/defects/:id', name: 'defect-detail', component: DefectDetailView },
     ],
   },

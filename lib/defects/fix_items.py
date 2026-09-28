@@ -37,7 +37,8 @@ def create_for(defect_id: int):
     if row.feature_id is None:
         raise store.DefectError(
             f"#{row.id} is unattributed, so there is no feature to file "
-            f"under — `regin defects attribute {row.id} <ID>` first")
+            f"under — `regin defects attribute {row.id} <ID>` first",
+            remedy=store.remedy("attribute", row.id))
     if row.fix_task_id is not None:
         if _is_own_task(row):
             return row

@@ -24,7 +24,7 @@ import Textarea from '../ui/Textarea.vue'
 import DefectRow from '../defects/DefectRow.vue'
 import TaskImageStrip from '../tasks/TaskImageStrip.vue'
 import { imageFilesFrom } from '../../utils/imageFiles'
-import { DEFECTS_ANCHOR, defectsLink } from '../../utils/featureLinks'
+import { DEFECTS_ANCHOR, defectListLink, defectsLink } from '../../utils/featureLinks'
 import { useAttachedImages } from '../../composables/useAttachedImages.js'
 
 const props = defineProps({
@@ -243,7 +243,10 @@ async function onRowChanged(message) {
       />
     </ul>
     <p v-if="truncated" class="td-note" data-testid="feature-defects-truncated">
-      Showing {{ items.length }} of {{ total }} — open the full list to see the rest.
+      Showing {{ items.length }} of {{ total }} —
+      <router-link class="td-key" :to="defectListLink(feature.id)"
+                   data-testid="feature-defects-full-list">open the full list</router-link>
+      to see the rest.
     </p>
     <p v-if="byTask" class="td-note">
       <router-link

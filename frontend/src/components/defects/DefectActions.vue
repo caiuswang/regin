@@ -6,21 +6,27 @@
 // rows get one guessed parent — the exact corruption the NULL `feature_id`
 // state exists to prevent.
 //
-// Neither field is ever pre-filled. The feature is not proposed from the
-// suspect paths, the session or anything else, and the missing check is not
-// proposed at all: both are the assertion this control exists to collect, and
-// a default is an inference wearing a human's signature.
+// Neither the feature nor the missing check is ever pre-filled: both are the
+// assertion this control exists to collect, and a default is an inference
+// wearing a human's signature.
 //
-// Every refusal rendered here is the server's own sentence. The store's
-// message names its remedy (`merge`, `reopen`), so paraphrasing it would
-// leave the operator holding a dead end.
+// What the row offers is the R5 matrix (`utils/defectVerbs.js`): one primary
+// verb for its state, the rest behind ⋯. Every refusal is the server's own
+// sentence, and one that names a way out carries it as a button.
 import { computed, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import api from '../../api'
 import { useConfirm } from '../../composables/useConfirm'
+import { refusalOf, runRemedy } from '../../composables/useDefectRemedy'
+import { defectState, GROUP, MENU, PRIMARY } from '../../utils/defectVerbs'
+import { toBase64 } from '../../utils/imageFiles'
 import Button from '../ui/Button.vue'
-import Input from '../ui/Input.vue'
-import Textarea from '../ui/Textarea.vue'
 import DropdownMenu from '../ui/DropdownMenu.vue'
+import FeaturePicker from '../pipeline/FeaturePicker.vue'
+import DefectActionForm from './DefectActionForm.vue'
+import DefectMergePicker from './DefectMergePicker.vue'
+import DefectRefusal from './DefectRefusal.vue'
+import { FORMS } from './defectForms'
 
 const props = defineProps({
   defect: { type: Object, required: true },
@@ -28,205 +34,146 @@ const props = defineProps({
 })
 const emit = defineEmits(['changed'])
 
+const router = useRouter()
 const { confirm } = useConfirm()
 
 const form = ref('')
 const value = ref('')
 const busy = ref(false)
-const refusal = ref('')
+const refusal = ref(null)
 // Raised by a close on this page, never by arriving at an already-closed
 // defect: the offer is the answer to "you just named a check — who writes
 // it", and a row closed weeks ago is being read, not decided.
 const offered = ref(false)
-// The task this page just filed. Held here rather than read off the row
-// because a flash fades, and the row's "fix item" fact reads as a pointer that
-// was always there — neither says "this is the task you just created".
+// The task this page just filed. Held here because a flash fades, and the
+// row's "fix item" fact reads as a pointer that was always there.
 const created = ref(null)
+const filePick = ref(null)
 
-// A task no feature owns is an orphan, so the store refuses the create; the
-// disabled button says so before the round trip does.
+// A task no feature owns is an orphan, so the store refuses the create.
 const ATTRIBUTE_FIRST = 'Attribute it to a feature to create its fix task.'
 
-function idList(raw) {
-  const tokens = raw.split(/[\s,]+/).filter(Boolean)
-  if (!tokens.length || !tokens.every(t => /^\d+$/.test(t) && Number(t) > 0)) return null
-  return [...new Set(tokens.map(Number))]
+const state = computed(() => defectState(props.defect))
+
+const VERB = {
+  attribute: d => ({ label: d.feature_id ? 'Re-attribute' : 'Attribute', run: () => reveal('attribute'),
+                     testid: `defect-attribute-reveal-${d.id}` }),
+  close: () => ({ label: 'Close', run: () => reveal('close') }),
+  reopen: () => ({ label: 'Reopen', run: reopen }),
+  restore: () => ({ label: 'Restore', run: () => act('restore', 'restored to the queue') }),
+  unsnooze: () => ({ label: 'Unsnooze', run: () => act('unsnooze', 'back in the triage queue') }),
+  snooze: () => ({ label: 'Snooze', run: () => act('snooze', 'snoozed until something touches it') }),
+  decline: () => ({ label: 'Decline…', run: () => reveal('decline') }),
+  fix_create: d => ((d.fix_task_id || offered.value) ? null
+    : { label: 'Create fix task', run: createFixTask, testid: `defect-fix-create-row-${d.id}` }),
+  fix_link: d => ({ label: d.fix_task_id ? 'Re-point fix task' : 'Link existing task',
+                    run: () => reveal('fix-item'), testid: `defect-fix-item-reveal-${d.id}` }),
+  fix_clear: d => (d.fix_task_id ? { label: 'Clear fix task', run: clearFixTask } : null),
+  merge: () => ({ label: 'Merge into…', run: () => reveal('merge'), testid: 'defect-merge-reveal' }),
+  absorb: d => ({ label: 'Absorb duplicates…', run: () => reveal('absorb'),
+                  testid: `defect-absorb-reveal-${d.id}` }),
+  edit: d => ({ label: 'Edit symptom', run: () => reveal('edit'), testid: `defect-edit-reveal-${d.id}` }),
+  paths: () => ({ label: 'Edit suspect paths', run: () => reveal('paths') }),
+  attach: () => ({ label: 'Attach image…', run: () => filePick.value?.click() }),
 }
 
-// A form with `send` builds its own request; the rest POST `{field: value}`
-// to the verb's own path.
-const FORMS = {
-  edit: {
-    label: 'Save', placeholder: 'what went wrong, in the reporter\u2019s words',
-    multiline: true,
-    invalid: (raw) => (raw.trim() ? '' : 'A defect needs a symptom.'),
-    hint: 'The wording is the dedup key too: a rewrite that matches another defect of the same feature is refused, and merge is the remedy.',
-    send: (id, raw) => api.patch(`/defects/${id}`, { symptom: raw.trim() }),
-    done: 'edited',
-  },
-  absorb: {
-    label: 'Absorb into', placeholder: 'duplicate ids, e.g. 18, 19',
-    invalid: (raw) => (idList(raw)
-      ? '' : 'Defect ids are positive whole numbers, separated by commas or spaces.'),
-    hint: 'Every one named folds into this defect and is deleted, all or none. This one keeps its wording and round; their suspect paths, screenshots and fix task move here. Refused while their fix tasks differ, or when this one is closed and any of them is open.',
-    send: (id, raw) => api.post(`/defects/${id}/absorb`, { duplicates: idList(raw) }),
-    done: 'absorbed its duplicates',
-  },
-  attribute: {
-    label: 'Attribute', placeholder: 'feature id, e.g. 81',
-    field: 'feature_id', numeric: true,
-    // `Number('eight')` is `NaN`, and a NaN posted as a foreign key is a
-    // request the server can only answer with a 400 the operator reads as
-    // the ledger refusing their assertion rather than as their own typo.
-    invalid: (raw) => (/^\d+$/.test(raw.trim()) && Number(raw) > 0
-      ? '' : 'A feature id is a positive whole number.'),
-    hint: 'The feature that CAUSED this, which is not necessarily the one the reporting session was working on. Naming a different one re-points the blame at that feature\u2019s current last event, so the escape verdict follows the blame.',
-    done: 'attributed',
-  },
-  close: {
-    label: 'Close', placeholder: 'the test that would have caught this',
-    field: 'missing_check',
-    // The store refuses a blank check with a 400. Refusing it here as well is
-    // not a second rulebook — it is the same rule stated where the operator
-    // can still act on it, before the round trip that loses their place.
-    invalid: (raw) => (raw.trim()
-      ? '' : 'Name the check that would have caught this. It is the only field here that changes future behaviour.'),
-    hint: 'Name a test, then write it. This is the only field here that changes future behaviour.',
-    done: 'closed',
-  },
-  merge: {
-    label: 'Merge', placeholder: 'the defect to KEEP, e.g. 17',
-    field: 'into', numeric: true,
-    invalid: (raw) => (/^\d+$/.test(raw.trim()) && Number(raw) > 0
-      ? '' : 'A defect id is a positive whole number.'),
-    hint: 'This defect folds into that one and is deleted; its suspect paths, screenshots and fix task move to the keeper, which keeps its own wording. The remedy `attribute` names when it refuses a symptom already reported against the feature.',
-    done: 'folded into the keeper',
-  },
-  'fix-item': {
-    label: 'Link task', placeholder: 'task id, e.g. 142',
-    field: 'task_id', numeric: true,
-    invalid: (raw) => (/^\d+$/.test(raw.trim()) && Number(raw) > 0
-      ? '' : 'A task id is a positive whole number.'),
-    hint: 'An item that already exists. Last writer wins — re-pointing is how a wrong one is corrected, and nothing is counted from this pointer.',
-    done: 'pointed at its fix task',
-  },
+function verbItem(verb) {
+  const spec = VERB[verb](props.defect)
+  if (!spec) return null
+  return { label: spec.label, onSelect: spec.run, disabled: busy.value,
+           testid: spec.testid || `defect-verb-${verb}-${props.defect.id}` }
 }
 
-// Offered on an attributed defect too, now that `attribute()` re-takes the
-// blame snapshot when the key actually changes. While it did not, a second
-// attribution left the FIRST feature's `state_category` standing and silently
-// mis-stated which state the defect escaped against (defect #137).
-// Create is hidden while the post-close offer stands, so the same verb is not
-// asked for twice on one row. Merge is the remedy `attribute`'s own refusal
-// names.
+const primary = computed(() => verbItem(PRIMARY[state.value]))
+
 const menuItems = computed(() => {
-  const d = props.defect
-  const items = [{
-    label: d.feature_id ? 'Re-attribute' : 'Attribute',
-    onSelect: () => reveal('attribute'),
-    testid: `defect-attribute-reveal-${d.id}`,
-  }]
-  if (!d.fix_task_id && !offered.value) {
-    items.push({
-      label: 'Create fix task',
-      onSelect: createFixTask,
-      disabled: busy.value || !d.feature_id,
-      title: d.feature_id ? '' : ATTRIBUTE_FIRST,
-      testid: `defect-fix-create-row-${d.id}`,
-    })
+  const items = []
+  let group = null
+  for (const verb of MENU[state.value]) {
+    const item = verbItem(verb)
+    if (!item) continue
+    if (group !== null && GROUP[verb] !== group) items.push({ separator: true })
+    group = GROUP[verb]
+    items.push(item)
   }
-  items.push(
-    {
-      label: d.fix_task_id ? 'Re-point fix task' : 'Link existing task',
-      onSelect: () => reveal('fix-item'),
-      testid: `defect-fix-item-reveal-${d.id}`,
-    },
-    { separator: true },
-    { label: 'Edit symptom', onSelect: () => reveal('edit'), testid: `defect-edit-reveal-${d.id}` },
-    { separator: true },
-    { label: 'Merge into…', onSelect: () => reveal('merge'), testid: 'defect-merge-reveal' },
-    { label: 'Absorb duplicates…', onSelect: () => reveal('absorb'), testid: `defect-absorb-reveal-${d.id}` },
-  )
   return items
 })
 
-// Live, so the submit is disabled as soon as the field cannot be sent —
-// rather than after a post that was never going to be accepted.
-const problem = computed(
-  () => (form.value ? FORMS[form.value].invalid(value.value) : ''))
-
-// Edit starts from the current wording — it is a correction of what is
-// there, not a fresh assertion — while every other field starts empty.
+// Edit and paths start from what is there — they correct it — while every
+// other field starts empty.
 function reveal(which) {
   form.value = form.value === which ? '' : which
-  value.value = form.value === 'edit' ? props.defect.symptom : ''
-  refusal.value = ''
+  value.value = FORMS[form.value]?.initial?.(props.defect) ?? ''
+  refusal.value = null
 }
 
-async function submit() {
-  const spec = FORMS[form.value]
-  if (!spec) return
-  if (problem.value) {
-    refusal.value = problem.value
-    return
-  }
+function refuse(body) {
+  refusal.value = refusalOf(body)
+}
+
+async function call(send) {
   busy.value = true
-  refusal.value = ''
-  const body = spec.send
-    ? await spec.send(props.defect.id, value.value)
-    : await api.post(
-      `/defects/${props.defect.id}/${form.value}`,
-      // An id goes as a number: the route reads `feature_id` straight off the
-      // body, and a string there would reach the foreign key as one.
-      // Trimmed: the store stores what it is sent, and a check named
-      // "  test_x  " is a different string from the one the author typed.
-      { [spec.field]: spec.numeric ? Number(value.value.trim()) : value.value.trim() })
-  busy.value = false
-  if (body?.ok === false) {
-    refusal.value = body.msg || 'the ledger refused, without saying why'
-    return
+  refusal.value = null
+  try {
+    const body = await send()
+    if (body?.ok === false) {
+      refuse(body)
+      return null
+    }
+    return body
+  } catch (e) {
+    refuse(e?.message || String(e))
+    return null
+  } finally {
+    busy.value = false
   }
+}
+
+async function act(verb, done) {
+  const body = await call(() => api.post(`/defects/${props.defect.id}/${verb}`))
+  if (body) emit('changed', `#${props.defect.id} ${done}.`)
+}
+
+async function submit(raw = value.value) {
   const which = form.value
+  const spec = FORMS[which]
+  if (!spec || spec.invalid(raw)) return
+  const body = await call(() => spec.send(props.defect.id, raw))
+  if (!body) return
   form.value = ''
   if (which === 'merge') {
-    // The row the operator was looking at no longer exists — the store
-    // deletes the duplicate — and the response carries the keeper. Naming the
-    // survivor is the only honest sentence here.
+    // The row this page named no longer exists — the store deletes the
+    // duplicate — and the response carries the keeper.
     emit('changed', `#${props.defect.id} folded into #${body.defect.id}.`,
          { keeper: body.defect.id })
     return
   }
   // Only a close raises the offer, and only when nothing is pointed at yet:
-  // the pointer is last-writer-wins, but silently proposing a SECOND task for
-  // a defect that already has one is how the board grows duplicates.
+  // silently proposing a SECOND task is how the board grows duplicates.
   offered.value = which === 'close' && !props.defect.fix_task_id
   emit('changed', `#${props.defect.id} ${spec.done}.`)
 }
 
-// The other half of the close: the check just named is a test somebody has to
-// write, and this is the only moment anyone is looking at the defect knowing
-// that. The task carries the symptom verbatim as its title and the named
-// check in its body — regin authors it, so no field here is pre-filled for a
-// human to rubber-stamp.
+// The check just named is a test somebody has to write, and this is the only
+// moment anyone is looking at the defect knowing that.
 async function createFixTask() {
-  busy.value = true
-  refusal.value = ''
-  const body = await api.post(`/defects/${props.defect.id}/fix-item`,
-                              { create: true })
-  busy.value = false
-  if (body?.ok === false) {
-    refusal.value = body.msg || 'the ledger refused, without saying why'
-    return
-  }
+  const body = await call(() => api.post(`/defects/${props.defect.id}/fix-item`, { create: true }))
+  if (!body) return
   offered.value = false
   created.value = body.defect.fix_task_id
-  emit('changed',
-       `#${props.defect.id} will be fixed by task #${body.defect.fix_task_id}.`)
+  emit('changed', `#${props.defect.id} will be fixed by task #${body.defect.fix_task_id}.`)
 }
 
-// Reopening is not undo. It records that we claimed this fixed and were
-// wrong, and the round it bumps is a permanent figure on the feature that
-// caused it — so it is asked for once, out loud, before it is written.
+async function clearFixTask() {
+  const ok = await confirm('Clear fix task',
+    `Unpoint defect #${props.defect.id} from task #${props.defect.fix_task_id}? The task itself is kept.`)
+  if (!ok) return
+  const body = await call(() => api.del(`/defects/${props.defect.id}/fix-item`))
+  if (body) emit('changed', `#${props.defect.id} no longer points at a fix task.`)
+}
+
+// Reopening is not undo: the round it bumps is a permanent figure on the
+// feature that caused it, so it is asked for once, out loud.
 async function reopen() {
   const ok = await confirm(
     'Reopen',
@@ -235,35 +182,49 @@ async function reopen() {
     + 'keeps for good.',
     true)
   if (!ok) return
+  const body = await call(() => api.post(`/defects/${props.defect.id}/reopen`))
+  if (body) emit('changed', `#${props.defect.id} reopened at round ${body.defect.round}.`)
+}
+
+async function attach(event) {
+  const files = [...(event.target.files || [])]
+  event.target.value = ''
+  if (!files.length) return
+  for (const file of files) {
+    const data_b64 = await toBase64(file)
+    const body = await call(() => api.post(`/defects/${props.defect.id}/images`, { data_b64 }))
+    if (!body) return
+  }
+  emit('changed', `#${props.defect.id}: ${files.length} image${files.length === 1 ? '' : 's'} attached.`)
+}
+
+async function onRemedy(remedy) {
   busy.value = true
-  refusal.value = ''
-  const body = await api.post(`/defects/${props.defect.id}/reopen`)
-  busy.value = false
-  if (body?.ok === false) {
-    refusal.value = body.msg || 'the ledger refused, without saying why'
+  const result = await runRemedy(remedy, { confirm }).finally(() => { busy.value = false })
+  if (result.reveal === 'attribute') {
+    if (String(result.defectId) === String(props.defect.id)) reveal('attribute')
+    else router.push(`/defects/${result.defectId}`)
     return
   }
-  emit('changed', `#${props.defect.id} reopened at round ${body.defect.round}.`)
+  if (!result.ok) {
+    if (result.refusal) refusal.value = result.refusal
+    return
+  }
+  form.value = ''
+  refusal.value = null
+  emit('changed', result.message, result.keeper ? { keeper: result.keeper } : undefined)
 }
 </script>
 
 <template>
   <div v-if="canWrite" class="acts">
     <div class="row">
-      <!-- One primary verb, un-nested: the status decides it. Everything
-           else a row can do sits behind the menu, so a closed defect with
-           nothing left to decide no longer reads as a wall of buttons. -->
       <Button
-        v-if="defect.status === 'open'"
-        variant="secondary" size="sm"
-        :aria-expanded="form === 'close'"
-        @click="reveal('close')"
-      >Close</Button>
-      <Button
-        v-else
+        v-if="primary"
         variant="secondary" size="sm" :disabled="busy"
-        @click="reopen"
-      >Reopen</Button>
+        :data-testid="`defect-primary-${defect.id}`"
+        @click="primary.onSelect"
+      >{{ primary.label }}</Button>
       <DropdownMenu :items="menuItems" align="start">
         <template #trigger>
           <Button variant="ghost" size="sm" class="ledger-reveal"
@@ -273,45 +234,38 @@ async function reopen() {
       </DropdownMenu>
       <span v-if="!defect.feature_id && !defect.fix_task_id" class="note"
             :data-testid="`defect-fix-create-blocked-${defect.id}`">{{ ATTRIBUTE_FIRST }}</span>
+      <input
+        ref="filePick" type="file" accept="image/*" multiple class="sr-only"
+        tabindex="-1" aria-hidden="true"
+        :data-testid="`defect-attach-input-${defect.id}`"
+        @change="attach"
+      >
     </div>
 
-    <form v-if="form" class="form" @submit.prevent="submit">
-      <label class="sr-only" :for="`f-${defect.id}`">
-        {{ FORMS[form].placeholder }}
-      </label>
-      <Textarea
-        v-if="FORMS[form].multiline"
-        :id="`f-${defect.id}`"
-        v-model="value"
-        class="grow"
-        rows="3"
-        :placeholder="FORMS[form].placeholder"
-        :disabled="busy"
-        :error="!!problem"
-        :data-testid="`defect-${form}-field-${defect.id}`"
+    <DefectMergePicker
+      v-if="form === 'merge'"
+      :defect="defect" :busy="busy"
+      @confirm="id => submit(String(id))"
+      @cancel="form = ''"
+    />
+    <form v-else-if="form === 'attribute'" class="form" @submit.prevent="submit()">
+      <FeaturePicker
+        v-model="value" class="grow" :disabled="busy"
+        label="The feature that caused this"
+        :testid="`defect-attribute-picker-${defect.id}`"
       />
-      <Input
-        v-else
-        :id="`f-${defect.id}`"
-        v-model="value"
-        class="grow"
-        :placeholder="FORMS[form].placeholder"
-        :disabled="busy"
-        :error="!!problem && !!value"
-      />
-      <!-- Carries the defect id so the submit and the disclosure that
-           revealed it do not share one accessible name. -->
-      <Button type="submit" size="sm" :disabled="busy || !!problem"
-              :data-testid="`defect-${form}-submit-${defect.id}`">
-        {{ FORMS[form].label }} #{{ defect.id }}
+      <Button type="submit" size="sm" :disabled="busy || !value"
+              :data-testid="`defect-attribute-submit-${defect.id}`">
+        {{ defect.feature_id ? 'Re-attribute' : 'Attribute' }} #{{ defect.id }}
       </Button>
-      <p class="hint">{{ FORMS[form].hint }}</p>
-      <!-- Said before the post, not after it: the server would answer a blank
-           check or a NaN id with a 400, and a round trip to learn what the
-           field already knew costs the operator their place in the list. -->
-      <p v-if="problem && value" class="refusal" role="alert"
-         :data-testid="`defect-${form}-problem-${defect.id}`">{{ problem }}</p>
+      <p class="hint">{{ FORMS.attribute.hint }}</p>
     </form>
+    <DefectActionForm
+      v-else-if="form"
+      v-model="value"
+      :form="form" :spec="FORMS[form]" :defect-id="defect.id" :busy="busy"
+      @submit="submit()"
+    />
 
     <div v-if="offered" class="offer" role="status"
          :data-testid="`defect-fix-offer-${defect.id}`">
@@ -334,7 +288,8 @@ async function reopen() {
       <router-link :to="`/features/${defect.feature_id}`">{{ defect.feature_title || `feature #${defect.feature_id}` }}</router-link>'s tasks.
     </p>
 
-    <p v-if="refusal" class="refusal" role="alert">{{ refusal }}</p>
+    <DefectRefusal v-if="refusal" :refusal="refusal" :busy="busy"
+                   :testid="`defect-refusal-${defect.id}`" @remedy="onRemedy" />
   </div>
 </template>
 
@@ -343,9 +298,10 @@ async function reopen() {
 .row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
 .note { font-size: 11.5px; color: var(--color-fg-faint); max-width: 44rem; }
 .form {
-    display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem;
+    display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0.4rem;
     max-width: 44rem;
 }
+.form .grow { flex: 1 1 16rem; }
 .hint { flex-basis: 100%; font-size: 11px; color: var(--color-fg-faint); }
 .offer {
     display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem;
@@ -360,9 +316,4 @@ async function reopen() {
     max-width: 44rem;
 }
 .created a { color: var(--color-primary); }
-.refusal {
-    border-radius: var(--radius-lg); background: var(--color-red-50);
-    padding: 0.35rem 0.6rem; font-size: 11.5px; color: var(--color-red-700);
-    max-width: 44rem;
-}
 </style>

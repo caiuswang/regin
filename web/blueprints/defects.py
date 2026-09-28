@@ -75,6 +75,9 @@ def _view(row, feature_title, blamed_event_kind, images=None,
         # are both closed, and only one of them was ever looked at.
         "triage_state": row.triage_state,
         "triage_reason": row.triage_reason,
+        # The row's place on the triage axis as the queue predicate reads it,
+        # so a surface never re-derives the snooze-watermark rule.
+        "queue_position": store.queue_position(row),
         "opened_at": row.opened_at, "updated_at": row.updated_at,
         "closed_at": row.closed_at,
         # Metadata only — the bytes are a separate GET, so a page of 50
@@ -173,6 +176,7 @@ def api_list_defects():
     return jsonify(list_page(
         body, population=store.population(query), sort=str(query.sort),
         filters={"scope": query.scope, "status": query.status, "q": query.q,
+                 "triage": query.triage_position,
                  "feature_id": query.feature_id,
                  "fix_item": query.fix_task_id,
                  "project": "none" if query.project_none
@@ -196,18 +200,33 @@ def api_read_defect(defect_id: int):
     return jsonify({"defect": _serialize(row)})
 
 
+def _edit_problem(payload: dict):
+    unknown = sorted(set(payload) - {"symptom", "suspect_paths"})
+    if unknown:
+        return f"unknown field(s): {', '.join(unknown)}"
+    if not payload:
+        return "send symptom, suspect_paths, or both"
+    if "symptom" in payload and (not isinstance(payload["symptom"], str)
+                                 or not payload["symptom"].strip()):
+        return "symptom is required"
+    paths = payload.get("suspect_paths", [])
+    if not isinstance(paths, list) or any(not isinstance(p, str) for p in paths):
+        return "suspect_paths must be a list of strings"
+    return None
+
+
 @defects_bp.route("/api/defects/<int:defect_id>", methods=["PATCH"])
 @require_editor
 def api_edit_defect(defect_id: int):
-    """Rewrite a defect's wording — open or closed."""
-    payload = request.get_json(silent=True) or {}
-    unknown = sorted(set(payload) - {"symptom"})
-    if unknown:
-        return jsonify({"error": f"unknown field(s): {', '.join(unknown)}"}), 400
-    symptom = payload.get("symptom")
-    if not isinstance(symptom, str) or not symptom.strip():
-        return jsonify({"error": "symptom is required"}), 400
-    return _write(defect_id, lambda: store.edit(defect_id, symptom=symptom))
+    """Rewrite a defect's wording and/or its suspect paths — open or closed."""
+    payload = request.get_json(silent=True)
+    payload = payload if isinstance(payload, dict) else {}
+    problem = _edit_problem(payload)
+    if problem:
+        return jsonify({"error": problem}), 400
+    return _write(defect_id, lambda: store.edit(
+        defect_id, symptom=payload.get("symptom"),
+        suspect_paths=payload.get("suspect_paths")))
 
 
 @defects_bp.route("/api/defects", methods=["POST"])
@@ -223,7 +242,7 @@ def api_open_defect():
             payload["symptom"], feature_id=feature_id,
             suspect_paths=payload.get("suspect_paths", []))
     except store.DefectError as exc:
-        return jsonify({"error": str(exc)}), 409
+        return _refused(exc)
     return jsonify({"outcome": recorded.outcome,
                     "defect": _serialize(recorded.defect)}), \
         200 if recorded.deduped else 201
@@ -249,8 +268,15 @@ def _write(defect_id: int, act):
     try:
         row = act()
     except store.DefectError as exc:
-        return jsonify({"error": str(exc)}), 409
+        return _refused(exc)
     return jsonify({"defect": _serialize(row)}), 200
+
+
+def _refused(exc):
+    body = {"error": str(exc)}
+    if exc.remedy:
+        body["remedy"] = exc.remedy
+    return jsonify(body), 409
 
 
 @defects_bp.route("/api/defects/<int:defect_id>/attribute", methods=["POST"])
@@ -309,9 +335,8 @@ def _fix_item_problem(payload, task_id, create):
 def api_set_fix_item(defect_id: int):
     """Point a defect at the task that will close it, or author that task.
 
-    There is no `clear` here. The pointer is last-writer-wins, so a browser
-    that mis-pointed re-points; unpointing a defect entirely is a correction
-    of the ledger, and `regin defects fix-item --clear` is where it lives.
+    The pointer is last-writer-wins, so a browser that mis-pointed re-points;
+    unpointing it entirely is `DELETE` on the same path.
     """
     payload = request.get_json(silent=True)
     body = payload if isinstance(payload, dict) else {}
@@ -322,6 +347,14 @@ def api_set_fix_item(defect_id: int):
     if create:
         return _write(defect_id, lambda: fix_items.create_for(defect_id))
     return _write(defect_id, lambda: store.set_fix_item(defect_id, task_id))
+
+
+@defects_bp.route("/api/defects/<int:defect_id>/fix-item",
+                  methods=["DELETE"])
+@require_editor
+def api_clear_fix_item(defect_id: int):
+    """Unpoint a defect from its fix task. The task itself is untouched."""
+    return _write(defect_id, lambda: store.clear_fix_item(defect_id))
 
 
 def _positive_id(value) -> bool:
@@ -400,6 +433,20 @@ def api_snooze_defect(defect_id: int):
     queue's contents a function of the clock.
     """
     return _write(defect_id, lambda: store.snooze(defect_id))
+
+
+@defects_bp.route("/api/defects/<int:defect_id>/unsnooze", methods=["POST"])
+@require_editor
+def api_unsnooze_defect(defect_id: int):
+    """Return a snoozed defect to the queue now, without waiting for a write."""
+    return _write(defect_id, lambda: store.unsnooze(defect_id))
+
+
+@defects_bp.route("/api/defects/<int:defect_id>/restore", methods=["POST"])
+@require_editor
+def api_restore_defect(defect_id: int):
+    """Undo a decline: open again, back in the queue, round unchanged."""
+    return _write(defect_id, lambda: store.restore(defect_id))
 
 
 @defects_bp.route("/api/defects/<int:defect_id>/reopen", methods=["POST"])

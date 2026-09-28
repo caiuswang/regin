@@ -89,11 +89,14 @@ test('test_defect_merge_lands_on_keeper', async ({ page }) => {
     return route.fulfill({ json: { defect: rows[9] } })
   })
 
+  await page.route(/\/api\/defects\?/, route => route.fulfill({ json: {
+    items: [rows[7], rows[9]], pagination: { total: 2 } } }))
+
   await page.goto('/defects/7')
   await page.getByTestId('defect-more-7').click()
   await page.getByRole('menuitem', { name: 'Merge into…' }).click()
-  await page.getByPlaceholder('the defect to KEEP, e.g. 17').fill('9')
-  await page.getByTestId('defect-merge-submit-7').click()
+  await page.getByTestId('merge-option-9').click()
+  await page.getByTestId('merge-confirm').click()
 
   await expect(page).toHaveURL(/\/defects\/9$/)
   await expect(page.getByTestId('defect-row-9')).toBeVisible()
