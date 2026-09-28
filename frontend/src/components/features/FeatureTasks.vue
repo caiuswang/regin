@@ -24,6 +24,7 @@ import Select from '../ui/Select.vue'
 import Textarea from '../ui/Textarea.vue'
 import TaskKindChip from '../tasks/TaskKindChip.vue'
 import TaskStatusIcon from '../tasks/TaskStatusIcon.vue'
+import { TASKS_ANCHOR } from '../../utils/featureLinks'
 import { carriedProject, projectOptions, useProjects }
   from '../../composables/useProjects.js'
 
@@ -31,6 +32,9 @@ const props = defineProps({
   featureId: { type: Number, required: true },
   canWrite: { type: Boolean, default: false },
   projectId: { type: Number, default: null },
+  // Transcribed slices are the feature's build; a second Build step beside
+  // them would be a second way to build one feature.
+  hasSlices: { type: Boolean, default: false },
 })
 const { items: projects, ensure: ensureProjects } = useProjects()
 const router = useRouter()
@@ -141,7 +145,7 @@ async function submit() {
 </script>
 
 <template>
-  <Card data-testid="feature-tasks">
+  <Card :id="TASKS_ANCHOR" data-testid="feature-tasks">
     <div class="ft-head">
       <div>
         <h2 class="card-header ft-title">Tasks</h2>
@@ -153,6 +157,7 @@ async function submit() {
           @click="startStep('spec')"
         >Write spec</Button>
         <Button
+          v-if="!hasSlices"
           variant="secondary" size="sm" data-testid="feature-verb-build"
           @click="startStep('build')"
         >Build</Button>

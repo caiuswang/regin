@@ -279,7 +279,31 @@ def ship_cmd(
     settling run ship a feature nobody claimed.
     """
     feature_id = _resolve(key, ref)
-    feature_store.ship(feature_id, trace_id=session)
+    _declare(feature_store.ship, feature_id, session)
+    typer.echo(f"#{feature_id}  {events.stage(feature_id)}  "
+               f"rounds={events.rounds(feature_id)}")
+
+
+def _declare(verb, feature_id: int, session: Optional[str]) -> None:
+    try:
+        verb(feature_id, trace_id=session)
+    except feature_store.FeatureError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2)
+
+
+@feature_app.command("reopen")
+def reopen_cmd(
+    key: str = typer.Argument(..., help="Feature id"),
+    ref: Optional[str] = typer.Option(
+        None, "--ref", help="Name the feature by its tracker reference"),
+    session: Optional[str] = typer.Option(
+        None, "--session", help="This session's trace id"),
+) -> None:
+    """Walk a shipped or escaped feature back (+1 round), or return an
+    abandoned one to spec (no round)."""
+    feature_id = _resolve(key, ref)
+    _declare(feature_store.reopen, feature_id, session)
     typer.echo(f"#{feature_id}  {events.stage(feature_id)}  "
                f"rounds={events.rounds(feature_id)}")
 
@@ -300,7 +324,7 @@ def abandon_cmd(
     reading.
     """
     feature_id = _resolve(key, ref)
-    feature_store.abandon(feature_id, trace_id=session)
+    _declare(feature_store.abandon, feature_id, session)
     typer.echo(f"#{feature_id}  {events.stage(feature_id)}")
 
 

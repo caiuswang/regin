@@ -145,6 +145,7 @@ test('test_unattribute_refusal_stays_inline', async ({ page }) => {
 
   await page.goto('/features/242')
   await page.getByRole('button', { name: /Un-declare abcdef01/ }).click()
+  await page.getByRole('button', { name: 'Unattribute', exact: true }).click()
 
   const refusal = page.getByTestId('undeclare-refusal')
   await expect(refusal).toContainText('attributed through a run')

@@ -209,3 +209,19 @@ test('a count of nothing is not a link', async ({ page }) => {
   await expect(page.getByTestId('feature-row-206')).toContainText('none')
   await expect(page.getByTestId('feature-defects-link-7')).toHaveCount(0)
 })
+
+test('a row names its next step and links to it', async ({ page }) => {
+  await stub(page, index({ items: [
+    row({ stage: 'escaped',
+          next_step: { kind: 'reopen', label: '2 blamed defects — reopen to fix',
+                       target: '/features/242' } }),
+    row({ id: 206, stage: 'shipped', next_step: { kind: 'none', label: '', target: null } }),
+  ] }))
+  await page.goto('/features')
+
+  const step = page.getByTestId('feature-row-242').getByTestId('feature-next-step')
+  await expect(step).toHaveText('Next: 2 blamed defects — reopen to fix')
+  await expect(step).toHaveAttribute('href', '/features/242')
+  await expect(page.getByTestId('feature-row-206').getByTestId('feature-next-step'))
+    .toHaveCount(0)
+})

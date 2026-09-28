@@ -29,6 +29,8 @@ import { computed } from 'vue'
 import Badge from '../Badge.vue'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
+import FeatureNextStep from './FeatureNextStep.vue'
+import FeatureTitle from './FeatureTitle.vue'
 import { STAGE_COLOR, asOf } from '../../utils/ledgerFormat'
 
 const props = defineProps({
@@ -49,6 +51,9 @@ const props = defineProps({
   // opposites: an abandoned feature can be neither shipped nor abandoned
   // again, while a shipped one can still be taken down.
   canAbandon: { type: Boolean, default: false },
+  canReopen: { type: Boolean, default: false },
+  canRename: { type: Boolean, default: false },
+  nextStep: { type: Object, default: null },
   // Which write is in flight, so the whole row disables together: a second
   // click during a ship appends a second event to an append-only log.
   busy: { type: String, default: '' },
@@ -57,7 +62,7 @@ const props = defineProps({
   // reading it would be the vendor branch the seam forbids.
   live: { type: Boolean, default: false },
 })
-defineEmits(['refresh', 'ship', 'abandon'])
+defineEmits(['refresh', 'ship', 'abandon', 'reopen', 'renamed'])
 
 const color = computed(() => STAGE_COLOR[props.stage?.stage] || 'gray')
 // Only a successful fetch writes it, so a feature nobody has synced has no
@@ -73,7 +78,11 @@ const synced = computed(() => asOf(props.syncedAt))
            URL — which is the one place a reader cannot select a word from
            without taking the rest of the path with it. -->
       <span class="stage-id" data-testid="feature-id">#{{ featureId }}</span>
-      <span class="stage-key">{{ title }}</span>
+      <FeatureTitle
+        class="stage-key"
+        :feature-id="featureId" :title="title" :editable="canRename"
+        @saved="$emit('renamed', $event)"
+      />
 
       <!-- The reference, where there is one. A link, because an operator who
            reads it wants to open it. -->
@@ -143,6 +152,19 @@ const synced = computed(() => asOf(props.syncedAt))
         {{ busy === 'ship' ? 'Shipping…' : 'Ship' }}
       </Button>
 
+      <Button
+        v-if="canReopen"
+        class="stage-ship"
+        variant="secondary" size="sm"
+        data-testid="reopen-feature"
+        :disabled="Boolean(busy)"
+        :aria-label="`Reopen ${title}`"
+        @click="$emit('reopen')"
+      >
+        <Icon name="refresh-cw" :size="12" />
+        {{ busy === 'reopen' ? 'Reopening…' : 'Reopen' }}
+      </Button>
+
       <!-- Taking it down. `abandoned` is a stage, not a delete: the events are
            the only source of this feature's rounds and its escapes, so removing
            one would not be a cleanup but a rewrite of history. The confirm is
@@ -160,6 +182,8 @@ const synced = computed(() => asOf(props.syncedAt))
         {{ busy === 'abandon' ? 'Abandoning…' : 'Abandon' }}
       </Button>
     </div>
+
+    <FeatureNextStep :step="nextStep" />
 
     <!-- Inline, never a toast: the reader has to be able to see the claim and
          the stage it qualifies at the same time. -->
@@ -184,10 +208,6 @@ const synced = computed(() => asOf(props.syncedAt))
     font-family: var(--font-mono, monospace); font-weight: 600;
     font-size: 0.8125rem; color: var(--color-fg-faint);
     font-variant-numeric: tabular-nums;
-}
-.stage-key {
-    font-family: var(--font-mono, monospace); font-weight: 700;
-    font-size: 0.95rem; color: var(--color-fg);
 }
 .stage-blurb { font-size: 12px; color: var(--color-fg-muted); }
 .stage-counts {
@@ -216,6 +236,7 @@ const synced = computed(() => asOf(props.syncedAt))
     border-bottom: 1px dotted var(--color-border-strong);
 }
 .stage-ref:hover { color: var(--color-fg); }
+.stage-ref:focus-visible { outline: 2px solid var(--color-blue-500); }
 .stage-refresh { flex: none; margin-left: auto; }
 .stage-ship { flex: none; }
 .stage-abandon { flex: none; }

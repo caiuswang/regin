@@ -27,6 +27,7 @@ from lib.auth import require_auth, require_editor
 from lib.features import attribution, images as images_module
 from lib.features import index as index_module
 from lib.features import ledger as ledger_module
+from lib.features import next_step as next_step_module
 from lib.features import spans
 from lib.features import steps as steps_module
 from lib.features import store as feature_store
@@ -125,6 +126,11 @@ def _ledger_body(feature_id: int) -> dict:
     # Summaries, never the bytes: a spec with four screenshots on it would
     # otherwise put megabytes of base64 into every read of the ledger.
     body["images"] = images_module.list_for(feature_id)
+    body["next_step"] = next_step_module.for_feature(feature_id).to_dict()
+    body["verbs"] = list(feature_store.verbs(body["stage"]["stage"]))
+    body["ship_check"] = next_step_module.ship_check(feature_id)
+    body["slice_tasks"] = next_step_module.task_facts(
+        [feature_id])[feature_id].slices
     return body
 
 
@@ -170,11 +176,27 @@ def api_feature_ship(feature_id):
     trusts, and the escape is counted from the defect's own pointer at the
     event this appends.
     """
+    return _lifecycle(feature_store.ship, feature_id)
+
+
+def _lifecycle(verb, feature_id: int):
+    """Run one operator verb: 409 when the stage refuses it, 404 when there
+    is no such feature."""
     try:
-        feature_store.ship(feature_id)
+        verb(feature_id)
+    except feature_store.VerbRefused as exc:
+        return jsonify({"error": str(exc)}), 409
     except feature_store.FeatureError as exc:
         return jsonify({"error": str(exc)}), 404
     return jsonify(_ledger_body(feature_id))
+
+
+@features_bp.route("/api/features/<int:feature_id>/reopen", methods=["POST"])
+@require_editor
+def api_feature_reopen(feature_id):
+    """Walk a shipped or escaped feature back (+1 round), or return an
+    abandoned one to spec (no round)."""
+    return _lifecycle(feature_store.reopen, feature_id)
 
 
 @features_bp.route("/api/features/<int:feature_id>/abandon", methods=["POST"])
@@ -185,11 +207,7 @@ def api_feature_abandon(feature_id):
     A feature's events are the only source of its rounds and its escapes, so
     removing one would not be a cleanup but a rewrite of history.
     """
-    try:
-        feature_store.abandon(feature_id)
-    except feature_store.FeatureError as exc:
-        return jsonify({"error": str(exc)}), 404
-    return jsonify(_ledger_body(feature_id))
+    return _lifecycle(feature_store.abandon, feature_id)
 
 
 @features_bp.route("/api/features/<int:feature_id>/attribute",

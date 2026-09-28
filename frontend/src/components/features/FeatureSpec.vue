@@ -29,6 +29,7 @@ import MarkdownContent from '../MarkdownContent.vue'
 import Textarea from '../ui/Textarea.vue'
 import { caretTarget, withCaretInsert } from '../../utils/caret'
 import { imageFilesFrom } from '../../utils/imageFiles'
+import { SPEC_ANCHOR } from '../../utils/featureLinks'
 import { IMAGE_REF_HINT, imageRefBlock, resolveImageRefs } from '../../utils/taskBodyImages'
 
 const props = defineProps({
@@ -111,7 +112,7 @@ async function onDrop(e) {
 </script>
 
 <template>
-  <Card data-testid="feature-spec">
+  <Card :id="SPEC_ANCHOR" data-testid="feature-spec">
     <div class="fs-head">
       <div>
         <h2 class="card-header fs-title">Spec</h2>
