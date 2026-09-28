@@ -59,16 +59,30 @@ const description = computed(() => (adopting.value
   : 'What is being delivered. The spec is thin prose — no file paths, which at'
     + ' this point would specify an implementation that does not exist yet.'))
 
-watch(open, async (isOpen) => {
-  if (!isOpen) return
+// The typed draft outlives a close — an Escape is not a decision to throw the
+// words away — and ends only when the feature is declared or the operator
+// discards it, as the task composer's does. The images cannot survive a close:
+// they are browser blobs held against a feature id that does not exist yet.
+const pristine = computed(() => !title.value && !body.value && !reference.value && !provider.value)
+
+function discard() {
   mode.value = 'declare'
   title.value = ''
   body.value = ''
   reference.value = ''
   provider.value = ''
   failed.value = ''
-  resetImages()
   projectId.value = ''
+  resetImages()
+}
+
+watch(open, async (isOpen) => {
+  if (!isOpen) {
+    resetImages()
+    return
+  }
+  failed.value = ''
+  if (!pristine.value) return
   await ensureProjects()
   projectId.value = carriedProject(props.scope, projects.value)
 })
@@ -120,6 +134,7 @@ async function declare() {
   // closes — the feature exists, and the strip's own error says which half
   // failed.
   await flushImages(ledger.id)
+  discard()
   open.value = false
   emit('declared', ledger)
 }
@@ -210,6 +225,12 @@ async function declare() {
     </form>
 
     <template #footer>
+      <Button
+        v-if="!pristine"
+        variant="ghost"
+        data-testid="declare-discard"
+        @click="discard(); open = false"
+      >Discard draft</Button>
       <Button variant="ghost" @click="open = false">Cancel</Button>
       <Button
         variant="primary"

@@ -17,6 +17,7 @@ import {
   projectCwd, rememberArm, seededArmDraft,
 } from '../../composables/useArmPrefs.js'
 import { useProjects } from '../../composables/useProjects.js'
+import { useFlash } from '../../composables/useFlash.js'
 
 const props = defineProps({
   task: { type: Object, required: true },
@@ -120,9 +121,13 @@ const cwdMismatch = computed(() => {
     + `${draft.cwd || 'the server working directory'}.`
 })
 
+const { flash } = useFlash()
+
 async function submit() {
   if (!await arm(props.task, draft)) return
   rememberArm(draft)
+  flash(`#${props.task.id} armed`, 'success',
+    { link: { to: `/tasks/${props.task.id}`, label: 'Open' } })
   emit('armed')
 }
 </script>

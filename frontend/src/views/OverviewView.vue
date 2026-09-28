@@ -3,30 +3,27 @@
 // what to run next, what needs a decision, and the projects — all from one
 // `GET /api/pipeline/overview?project=` read under the shell's scope.
 import { computed, onActivated, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import api from '../api'
 import Button from '../components/ui/Button.vue'
-import Icon from '../components/ui/Icon.vue'
 import OverviewLoop from '../components/pipeline/OverviewLoop.vue'
 import RunNextPanel from '../components/pipeline/RunNextPanel.vue'
 import NeedsDecisionPanel from '../components/pipeline/NeedsDecisionPanel.vue'
 import ProjectsPanel from '../components/pipeline/ProjectsPanel.vue'
 import ProjectScopePanel from '../components/pipeline/ProjectScopePanel.vue'
 import TriageSheet from '../components/pipeline/TriageSheet.vue'
-import TaskComposerDialog from '../components/tasks/TaskComposerDialog.vue'
+import PipelineCreateButton from '../components/pipeline/PipelineCreateButton.vue'
+import { usePipelineCreate } from '../composables/usePipelineCreate'
 import { usePipelineTabActive } from '../composables/usePipelineHeader'
 import { invalidatePipelineCounts, markPipelineRead, usePipelineCounts } from '../composables/usePipelineCounts'
 import { scopeOf, scopeQuery, usePipelineScope, SCOPE_ALL } from '../composables/usePipelineScope'
-import { useProjects } from '../composables/useProjects'
 import { useTaskShortcuts } from '../composables/useTaskShortcuts'
 import { useBreakpoint } from '../composables/useBreakpoint'
 
 const route = useRoute()
-const router = useRouter()
 const isCurrentTab = usePipelineTabActive()
 const { setScope } = usePipelineScope()
 const { revision } = usePipelineCounts()
-const { items: projects, ensure: ensureProjects } = useProjects()
 const { isMdUp } = useBreakpoint()
 
 const scope = computed(() => scopeOf(route.query))
@@ -68,13 +65,13 @@ function featuresTo(triageId, stage) {
   return { path: '/features', query }
 }
 
-const composing = ref(false)
+const { openCreate } = usePipelineCreate()
 const triaging = ref(false)
 const canWrite = computed(() => api.getStoredUser()?.role !== 'viewer')
 const picker = () => document.querySelector('[data-testid="pipeline-project"]')
 
 useTaskShortcuts({
-  c: () => { if (canWrite.value) composing.value = true },
+  c: () => { if (canWrite.value) openCreate('task') },
   // The Overview has no search of its own; the chip's picker owns it.
   '/': () => picker()?.click(),
 })
@@ -87,18 +84,14 @@ watch(revision, () => { if (route.path === '/overview') load() })
 // `mounted` then `activated` both fire on the first arrival inside KeepAlive,
 // so the guard is armed by the activation itself.
 let arrived = false
-onMounted(() => { ensureProjects(); load() })
+onMounted(load)
 onActivated(() => { if (arrived) load(); arrived = true })
 </script>
 
 <template>
   <div class="ov" data-testid="overview">
     <Teleport v-if="isCurrentTab && canWrite" defer to="#pipeline-actions">
-      <Button variant="primary" data-testid="task-new" @click="composing = true">
-        <Icon name="plus" :size="14" />
-        <span>New task</span>
-        <kbd class="ov-kbd">c</kbd>
-      </Button>
+      <PipelineCreateButton kind="task" testid="task-new" />
     </Teleport>
 
     <div v-if="error && !data" class="ov-error" role="alert" data-testid="overview-error">
@@ -111,7 +104,7 @@ onActivated(() => { if (arrived) load(); arrived = true })
 
     <template v-else>
       <p v-if="error" class="ov-stale" role="status">Showing the last good read — {{ error }}</p>
-      <OverviewLoop :loop="data.loop" :ready="data.run_next.ready" :compact="!isMdUp" :features-to="featuresTo" />
+      <OverviewLoop :loop="data.loop" :ready="data.run_next.ready" :compact="!isMdUp" :scope="scopeQuery(scope)" />
 
       <ProjectScopePanel
         v-if="data.project_head && isMdUp"
@@ -140,12 +133,6 @@ onActivated(() => { if (arrived) load(); arrived = true })
       />
     </template>
 
-    <TaskComposerDialog
-      v-model:open="composing"
-      :projects="projects"
-      :project="scope === SCOPE_ALL ? '' : scope"
-      @created="changed"
-    />
     <TriageSheet v-model:open="triaging" :scope="scope" @changed="changed" />
   </div>
 </template>
@@ -162,11 +149,6 @@ onActivated(() => { if (arrived) load(); arrived = true })
     display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
     border: 1px solid var(--color-border); border-radius: var(--radius-xl);
     padding: 1rem 1.1rem; font-size: 13px; color: var(--color-fg-muted);
-}
-.ov-kbd {
-    margin-left: 0.25rem; padding: 0 0.25rem; font-size: 0.6875rem;
-    font-family: var(--font-mono, ui-monospace, monospace);
-    border: 1px solid currentColor; border-radius: var(--radius-sm, 0.25rem); opacity: 0.7;
 }
 
 @media (max-width: 1023.98px) {

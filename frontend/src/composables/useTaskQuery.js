@@ -68,6 +68,11 @@ const CORRECTED = ['sort', 'group', 'view']
 
 export const VIEWS = ['board', 'list', 'graph']
 
+// `lib/tasks/next_step.py::GROUP_KEYS`. A `?group=` naming one of them is an
+// ADDRESS, not a grouping: the next-step list, opened on that group — which is
+// what a count on the Overview links to. The grouping reads as `next_step`.
+export const NEXT_STEP_GROUPS = ['ready', 'running', 'blocked', 'failed', 'ideas']
+
 // The stored axes that reach the server. `group` is not one: it decides how
 // the loaded rows are split into feeds, never which rows those are.
 const PARAMS = { status: 1, priority: 1, sort: 1, archived: 1, unfeatured: 1 }
@@ -86,6 +91,7 @@ const NARROWING = ['status', 'priority', 'archived', 'unfeatured']
 function readAxis(query, axis) {
   const raw = String(query[axis] ?? '').trim()
   if (!raw) return DEFAULTS[axis]
+  if (axis === 'group' && NEXT_STEP_GROUPS.includes(raw)) return 'next_step'
   if (CORRECTED.includes(axis) && !LEGAL[axis](raw)) return DEFAULTS[axis]
   return raw
 }
@@ -122,6 +128,12 @@ export function useTaskQuery() {
   const project = computed(() => {
     const raw = String(route.query.project ?? '').trim()
     return !raw || raw === 'all' ? '' : raw
+  })
+
+  /** The next-step group a link arrived at (`?group=ready`), or `''`. */
+  const anchor = computed(() => {
+    const raw = String(route.query.group ?? '').trim()
+    return NEXT_STEP_GROUPS.includes(raw) ? raw : ''
   })
 
   /** Exactly what the feed and the counts are asked for. */
@@ -167,12 +179,18 @@ export function useTaskQuery() {
       if (String(next.size) === '50') delete query.size
       else query.size = String(next.size)
     }
+    // The grouping is stored only when the reader picks one: a `?group=ready`
+    // arrival reads as next_step without anyone choosing it, and storing that
+    // would overwrite the grouping they keep. The anchor stays in the URL until
+    // a grouping is picked, so it is still the address after a filter change.
+    const keptAnchor = !('group' in next) && anchor.value
     for (const axis of AXES) {
       const value = String(merged[axis] ?? '')
-      if (axis in STORED) store(axis, value)
+      if (axis in STORED && (axis !== 'group' || 'group' in next)) store(axis, value)
       if (value && value !== DEFAULTS[axis]) query[axis] = value
       else delete query[axis]
     }
+    if (keptAnchor) query.group = keptAnchor
     router.replace({ path: route.path, query })
   }
 
@@ -230,5 +248,5 @@ export function useTaskQuery() {
     return flipsMode || Object.keys(restored).some(axis => axis in PARAMS)
   }
 
-  return { state, project, params, active, page, size, patch, reset, restoreStored }
+  return { state, project, params, active, anchor, page, size, patch, reset, restoreStored }
 }

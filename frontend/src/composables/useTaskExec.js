@@ -78,10 +78,16 @@ export function useTaskExec(reload) {
       return false
     }
     clearRefusal(task.id)
-    if (action === 'run') flash(`Attempt ${result.run?.attempt ?? ''} started`.trim())
-    else if (result.delivered === false) {
-      flash(result.detail || `The run did not take the ${action}`, 'error')
-    } else flash(`${action} delivered`)
+    const link = { to: `/tasks/${task.id}`, label: `#${task.id}` }
+    if (action === 'run') {
+      const attempt = result.run?.attempt
+      const traceId = result.run?.trace_id
+      flash(attempt ? `Attempt ${attempt} of #${task.id} started` : `#${task.id} started`,
+        'success', { link: { to: traceId ? `/trace/sessions/${traceId}` : `/tasks/${task.id}`,
+                             label: 'Watch' } })
+    } else if (result.delivered === false) {
+      flash(result.detail || `The run did not take the ${action}`, 'error', { link })
+    } else flash(`${action === 'stop' ? 'Stopped' : 'Interrupted'} #${task.id}`, 'success', { link })
     await reload()
     return true
   }

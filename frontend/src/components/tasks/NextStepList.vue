@@ -3,7 +3,7 @@
 // needs next — Ready to run, Running, Blocked, Failed, Ideas — every header
 // counted by the server (`/api/tasks?group=next_step`), done counted and
 // hidden. Each group pages on its own; Ideas opens on three.
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import api from '../../api'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
@@ -18,6 +18,9 @@ import { invalidatePipelineCounts } from '../../composables/usePipelineCounts.js
 
 const props = defineProps({
   params: { type: Object, required: true },
+  // A next-step group key a link arrived at (`?group=failed`): opened and
+  // scrolled to once its rows are in.
+  anchor: { type: String, default: '' },
 })
 const emit = defineEmits(['count'])
 
@@ -93,6 +96,18 @@ async function sheetDone() {
 
 watch(() => JSON.stringify(props.params), reload, { immediate: true })
 
+// Once per arrival: a later reload must not yank the reader back to it.
+let anchored = ''
+watch(() => [props.anchor, groups.value.map(g => g.key).join()], async ([key]) => {
+  if (!key) { anchored = ''; return }
+  if (anchored === key || !groups.value.some(g => g.key === key)) return
+  anchored = key
+  collapsed.value = { ...collapsed.value, [key]: false }
+  await nextTick()
+  document.querySelector(`[data-testid="next-step-group-${key}"]`)
+    ?.scrollIntoView({ block: 'start' })
+}, { immediate: true })
+
 defineExpose({ reload })
 </script>
 
@@ -111,6 +126,8 @@ defineExpose({ reload })
       v-for="group in groups"
       :key="group.key"
       class="nsl-group"
+      :class="{ 'is-anchored': group.key === anchor }"
+      :data-anchored="group.key === anchor ? 'true' : undefined"
       :data-testid="`next-step-group-${group.key}`"
     >
       <header class="nsl-head">
@@ -175,6 +192,8 @@ defineExpose({ reload })
     font-size: 0.8125rem;
     color: var(--color-fg-muted);
 }
+.nsl-group { scroll-margin-top: 0.5rem; }
+.nsl-group.is-anchored .nsl-label { color: var(--color-primary); }
 .nsl-head {
     display: flex;
     align-items: center;

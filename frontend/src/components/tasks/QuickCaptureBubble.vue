@@ -10,7 +10,7 @@
 // images, and the issue field. Tags are curation, and curation is what /tasks
 // is for; the issue field is the opposite of curation, since pasting a
 // reference is what lets an idea be captured without typing anything at all.
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import Button from '../ui/Button.vue'
 import Dialog from '../ui/Dialog.vue'
 import Input from '../ui/Input.vue'
@@ -21,6 +21,8 @@ import { imageFilesFrom } from '../../utils/imageFiles'
 import { TITLE_MAX } from '../../composables/useTasks.js'
 import { useFlash } from '../../composables/useFlash.js'
 import { useQuickCapture } from '../../composables/useQuickCapture.js'
+import { useProjects } from '../../composables/useProjects.js'
+import { shellProjectId, useShellScope } from '../../composables/usePipelineScope.js'
 import { useAttachedImages } from '../../composables/useAttachedImages.js'
 import { caretTarget, withCaretInsert } from '../../utils/caret'
 import { imageRefBlock } from '../../utils/taskBodyImages'
@@ -47,6 +49,17 @@ const {
 } = useAttachedImages()
 
 const titleInput = ref(null)
+
+// Named on the form, because a capture filed under a project the operator did
+// not pick here would otherwise be a side effect they cannot see.
+const shellScope = useShellScope()
+const { items: projects } = useProjects()
+const scopedTo = computed(() => {
+  if (!shellScope.value) return ''
+  const id = shellProjectId()
+  if (id == null) return ''
+  return projects.value.find(p => p.id === id)?.name || `project #${id}`
+})
 
 // Spans the POST *and* the image flush, and is the single condition behind
 // both the Save button and the Enter key — a keyboard path guarded less
@@ -98,7 +111,8 @@ async function submit() {
     await flushImages(task.id)
     resetImages()
     captured(task)
-    flash('Idea captured')
+    flash(`Idea #${task.id} captured`, 'success',
+      { link: { to: `/tasks/${task.id}`, label: 'Open' } })
   } finally {
     submitting.value = false
   }
@@ -170,6 +184,9 @@ async function submit() {
           @remove="removeImage"
         />
       </div>
+      <p v-if="scopedTo" class="quick-capture-scope" data-testid="quick-capture-scope">
+        Filed under {{ scopedTo }} — the project the Pipeline is showing.
+      </p>
     </form>
 
     <p v-if="error" class="quick-capture-error" role="alert" data-testid="quick-capture-error">
@@ -192,6 +209,7 @@ async function submit() {
 </template>
 
 <style scoped>
+.quick-capture-scope { font-size: 12px; color: var(--color-fg-muted); }
 /* Sizing and colour come from the Button primitive; only the placement and
    the lift are this component's business. */
 .quick-capture-fab {

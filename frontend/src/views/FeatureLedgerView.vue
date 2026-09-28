@@ -23,6 +23,7 @@ import { useAttachedImages } from '../composables/useAttachedImages.js'
 import { useBusyAction } from '../composables/useBusyAction'
 import { useConfirm } from '../composables/useConfirm'
 import { rememberedQuery } from '../composables/usePipelineTabState'
+import { useDetailBack } from '../composables/useDetailBack'
 import { LEDGER_ANCHORS, reveal } from '../utils/featureLinks'
 import { reopenMessage, shipMessage } from '../utils/featureConfirm'
 import Button from '../components/ui/Button.vue'
@@ -44,7 +45,7 @@ const featureId = computed(() => Number(route.params.id))
 // carries the query the tab was last left under, so a filter, a search or a
 // scope survives the round trip. An arrival by deep link has none, and the
 // bare path is the right answer there.
-const backTo = computed(() => ({ path: '/features', query: rememberedQuery('/features') }))
+const back = useDetailBack(() => ({ to: { path: '/features', query: rememberedQuery('/features') }, label: 'Features' }))
 
 const ledger = ref(null)
 const loading = ref(true)
@@ -239,8 +240,10 @@ function onDeclared() {
 
 <template>
   <div class="space-y-4 p-4">
-    <router-link :to="backTo" class="back">
-      <Icon name="chevron-left" :size="14" />Features
+    <router-link v-slot="{ href }" :to="back.to.value" custom>
+      <a :href="href" class="back focus-visible:outline-2 focus-visible:outline-blue-500" data-testid="detail-back" @click="back.go">
+        <Icon name="chevron-left" :size="14" />{{ back.label.value }}
+      </a>
     </router-link>
 
     <p v-if="loading" class="text-sm text-slate-500">Loading…</p>

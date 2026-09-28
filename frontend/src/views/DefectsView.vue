@@ -105,7 +105,10 @@ watch(() => (route.path === '/defects' ? JSON.stringify(route.query) : null),
 
 // A merge deletes the row it was made on; the keeper is the one to show.
 function onChanged(message, info) {
-  if (message) flash(message)
+  if (message) {
+    flash(message, 'success', info?.keeper
+      ? { link: { to: `/defects/${info.keeper}`, label: `Open #${info.keeper}` } } : {})
+  }
   invalidatePipelineCounts()
   if (info?.keeper) {
     router.push(`/defects/${info.keeper}`)

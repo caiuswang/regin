@@ -2,6 +2,7 @@ import { computed, ref } from 'vue'
 import api from '../api'
 import { useConfirm } from './useConfirm'
 import { refusalOf, runRemedy } from './useDefectRemedy'
+import { useFlash } from './useFlash'
 
 // The triage queue's terminal verbs, and the cursor that walks them.
 //
@@ -49,7 +50,8 @@ export const VERBS = {
     body: (v) => ({ into: Number(v) }),
     invalid: (v) => (/^\d+$/.test(String(v).trim()) && Number(v) > 0
       ? '' : 'Pick the defect to keep.'),
-    done: (id) => `#${id} folded into the keeper.`,
+    done: (id, v) => `#${id} folded into #${Number(v)}.`,
+    link: (v) => ({ to: `/defects/${Number(v)}`, label: `Open #${Number(v)}` }),
   },
   X: {
     key: 'decline',
@@ -91,6 +93,7 @@ const FIX = { path: 'fix-item', body: () => ({ create: true }) }
 // The queue is read under no project scope: a defect in it has no feature and
 // so no project, and the server drops a project scope on `scope=triage` anyway.
 export function useDefectTriage() {
+  const { flash } = useFlash()
   const items = ref([])
   const total = ref(0)
   const loading = ref(true)
@@ -220,7 +223,9 @@ export function useDefectTriage() {
     }
     if (verb.withFix) return acceptAndFix(row)
     if (!(await post(row, verb, value))) return undefined
-    return settle(verb.done(row.id))
+    const message = verb.done(row.id, value)
+    if (verb.link) flash(message, 'success', { link: verb.link(value) })
+    return settle(message)
   }
 
   /** Begin a verb: run it outright when it takes no field, else open one. */

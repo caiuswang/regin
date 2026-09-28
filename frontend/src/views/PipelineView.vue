@@ -9,11 +9,20 @@ import ProjectPicker from '../components/pipeline/ProjectPicker.vue'
 import { usePipelineHeader } from '../composables/usePipelineHeader'
 import { usePipelineCounts, usePipelineUpdatedAt } from '../composables/usePipelineCounts'
 import { usePipelineTabState } from '../composables/usePipelineTabState'
-import { usePipelineScope, scopeQuery, storedScope, SCOPE_ALL, SCOPE_NONE }
+import { usePipelineScope, persistScope, publishShellScope, scopeQuery, storedScope,
+  SCOPE_ALL, SCOPE_NONE }
   from '../composables/usePipelineScope'
 import { useProjects } from '../composables/useProjects'
 import { useTaskShortcuts } from '../composables/useTaskShortcuts'
 import { useBreakpoint } from '../composables/useBreakpoint'
+import { usePipelineCreate } from '../composables/usePipelineCreate'
+import { invalidatePipelineCounts } from '../composables/usePipelineCounts'
+import { TASK_CAPTURED_EVENT } from '../composables/useQuickCapture.js'
+import { useFlash } from '../composables/useFlash'
+import api from '../api'
+import TaskComposerDialog from '../components/tasks/TaskComposerDialog.vue'
+import NewFeatureDialog from '../components/features/NewFeatureDialog.vue'
+import NewDefectDialog from '../components/defects/NewDefectDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -65,9 +74,22 @@ const scopeLabel = computed(() => {
   return projects.value.find(p => String(p.id) === s)?.name || `project #${s}`
 })
 
+// A detail page is one row, and a row does not change project with the
+// scope — so a new scope on a detail leaves for the list it belongs to.
+function parentList(path) {
+  if (path.startsWith('/defects')) return '/defects'
+  const tab = TABS.find(t => path.startsWith(`${t.path}/`))
+  return tab ? tab.path : '/overview'
+}
+
 function pickScope(next) {
-  if (onTab.value) setScope(next)
-  else router.push({ path: '/overview', query: scopeQuery(next) })
+  if (onTab.value || route.path === '/defects') {
+    setScope(next)
+    return
+  }
+  persistScope(next)
+  const path = parentList(route.path)
+  router.push({ path, query: queryFor(path, scopeQuery(next)) })
 }
 
 function tabTo(tab) {
@@ -95,11 +117,52 @@ const updatedLabel = computed(() => {
 const picker = ref(null)
 useTaskShortcuts({ p: () => picker.value?.open() })
 
+// The three create dialogs live here, not in the tabs, so every tab's "New ▾"
+// reaches every kind. Each prefills from the scope the strip names.
+const { creating, openCreate } = usePipelineCreate()
+const { flash } = useFlash()
+const canWrite = computed(() => api.getStoredUser()?.role !== 'viewer')
+const createProject = computed(() => (/^\d+$/.test(carried.value) ? carried.value : ''))
+function dialog(kind) {
+  return computed({
+    get: () => creating.value === kind,
+    set: (v) => { if (v) openCreate(kind); else if (creating.value === kind) creating.value = null },
+  })
+}
+const taskOpen = dialog('task')
+const featureOpen = dialog('feature')
+const defectOpen = dialog('defect')
+
+function taskCreated(task) {
+  invalidatePipelineCounts()
+  // The Tasks feed already listens for a capture; a created task is one.
+  window.dispatchEvent(new CustomEvent(TASK_CAPTURED_EVENT, { detail: { id: task.id } }))
+  flash(`Task #${task.id} created`, 'success',
+    { link: { to: `/tasks/${task.id}`, label: 'Open' } })
+}
+
+function featureDeclared(ledger) {
+  invalidatePipelineCounts()
+  if (!ledger?.id) return
+  flash(`Feature #${ledger.id} declared`, 'success',
+    { link: { to: `/features/${ledger.id}`, label: 'Open' } })
+  router.push(`/features/${ledger.id}`)
+}
+
+function defectCreated({ defect, outcome }) {
+  invalidatePipelineCounts()
+  const where = defect.feature_id ? `on feature #${defect.feature_id}` : 'in triage'
+  const verb = outcome === 'deduped' ? 'matched an open report' : 'reported'
+  flash(`Defect #${defect.id} ${verb} ${where}`, 'success',
+    { link: { to: `/defects/${defect.id}`, label: 'Open' } })
+}
+
 onMounted(() => {
   ensureProjects()
   if (onTab.value) restoreStored(isLegalScope)
 })
-watch(carried, s => loadCounts(s), { immediate: true })
+watch(carried, (s) => { loadCounts(s); publishShellScope(s) }, { immediate: true })
+onBeforeUnmount(() => publishShellScope(null))
 // A tab writing a row is what makes its own count wrong, and the tab has no
 // way to reach this header. It bumps a revision instead.
 watch(countsRevision, () => loadCounts(carried.value))
@@ -163,6 +226,17 @@ watch(countsRevision, () => loadCounts(carried.value))
         <component :is="Component" :key="route.path" />
       </KeepAlive>
     </router-view>
+
+    <template v-if="canWrite">
+      <TaskComposerDialog
+        v-model:open="taskOpen"
+        :projects="projects"
+        :project="createProject"
+        @created="taskCreated"
+      />
+      <NewFeatureDialog v-model:open="featureOpen" :scope="createProject" @declared="featureDeclared" />
+      <NewDefectDialog v-model:open="defectOpen" @created="defectCreated" />
+    </template>
   </div>
 </template>
 
@@ -228,6 +302,12 @@ watch(countsRevision, () => loadCounts(carried.value))
         width: 56px; height: 56px; border-radius: 999px; padding: 0;
         font-size: 0; gap: 0;
     }
+    .pl-actions :deep(button.pcb-more) {
+        width: 40px; height: 40px; align-self: center; margin-right: 0.5rem;
+        border-radius: 999px;
+    }
+    .pl-actions :deep(.pcb) { flex-direction: row-reverse; }
+    .pl-actions :deep(button.pcb-main) { border-radius: 999px; }
     .pl-actions :deep(button kbd), .pl-actions :deep(button span) { display: none; }
     .pl-actions :deep(button svg) { width: 20px; height: 20px; }
 }

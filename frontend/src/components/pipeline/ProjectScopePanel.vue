@@ -31,8 +31,14 @@ const emit = defineEmits(['all'])
         <span class="ps-pct">{{ head.shipped_pct == null ? 'nothing live' : `${head.shipped_pct}% shipped` }}</span>
       </div>
       <dl class="ps-figs">
-        <div><dt>open tasks</dt><dd>{{ head.open_tasks }}</dd></div>
-        <div :class="{ 'is-warn': head.open_defects }"><dt>open defects</dt><dd>{{ head.open_defects }}</dd></div>
+        <div>
+          <dt>open tasks</dt>
+          <dd><router-link class="ps-link" :to="{ path: '/tasks', query: featuresTo.query }" data-testid="project-head-tasks">{{ head.open_tasks }}</router-link></dd>
+        </div>
+        <div :class="{ 'is-warn': head.open_defects }">
+          <dt>open defects</dt>
+          <dd><router-link class="ps-link" :to="{ path: '/defects', query: { ...featuresTo.query, status: 'open' } }" data-testid="project-head-defects">{{ head.open_defects }}</router-link></dd>
+        </div>
         <div><dt>spent</dt><dd>{{ head.spent_usd == null ? '—' : money(head.spent_usd) }}</dd></div>
       </dl>
     </header>
@@ -80,6 +86,8 @@ const emit = defineEmits(['all'])
 </template>
 
 <style scoped>
+.ps-link { color: inherit; text-decoration: none; }
+.ps-link:hover { text-decoration: underline; }
 .ps-head {
     display: flex; align-items: center; gap: 1.5rem; flex-wrap: wrap;
     padding: 0.9rem 1.1rem; border-bottom: 1px solid var(--color-border-subtle);
