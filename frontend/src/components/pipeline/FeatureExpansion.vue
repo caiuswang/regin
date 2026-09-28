@@ -1,9 +1,10 @@
 <script setup>
-// An expanded feature row (1c): the defects blamed on it and the fix tasks of
-// its current round. Read on expand, never on the page load.
+// An expanded feature row (1c): its active tasks, the defects blamed on it and
+// the fix tasks of its current round. Read on expand, never on the page load.
 import { computed, onMounted, ref } from 'vue'
 import api from '../../api'
 import TaskStatusIcon from '../tasks/TaskStatusIcon.vue'
+import FeatureActiveTasks from './FeatureActiveTasks.vue'
 import { defectRef } from '../../utils/pipelineFormat'
 
 const props = defineProps({
@@ -61,6 +62,7 @@ const fixes = computed(() => {
 
 <template>
   <div class="fx" :class="{ 'fx--compact': compact }" :data-testid="`feature-expansion-${feature.id}`">
+    <FeatureActiveTasks v-if="!compact" :feature-id="feature.id" />
     <p v-if="!loaded" class="fx-muted">Loading…</p>
     <p v-else-if="error" class="fx-muted" role="alert">{{ error }}</p>
     <template v-else>
@@ -91,7 +93,7 @@ const fixes = computed(() => {
 </template>
 
 <style scoped>
-.fx { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.25rem; padding: 0.25rem 0 0.5rem; }
+.fx { display: flex; flex-direction: column; gap: 0.9rem; padding: 0.25rem 0 0.5rem; }
 .fx--compact { display: block; padding: 0; }
 .fx-col { min-width: 0; display: flex; flex-direction: column; gap: 0.4rem; }
 .fx-label {
@@ -107,10 +109,10 @@ const fixes = computed(() => {
 .fx--compact .fx-item { border: 0; border-top: 1px solid var(--color-border-subtle); border-radius: 0; padding: 0.55rem 0; background: none; }
 .fx-id { font-family: var(--font-mono, monospace); font-weight: 700; color: var(--color-fg); text-decoration: none; flex: none; }
 .fx-tid { color: var(--color-fg-faint); flex: none; }
-.fx-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-fg); }
+.fx-text { flex: 1; min-width: 0; text-wrap: pretty; color: var(--color-fg); }
+.fx--compact .fx-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fx-link { text-decoration: none; }
 .fx-link:hover { text-decoration: underline; }
 .fx-state { flex: none; font-size: 11.5px; font-weight: 500; }
 .fx-muted { font-size: 12px; color: var(--color-fg-muted); }
-@media (max-width: 1023.98px) { .fx { grid-template-columns: minmax(0, 1fr); } }
 </style>

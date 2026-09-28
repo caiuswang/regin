@@ -163,6 +163,23 @@ async function stubPipeline(page, opts = {}) {
     }
     const one = p.match(/^\/api\/defects\/(\d+)$/)
     if (one) return json(route, { defect: defect(Number(one[1]), { symptom: 'Search palette returns spans from a deleted repo' }) })
+    if (p === '/api/tasks/counts' && url.searchParams.get('feature_id') === '31') {
+      return json(route, { by_status: { idea: 2, armed: 2, queued: 0, running: 1, done: 9, failed: 0 } })
+    }
+    if (p === '/api/tasks' && url.searchParams.get('group') === 'next_step') {
+      if (url.searchParams.get('feature_id') !== '31') {
+        return json(route, { groups: ['ready', 'running', 'blocked', 'ideas'].map(key => ({ key, n: 0, rows: [], more: 0 })) })
+      }
+      const task = (id, title, status, extra = {}) => ({ id, title, status, waits_on: null, live: null, ...extra })
+      return json(route, { open: 5, done_hidden: 9, groups: [
+        { key: 'ready', n: 1, more: 0, rows: [task(416, 'Backoff jitter for reconnect attempts', 'armed')] },
+        { key: 'running', n: 1, more: 0, rows: [task(414, 'Reconnect tail when the socket drops mid-turn', 'running',
+          { live: { run_id: 7, trace_id: 'tr-414', attempt: 2, started_at: minutesAgo(3) } })] },
+        { key: 'blocked', n: 1, more: 0, rows: [task(410, 'Drop the orphaned worktree on cancel', 'armed',
+          { waits_on: { id: 415, status: 'queued' } })] },
+        { key: 'ideas', n: 2, more: 0, rows: [task(420, 'An idea', 'idea')] },
+      ] })
+    }
     if (p === '/api/tasks') {
       return json(route, { items: [
         { id: 415, title: 'Stale lease blocks re-arm after runner crash', status: 'queued' },
@@ -346,9 +363,49 @@ test('test_features_stage_tabs_expand_and_triage_keys', async ({ page }) => {
   expect(counts.spec + counts.building + counts.shipped + counts.escaped).toBe(counts.all)
   await expect(page.getByTestId('pipeline-subline')).toHaveText('61% of sessions attributed · $412 of $655')
 
-  // Expand escaped: its blamed defects and current-round fix tasks are listed.
+  // Stage cell: label, step and one segment per step reached; escaped reads
+  // "Shipped · escaped" with a warning last segment. Round pips carry no tone.
+  const stageOf = id => page.getByTestId(`feature-row-${id}`).getByTestId('stage-segments')
+  await expect(stageOf(44)).toContainText('Building')
+  await expect(stageOf(44).getByTestId('stage-step')).toHaveText('2 of 3')
+  await expect(stageOf(44).locator('.ss-seg')).toHaveCount(2)
+  await expect(stageOf(46).getByTestId('stage-step')).toHaveText('1 of 3')
+  await expect(stageOf(46).locator('.ss-seg')).toHaveCount(1)
+  await expect(stageOf(35).locator('.ss-seg--success')).toHaveCount(3)
+  await expect(stageOf(31)).toContainText('Shipped')
+  await expect(stageOf(31).getByTestId('stage-step')).toHaveText('escaped')
+  await expect(stageOf(31).locator('.ss-seg--success')).toHaveCount(2)
+  await expect(stageOf(31).locator('.ss-seg--warning')).toHaveCount(1)
+  const pips = page.getByTestId('feature-row-31').getByTestId('feature-rounds').locator('.ftt-pip')
+  await expect(pips).toHaveCount(5)
+  const pipColours = new Set(await pips.evaluateAll(els => els.map(e => getComputedStyle(e).backgroundColor)))
+  expect(pipColours.size).toBe(1)
+
+  // Stage tabs are one neutral surface; only the active tab is filled.
+  const tabBg = key => page.getByTestId(`feature-stage-${key}`).evaluate(e => getComputedStyle(e).backgroundColor)
+  const neutral = await tabBg('spec')
+  for (const key of ['building', 'shipped', 'escaped']) expect(await tabBg(key)).toBe(neutral)
+  expect(await tabBg('all')).not.toBe(neutral)
+
+  // Expand escaped: its active tasks, blamed defects and current-round fix
+  // tasks, stacked in that order.
   await page.getByTestId('feature-toggle-31').click()
   const expansion = page.getByTestId('feature-expansion-31')
+  const active = expansion.getByTestId('feature-active-31')
+  await expect(active.getByTestId('feature-active-heading')).toHaveText('Active tasks · 1 running · 2 armed')
+  await expect(active.locator('[data-testid^="feature-active-task-"]')).toHaveCount(3)
+  await expect(active.locator('[data-testid^="feature-active-task-"]').first()).toHaveAttribute('data-testid', 'feature-active-task-414')
+  await expect(active.getByTestId('feature-active-task-414')).toContainText('running · 3m')
+  await expect(active.getByTestId('feature-active-task-410')).toContainText('armed · waits #415')
+  await expect(active.getByTestId('feature-active-task-416')).toContainText(/armed$/)
+  await expect(active.getByTestId('feature-active-task-420')).toHaveCount(0)
+  await expect(active.getByTestId('feature-active-more')).toHaveCount(0)
+  const activeBox = await active.boundingBox()
+  const defectBox = await expansion.getByTestId('feature-defect-91').boundingBox()
+  const fixBox = await expansion.getByTestId('feature-fix-415').boundingBox()
+  expect(defectBox.y).toBeGreaterThan(activeBox.y + activeBox.height - 1)
+  expect(fixBox.y).toBeGreaterThan(defectBox.y + defectBox.height)
+  expect(Math.abs(fixBox.x - defectBox.x)).toBeLessThan(2)
   await expect(expansion).toContainText('Blamed defects · 3 open')
   await expect(expansion.getByTestId('feature-defect-91')).toContainText('open · fix queued')
   await expect(expansion.getByTestId('feature-defect-89')).toContainText('open · fix running')

@@ -67,7 +67,7 @@ test('every row carries a real stage, and a costless one is not a zero',
     await page.goto('/features')
 
     await expect(rows(page)).toHaveCount(2)
-    await expect(rows(page).nth(1)).toContainText('spec')
+    await expect(rows(page).nth(1)).toContainText('Spec1 of 3')
     await expect(rows(page).nth(1)).toContainText('none declared')
     await expect(rows(page).nth(1)).not.toContainText('$0.00')
   })
