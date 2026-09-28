@@ -325,25 +325,45 @@ def reopen_cmd(
     _declared(session, row, "reopened")
 
 
+@defects_app.command("edit")
+def edit_cmd(
+    defect_id: int = typer.Argument(..., help="Defect id"),
+    symptom: str = typer.Option(..., "--symptom", help="The new wording"),
+    session: Optional[str] = typer.Option(
+        None, "--session", help="This session's trace id"),
+) -> None:
+    """Rewrite a defect's wording, open or closed."""
+    try:
+        row = store.edit(defect_id, symptom=symptom)
+    except store.DefectError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2)
+    typer.echo(f"#{row.id} edited")
+    _declared(session, row, "edited")
+
+
 @defects_app.command("merge")
 def merge_cmd(
-    duplicate_id: int = typer.Argument(..., help="The duplicate to fold away"),
+    duplicate_ids: list[int] = typer.Argument(
+        ..., help="The duplicates to fold away"),
     into: int = typer.Option(..., "--into", help="The defect to keep"),
     session: Optional[str] = typer.Option(
         None, "--session", help="This session's trace id"),
 ) -> None:
-    """Fold a duplicate into a keeper, unioning its suspect paths.
+    """Fold duplicates into a keeper — all or none — moving their suspect
+    paths, screenshots and fix item onto it.
 
-    The duplicate row is deleted rather than closed: `close` demands a
+    The duplicate rows are deleted rather than closed: `close` demands a
     `missing_check`, and writing "duplicate of #17" into the ledger's only
     behaviour-changing field would be worse than losing the row.
     """
     try:
-        row = store.merge(duplicate_id, into=into)
+        row = store.merge_many(duplicate_ids, into=into)
     except store.DefectError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(2)
-    typer.echo(f"#{duplicate_id} merged into #{row.id}")
+    folded = ", ".join(f"#{i}" for i in duplicate_ids)
+    typer.echo(f"{folded} merged into #{row.id}")
     _declared(session, row, "merged")
 
 

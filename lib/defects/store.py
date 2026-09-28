@@ -29,7 +29,7 @@ from lib.defects import query as defect_query
 from lib.orm import SessionLocal
 from lib.orm.models.defects import (
     STATUS_CLOSED, STATUS_OPEN, SYMPTOM_MAX, TRIAGE_DECLINED, TRIAGE_SNOOZED,
-    Defect,
+    Defect, DefectImage,
 )
 from lib.tasks.query import like_pattern
 from lib.utils.pagination import (
@@ -399,40 +399,116 @@ def attribute(defect_id: int, feature_id: int) -> Defect:
         return row
 
 
+def edit(defect_id: int, *, symptom: str) -> Defect:
+    """Rewrite a defect's wording, open or closed.
+
+    The dedup key moves with the wording, so a rewrite that lands on another
+    row's key is refused the way `attribute` refuses one: two rows reporting
+    the same symptom is a duplicate, and `merge` is the operator's word for it.
+    """
+    if not symptom.strip():
+        raise DefectError("a defect needs a symptom")
+    _check_symptom(symptom)
+    key = symptom_key(symptom)
+    with SessionLocal() as session:
+        row = _get(session, defect_id)
+        clash = None
+        if row.feature_id is not None:
+            clash = _existing(session, row.feature_id, key)
+        elif row.reported_by_trace:
+            clash = _existing_in_session(session, row.reported_by_trace, key)
+        if clash is not None and clash.id != row.id:
+            raise DefectError(
+                f"#{clash.id} already reports this symptom — `regin defects "
+                f"merge {row.id} --into {clash.id}` if they are the same bug")
+        row.symptom = symptom.strip()
+        row.symptom_key = key
+        _touch(row)
+        session.add(row)
+        session.commit()
+        session.refresh(row)
+        log.write("defect_edited", defect_id=row.id)
+        return row
+
+
 def merge(duplicate_id: int, *, into: int) -> Defect:
-    """Fold a duplicate into a keeper and delete it.
+    return merge_many([duplicate_id], into=into)
+
+
+def _merge_refusal(dups: list[Defect], keeper: Defect) -> Optional[str]:
+    fix_tasks = {r.fix_task_id for r in [keeper, *dups] if r.fix_task_id}
+    if len(fix_tasks) > 1:
+        return (f"these defects point at different fix items (tasks "
+                f"{', '.join(str(t) for t in sorted(fix_tasks))}) — somebody "
+                "thought they were separate bugs; detach all but one first")
+    still_open = [r.id for r in dups if r.status == STATUS_OPEN]
+    if keeper.status == STATUS_CLOSED and still_open:
+        return (f"#{keeper.id} is closed and "
+                f"{', '.join(f'#{i}' for i in still_open)} still open — folding "
+                f"an open bug into a closed one hides it; `regin defects reopen "
+                f"{keeper.id}` first, or keep the open one")
+    return None
+
+
+def _move_images(session, dups: list[Defect], keeper: Defect) -> None:
+    """Re-home the duplicates' screenshots after the keeper's own, instead of
+    letting `ON DELETE CASCADE` take them with the row.
+
+    Moved without the per-owner count ceiling: that ceiling bounds what an
+    upload may add, and this is evidence that already exists."""
+    used = session.exec(select(DefectImage.idx).where(
+        DefectImage.defect_id == keeper.id)).all()
+    nxt = max(used, default=0) + 1
+    for dup in dups:
+        for img in session.exec(select(DefectImage).where(
+                DefectImage.defect_id == dup.id)
+                .order_by(DefectImage.idx)).all():
+            img.defect_id, img.idx = keeper.id, nxt
+            nxt += 1
+            session.add(img)
+    session.flush()
+
+
+def merge_many(duplicate_ids: Iterable[int], *, into: int) -> Defect:
+    """Fold one or more duplicates into a keeper and delete them — all of
+    them, or none.
 
     Deletion rather than closure: `close` demands a `missing_check`, so routing
     a duplicate through it means either fabricating one or writing "duplicate
     of #17" into the ledger's only behaviour-changing field — and the row would
-    still count against the feature either way. The audit trail lives in the
-    activity log, so no column is needed to remember this happened.
+    still count against the feature either way. The audit trail, each
+    duplicate's wording included, lives in the activity log.
 
     No symptom or feature equality is required: the operator is asserting
-    sameness, and two differently-worded reports of one bug is the case this
-    is most needed for.
+    sameness, and differently-worded reports of one bug is the case this is
+    most needed for. The keeper's wording and round stand; `edit` rewrites
+    the wording. What the duplicates carried as evidence — suspect paths,
+    screenshots, a fix item — moves onto the keeper.
     """
-    if duplicate_id == into:
+    ids = list(dict.fromkeys(duplicate_ids))
+    if not ids:
+        raise DefectError("name at least one duplicate to merge")
+    if into in ids:
         raise DefectError("a defect cannot be merged into itself")
     with SessionLocal() as session:
-        dup = _get(session, duplicate_id)
         keeper = _get(session, into)
-        if (dup.fix_task_id and keeper.fix_task_id
-                and dup.fix_task_id != keeper.fix_task_id):
-            raise DefectError(
-                f"#{dup.id} and #{keeper.id} point at different fix items "
-                f"(tasks {dup.fix_task_id} and {keeper.fix_task_id}) — "
-                "somebody thought these were two bugs; detach one first")
-        keeper.suspect_paths_json = _union_paths(keeper, _paths(dup))
-        if not keeper.fix_task_id and dup.fix_task_id:
-            keeper.fix_task_id = dup.fix_task_id
+        dups = [_get(session, i) for i in ids]
+        refusal = _merge_refusal(dups, keeper)
+        if refusal:
+            raise DefectError(refusal)
+        for dup in dups:
+            keeper.suspect_paths_json = _union_paths(keeper, _paths(dup))
+            keeper.fix_task_id = keeper.fix_task_id or dup.fix_task_id
+        _move_images(session, dups, keeper)
         _touch(keeper)
-        session.delete(dup)
+        for dup in dups:
+            session.delete(dup)
         session.add(keeper)
         session.commit()
         session.refresh(keeper)
-        log.write("defect_merged", defect_id=duplicate_id, into=keeper.id,
-                  symptom=dup.symptom)
+        for dup in dups:
+            log.write("defect_merged", defect_id=dup.id, into=keeper.id,
+                      symptom=dup.symptom)
         return keeper
 
 

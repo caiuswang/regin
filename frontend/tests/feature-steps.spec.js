@@ -84,20 +84,35 @@ test('Build opens the existing build step instead of creating one',
     expect(posts).toBe(0)
   })
 
-test('steps list spec, then build, then fix, then free-form, with kind chips',
+// Defect #194: grouping by kind put a new fix task after the build step but
+// ahead of every free-form task. The stub orders like the server does — by the
+// `sort` the page asked for, newest first when it asks for none — so a page
+// that drops the param or regroups the rows renders a different order.
+test('steps list in creation order, so a new fix task is the last row',
   async ({ page }) => {
-    await stubFeature(page, [
-      task({ id: 1, kind: 'task', title: 'free' }),
-      task({ id: 2, kind: 'fix', title: 'a bug' }),
-      task({ id: 3, kind: 'build', title: 'the build' }),
-      task({ id: 4, kind: 'spec', title: 'the spec' }),
-    ])
+    const rows = [
+      task({ id: 4, kind: 'fix', title: 'a bug, filed last' }),
+      task({ id: 1, kind: 'spec', title: 'the spec' }),
+      task({ id: 3, kind: 'task', title: 'free' }),
+      task({ id: 2, kind: 'build', title: 'the build' }),
+    ]
+    await stubFeature(page, [])
+    const asked = []
+    await page.route('**/api/tasks?**', (route) => {
+      const url = new URL(route.request().url())
+      asked.push(url.searchParams)
+      const asc = url.searchParams.get('sort') === 'created:asc'
+      const items = [...rows].sort((a, b) => (asc ? a.id - b.id : b.id - a.id))
+      return route.fulfill({ json: { items, next_cursor: null } })
+    })
     await page.goto('/features/242')
 
     const names = page.getByTestId('feature-tasks-list').locator('.ft-name')
-    await expect(names).toHaveText(['the spec', 'the build', 'a bug', 'free'])
+    await expect(names).toHaveText(
+      ['the spec', 'the build', 'free', 'a bug, filed last'])
     await expect(page.getByTestId('feature-tasks-list')
       .getByTestId('task-kind-chip')).toHaveText(['spec', 'build', 'fix'])
+    expect(asked[0].get('size')).toBe('200')
   })
 
 test('the list shows feature steps by default, and names the feature',

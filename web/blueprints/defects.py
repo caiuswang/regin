@@ -196,6 +196,20 @@ def api_read_defect(defect_id: int):
     return jsonify({"defect": _serialize(row)})
 
 
+@defects_bp.route("/api/defects/<int:defect_id>", methods=["PATCH"])
+@require_editor
+def api_edit_defect(defect_id: int):
+    """Rewrite a defect's wording — open or closed."""
+    payload = request.get_json(silent=True) or {}
+    unknown = sorted(set(payload) - {"symptom"})
+    if unknown:
+        return jsonify({"error": f"unknown field(s): {', '.join(unknown)}"}), 400
+    symptom = payload.get("symptom")
+    if not isinstance(symptom, str) or not symptom.strip():
+        return jsonify({"error": "symptom is required"}), 400
+    return _write(defect_id, lambda: store.edit(defect_id, symptom=symptom))
+
+
 @defects_bp.route("/api/defects", methods=["POST"])
 @require_editor
 def api_open_defect():
@@ -310,6 +324,11 @@ def api_set_fix_item(defect_id: int):
     return _write(defect_id, lambda: store.set_fix_item(defect_id, task_id))
 
 
+def _positive_id(value) -> bool:
+    # `isinstance(True, int)` — and a bool here would name defect 1.
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
 @defects_bp.route("/api/defects/<int:defect_id>/merge", methods=["POST"])
 @require_editor
 def api_merge_defect(defect_id: int):
@@ -326,12 +345,33 @@ def api_merge_defect(defect_id: int):
     """
     payload = request.get_json(silent=True) or {}
     into = payload.get("into")
-    # `isinstance(True, int)` — and a bool here would merge into defect 1.
-    if isinstance(into, bool) or not isinstance(into, int) or into < 1:
+    if not _positive_id(into):
         return jsonify({"error": "name the defect to keep as `into`"}), 400
     if _missing(into):
         return jsonify({"error": f"no defect {into}"}), 404
     return _write(defect_id, lambda: store.merge(defect_id, into=into))
+
+
+@defects_bp.route("/api/defects/<int:defect_id>/absorb", methods=["POST"])
+@require_editor
+def api_absorb_defects(defect_id: int):
+    """Fold every defect the body names into this one, in one transaction.
+
+    The keeper is the path's id — the row the operator is looking at when
+    they recognise several reports as one bug — so N duplicates are one call
+    and one refusal, rather than N merges that can stop halfway.
+    """
+    payload = request.get_json(silent=True) or {}
+    dups = payload.get("duplicates")
+    if not isinstance(dups, list) or not dups \
+            or not all(_positive_id(d) for d in dups):
+        return jsonify({"error": "name the duplicates as `duplicates`, a "
+                                 "list of defect ids"}), 400
+    gone = [d for d in dups if _missing(d)]
+    if gone:
+        return jsonify({"error": "no defect "
+                        + ", ".join(str(d) for d in gone)}), 404
+    return _write(defect_id, lambda: store.merge_many(dups, into=defect_id))
 
 
 @defects_bp.route("/api/defects/<int:defect_id>/decline", methods=["POST"])

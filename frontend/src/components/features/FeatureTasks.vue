@@ -13,7 +13,7 @@
 // No Arm and no Run here, deliberately. Execution parameters and run control
 // stay on the task page — a second copy of the run machinery would be a second
 // writer of the same lifecycle. Each row is a link to where that work happens.
-import { computed, ref, watch } from 'vue'
+import { ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '../../api'
 import Button from '../ui/Button.vue'
@@ -55,10 +55,12 @@ const STAGE_OPTIONS = [
   { value: 'build', label: 'Build' },
 ]
 
-// Server order is kept within a kind: Array.prototype.sort is stable.
-const KIND_ORDER = { spec: 0, build: 1, fix: 2 }
-const rank = (t) => KIND_ORDER[t.kind] ?? 3
-const ordered = computed(() => [...items.value].sort((a, b) => rank(a) - rank(b)))
+// Creation order, oldest first, and no regrouping by kind: grouping put a new
+// fix task after the build step but ahead of every free-form task, so the row
+// just created landed mid-list. In creation order a new step is always the
+// last row. The size is the server's ceiling because oldest-first paging
+// would push the newest row off the only page this card reads.
+const LIST_QUERY = 'sort=created:asc&size=200'
 
 // One spec step and one build step per feature: a verb whose step exists is a
 // link to it, not a second one. Matched by the verb's own key, not by kind —
@@ -104,7 +106,7 @@ async function load() {
   loading.value = true
   loadError.value = ''
   try {
-    const body = await api.get(`/tasks?feature_id=${props.featureId}`)
+    const body = await api.get(`/tasks?feature_id=${props.featureId}&${LIST_QUERY}`)
     items.value = body.items || []
   } catch (e) {
     loadError.value = e?.message || String(e)
@@ -234,7 +236,7 @@ async function submit() {
       it simply has nothing for an agent to run.
     </p>
     <ul v-else class="ledger-list" data-testid="feature-tasks-list">
-      <li v-for="task in ordered" :key="task.id" class="ledger-row ft-row">
+      <li v-for="task in items" :key="task.id" class="ledger-row ft-row">
         <router-link class="ft-link" :to="`/tasks/${task.id}`">
           <TaskStatusIcon :status="task.status" :size="13" />
           <TaskKindChip :kind="task.kind" />

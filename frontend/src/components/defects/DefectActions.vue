@@ -19,6 +19,7 @@ import api from '../../api'
 import { useConfirm } from '../../composables/useConfirm'
 import Button from '../ui/Button.vue'
 import Input from '../ui/Input.vue'
+import Textarea from '../ui/Textarea.vue'
 import DropdownMenu from '../ui/DropdownMenu.vue'
 
 const props = defineProps({
@@ -46,7 +47,31 @@ const created = ref(null)
 // disabled button says so before the round trip does.
 const ATTRIBUTE_FIRST = 'Attribute it to a feature to create its fix task.'
 
+function idList(raw) {
+  const tokens = raw.split(/[\s,]+/).filter(Boolean)
+  if (!tokens.length || !tokens.every(t => /^\d+$/.test(t) && Number(t) > 0)) return null
+  return [...new Set(tokens.map(Number))]
+}
+
+// A form with `send` builds its own request; the rest POST `{field: value}`
+// to the verb's own path.
 const FORMS = {
+  edit: {
+    label: 'Save', placeholder: 'what went wrong, in the reporter\u2019s words',
+    multiline: true,
+    invalid: (raw) => (raw.trim() ? '' : 'A defect needs a symptom.'),
+    hint: 'The wording is the dedup key too: a rewrite that matches another defect of the same feature is refused, and merge is the remedy.',
+    send: (id, raw) => api.patch(`/defects/${id}`, { symptom: raw.trim() }),
+    done: 'edited',
+  },
+  absorb: {
+    label: 'Absorb into', placeholder: 'duplicate ids, e.g. 18, 19',
+    invalid: (raw) => (idList(raw)
+      ? '' : 'Defect ids are positive whole numbers, separated by commas or spaces.'),
+    hint: 'Every one named folds into this defect and is deleted, all or none. This one keeps its wording and round; their suspect paths, screenshots and fix task move here. Refused while their fix tasks differ, or when this one is closed and any of them is open.',
+    send: (id, raw) => api.post(`/defects/${id}/absorb`, { duplicates: idList(raw) }),
+    done: 'absorbed its duplicates',
+  },
   attribute: {
     label: 'Attribute', placeholder: 'feature id, e.g. 81',
     field: 'feature_id', numeric: true,
@@ -74,7 +99,7 @@ const FORMS = {
     field: 'into', numeric: true,
     invalid: (raw) => (/^\d+$/.test(raw.trim()) && Number(raw) > 0
       ? '' : 'A defect id is a positive whole number.'),
-    hint: 'This defect folds into that one and is deleted; the keeper takes the union of both suspect paths. The remedy `attribute` names when it refuses a symptom already reported against the feature.',
+    hint: 'This defect folds into that one and is deleted; its suspect paths, screenshots and fix task move to the keeper, which keeps its own wording. The remedy `attribute` names when it refuses a symptom already reported against the feature.',
     done: 'folded into the keeper',
   },
   'fix-item': {
@@ -117,7 +142,10 @@ const menuItems = computed(() => {
       testid: `defect-fix-item-reveal-${d.id}`,
     },
     { separator: true },
-    { label: 'Merge', onSelect: () => reveal('merge'), testid: 'defect-merge-reveal' },
+    { label: 'Edit symptom', onSelect: () => reveal('edit'), testid: `defect-edit-reveal-${d.id}` },
+    { separator: true },
+    { label: 'Merge into…', onSelect: () => reveal('merge'), testid: 'defect-merge-reveal' },
+    { label: 'Absorb duplicates…', onSelect: () => reveal('absorb'), testid: `defect-absorb-reveal-${d.id}` },
   )
   return items
 })
@@ -127,9 +155,11 @@ const menuItems = computed(() => {
 const problem = computed(
   () => (form.value ? FORMS[form.value].invalid(value.value) : ''))
 
+// Edit starts from the current wording — it is a correction of what is
+// there, not a fresh assertion — while every other field starts empty.
 function reveal(which) {
   form.value = form.value === which ? '' : which
-  value.value = ''
+  value.value = form.value === 'edit' ? props.defect.symptom : ''
   refusal.value = ''
 }
 
@@ -142,13 +172,15 @@ async function submit() {
   }
   busy.value = true
   refusal.value = ''
-  const body = await api.post(
-    `/defects/${props.defect.id}/${form.value}`,
-    // An id goes as a number: the route reads `feature_id` straight off the
-    // body, and a string there would reach the foreign key as one.
-    // Trimmed: the store stores what it is sent, and a check named
-    // "  test_x  " is a different string from the one the author typed.
-    { [spec.field]: spec.numeric ? Number(value.value.trim()) : value.value.trim() })
+  const body = spec.send
+    ? await spec.send(props.defect.id, value.value)
+    : await api.post(
+      `/defects/${props.defect.id}/${form.value}`,
+      // An id goes as a number: the route reads `feature_id` straight off the
+      // body, and a string there would reach the foreign key as one.
+      // Trimmed: the store stores what it is sent, and a check named
+      // "  test_x  " is a different string from the one the author typed.
+      { [spec.field]: spec.numeric ? Number(value.value.trim()) : value.value.trim() })
   busy.value = false
   if (body?.ok === false) {
     refusal.value = body.msg || 'the ledger refused, without saying why'
@@ -246,7 +278,19 @@ async function reopen() {
       <label class="sr-only" :for="`f-${defect.id}`">
         {{ FORMS[form].placeholder }}
       </label>
+      <Textarea
+        v-if="FORMS[form].multiline"
+        :id="`f-${defect.id}`"
+        v-model="value"
+        class="grow"
+        rows="3"
+        :placeholder="FORMS[form].placeholder"
+        :disabled="busy"
+        :error="!!problem"
+        :data-testid="`defect-${form}-field-${defect.id}`"
+      />
       <Input
+        v-else
         :id="`f-${defect.id}`"
         v-model="value"
         class="grow"

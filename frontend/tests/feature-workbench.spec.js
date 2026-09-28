@@ -315,7 +315,7 @@ test('every secondary action is still reachable from the row menu',
     for (const [label, which, field, value] of [
       ['Re-attribute', 'attribute', 'feature_id', 81],
       ['Link existing task', 'fix-item', 'task_id', 12],
-      ['Merge', 'merge', 'into', 17],
+      ['Merge into…', 'merge', 'into', 17],
     ]) {
       await more.click()
       await page.getByRole('menuitem', { name: label }).click()
