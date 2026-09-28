@@ -76,10 +76,13 @@ test('the fix task page names the defect it fixes', async ({ page }) => {
                    project_id: null, project_name: null, external_ref: null,
                    stage: LEDGER.stage } } })
       : route.fallback())
-  await page.route('**/api/defects?feature_id=*', (route) =>
-    route.fulfill({ json: { items: [], scope: 'feature' } }))
+  await page.route('**/api/defects?fix_item=143*', (route) =>
+    route.fulfill({ json: { items: [{ id: 7, feature_id: 242,
+      symptom: 'the gutter folds', status: 'open', round: 1,
+      suspect_paths: [], fix_task_id: 143, images: [] }], scope: 'fix-item' } }))
 
   await page.goto('/tasks/143')
+  await expect(page.getByTestId('feature-defects-list')).toContainText('the gutter folds')
   const fixes = page.getByTestId('task-fixes-defects')
   await expect(fixes.getByRole('link', { name: 'defect #7' }))
     .toHaveAttribute('href', '/defects/7')

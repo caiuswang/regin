@@ -1,12 +1,11 @@
 <script setup>
 // The defects blamed on a feature — read, and reported.
 //
-// Feature-scoped from the start: it reads `?feature_id=` and posts
-// `feature_id`, so the feature page is its home and the task page mounts it
-// for the feature that task is a step of. A task under no feature has nothing
-// to blame, and inventing one from its own id is exactly the identity overload
-// this redesign removed — which is why the task page passes the feature it
-// resolved rather than its own id.
+// Reports are always feature-scoped: it posts `feature_id`, and a task under
+// no feature has nothing to blame. The LIST is scoped by who is reading: the
+// feature page reads `?feature_id=`, the task page passes `fixTaskId` and reads
+// `?fix_item=` — a feature's defects are not every step's, and listing them on
+// each step made every task look like the one that fixes them.
 //
 // Mounting it here is what lets a feature with NO task report a bug at all: a
 // shape the model allows and can ship, and which had no browser control for it
@@ -25,12 +24,13 @@ import Textarea from '../ui/Textarea.vue'
 import DefectRow from '../defects/DefectRow.vue'
 import TaskImageStrip from '../tasks/TaskImageStrip.vue'
 import { imageFilesFrom } from '../../utils/imageFiles'
-import { DEFECTS_ANCHOR } from '../../utils/featureLinks'
+import { DEFECTS_ANCHOR, defectsLink } from '../../utils/featureLinks'
 import { useAttachedImages } from '../../composables/useAttachedImages.js'
 
 const props = defineProps({
   feature: { type: Object, default: null },
   canWrite: { type: Boolean, default: false },
+  fixTaskId: { type: Number, default: null },
 })
 // Any write here moves the page's figures (open/total, escapes, stage) and a
 // row's write can file a task, so the page re-reads both on this.
@@ -49,6 +49,7 @@ const {
 const busy = ref(false)
 const failed = ref('')
 const outcome = ref('')
+const outcomeId = ref(null)
 const items = ref([])
 const total = ref(0)
 const loading = ref(true)
@@ -61,6 +62,9 @@ const loadError = ref('')
 const MAX_ROWS = 200
 
 const isFeature = computed(() => Boolean(props.feature))
+const byTask = computed(() => props.fixTaskId != null)
+const scopeParam = computed(() => byTask.value
+  ? `fix_item=${props.fixTaskId}` : `feature_id=${props.feature.id}`)
 const canSubmit = computed(() => symptom.value.trim().length > 0 && !busy.value)
 const truncated = computed(() => total.value > items.value.length)
 
@@ -76,7 +80,7 @@ async function load() {
   loadError.value = ''
   try {
     const body = await api.get(
-      `/defects?feature_id=${props.feature.id}&size=${MAX_ROWS}`)
+      `/defects?${scopeParam.value}&size=${MAX_ROWS}`)
     items.value = body.items || []
     total.value = body.pagination?.total ?? items.value.length
   } catch (e) {
@@ -87,8 +91,11 @@ async function load() {
 }
 // A different feature's rows are not this one's, so they go before the read
 // rather than lingering under the new title until it lands.
-watch(() => props.feature?.id, () => { items.value = []; load() },
-      { immediate: true })
+// Two sources, not one getter returning an array: a fresh array every run
+// would fire on each same-id re-fetch of the feature and unmount the rows,
+// losing the notice a row's write just rendered.
+watch([() => props.feature?.id, () => props.fixTaskId],
+      () => { items.value = []; load() }, { immediate: true })
 // The held blobs cannot survive a close: they belong to a report that was
 // never filed, and a thumbnail still there on the next open would be evidence
 // for a different bug.
@@ -129,6 +136,7 @@ async function submit() {
   // evidence for the same bug, and dropping it would lose the only thing the
   // duplicate added.
   await flushShots(body.defect.id)
+  outcomeId.value = body.defect.id
   outcome.value = body.outcome === 'deduped'
     ? `#${body.defect.id} already tracked this symptom — deduped, not reopened.`
     : `#${body.defect.id} opened against ${props.feature.title}.`
@@ -139,7 +147,10 @@ async function submit() {
 }
 
 async function onRowChanged(message) {
-  if (message) outcome.value = message
+  if (message) {
+    outcome.value = message
+    outcomeId.value = null
+  }
   await load()
   emit('changed')
 }
@@ -148,7 +159,7 @@ async function onRowChanged(message) {
 <template>
   <Card v-if="isFeature" :id="DEFECTS_ANCHOR" data-testid="feature-defects">
     <div class="td-head">
-      <h2 class="card-header">Defects</h2>
+      <h2 class="card-header">{{ byTask ? 'Defects this task fixes' : 'Defects' }}</h2>
       <span class="td-spacer" />
       <Button
         v-if="canWrite && !open"
@@ -201,6 +212,12 @@ async function onRowChanged(message) {
 
     <p v-if="outcome" class="td-note" role="status" data-testid="feature-defect-result">
       {{ outcome }}
+      <!-- On the task page a new report fixes nothing yet, so it is not in
+           this list: the link is how the page that filed it reads it back. -->
+      <router-link
+        v-if="byTask && outcomeId != null" class="td-key"
+        :to="`/defects/${outcomeId}`" data-testid="feature-defect-result-link"
+      >Open #{{ outcomeId }}</router-link>
     </p>
     <p v-if="failed" class="td-fail" role="status" data-testid="feature-defect-error">
       {{ failed }}
@@ -211,7 +228,8 @@ async function onRowChanged(message) {
     <p v-if="loading && !items.length" class="td-note">Loading…</p>
     <p v-else-if="loadError" class="td-fail" role="alert">{{ loadError }}</p>
     <p v-else-if="!items.length" class="td-note" data-testid="feature-defects-empty">
-      No defects are blamed on this feature.
+      {{ byTask ? 'This task is not the fix for any defect.'
+        : 'No defects are blamed on this feature.' }}
     </p>
     <ul v-else class="ledger-list" data-testid="feature-defects-list">
       <DefectRow
@@ -226,6 +244,12 @@ async function onRowChanged(message) {
     </ul>
     <p v-if="truncated" class="td-note" data-testid="feature-defects-truncated">
       Showing {{ items.length }} of {{ total }} — open the full list to see the rest.
+    </p>
+    <p v-if="byTask" class="td-note">
+      <router-link
+        class="td-key" :to="defectsLink(feature.id)"
+        data-testid="feature-defects-all-link"
+      >Every defect blamed on {{ feature.title }} →</router-link>
     </p>
   </Card>
 </template>

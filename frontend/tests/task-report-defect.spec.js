@@ -1,10 +1,11 @@
 /**
  * The defects a task's page reports — and reads back.
  *
- * Reporting used to be write-only here: the outcome was a local ref, so a
- * reload left the operator with a defect they had been told was saved and
- * could not find on the page, on /defects, or anywhere else. The list is what
- * makes the report a record rather than a claim.
+ * The list is the defects THIS task is the fix for (`?fix_item=`), not every
+ * defect blamed on its feature: listing the feature's ledger on each step made
+ * every sibling task look like the one fixing them. A report still goes to the
+ * feature, and since a fresh report fixes nothing yet, the outcome links it —
+ * that link is how the page that filed it reads it back.
  *
  * The control lives only on a top-level task: a child is a run, not a feature.
  * The key comes from the detail route, never composed from the id — a task
@@ -48,18 +49,27 @@ async function stubDetail(page, row, feature = {
   }
 }
 
-// Scoped listing, so the stub answers the page's own `?feature_id=` read and
-// not whatever the ledger-wide default would return.
-async function stubList(page, items) {
-  await page.route('**/api/defects?feature_id=*', (route) =>
-    route.fulfill({ json: { items, scope: 'feature' } }))
+// The task page lists the defects THIS task fixes (`?fix_item=`), never the
+// feature's whole ledger: the stub answers per task, and a `feature_id=` read
+// answers with every defect so a regression to the feature scope is visible.
+async function stubList(page, byTask, featureWide = []) {
+  const reads = []
+  await page.route('**/api/defects?*', (route) => {
+    if (route.request().method() !== 'GET') return route.fallback()
+    const url = new URL(route.request().url())
+    reads.push(url.search)
+    const fix = url.searchParams.get('fix_item')
+    const items = fix != null ? (byTask[fix] || []) : featureWide
+    return route.fulfill({ json: { items, scope: fix != null ? 'fix-item' : 'feature' } })
+  })
+  return reads
 }
 
 test('test_the_defects_card_appears_only_on_a_task_under_a_feature',
   async ({ page }) => {
     // A task under no feature has nothing to blame, and inventing one from
     // its own id is exactly the identity overload this model removed.
-    await stubList(page, [])
+    await stubList(page, {})
     await stubDetail(page, task({ id: 8, title: 'unplaced', feature_id: null }),
                      null)
     await page.goto('/tasks/8')
@@ -71,23 +81,64 @@ test('test_the_defects_card_appears_only_on_a_task_under_a_feature',
     await expect(page.getByTestId('feature-report-defect')).toBeVisible()
   })
 
-test('test_the_card_lists_the_defects_already_blamed_on_the_feature',
+test('test_the_card_lists_only_the_defects_this_task_fixes',
   async ({ page }) => {
-    await stubList(page, [defect(), defect({ id: 42, symptom: 'the rail clips' })])
-    await stubDetail(page, task())
+    const mine = defect({ fix_task_id: 7 })
+    const sibling = defect({ id: 42, symptom: 'the rail clips', fix_task_id: 9 })
+    const unowned = defect({ id: 43, symptom: 'the badge wraps' })
+    const reads = await stubList(page, { 7: [mine], 9: [sibling] },
+                                 [mine, sibling, unowned])
+    // Task and feature ids differ so the footer link cannot pass on a swap.
+    await stubDetail(page, task({ feature_id: 274 }), {
+      id: 274, title: 'the feature', origin: 'native', external_ref: null,
+      stage: 'building',
+    })
 
     await page.goto('/tasks/7')
     const list = page.getByTestId('feature-defects-list')
     await expect(list).toContainText('the gutter folds')
-    await expect(list).toContainText('the rail clips')
     await expect(list).toContainText('#41')
+    await expect(list).not.toContainText('the rail clips')
+    await expect(list).not.toContainText('the badge wraps')
+    expect(reads.every((q) => q.includes('fix_item=7') && !q.includes('feature_id')))
+      .toBe(true)
+    await expect(page.getByTestId('feature-defects-all-link'))
+      .toHaveAttribute('href', '/features/274#feature-defects')
   })
 
-test('test_submitting_posts_the_key_and_the_report_survives_a_reload',
+test('test_a_sibling_step_under_the_same_feature_lists_none_of_them',
+  async ({ page }) => {
+    const mine = defect({ fix_task_id: 7 })
+    await stubList(page, { 7: [mine] }, [mine])
+    await stubDetail(page, task({ id: 12, title: 'another step' }))
+
+    await page.goto('/tasks/12')
+    await expect(page.getByTestId('feature-defects-empty'))
+      .toContainText('not the fix for any defect')
+    await expect(page.getByTestId('feature-defects-list')).toHaveCount(0)
+  })
+
+test('test_moving_between_steps_of_one_feature_re_reads_the_list',
+  async ({ page }) => {
+    const first = defect({ fix_task_id: 7 })
+    const second = defect({ id: 42, symptom: 'the rail clips', fix_task_id: 9 })
+    await stubList(page, { 7: [first], 9: [second] }, [first, second])
+    await stubDetail(page, task())
+    await stubDetail(page, task({ id: 9, title: 'the other step' }))
+
+    await page.goto('/tasks/7')
+    await expect(page.getByTestId('feature-defects-list')).toContainText('the gutter folds')
+    await page.evaluate(() => window.history.pushState({}, '', '/tasks/9'))
+    await page.evaluate(() => window.dispatchEvent(new PopStateEvent('popstate')))
+    const list = page.getByTestId('feature-defects-list')
+    await expect(list).toContainText('the rail clips')
+    await expect(list).not.toContainText('the gutter folds')
+  })
+
+test('test_submitting_posts_the_feature_and_links_the_new_report',
   async ({ page }) => {
     const stored = []
-    await page.route('**/api/defects?feature_id=*', (route) =>
-      route.fulfill({ json: { items: stored.slice(), scope: 'feature' } }))
+    await stubList(page, {}, stored)
     const posted = []
     await page.route('**/api/defects', async (route) => {
       if (route.request().method() !== 'POST') return route.fallback()
@@ -112,11 +163,11 @@ test('test_submitting_posts_the_key_and_the_report_survives_a_reload',
     await expect(page.getByTestId('feature-defect-result')).toContainText('opened')
     expect(posted[0]).toEqual({ symptom: 'the gutter folds', feature_id: 7 })
     expect(posted[0].session_id).toBeUndefined()
-    // The list, not the outcome line, is the record: it is what a reload keeps.
-    await expect(page.getByTestId('feature-defects-list')).toContainText('the gutter folds')
-
-    await page.reload()
-    await expect(page.getByTestId('feature-defects-list')).toContainText('the gutter folds')
+    // A fresh report fixes nothing yet, so it is not this task's to list; the
+    // link is how the page that filed it reads it back.
+    await expect(page.getByTestId('feature-defect-result-link'))
+      .toHaveAttribute('href', '/defects/41')
+    await expect(page.getByTestId('feature-defects-empty')).toBeVisible()
 
     await page.getByTestId('feature-report-defect').click()
     await page.getByTestId('feature-defect-symptom').fill('the gutter folds')
@@ -126,8 +177,7 @@ test('test_submitting_posts_the_key_and_the_report_survives_a_reload',
 
 test('test_a_task_reports_against_the_feature_it_is_placed_under',
   async ({ page }) => {
-    await page.route('**/api/defects?feature_id=*', (route) =>
-      route.fulfill({ json: { items: [], scope: 'feature' } }))
+    await stubList(page, {})
     const posted = []
     await page.route('**/api/defects', async (route) => {
       if (route.request().method() !== 'POST') return route.fallback()

@@ -283,7 +283,7 @@ onMounted(() => { ensureProjects(); load() })
         @changed="load"
       />
 
-      <FeatureDefects :feature="feature" :can-write="canWrite" />
+      <FeatureDefects :feature="feature" :fix-task-id="task.id" :can-write="canWrite" />
 
       <TaskComments :task-id="task.id" :can-write="canWrite" />
 
