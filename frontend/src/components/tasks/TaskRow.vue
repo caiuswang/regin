@@ -2,8 +2,8 @@
 // One task, on one line.
 //
 // Density is the point: an identifier, a priority glyph, a status glyph, the
-// title, and the few facts that fit — with the actions revealed on hover or
-// focus rather than five buttons standing in every row. A backlog is read by
+// title, and the few facts that fit, then a strip of icon-only actions rather
+// than five labelled buttons standing in every row. A backlog is read by
 // scanning a column, and a three-line card with a button bar makes eight rows
 // a screenful.
 //
@@ -296,18 +296,14 @@ const runCount = computed(() => props.task.run_count || 0)
     font-variant-numeric: tabular-nums;
 }
 
-/* Revealed on hover or when anything inside takes focus, so the row stays
-   readable while scanning but is never keyboard-unreachable. */
+/* Always drawn: an action reachable only on hover is one a touch screen or a
+   scanning eye never finds (feature #119 I2). */
 .task-actions {
     display: flex;
     align-items: center;
     gap: 0.125rem;
     flex-shrink: 0;
-    opacity: 0;
-    transition: opacity 120ms;
 }
-.task-row:hover .task-actions,
-.task-actions:focus-within { opacity: 1; }
 
 .task-stale {
     padding: 0 0.75rem 0.5rem 2.5rem;
@@ -315,11 +311,6 @@ const runCount = computed(() => props.task.run_count || 0)
     color: var(--color-warning);
     background: var(--color-surface);
     overflow-wrap: anywhere;
-}
-
-/* Touch has no hover, so the reveal would hide the actions permanently. */
-@media (hover: none) {
-    .task-actions { opacity: 1; }
 }
 
 /* Narrow: the title is the row, so it gets the whole first line and the
@@ -331,7 +322,6 @@ const runCount = computed(() => props.task.run_count || 0)
     .task-facts,
     .task-day { display: none; }
     .task-actions {
-        opacity: 1;
         flex: 1 0 100%;
         justify-content: flex-end;
     }

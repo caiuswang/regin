@@ -1,12 +1,20 @@
 <script setup>
 // "Running now" (1a): the tasks an agent is working on, newest attempt first,
-// heading the Run next card. Each row's one action is Watch; a run with no
-// trace yet has nothing to watch, so Watch opens the task instead.
+// heading the Run next card. Each row offers Watch and Stop (feature #119
+// R4a); a run with no trace yet has nothing to watch, so Watch opens the task.
+import api from '../../api'
+import Button from '../ui/Button.vue'
+import TaskRefusal from '../tasks/TaskRefusal.vue'
 import { ago, runningMeta, runningSub } from '../../utils/pipelineFormat'
+import { useTaskVerbs } from '../../composables/useTaskVerbs.js'
 
 defineProps({
   running: { type: Object, required: true },
 })
+const emit = defineEmits(['stopped'])
+
+const canWrite = api.getStoredUser()?.role !== 'viewer'
+const { refusals, busyId, act } = useTaskVerbs(async () => emit('stopped'))
 
 function watchTo(row) {
   return row.live?.trace_id ? `/trace/sessions/${row.live.trace_id}` : `/tasks/${row.id}`
@@ -37,6 +45,17 @@ function watchTo(row) {
           :aria-label="`Watch #${row.id}`"
           :data-testid="`running-now-watch-${row.id}`"
         >Watch</router-link>
+        <Button
+          v-if="canWrite"
+          variant="secondary"
+          size="sm"
+          class="rnw-stop"
+          :disabled="busyId === row.id"
+          :aria-label="`Stop #${row.id}`"
+          :data-testid="`running-now-stop-${row.id}`"
+          @click="act('stop', row)"
+        >Stop</Button>
+        <TaskRefusal v-if="refusals[row.id]" class="rnw-refusal" :refusal="refusals[row.id]" />
       </li>
     </ul>
   </div>
@@ -44,8 +63,10 @@ function watchTo(row) {
 
 <style scoped>
 .rnw-rows { display: flex; flex-direction: column; }
+.rnw-row .rnw-refusal { flex: 1 0 100%; margin-top: 0; }
+.rnw-row .rnw-stop { flex: none; color: var(--color-danger); }
 .rnw-row {
-    display: flex; align-items: center; gap: 0.6rem; min-width: 0;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; min-width: 0;
     padding: 0.6rem 1.1rem; border-top: 1px solid var(--color-border-subtle);
 }
 .rnw-id { min-width: 2.25rem; font-size: 12px; color: var(--color-fg-faint); font-variant-numeric: tabular-nums; flex: none; }

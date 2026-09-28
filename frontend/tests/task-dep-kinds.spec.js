@@ -66,7 +66,8 @@ test.describe('/tasks — a dependency edge carries a kind', () => {
     const dependent = await capture(page, headers, `${mark()} queued behind`)
 
     await page.goto(`/tasks/${dependent}`)
-    await page.getByTestId('task-detail-deps').click()
+    await page.getByTestId('task-detail-actions').getByTestId('task-menu').click()
+    await page.getByTestId('task-verb-deps').click()
     await page.getByTestId(`task-dep-${dep}`).click()
 
     const kind = page.getByTestId(`task-dep-kind-${dep}`)

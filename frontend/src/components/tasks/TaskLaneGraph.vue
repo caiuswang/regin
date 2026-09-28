@@ -9,8 +9,13 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
-import TaskStatusIcon from './TaskStatusIcon.vue'
+import TaskLaneNode from './TaskLaneNode.vue'
+import TaskRefusal from './TaskRefusal.vue'
+import TaskSheets from './TaskSheets.vue'
+import api from '../../api'
+import { invalidatePipelineCounts } from '../../composables/usePipelineCounts.js'
 import { GRAPH_FILTERS, useLaneGraph } from '../../composables/useTaskViews.js'
+import { useTaskVerbs } from '../../composables/useTaskVerbs.js'
 import { LANE_W, NODE_H, NODE_W, layoutLanes } from '../../utils/taskLaneLayout.js'
 
 const props = defineProps({
@@ -103,6 +108,25 @@ const footer = computed(() => {
   return `${chains} · ${n} feature ${n === 1 ? 'lane' : 'lanes'} hidden (no open tasks)`
 })
 
+const canWrite = api.getStoredUser()?.role !== 'viewer'
+const sheet = ref(null)
+
+async function afterWrite() {
+  invalidatePipelineCounts()
+  await graph.load()
+}
+
+const { refusals, busyId, act } = useTaskVerbs(afterWrite, {
+  openSheet: (kind, task) => { sheet.value = { kind, task } },
+})
+const refused = computed(() => Object.entries(refusals.value)
+  .map(([id, refusal]) => ({ id: Number(id), refusal })))
+
+async function sheetDone() {
+  sheet.value = null
+  await afterWrite()
+}
+
 defineExpose({ reload: graph.load })
 </script>
 
@@ -123,6 +147,12 @@ defineExpose({ reload: graph.load })
       <template v-else>{{ open ? 'No open chains to draw.' : 'No tasks to draw yet.' }}</template>
     </p>
     <template v-else>
+      <ul v-if="refused.length" class="tlg-refusals">
+        <li v-for="r in refused" :key="r.id" :data-testid="`graph-refusal-${r.id}`">
+          <router-link :to="`/tasks/${r.id}`">#{{ r.id }}</router-link>
+          <TaskRefusal :refusal="r.refusal" />
+        </li>
+      </ul>
       <div ref="viewport" class="tlg-viewport">
         <div
           class="tlg-canvas"
@@ -175,26 +205,18 @@ defineExpose({ reload: graph.load })
                 :data-blocking="edge.blocking ? '' : undefined"
               />
             </svg>
-            <router-link
+            <TaskLaneNode
               v-for="node in layout.nodes"
               :key="node.id"
-              :to="`/tasks/${node.id}`"
+              :node="node"
+              :tag="tag(node)"
               :class="nodeClass(node)"
               :style="{ left: `${node.x}px`, top: `${node.y}px`, width: `${NODE_W}px`, height: `${NODE_H}px` }"
-              :data-testid="`graph-node-${node.id}`"
-              :data-column="node.column"
-              @mouseenter="hovered = node.id"
-              @mouseleave="hovered = null"
-              @focus="hovered = node.id"
-              @blur="hovered = null"
-            >
-              <span class="tlg-node-top">
-                <TaskStatusIcon :status="node.status" :size="12" />
-                <span class="tlg-node-id">#{{ node.id }}</span>
-                <span class="tlg-node-tag">{{ tag(node) }}</span>
-              </span>
-              <span class="tlg-node-title">{{ node.title }}</span>
-            </router-link>
+              :busy="busyId === node.id"
+              :can-write="canWrite"
+              @hover="id => (hovered = id)"
+              @verb="act"
+            />
           </div>
         </div>
       </div>
@@ -209,6 +231,7 @@ defineExpose({ reload: graph.load })
         <Button variant="secondary" size="icon" class="tlg-fit" aria-label="Fit to width" @click="fit">FIT</Button>
       </div>
     </template>
+    <TaskSheets :sheet="sheet" @close="sheet = null" @done="sheetDone" />
   </div>
 </template>
 
@@ -345,13 +368,11 @@ defineExpose({ reload: graph.load })
     border-color: var(--color-border-strong);
     box-shadow: 0 4px 12px color-mix(in srgb, var(--color-fg) 12%, transparent);
 }
-.tlg-node:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 2px; }
 /* The contents fade, never the card: a translucent surface shows every edge behind it. */
-.tlg-done > * { opacity: 0.6; }
+.tlg-done > :deep(*) { opacity: 0.6; }
 .tlg-done { --tlg-accent: var(--color-success); }
 .tlg-done::before { opacity: 0.45; }
 .tlg-armed { --tlg-accent: var(--color-info); }
-.tlg-queued,
 .tlg-blocked { --tlg-accent: var(--color-warning); }
 .tlg-failed { --tlg-accent: var(--color-danger); }
 .tlg-running {
@@ -360,37 +381,25 @@ defineExpose({ reload: graph.load })
     box-shadow: 0 0 0 1px var(--color-agent), 0 0 0 4px var(--color-agent-soft);
 }
 .tlg-node.is-found { box-shadow: 0 0 0 3px var(--color-ring); }
-.tlg-node-top {
-    display: flex;
-    align-items: center;
-    gap: 0.375rem;
-}
-.tlg-node-id {
-    font-family: var(--font-mono, ui-monospace, monospace);
-    font-size: 0.6875rem;
-    color: var(--color-fg-subtle);
-}
-.tlg-node-tag {
+.tlg-node :deep(.tlg-node-tag) {
     margin-left: auto;
     font-size: 0.6875rem;
     font-weight: 600;
     color: var(--color-fg-subtle);
 }
-.tlg-done .tlg-node-tag { color: var(--color-success); }
-.tlg-running .tlg-node-tag { color: var(--color-agent); }
-.tlg-queued .tlg-node-tag,
-.tlg-blocked .tlg-node-tag { color: var(--color-warning); }
-.tlg-armed .tlg-node-tag { color: var(--color-info); }
-.tlg-failed .tlg-node-tag { color: var(--color-danger); }
-.tlg-node-title {
-    display: -webkit-box;
-    overflow: hidden;
-    font-size: 0.8125rem;
-    font-weight: 500;
-    line-height: 1.3;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
+.tlg-done :deep(.tlg-node-tag) { color: var(--color-success); }
+.tlg-running :deep(.tlg-node-tag) { color: var(--color-agent); }
+.tlg-blocked :deep(.tlg-node-tag) { color: var(--color-warning); }
+.tlg-armed :deep(.tlg-node-tag) { color: var(--color-info); }
+.tlg-failed :deep(.tlg-node-tag) { color: var(--color-danger); }
+.tlg-refusals {
+    margin: 0 0 0.5rem;
+    padding: 0;
+    list-style: none;
+    font-size: 0.75rem;
 }
+.tlg-refusals li { display: flex; align-items: baseline; gap: 0.5rem; }
+.tlg-refusals :deep(.task-refusal) { margin-top: 0; }
 .tlg-footer {
     position: absolute;
     bottom: 0.625rem;

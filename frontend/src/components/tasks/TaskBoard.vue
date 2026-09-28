@@ -1,16 +1,20 @@
 <script setup>
-// The Tasks tab as a board: Ideas, Armed, Queued, Running, Done — each column
+// The Tasks tab as a board: Ideas, Armed, Running, Done — each column
 // counted and paged by the server (`/api/tasks/board`). Failed is not a
 // column: it is a count under Done that opens on "show". A column the server
 // counts at 0 folds to a 48px rail so the columns holding cards get the row;
 // Done stays open while failed tasks hide behind its footer, or they would be
 // unreachable.
-import { computed, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
+import api from '../../api'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
 import TaskBoardCard from './TaskBoardCard.vue'
+import TaskSheets from './TaskSheets.vue'
 import TaskStatusIcon from './TaskStatusIcon.vue'
+import { invalidatePipelineCounts } from '../../composables/usePipelineCounts.js'
 import { useTaskBoard } from '../../composables/useTaskViews.js'
+import { useTaskVerbs } from '../../composables/useTaskVerbs.js'
 
 const props = defineProps({
   params: { type: Object, required: true },
@@ -20,7 +24,6 @@ const emit = defineEmits(['count', 'compose', 'view'])
 const COLUMNS = {
   idea: { label: 'Ideas', hint: () => 'arm to run', noun: 'ideas' },
   armed: { label: 'Armed', hint: c => (c.blocked ? `${c.blocked} blocked` : ''), noun: 'armed' },
-  queued: { label: 'Queued', hint: () => 'next up', noun: 'queued' },
   running: { label: 'Running', hint: () => '', noun: 'running' },
   done: { label: 'Done', hint: () => 'newest first', noun: 'done' },
 }
@@ -31,7 +34,7 @@ const board = useTaskBoard(params)
 const columns = computed(() => board.body.value?.columns || [])
 const failedCount = computed(() => board.body.value?.failed || 0)
 
-const QUEUE = ['armed', 'queued', 'running']
+const QUEUE = ['armed', 'running']
 
 function isRail(col) {
   return col.n === 0 && !(col.status === 'done' && failedCount.value > 0)
@@ -51,6 +54,23 @@ async function reload() {
     : `${shown} of ${body.population} tasks`)
 }
 
+const canWrite = api.getStoredUser()?.role !== 'viewer'
+const sheet = ref(null)
+
+async function afterWrite() {
+  invalidatePipelineCounts()
+  await reload()
+}
+
+const { refusals, busyId, act } = useTaskVerbs(afterWrite, {
+  openSheet: (kind, task) => { sheet.value = { kind, task } },
+})
+
+async function sheetDone() {
+  sheet.value = null
+  await afterWrite()
+}
+
 watch(() => JSON.stringify(props.params), reload, { immediate: true })
 
 defineExpose({ reload })
@@ -66,7 +86,7 @@ defineExpose({ reload })
     <template v-else>
       <div v-if="queueClear" class="tb-clear" role="status" data-testid="board-queue-clear">
         <Icon name="circle-check" :size="15" class="tb-clear-icon" />
-        <span><b>Queue is clear.</b> Nothing armed, queued or running — {{ doneWeek }}
+        <span><b>Queue is clear.</b> Nothing armed or running — {{ doneWeek }}
           {{ doneWeek === 1 ? 'task' : 'tasks' }} done this week.</span>
         <span class="tb-clear-actions">
           <Button variant="secondary" size="sm" @click="emit('compose')">New task</Button>
@@ -99,7 +119,11 @@ defineExpose({ reload })
               <span class="tb-hint">{{ COLUMNS[col.status].hint(col) }}</span>
             </header>
             <div v-if="col.cards.length" class="tb-cards">
-              <TaskBoardCard v-for="task in col.cards" :key="task.id" :task="task" />
+              <TaskBoardCard
+                v-for="task in col.cards" :key="task.id" :task="task"
+                :busy="busyId === task.id" :refusal="refusals[task.id] || null"
+                :can-write="canWrite" @verb="act"
+              />
             </div>
             <Button
               v-if="col.more > 0"
@@ -111,7 +135,11 @@ defineExpose({ reload })
             >{{ col.more }} more {{ COLUMNS[col.status].noun }}</Button>
             <template v-if="col.status === 'done' && failedCount">
               <div v-if="board.failed.value?.cards?.length" class="tb-cards">
-                <TaskBoardCard v-for="task in board.failed.value.cards" :key="task.id" :task="task" />
+                <TaskBoardCard
+                  v-for="task in board.failed.value.cards" :key="task.id" :task="task"
+                  :busy="busyId === task.id" :refusal="refusals[task.id] || null"
+                  :can-write="canWrite" @verb="act"
+                />
               </div>
               <Button
                 v-if="!board.failed.value || board.failed.value.more > 0"
@@ -126,6 +154,7 @@ defineExpose({ reload })
         </template>
       </div>
     </template>
+    <TaskSheets :sheet="sheet" @close="sheet = null" @done="sheetDone" />
   </div>
 </template>
 

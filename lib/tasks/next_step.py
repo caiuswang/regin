@@ -5,14 +5,17 @@ header count is the backlog's and never a loaded page's:
 
 | Group   | Membership                                     | Order                        |
 |---------|------------------------------------------------|------------------------------|
-| ready   | armed or queued, every dependency satisfied    | priority (urgent first), id  |
+| ready   | armed, every dependency satisfied              | priority (urgent first), id  |
 | running | running                                        | latest attempt started, desc |
-| blocked | armed or queued, some dependency unsatisfied   | priority (urgent first), id  |
+| blocked | armed, some dependency unsatisfied             | priority (urgent first), id  |
+| failed  | failed                                         | latest attempt ended, desc   |
 | ideas   | idea                                           | priority (urgent first), id  |
-| hidden  | done, failed — counted, never listed           | —                            |
+| hidden  | done — counted, never listed                   | —                            |
 
-The four listed groups partition the open tasks, so their counts sum to
-`open`. "Satisfied" is `lib.tasks.deps`' per-edge-kind rule, stated once more
+The five listed groups partition the unsettled tasks, so their counts sum to
+`open`. A failed task is listed rather than hidden because it still wants a
+decision — Retry, Re-arm or Mark done. A legacy `queued` row is read as armed;
+nothing writes that status and no surface names it. "Satisfied" is `lib.tasks.deps`' per-edge-kind rule, stated once more
 here as SQL so it can count and page; a dependency whose task row is gone
 reads as unsatisfied, exactly as `deps.blocking` reads it.
 """
@@ -39,13 +42,16 @@ from lib.tasks import store
 GROUP_READY = "ready"
 GROUP_RUNNING = "running"
 GROUP_BLOCKED = "blocked"
+GROUP_FAILED = "failed"
 GROUP_IDEAS = "ideas"
-GROUP_KEYS = (GROUP_READY, GROUP_RUNNING, GROUP_BLOCKED, GROUP_IDEAS)
+GROUP_KEYS = (GROUP_READY, GROUP_RUNNING, GROUP_BLOCKED, GROUP_FAILED,
+              GROUP_IDEAS)
 
 GROUP_COPY = {
-    GROUP_READY: ("Ready to run", "armed or queued, dependencies clear"),
+    GROUP_READY: ("Ready to run", "armed, dependencies clear"),
     GROUP_RUNNING: ("Running", ""),
-    GROUP_BLOCKED: ("Blocked", "armed or queued, waiting on another task"),
+    GROUP_BLOCKED: ("Blocked", "armed, waiting on another task"),
+    GROUP_FAILED: ("Failed", "the last attempt failed — retry, re-arm or mark done"),
     GROUP_IDEAS: ("Ideas", "not armed — nothing runs until you arm it"),
 }
 
@@ -53,8 +59,8 @@ GROUP_COPY = {
 #: the one least likely to be acted on, so it previews and says how many more.
 IDEAS_PREVIEW = 3
 
-BOARD_COLUMNS = (TASK_STATUS_IDEA, TASK_STATUS_ARMED, TASK_STATUS_QUEUED,
-                 TASK_STATUS_RUNNING, TASK_STATUS_DONE)
+BOARD_COLUMNS = (TASK_STATUS_IDEA, TASK_STATUS_ARMED, TASK_STATUS_RUNNING,
+                 TASK_STATUS_DONE)
 #: Pageable like a column, never drawn as one: the board shows it as a count
 #: behind Done's footer.
 BOARD_PAGEABLE = (*BOARD_COLUMNS, TASK_STATUS_FAILED)
@@ -63,7 +69,7 @@ BOARD_PAGEABLE = (*BOARD_COLUMNS, TASK_STATUS_FAILED)
 DONE_WEEK = timedelta(days=7)
 
 _RUNNABLE = (TASK_STATUS_ARMED, TASK_STATUS_QUEUED)
-_HIDDEN = (TASK_STATUS_DONE, TASK_STATUS_FAILED)
+_SETTLED = (TASK_STATUS_DONE, TASK_STATUS_FAILED)
 _SETTLED_FOR_AFTER = (TASK_STATUS_DONE, TASK_STATUS_FAILED)
 
 
@@ -99,12 +105,19 @@ def membership(group: str):
         GROUP_READY: and_(runnable, ~has_unmet_dependency()),
         GROUP_RUNNING: AgentTask.status == TASK_STATUS_RUNNING,
         GROUP_BLOCKED: and_(runnable, has_unmet_dependency()),
+        GROUP_FAILED: AgentTask.status == TASK_STATUS_FAILED,
         GROUP_IDEAS: AgentTask.status == TASK_STATUS_IDEA,
     }[group]
 
 
 def _latest_start():
     return (select(func.max(AgentTaskRun.started_at))
+            .where(AgentTaskRun.task_id == AgentTask.id)
+            .correlate(AgentTask).scalar_subquery())
+
+
+def _latest_end():
+    return (select(func.max(AgentTaskRun.ended_at))
             .where(AgentTaskRun.task_id == AgentTask.id)
             .correlate(AgentTask).scalar_subquery())
 
@@ -120,13 +133,15 @@ def _by_recency(stmt, column):
 def group_order(stmt, group: str):
     if group == GROUP_RUNNING:
         return _by_recency(stmt, _latest_start())
+    if group == GROUP_FAILED:
+        return _by_recency(stmt, _latest_end())
     return _by_priority(stmt)
 
 
 def column_order(stmt, status: str):
     if status == TASK_STATUS_RUNNING:
         return _by_recency(stmt, _latest_start())
-    if status in _HIDDEN:
+    if status in _SETTLED:
         return _by_recency(stmt, AgentTask.updated_at)
     return _by_priority(stmt)
 
@@ -203,7 +218,7 @@ def groups(session, filters: dict, *, size: int, page: int = 0,
     keys = (only,) if only else GROUP_KEYS
     out = [_group(session, filters, key, _window_for(key, only, size, page))
            for key in keys]
-    hidden = _count(session, filters, AgentTask.status.in_(_HIDDEN))
+    hidden = _count(session, filters, AgentTask.status == TASK_STATUS_DONE)
     open_n = sum(_count(session, filters, membership(key))
                  for key in GROUP_KEYS) if only else sum(
         g["n"] for g in out)
@@ -239,12 +254,6 @@ def board(session, filters: dict, *, size: int, page: int = 0,
     failed = _count(session, filters, AgentTask.status == TASK_STATUS_FAILED)
     return {"columns": columns, "failed": failed,
             "done_week": _count(session, filters, _done_since(DONE_WEEK))}
-
-
-def _latest_end():
-    return (select(func.max(AgentTaskRun.ended_at))
-            .where(AgentTaskRun.task_id == AgentTask.id)
-            .correlate(AgentTask).scalar_subquery())
 
 
 def _done_since(window: timedelta):

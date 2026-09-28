@@ -359,11 +359,9 @@ def test_a_dropped_repo_leaves_its_tasks_in_the_backlog(flask_client):
     assert task["project_id"] == pid
     listed = flask_client.get(f"/api/tasks?project_id={pid}",
                               headers=EDITOR).get_json()["items"]
-    # `run_count` and `armed` are page-level additions, not part of the row a
-    # detail read returns: both are grouped queries the list does once for
-    # every id on it.
-    assert [{k: v for k, v in row.items()
-             if k not in ("run_count", "armed")} for row in listed] == [task]
+    # The detail read carries the same row facts the list does, so a verb
+    # offered on the list row is the verb offered on the task's page.
+    assert listed == [task]
 
 
 # ── every surface that can set a project ─────────────────────

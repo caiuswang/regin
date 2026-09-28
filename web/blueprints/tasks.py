@@ -192,9 +192,7 @@ def api_list_tasks():
             filters["unassigned"])).one()
     envelope = page.to_envelope()
     _with_images(envelope["items"])
-    task_rows.feature_titles(envelope["items"])
-    task_rows.fix_defects(envelope["items"])
-    task_rows.run_counts(envelope["items"])
+    task_rows.next_step_facts(envelope["items"])
     return jsonify(list_page(envelope, population=population,
                              sort=filters["sort"], filters=_applied(filters),
                              extras={"counts": totals}))
@@ -319,6 +317,7 @@ def _detail(task: dict, task_id: int) -> dict:
 
     feature = (feature_store.get(task["feature_id"])
                if task.get("feature_id") is not None else None)
+    task_rows.next_step_facts([task])
     return {"task": _one_with_images(task),
             "armed": runs.armed_attempt(task_id),
             "feature": None if feature is None else {
@@ -517,6 +516,23 @@ def api_task_arm_proposal(task_id: int):
         return jsonify(feature_slices.proposal_for_task(task_id))
     except feature_slices.NoProposal as exc:
         return jsonify({"error": str(exc)}), 404
+
+
+@tasks_bp.route('/api/tasks/<int:task_id>/disarm', methods=['POST'])
+@require_editor
+def api_disarm_task(task_id: int):
+    """Take an armed task back to `idea` and drop its pending attempt.
+
+    409 while it runs or when it is not armed — the refusal says which.
+    """
+    try:
+        task = store.disarm_task(task_id)
+    except store.DisarmRefused as exc:
+        log.warn("task_disarm_refused", task_id=task_id, detail=str(exc))
+        return jsonify({"error": str(exc)}), 409
+    if task is None:
+        return _unknown_task()
+    return jsonify(_detail(task, task_id))
 
 
 @tasks_bp.route('/api/tasks/<int:task_id>/run', methods=['POST'])

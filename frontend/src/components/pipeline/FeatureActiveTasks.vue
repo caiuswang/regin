@@ -1,5 +1,5 @@
 <script setup>
-// The tasks of one feature that are running, armed or queued. Rows come from
+// The tasks of one feature that are running or armed. Rows come from
 // the next-step read so each carries its live run and what it waits on; the
 // header counts come from the status totals, never from the rows loaded.
 import { computed, onMounted, ref } from 'vue'
@@ -13,7 +13,7 @@ const props = defineProps({
 })
 
 const ORDER = ['running', 'ready', 'blocked']
-const HEAD = ['running', 'armed', 'queued']
+const HEAD = ['running', 'armed']
 const PAGE = 20
 
 const groups = ref([])
@@ -71,7 +71,7 @@ function label(t) {
     </p>
     <p v-if="!loaded" class="fa-muted">Loading…</p>
     <p v-else-if="error" class="fa-muted" role="alert">{{ error }}</p>
-    <p v-else-if="!rows.length" class="fa-muted">Nothing is running, armed or queued.</p>
+    <p v-else-if="!rows.length" class="fa-muted">Nothing is running or armed.</p>
     <ul v-else class="fa-list">
       <li v-for="t in rows" :key="t.id" class="fa-item" :data-testid="`feature-active-task-${t.id}`">
         <TaskStatusIcon :status="t.status" :size="13" />
@@ -108,7 +108,6 @@ function label(t) {
 .fa-state { flex: none; font-size: 11px; font-weight: 500; }
 .fa-state--idea { color: var(--color-fg-faint); }
 .fa-state--armed { color: var(--color-info); }
-.fa-state--queued { color: var(--color-warning-strong); }
 .fa-state--running { color: var(--color-agent); }
 .fa-muted { font-size: 12px; color: var(--color-fg-muted); }
 .fa-ideas { font-size: 12px; color: var(--color-fg-muted); }

@@ -4,7 +4,7 @@
 |-----------------|----------------------------------------------------|-----------------------------------------|-----|
 | loop            | the three tab populations, split into their parts  | fixed                                   | —   |
 | running         | running tasks, feature steps included              | latest attempt started, desc            | 6   |
-| run_next        | armed or queued tasks, feature steps included      | dependency-clear first, priority, id    | 6   |
+| run_next        | armed tasks, feature steps included                | dependency-clear first, priority, id    | 6   |
 | needs_decision  | the triage queue (`defects.store.in_queue`), unscoped | newest first                         | 3   |
 | projects        | scope `all` only — `projects.panel`                | attention                               | 5   |
 | project_head / project_features | scope = one project                | last activity                           | 5   |
@@ -55,8 +55,8 @@ NEEDS_DECISION_CAP = 3
 PROJECT_FEATURES_CAP = 5
 
 _TASK_PARTS = ((TASK_STATUS_IDEA, "Ideas"), (TASK_STATUS_ARMED, "Armed"),
-               (TASK_STATUS_QUEUED, "Queued"), (TASK_STATUS_RUNNING, "Running"),
-               (TASK_STATUS_DONE, "Done"), (TASK_STATUS_FAILED, "Failed"))
+               (TASK_STATUS_RUNNING, "Running"), (TASK_STATUS_DONE, "Done"),
+               (TASK_STATUS_FAILED, "Failed"))
 _FEATURE_PARTS = ((events_module.STAGE_SPEC, "Spec"),
                   (events_module.STAGE_BUILDING, "Building"),
                   (events_module.STAGE_SHIPPED, "Shipped"),

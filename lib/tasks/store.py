@@ -29,7 +29,7 @@ from lib.orm.models.tasks import (
     AgentTask, AgentTaskDep, AgentTaskImage, AgentTaskRun,
     PRIORITY_ORDER, TASK_PRIORITY_NONE, TASK_STATUS_ARCHIVED,
     TASK_STATUS_ARMED, TASK_STATUS_DONE, TASK_STATUS_FAILED, TASK_STATUS_IDEA,
-    TASK_KIND_TASK, TASK_STATUS_RUNNING,
+    TASK_KIND_TASK, TASK_STATUS_RUNNING, RUN_OPEN_STATUSES, RUN_STATUS_ARMED,
 )
 
 log = get_activity_logger("tasks")
@@ -47,6 +47,10 @@ TASK_TRANSITIONS: dict[str, tuple[str, ...]] = {
     # settling, and why it is an edit-surface transition rather than one the
     # run lifecycle reports.
     TASK_STATUS_IDEA: (TASK_STATUS_DONE,),
+    # Mark done on an armed task withdraws the attempt it was armed for, the
+    # same drop `disarm_task` makes: a done task holding a pending attempt
+    # would spend it on the next Run.
+    TASK_STATUS_ARMED: (TASK_STATUS_DONE,),
     TASK_STATUS_RUNNING: (TASK_STATUS_DONE,),
     TASK_STATUS_FAILED: (TASK_STATUS_DONE,),
     # The un-claim. It costs no round: nothing was built between the claim and
@@ -67,6 +71,14 @@ class DeleteRefused(ValueError):
 
     def __init__(self, task_id: int, detail: str) -> None:
         super().__init__(f"cannot delete task {task_id}: {detail}")
+        self.task_id = task_id
+
+
+class DisarmRefused(ValueError):
+    """A task that cannot be disarmed — a 409 carrying the reason."""
+
+    def __init__(self, task_id: int, detail: str) -> None:
+        super().__init__(f"cannot disarm task {task_id}: {detail}")
         self.task_id = task_id
 
 
@@ -323,14 +335,35 @@ def _refusal_for(row: AgentTask, target: str):
     return None
 
 
-def _apply_status(session, row: AgentTask, fields: dict) -> None:
+def _apply_status(session, row: AgentTask, fields: dict) -> Optional[str]:
+    """Move the row's status; returns the status it left, or None."""
     target = fields.get("status")
     if target is None or target == row.status:
-        return
+        return None
     refusal = _refusal_for(row, target)
     if refusal is not None:
         raise refusal
+    left = row.status
     row.status = target
+    return left
+
+
+def _after_status(task_id: int, left: Optional[str], now: str) -> None:
+    """What a status move owes the rest of the DAG once it is committed.
+
+    Mark done releases the dependents exactly as a settling run does
+    (`runs.fire_ready_dependents`), so an armed task waiting on a manually
+    completed one starts without a second click. It never closes the defects
+    this task fixes: closing needs a `missing_check`, which only the closer
+    can give.
+    """
+    from lib.tasks import runs  # noqa: PLC0415  (runs imports this module)
+
+    if left is None or now != TASK_STATUS_DONE:
+        return
+    if left == TASK_STATUS_ARMED:
+        runs.drop_armed(task_id)
+    runs.fire_ready_dependents(task_id)
 
 
 def update_task(task_id: int, fields: dict) -> Optional[dict]:
@@ -344,9 +377,10 @@ def update_task(task_id: int, fields: dict) -> Optional[dict]:
         row = session.get(AgentTask, task_id)
         if row is None:
             return None
-        _apply_status(session, row, fields)
+        left = _apply_status(session, row, fields)
         _apply_fields(session, row, fields)
         view = _touch(session, row)
+    _after_status(task_id, left, view["status"])
     if "feature_id" in fields:
         view = _apply_feature(task_id, fields["feature_id"]) or view
     log.write("task_updated", task_id=task_id, status=view["status"],
@@ -423,6 +457,49 @@ def arm_task(task_id: int, *, params: dict, verify_cmd: Optional[str],
     log.write("task_armed", task_id=task_id, autorun=autorun,
               has_verify=bool(verify_cmd))
     return view
+
+
+def disarm_task(task_id: int) -> Optional[dict]:
+    """Take an armed task back to `idea`, dropping its pending attempt.
+
+    Refused while an agent is reachable — the parameters are in flight — and
+    for a task that is not armed, which has no pending attempt to drop.
+
+    The drop and the move to `idea` are one transaction, and an attempt a
+    concurrent launch has already opened (`starting`) refuses it: the pending
+    row is what that launch spends, so there is nothing left to disarm.
+    """
+    from lib.tasks import runs  # noqa: PLC0415  (runs imports this module)
+
+    if runs.live_run(task_id) is not None:
+        raise DisarmRefused(task_id, "it is running — stop it first")
+    with SessionLocal() as session:
+        row = session.get(AgentTask, task_id)
+        if row is None:
+            return None
+        _refuse_disarm(session, row)
+        pending = session.exec(
+            select(AgentTaskRun).where(AgentTaskRun.task_id == task_id,
+                                       AgentTaskRun.status == RUN_STATUS_ARMED)
+        ).all()
+        for attempt in pending:
+            session.delete(attempt)
+        row.status = TASK_STATUS_IDEA
+        view = _touch(session, row)
+    log.write("task_disarmed", task_id=task_id,
+              dropped_runs=[a.id for a in pending])
+    return view
+
+
+def _refuse_disarm(session, row: AgentTask) -> None:
+    opening = session.exec(
+        select(AgentTaskRun.id).where(AgentTaskRun.task_id == row.id,
+                                      AgentTaskRun.status.in_(RUN_OPEN_STATUSES))
+    ).first()
+    if row.status == TASK_STATUS_RUNNING or opening is not None:
+        raise DisarmRefused(row.id, "it is running — stop it first")
+    if row.status != TASK_STATUS_ARMED:
+        raise DisarmRefused(row.id, f"it is {row.status!r}, not 'armed'")
 
 
 def set_status(task_id: int, status: str) -> Optional[dict]:
@@ -560,6 +637,7 @@ def bulk_update(task_ids: list[int], fields: dict) -> dict:
         raise BulkFieldRejected(unknown_fields[0])
     changed: list[int] = []
     rejected: list[dict] = []
+    moved: list[tuple[int, Optional[str], str]] = []
     with SessionLocal() as session:
         for task_id in task_ids[:BULK_MAX]:
             row = session.get(AgentTask, task_id)
@@ -567,22 +645,27 @@ def bulk_update(task_ids: list[int], fields: dict) -> dict:
                 rejected.append({"id": task_id, "reason": "unknown task"})
                 continue
             try:
-                _apply_bulk_fields(session, row, fields)
+                left = _apply_bulk_fields(session, row, fields)
             except (TransitionRejected, UnknownProject) as exc:
                 rejected.append({"id": task_id, "reason": str(exc)})
                 continue
             row.updated_at = _now()
             session.add(row)
             changed.append(task_id)
+            moved.append((task_id, left, row.status))
         session.commit()
+    for task_id, left, now in moved:
+        _after_status(task_id, left, now)
     log.write("task_bulk_updated", count=len(changed),
               rejected=len(rejected), changed=sorted(fields))
     return {"changed": changed, "rejected": rejected}
 
 
-def _apply_bulk_fields(session, row: AgentTask, fields: dict) -> None:
-    _apply_status(session, row, fields)
+def _apply_bulk_fields(session, row: AgentTask,
+                       fields: dict) -> Optional[str]:
+    left = _apply_status(session, row, fields)
     if "priority" in fields:
         _set_priority(row, fields["priority"])
     if "project_id" in fields:
         row.project_id = _resolved_project(session, fields["project_id"])
+    return left

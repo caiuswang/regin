@@ -10,7 +10,7 @@ from lib.orm import SessionLocal
 from lib.orm.models.sync import Repo
 from lib.orm.models.tasks import (
     AgentTaskDep, AgentTaskRun, DEP_KIND_AFTER, RUN_STATUS_RUNNING, TASK_STATUS_ARMED, TASK_STATUS_DONE,
-    TASK_STATUS_FAILED, TASK_STATUS_QUEUED, TASK_STATUS_RUNNING,
+    TASK_STATUS_FAILED, TASK_STATUS_RUNNING,
 )
 from lib.pipeline import overview as overview_module
 from lib.pipeline import projects
@@ -55,7 +55,7 @@ def _stages(body) -> dict:
 
 
 def _seed_everything(native_task, feature_row, defect_row):
-    for status in (TASK_STATUS_ARMED, TASK_STATUS_QUEUED, TASK_STATUS_RUNNING,
+    for status in (TASK_STATUS_ARMED, TASK_STATUS_RUNNING,
                    TASK_STATUS_DONE, TASK_STATUS_FAILED, "idea", "archived"):
         native_task(title=f"loose {status}", status=status)
     building = feature_row("building", stage=events.BUILD_STARTED)
@@ -95,12 +95,12 @@ def test_overview_loop_parts_sum_to_totals(flask_client, native_task,
 
     stages = _stages(_overview(flask_client))
     assert [_labels(stages[k]) for k in ("Tasks", "Features", "Defects")] == [
-        ["Ideas", "Armed", "Queued", "Running", "Done", "Failed"],
+        ["Ideas", "Armed", "Running", "Done", "Failed"],
         ["Spec", "Building", "Shipped", "Escaped"],
         ["Triage", "Open", "Closed"]]
     # Every task but archived, a feature's step included: the Tasks tab's own
     # population.
-    assert stages["Tasks"]["total"] == 7
+    assert stages["Tasks"]["total"] == 6
     # Abandoned is never shown, so it is neither a part nor in the total.
     assert stages["Features"]["total"] == 3
     assert [p["n"] for p in stages["Defects"]["parts"]] == [1, 1, 1]
@@ -115,7 +115,7 @@ def test_overview_run_next_orders_dependency_clear_first(flask_client,
     waiting = native_task(title="#409 waits", status=TASK_STATUS_ARMED)
     _depends(waiting, running)
     _priority(waiting, "urgent", 0)
-    low = native_task(title="low ready", status=TASK_STATUS_QUEUED)
+    low = native_task(title="low ready", status=TASK_STATUS_ARMED)
     _priority(low, "low", 3)
     high = native_task(title="high ready", status=TASK_STATUS_ARMED)
     _priority(high, "high", 1)

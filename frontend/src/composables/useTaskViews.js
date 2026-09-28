@@ -96,18 +96,18 @@ export function useNextStep(params, size = 50) {
   }
 
   /** Every Ready task id, across pages — "Run all N" means all N. */
-  async function readyIds() {
+  async function readyRows() {
     const ids = []
     for (let page = 0; ; page++) {
       const data = await api.get(`/tasks?${groupedQuery(params.value,
         { group: 'next_step', only: 'ready', page, size: 200 })}`)
       const rows = data.groups[0]?.rows || []
-      ids.push(...rows.map(r => r.id))
+      ids.push(...rows.map(r => ({ id: r.id, title: r.title })))
       if (rows.length < 200) return ids
     }
   }
 
-  return { body, error, loading, load, more, readyIds }
+  return { body, error, loading, load, more, readyRows }
 }
 
 /** `GET /api/tasks/board` — five status columns, each paged on its own. */

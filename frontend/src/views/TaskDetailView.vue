@@ -23,13 +23,14 @@ import TaskKindChip from '../components/tasks/TaskKindChip.vue'
 import TaskPriorityIcon from '../components/tasks/TaskPriorityIcon.vue'
 import TaskRefusal from '../components/tasks/TaskRefusal.vue'
 import FeatureDefects from '../components/features/FeatureDefects.vue'
-import TaskRunControls from '../components/tasks/TaskRunControls.vue'
+import TaskPrimaryAction from '../components/tasks/TaskPrimaryAction.vue'
+import TaskVerbMenu from '../components/tasks/TaskVerbMenu.vue'
 import TaskRunHistory from '../components/tasks/TaskRunHistory.vue'
 import { priorityMeta, taskRef } from '../utils/taskMeta.js'
 import { taskStatusColor } from '../composables/useBadgeColor.js'
 import { useConfirm } from '../composables/useConfirm.js'
 import { useProjects } from '../composables/useProjects.js'
-import { useTaskExec } from '../composables/useTaskExec.js'
+import { useTaskVerbs } from '../composables/useTaskVerbs.js'
 import { useAttachedImages } from '../composables/useAttachedImages.js'
 import { useTaskMutations } from '../composables/useTasks.js'
 import { rememberedQuery } from '../composables/usePipelineTabState'
@@ -87,9 +88,17 @@ const deliverable = computed(
 // and this is that row.
 const armed = ref(null)
 
-// The same three controls the list row offers, against the same routes; a
-// task read at its own address should be startable there.
-const { refusals, liveness, busyId, control, syncLiveness } = useTaskExec(load)
+// The same primary action and ⋯ menu every other surface offers for this
+// state (feature #119 R4a), through the same routes.
+const { refusals, liveness, busyId, act: actOn, syncLiveness } = useTaskVerbs(load, {
+  openSheet: (kind) => { sheet.value = kind },
+})
+
+// Delete leaves an address that can now only 404, so it is the one verb the
+// page answers itself.
+function act(verb) {
+  return verb === 'delete' ? deleteTask() : actOn(verb, task.value)
+}
 
 async function load() {
   loading.value = true
@@ -150,42 +159,19 @@ onMounted(() => { ensureProjects(); load() })
           >#{{ task.feature_id }} {{ featureTitle }}</router-link>
         </div>
       </div>
-      <div v-if="task" class="td-actions">
-        <TaskRunControls
+      <div v-if="task" class="td-actions" data-testid="task-detail-actions">
+        <TaskPrimaryAction
           :task="task"
           :liveness="liveness[task.id] || null"
           :busy="busyId === task.id"
-          @control="action => control(task, action)"
+          :can-write="canWrite"
+          @verb="act"
         />
-        <Button variant="secondary" data-testid="task-detail-edit" @click="sheet = 'edit'">
-          <Icon name="pencil" :size="13" />
-          <span>Edit</span>
-        </Button>
-        <Button
-          variant="secondary"
-          data-testid="task-detail-arm"
-          @click="sheet = 'arm'"
-        >
-          <Icon name="power" :size="13" />
-          <span>Arm</span>
-        </Button>
-        <Button variant="ghost" data-testid="task-detail-deps" @click="sheet = 'deps'">
-          <Icon name="workflow" :size="13" />
-          <span>Deps</span>
-        </Button>
         <Button variant="ghost" data-testid="task-detail-runs" @click="sheet = 'runs'">
           <Icon name="list" :size="13" />
           <span>Runs</span>
         </Button>
-        <Button
-          variant="ghost"
-          class="td-danger"
-          data-testid="task-detail-delete"
-          @click="deleteTask"
-        >
-          <Icon name="trash" :size="13" />
-          <span>Delete</span>
-        </Button>
+        <TaskVerbMenu v-if="canWrite" :task="task" :busy="busyId === task.id" @verb="act" />
       </div>
     </header>
 
@@ -358,8 +344,7 @@ onMounted(() => { ensureProjects(); load() })
     white-space: nowrap;
 }
 .td-feature:hover { color: var(--color-primary); }
-.td-actions { display: flex; flex-wrap: wrap; gap: 0.375rem; }
-.td-danger { color: var(--color-danger); }
+.td-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.375rem; }
 .td-facts {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));

@@ -44,16 +44,16 @@ def backlog(native_task, task_run_row):
                  ended_at=None)
     ids["blocked"] = native_task(title="blocked", status="armed")
     _depends(ids["blocked"], ids["running"])
-    ids["queued_blocked"] = native_task(title="queued behind",
-                                        status="queued")
-    _depends(ids["queued_blocked"], ids["running"])
-    ids["low"] = native_task(title="low ready", status="queued")
+    ids["blocked2"] = native_task(title="also behind", status="armed")
+    _depends(ids["blocked2"], ids["running"])
+    ids["low"] = native_task(title="low ready", status="armed")
     _priority(ids["low"], "low", 3)
     ids["urgent"] = native_task(title="urgent ready", status="armed")
     _priority(ids["urgent"], "urgent", 0)
     ids["ideas"] = [native_task(title=f"idea {i}") for i in range(5)]
-    for status in ("done", "failed", "archived"):
+    for status in ("done", "archived"):
         native_task(title=status, status=status)
+    ids["failed"] = native_task(title="failed", status="failed")
     return ids
 
 
@@ -65,13 +65,13 @@ def test_tasks_next_step_groups(flask_client, backlog):
     body = _get(flask_client, "/api/tasks?group=next_step")
     groups = _groups(body)
 
-    assert list(groups) == ["ready", "running", "blocked", "ideas"]
-    assert [groups[k]["n"] for k in groups] == [2, 1, 2, 5]
-    assert (body["open"], body["done_hidden"]) == (10, 2)
+    assert list(groups) == ["ready", "running", "blocked", "failed", "ideas"]
+    assert [groups[k]["n"] for k in groups] == [2, 1, 2, 1, 5]
+    assert (body["open"], body["done_hidden"]) == (11, 1)
     assert _ids(groups["ready"]["rows"]) == [backlog["urgent"], backlog["low"]]
     assert groups["ready"]["bulk"] == 2
     assert set(_ids(groups["blocked"]["rows"])) == {
-        backlog["blocked"], backlog["queued_blocked"]}
+        backlog["blocked"], backlog["blocked2"]}
     assert (len(groups["ideas"]["rows"]), groups["ideas"]["more"]) == (3, 2)
 
 
@@ -81,7 +81,8 @@ def test_next_step_rows_offer_one_action(flask_client, backlog):
     running = groups["running"]["rows"][0]
 
     assert actions == {"ready": {"run"}, "running": {"watch"},
-                       "blocked": {None}, "ideas": {"arm"}}
+                       "blocked": {None}, "failed": {"retry"},
+                       "ideas": {"arm"}}
     assert running["live"]["trace_id"] == "t-live"
     assert groups["blocked"]["rows"][0]["waits_on"] == {
         "id": backlog["running"], "status": "running"}
@@ -96,9 +97,9 @@ def test_next_step_pages_one_group_and_honours_filters(flask_client,
 
     assert [g["key"] for g in page["groups"]] == ["ideas"]
     assert _ids(page["groups"][0]["rows"]) == [backlog["ideas"][4]]
-    assert (page["groups"][0]["more"], page["open"]) == (0, 10)
+    assert (page["groups"][0]["more"], page["open"]) == (0, 11)
     # Every non-status filter narrows the counts; status is the groups' own.
-    assert [searched[k]["n"] for k in searched] == [2, 0, 0, 0]
+    assert [searched[k]["n"] for k in searched] == [2, 0, 0, 0, 0]
 
 
 def test_next_step_rejects_an_unknown_group(flask_client):
@@ -137,7 +138,7 @@ def test_board_columns_count_and_cap_on_their_own(flask_client, board_rows):
     columns = {c["status"]: c for c in board["columns"]}
     idea = columns["idea"]
 
-    assert list(columns) == ["idea", "armed", "queued", "running", "done"]
+    assert list(columns) == ["idea", "armed", "running", "done"]
     assert (idea["n"], len(idea["cards"]), idea["more"]) == (4, 3, 1)
     assert columns["armed"]["blocked"] == 1
     assert board["failed"] == 1

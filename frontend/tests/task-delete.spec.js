@@ -106,9 +106,8 @@ test.describe('/tasks — delete', () => {
     await gotoTasks(page)
     await capture(page, 'delete from detail')
     await page.locator('.task-row').first().getByTestId('task-id').click()
-    await expect(page.getByTestId('task-detail-delete')).toBeVisible()
-
-    await page.getByTestId('task-detail-delete').click()
+    await page.getByTestId('task-detail-actions').getByTestId('task-menu').click()
+    await page.getByTestId('task-verb-delete').click()
     await confirmButton(page, 'Delete task').click()
 
     // The address can only 404 once the row is gone, so it is left behind.
