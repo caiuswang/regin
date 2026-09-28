@@ -35,17 +35,21 @@ const back = useDetailBack(() => (defect.value?.feature_id
   ? { to: { path: `/features/${defect.value.feature_id}` }, label: `feature #${defect.value.feature_id}` }
   : { to: { path: '/features', query: rememberedQuery('/features') }, label: 'triage' }))
 
+// An event re-read can still be in flight when the route moves to another
+// defect, so every answer is checked against the id it was asked for.
 async function load() {
+  const want = route.params.id
   loading.value = true
   loadError.value = ''
   try {
-    const body = await api.get(`/defects/${route.params.id}`)
+    const body = await api.get(`/defects/${want}`)
+    if (want !== route.params.id) return
     defect.value = body.defect
     publish({ subtitle: `Defect #${body.defect.id}, on its own address.` })
   } catch (e) {
-    loadError.value = e?.message || String(e)
+    if (want === route.params.id) loadError.value = e?.message || String(e)
   } finally {
-    loading.value = false
+    if (want === route.params.id) loading.value = false
   }
 }
 usePipelineLive(load)

@@ -114,6 +114,36 @@ def test_rolled_back_write_raises_nothing(frames):
     assert frames() == []
 
 
+def test_bulk_run_updates_raise_the_tasks_frame(frames, monkeypatch):
+    """A statement-level `update(AgentTaskRun)` bypasses the flush, so the
+    verify claim and the reopen have to announce their task themselves."""
+    from datetime import datetime, timezone
+
+    from lib.orm import SessionLocal
+    from lib.orm.models.tasks import AgentTaskRun
+    from lib.tasks import runs, store as tasks
+
+    task, _ = tasks.capture_task(title="bulk", source="test")
+    run = runs.open_attempt(task["id"])
+    with SessionLocal() as s:
+        s.get(AgentTaskRun, run["id"]).verify_cmd = "true"
+        s.commit()
+    frames()
+
+    assert runs._claim_verify(run["id"])[0] == runs.VERIFY_MINE
+    assert _keys(frames()) == [("task", task["id"])]
+
+    with SessionLocal() as s:
+        s.get(AgentTaskRun, run["id"]).ended_at = datetime.now(timezone.utc)
+        s.commit()
+    tasks.set_status(task["id"], "failed")
+    frames()
+    monkeypatch.setattr(runs.store, "set_status", lambda *a, **k: None)
+
+    assert runs.reopen_for_agent_report(run["id"]) is True
+    assert _keys(frames()) == [("task", task["id"])]
+
+
 def test_unrelated_write_raises_nothing(frames):
     from lib.orm import SessionLocal
     from lib.orm.models.sync import Repo

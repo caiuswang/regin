@@ -91,6 +91,13 @@ def mark(session: Session, entity: str, entity_id: int) -> None:
 
 
 def _after_flush(session: Session, _ctx) -> None:
+    try:
+        _collect(session)
+    except Exception:  # noqa: BLE001 — a refresh signal must never fail the write
+        log.error("pipeline_collect_failed", exc_info=True)
+
+
+def _collect(session: Session) -> None:
     touched = [*session.new, *session.deleted,
                *(o for o in session.dirty if session.is_modified(o))]
     pending = None
