@@ -1,9 +1,9 @@
 <script setup>
-// An expanded feature row (1c): its active tasks, the defects blamed on it and
-// the fix tasks of its current round. Read on expand, never on the page load.
+// An expanded feature row (1c): its active tasks and the defects blamed on it.
+// Fix tasks get no section of their own: a live one is already an active task,
+// and each defect row carries its fix's state. Read on expand, never on the page load.
 import { computed, onMounted, ref } from 'vue'
 import api from '../../api'
-import TaskStatusIcon from '../tasks/TaskStatusIcon.vue'
 import FeatureActiveTasks from './FeatureActiveTasks.vue'
 import { defectRef } from '../../utils/pipelineFormat'
 
@@ -13,18 +13,13 @@ const props = defineProps({
 })
 
 const defects = ref([])
-const tasks = ref(new Map())
 const loaded = ref(false)
 const error = ref('')
 
 onMounted(async () => {
   try {
-    const [d, t] = await Promise.all([
-      api.get(`/defects?feature_id=${props.feature.id}&with_fix_state=1&size=50`),
-      props.compact ? null : api.get(`/tasks?feature_id=${props.feature.id}&size=100`),
-    ])
+    const d = await api.get(`/defects?feature_id=${props.feature.id}&with_fix_state=1&size=50`)
     defects.value = d.items || []
-    tasks.value = new Map((t?.items || []).map(task => [task.id, task]))
   } catch (e) {
     error.value = e?.message || String(e)
   } finally {
@@ -43,21 +38,6 @@ function stateOf(d) {
   }
   return { text: 'open', tone: 'danger' }
 }
-
-// The fix tasks carrying this feature's open defects, one row each.
-const fixes = computed(() => {
-  const seen = new Map()
-  for (const d of open.value) {
-    if (!d.fix_task_id || seen.has(d.fix_task_id)) continue
-    const task = tasks.value.get(d.fix_task_id)
-    seen.set(d.fix_task_id, {
-      id: d.fix_task_id,
-      title: task?.title || `task #${d.fix_task_id}`,
-      status: task?.status || d.fix_state || 'idea',
-    })
-  }
-  return [...seen.values()]
-})
 </script>
 
 <template>
@@ -74,17 +54,6 @@ const fixes = computed(() => {
             <router-link :to="`/defects/${d.id}`" class="fx-id focus-visible:outline-2 focus-visible:outline-blue-500">{{ defectRef(d.id) }}</router-link>
             <span class="fx-text">{{ d.symptom }}</span>
             <span class="fx-state" :class="`text-tone-${stateOf(d).tone}`">{{ stateOf(d).text }}</span>
-          </li>
-        </ul>
-      </div>
-      <div v-if="!compact" class="fx-col">
-        <h3 class="fx-label">Fix tasks · round {{ feature.rounds }}</h3>
-        <p v-if="!fixes.length" class="fx-muted">No fix task is carrying an open defect.</p>
-        <ul class="fx-list">
-          <li v-for="t in fixes" :key="t.id" class="fx-item" :data-testid="`feature-fix-${t.id}`">
-            <TaskStatusIcon :status="t.status" />
-            <span class="fx-tid">#{{ t.id }}</span>
-            <router-link :to="`/tasks/${t.id}`" class="fx-text fx-link focus-visible:outline-2 focus-visible:outline-blue-500">{{ t.title }}</router-link>
           </li>
         </ul>
       </div>
@@ -108,11 +77,8 @@ const fixes = computed(() => {
 }
 .fx--compact .fx-item { border: 0; border-top: 1px solid var(--color-border-subtle); border-radius: 0; padding: 0.55rem 0; background: none; }
 .fx-id { font-family: var(--font-mono, monospace); font-weight: 700; color: var(--color-fg); text-decoration: none; flex: none; }
-.fx-tid { color: var(--color-fg-faint); flex: none; }
 .fx-text { flex: 1; min-width: 0; text-wrap: pretty; color: var(--color-fg); }
 .fx--compact .fx-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fx-link { text-decoration: none; }
-.fx-link:hover { text-decoration: underline; }
 .fx-state { flex: none; font-size: 11.5px; font-weight: 500; }
 .fx-muted { font-size: 12px; color: var(--color-fg-muted); }
 </style>

@@ -179,12 +179,6 @@ async function stubPipeline(page, opts = {}) {
         { key: 'ideas', n: 2, more: 0, rows: [task(420, 'An idea', 'idea')] },
       ] })
     }
-    if (p === '/api/tasks') {
-      return json(route, { items: [
-        { id: 415, title: 'Stale lease blocks re-arm after runner crash', status: 'queued' },
-        { id: 414, title: 'Reconnect tail when the socket drops mid-turn', status: 'running' },
-      ], pagination: { total: 2 } })
-    }
     return route.fallback()
   })
   return state
@@ -614,8 +608,8 @@ test('test_features_stage_tabs_expand_and_triage_keys', async ({ page }) => {
   for (const key of ['building', 'shipped', 'escaped']) expect(await tabBg(key)).toBe(neutral)
   expect(await tabBg('all')).not.toBe(neutral)
 
-  // Expand escaped: its active tasks, blamed defects and current-round fix
-  // tasks, stacked in that order.
+  // Expand escaped: its active tasks, then its blamed defects. A fix task has
+  // no section of its own — the running one (#414) shows once, as an active task.
   await page.getByTestId('feature-toggle-31').click()
   const expansion = page.getByTestId('feature-expansion-31')
   const active = expansion.getByTestId('feature-active-31')
@@ -629,16 +623,13 @@ test('test_features_stage_tabs_expand_and_triage_keys', async ({ page }) => {
   await expect(active.getByTestId('feature-active-more')).toHaveCount(0)
   const activeBox = await active.boundingBox()
   const defectBox = await expansion.getByTestId('feature-defect-91').boundingBox()
-  const fixBox = await expansion.getByTestId('feature-fix-415').boundingBox()
   expect(defectBox.y).toBeGreaterThan(activeBox.y + activeBox.height - 1)
-  expect(fixBox.y).toBeGreaterThan(defectBox.y + defectBox.height)
-  expect(Math.abs(fixBox.x - defectBox.x)).toBeLessThan(2)
   await expect(expansion).toContainText('Blamed defects · 3 open')
   await expect(expansion.getByTestId('feature-defect-91')).toContainText('open · fix queued')
   await expect(expansion.getByTestId('feature-defect-89')).toContainText('open · fix running')
-  await expect(expansion).toContainText('Fix tasks · round 5')
-  await expect(expansion.getByTestId('feature-fix-415')).toContainText('Stale lease blocks re-arm')
-  await expect(expansion.getByTestId('feature-fix-414')).toBeVisible()
+  await expect(expansion).not.toContainText('Fix tasks')
+  await expect(expansion.locator('[data-testid^="feature-fix-"]')).toHaveCount(0)
+  await expect(expansion.locator('a[href="/tasks/414"]')).toHaveCount(1)
 
   // Triage keys: A is refused with no feature blamed; X + confirm declines.
   await expect(page.getByTestId('triage-count')).toHaveText('3')
