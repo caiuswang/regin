@@ -1113,6 +1113,20 @@ def _enclosing_prompt_id(span: dict, by_id: dict) -> str | None:
     return None
 
 
+def _group_by_enclosing_prompt(spans: list[dict], name: str) -> dict[str, list[dict]]:
+    """Spans called `name`, keyed by their enclosing prompt span_id (spans
+    with no enclosing prompt are dropped)."""
+    by_id = {s['span_id']: s for s in spans}
+    grouped: dict[str, list[dict]] = {}
+    for s in spans:
+        if s.get('name') != name:
+            continue
+        pid = _enclosing_prompt_id(s, by_id)
+        if pid:
+            grouped.setdefault(pid, []).append(s)
+    return grouped
+
+
 def _attach_subagent_impact(spans: list[dict]) -> None:
     """Stamp `attributes.main_session_impact_tokens` onto each
     `subagent.start` whose result we can unambiguously attribute.
@@ -1130,18 +1144,8 @@ def _attach_subagent_impact(spans: list[dict]) -> None:
 
     Pure serve-time derivation; mutates the shared `attributes` dict in place
     (the tree shares it by reference). No DB, no schema change."""
-    by_id = {s['span_id']: s for s in spans}
-    agents_by_prompt: dict[str, list[dict]] = {}
-    starts_by_prompt: dict[str, list[dict]] = {}
-    for s in spans:
-        if s.get('name') == 'tool.Agent':
-            pid = _enclosing_prompt_id(s, by_id)
-            if pid:
-                agents_by_prompt.setdefault(pid, []).append(s)
-        elif s.get('name') == 'subagent.start':
-            pid = _enclosing_prompt_id(s, by_id)
-            if pid:
-                starts_by_prompt.setdefault(pid, []).append(s)
+    agents_by_prompt = _group_by_enclosing_prompt(spans, 'tool.Agent')
+    starts_by_prompt = _group_by_enclosing_prompt(spans, 'subagent.start')
     for pid, starts in starts_by_prompt.items():
         agents = agents_by_prompt.get(pid) or []
         if len(starts) != 1 or len(agents) != 1:
