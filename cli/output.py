@@ -50,23 +50,25 @@ def table(rows: Iterable[Sequence[object]],
     if not data and not headers:
         return
     header_row = list(headers) if headers else None
-    all_rows = ([header_row] if header_row else []) + data
-
-    col_count = max(len(r) for r in all_rows)
-    widths = [min_col_width] * col_count
-    for r in all_rows:
-        for i, cell in enumerate(r):
-            if len(cell) > widths[i]:
-                widths[i] = len(cell)
-
-    def _fmt(row):
-        return "  ".join(str(c).ljust(widths[i]) for i, c in enumerate(row))
+    widths = _column_widths(([header_row] if header_row else []) + data, min_col_width)
 
     if header_row:
-        echo(_fmt(header_row))
-        echo(_fmt(["-" * w for w in widths]))
+        echo(_format_row(header_row, widths))
+        echo(_format_row(["-" * w for w in widths], widths))
     for r in data:
-        echo(_fmt(r))
+        echo(_format_row(r, widths))
+
+
+def _format_row(row: Sequence[object], widths: list[int]) -> str:
+    return "  ".join(str(c).ljust(widths[i]) for i, c in enumerate(row))
+
+
+def _column_widths(rows: list[Sequence[str]], min_col_width: int) -> list[int]:
+    widths = [min_col_width] * max(len(r) for r in rows)
+    for r in rows:
+        for i, cell in enumerate(r):
+            widths[i] = max(widths[i], len(cell))
+    return widths
 
 
 __all__ = ["echo", "error", "table"]

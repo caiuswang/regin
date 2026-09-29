@@ -30,13 +30,17 @@ def handle_completed(payload: HookPayload) -> HookResponse | None:
     return HookResponse(suppress_output=True)
 
 
+def _task_field(raw: dict, flat_key: str, nested_key: str):
+    return raw.get(flat_key) or (raw.get('task') or {}).get(nested_key)
+
+
 def _emit_span(payload: HookPayload, name: str) -> None:
     from lib.hook_plugin import post_span  # type: ignore
     attrs: dict = {}
     raw = payload.raw
-    task_id = raw.get('task_id') or (raw.get('task') or {}).get('id')
-    subject = raw.get('task_subject') or (raw.get('task') or {}).get('subject')
-    status = raw.get('status') or (raw.get('task') or {}).get('status')
+    task_id = _task_field(raw, 'task_id', 'id')
+    subject = _task_field(raw, 'task_subject', 'subject')
+    status = _task_field(raw, 'status', 'status')
     if task_id:
         attrs['task_id'] = task_id
     if subject:

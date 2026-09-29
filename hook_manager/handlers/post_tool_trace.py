@@ -560,23 +560,38 @@ def _build_pattern_attrs(attrs: dict, tool_input: dict, tool_response: dict, pay
         attrs['pattern'] = pat
 
 
+def _set_str(attrs: dict, key: str, value: object) -> None:
+    if isinstance(value, str) and value:
+        attrs[key] = value
+
+
+def _set_truncated_str(attrs: dict, key: str, value: object, limit: int) -> None:
+    """Store a non-empty string under `key`, capped at `limit`, recording the
+    dropped byte count under `<key>_truncated_bytes` when it was cut."""
+    if not (isinstance(value, str) and value):
+        return
+    head, dropped = _truncate_output(value, limit)
+    attrs[key] = head
+    if dropped:
+        attrs[f'{key}_truncated_bytes'] = dropped
+
+
 def _build_ask_attrs(attrs: dict, tool_input: dict, tool_response: dict, payload: HookPayload) -> None:
     questions = tool_input.get('questions') or []
-    attrs['questions'] = [
-        {
-            'question': q.get('question'),
-            'header': q.get('header'),
-            'options': [_ask_option(o) for o in (q.get('options') or [])],
-            'multiSelect': q.get('multiSelect', False),
-        }
-        for q in questions
-    ]
-    answers = tool_response.get('answers') or tool_input.get('answers') or {}
-    if answers:
-        attrs['answers'] = answers
-    annotations = tool_response.get('annotations') or tool_input.get('annotations') or {}
-    if annotations:
-        attrs['annotations'] = annotations
+    attrs['questions'] = [_ask_question(q) for q in questions]
+    for key in ('answers', 'annotations'):
+        value = tool_response.get(key) or tool_input.get(key)
+        if value:
+            attrs[key] = value
+
+
+def _ask_question(q: dict) -> dict:
+    return {
+        'question': q.get('question'),
+        'header': q.get('header'),
+        'options': [_ask_option(o) for o in (q.get('options') or [])],
+        'multiSelect': q.get('multiSelect', False),
+    }
 
 
 def _build_toolsearch_attrs(attrs: dict, tool_input: dict, tool_response: dict, payload: HookPayload) -> None:
@@ -589,41 +604,42 @@ def _build_toolsearch_attrs(attrs: dict, tool_input: dict, tool_response: dict, 
     q = tool_input.get('query')
     if isinstance(q, str) and q:
         attrs['query'] = q
-        if q.startswith('select:'):
-            names = [n.strip() for n in q[len('select:'):].split(',') if n.strip()]
-            if names:
-                attrs['selected_tools'] = names
-    mr = tool_input.get('max_results')
-    if isinstance(mr, int):
-        attrs['max_results'] = mr
+        names = _selected_tool_names(q)
+        if names:
+            attrs['selected_tools'] = names
+    _set_int(attrs, 'max_results', tool_input.get('max_results'))
     m = tool_response.get('matches')
     if isinstance(m, list) and m:
         attrs['loaded_tools'] = [str(x) for x in m if isinstance(x, str)]
-    tdt = tool_response.get('total_deferred_tools')
-    if isinstance(tdt, int):
-        attrs['total_deferred_tools'] = tdt
+    _set_int(attrs, 'total_deferred_tools', tool_response.get('total_deferred_tools'))
+
+
+def _selected_tool_names(query: str) -> list[str]:
+    if not query.startswith('select:'):
+        return []
+    return [n.strip() for n in query[len('select:'):].split(',') if n.strip()]
+
+
+def _set_int(attrs: dict, key: str, value: object) -> None:
+    if isinstance(value, int):
+        attrs[key] = value
 
 
 def _build_taskcreate_attrs(attrs: dict, tool_input: dict, tool_response: dict, payload: HookPayload) -> None:
-    subject = tool_input.get('subject')
-    if isinstance(subject, str) and subject:
-        attrs['subject'] = subject
-    description = tool_input.get('description')
-    if isinstance(description, str) and description:
-        head, dropped = _truncate_output(description, _BASH_STDOUT_MAX)
-        attrs['description'] = head
-        if dropped:
-            attrs['description_truncated_bytes'] = dropped
-    active_form = tool_input.get('activeForm')
-    if isinstance(active_form, str) and active_form:
-        attrs['active_form'] = active_form
+    _set_str(attrs, 'subject', tool_input.get('subject'))
+    _set_truncated_str(attrs, 'description', tool_input.get('description'), _BASH_STDOUT_MAX)
+    _set_str(attrs, 'active_form', tool_input.get('activeForm'))
+    task_id = _created_task_id(tool_response)
+    if task_id is not None:
+        attrs['task_id'] = str(task_id)
+
+
+def _created_task_id(tool_response: dict):
     # Claude Code returns the new task_id inside `tool_response.task.id`
     # (the dedicated TaskCreate hook fixture); the older flat shape
     # `tool_response.task_id` is unlikely but handled as a fallback.
     task = tool_response.get('task') if isinstance(tool_response.get('task'), dict) else None
-    task_id = (task.get('id') if task else None) or tool_response.get('task_id') or tool_response.get('taskId')
-    if task_id is not None:
-        attrs['task_id'] = str(task_id)
+    return (task.get('id') if task else None) or tool_response.get('task_id') or tool_response.get('taskId')
 
 
 _WF_RUN_RE = re.compile(r'workflows/(wf_[A-Za-z0-9][A-Za-z0-9_-]*)')
@@ -735,27 +751,21 @@ def _build_taskoutput_attrs(attrs: dict, tool_input: dict, tool_response: dict, 
     task_id = tool_input.get('task_id') or tool_input.get('taskId')
     if task_id is not None:
         attrs['task_id'] = str(task_id)
-    retrieval = tool_response.get('retrieval_status')
-    if isinstance(retrieval, str) and retrieval:
-        attrs['retrieval_status'] = retrieval
+    _set_str(attrs, 'retrieval_status', tool_response.get('retrieval_status'))
     task = tool_response.get('task') if isinstance(tool_response.get('task'), dict) else None
-    if not task:
-        return
+    if task:
+        _attach_wrapped_task(attrs, task)
+
+
+def _attach_wrapped_task(attrs: dict, task: dict) -> None:
     if 'task_id' not in attrs and task.get('task_id') is not None:
         attrs['task_id'] = str(task['task_id'])
     for field in ('task_type', 'status', 'description'):
-        v = task.get(field)
-        if isinstance(v, str) and v:
-            attrs[field] = v
+        _set_str(attrs, field, task.get(field))
     exit_code = task.get('exit_code')
     if isinstance(exit_code, int):
         attrs['exit_code'] = exit_code
-    output = task.get('output')
-    if isinstance(output, str) and output:
-        stored, dropped = _truncate_output(output, _BASH_STDOUT_MAX)
-        attrs['output'] = stored
-        if dropped:
-            attrs['output_truncated_bytes'] = dropped
+    _set_truncated_str(attrs, 'output', task.get('output'), _BASH_STDOUT_MAX)
 
 
 def _build_schedulewakeup_attrs(attrs: dict, tool_input: dict, tool_response: dict, payload: HookPayload) -> None:
@@ -877,21 +887,25 @@ def _mcp_result_text(tool_response: object) -> str:
     concatenated text blocks, then a string `result`, then pretty JSON."""
     if isinstance(tool_response, str):
         return tool_response
-    blocks = None
+    blocks = _mcp_content_blocks(tool_response)
+    if blocks is None and isinstance(tool_response, dict) \
+            and isinstance(tool_response.get('result'), str):
+        return tool_response['result']
+    texts = _block_texts(blocks or [])
+    return '\n'.join(texts) if texts else _json_text(tool_response)
+
+
+def _block_texts(blocks: list) -> list[str]:
+    return [b['text'] for b in blocks
+            if isinstance(b, dict) and isinstance(b.get('text'), str)]
+
+
+def _mcp_content_blocks(tool_response: object) -> list | None:
     if isinstance(tool_response, list):
-        blocks = tool_response
-    elif isinstance(tool_response, dict):
-        content = tool_response.get('content')
-        if isinstance(content, list):
-            blocks = content
-        elif isinstance(tool_response.get('result'), str):
-            return tool_response['result']
-    if blocks is not None:
-        texts = [b['text'] for b in blocks
-                 if isinstance(b, dict) and isinstance(b.get('text'), str)]
-        if texts:
-            return '\n'.join(texts)
-    return _json_text(tool_response)
+        return tool_response
+    if isinstance(tool_response, dict) and isinstance(tool_response.get('content'), list):
+        return tool_response['content']
+    return None
 
 
 def _build_mcp_attrs(attrs: dict, tool: str, tool_input: dict, tool_response: object) -> None:
@@ -1005,25 +1019,50 @@ def _emit_span(payload: HookPayload) -> None:
         tool, tool_input, tool_response
     )
 
-    attrs: dict = {'tool_name': tool}
-    # `tool_use_id` is the `toolu_…` Anthropic assigns to this call.
-    # Without it the tool-attribution backfill can't match the span to
-    # the transcript's tool_use block when it later assigns token costs.
-    tu_id = raw.get('tool_use_id')
-    if isinstance(tu_id, str) and tu_id:
-        attrs['tool_use_id'] = tu_id
-    anchor = (payload.cwd
-              if provider.provider_id in _CWD_RELATIVE_PATH_PROVIDERS else None)
-    fp = _file_path(tool_input, anchor)
-    if fp:
-        attrs['file_path'] = fp
-
+    attrs = _call_identity_attrs(payload, provider, tool, tool_input, raw)
     builder = _TOOL_BUILDERS.get(tool)
     if builder is not None:
         builder(attrs, tool_input, tool_response, payload)
     elif tool.startswith('mcp__'):
         _build_mcp_attrs(attrs, tool, tool_input, tool_response)
+    _attach_origin_attrs(attrs, raw)
 
+    # send_to_user lands a durable row in `agent_messages`; pin the span_id
+    # up front so that row can deep-link back to this exact tool span.
+    is_send = tool.endswith('__send_to_user')
+    span_id = uuid.uuid4().hex[:16] if is_send else None
+
+    duration_ms, start_time, end_time = _span_timing(raw)
+    post_span(
+        trace_id=payload.session_id,
+        name=f'tool.{_normalize_tool_name(tool)}',
+        attributes=attrs,
+        duration_ms=duration_ms,
+        start_time=start_time,
+        end_time=end_time,
+        span_id=span_id,
+    )
+
+    if is_send:
+        _record_agent_message(payload, tool_input, attrs, span_id)
+
+
+def _call_identity_attrs(payload: HookPayload, provider, tool: str,
+                         tool_input: dict, raw: dict) -> dict:
+    attrs: dict = {'tool_name': tool}
+    # `tool_use_id` is the `toolu_…` Anthropic assigns to this call.
+    # Without it the tool-attribution backfill can't match the span to
+    # the transcript's tool_use block when it later assigns token costs.
+    _set_str(attrs, 'tool_use_id', raw.get('tool_use_id'))
+    anchor = (payload.cwd
+              if provider.provider_id in _CWD_RELATIVE_PATH_PROVIDERS else None)
+    fp = _file_path(tool_input, anchor)
+    if fp:
+        attrs['file_path'] = fp
+    return attrs
+
+
+def _attach_origin_attrs(attrs: dict, raw: dict) -> None:
     # If this tool call originated inside a subagent, Claude Code tags the
     # payload with the subagent's `agent_id` (+ optional `agent_type`).
     # Persist both so the trace projection can re-parent the span under
@@ -1045,25 +1084,6 @@ def _emit_span(payload: HookPayload) -> None:
     prompt_id = raw.get('prompt_id')
     if prompt_id:
         attrs['source_prompt_id'] = prompt_id
-
-    # send_to_user lands a durable row in `agent_messages`; pin the span_id
-    # up front so that row can deep-link back to this exact tool span.
-    is_send = tool.endswith('__send_to_user')
-    span_id = uuid.uuid4().hex[:16] if is_send else None
-
-    duration_ms, start_time, end_time = _span_timing(raw)
-    post_span(
-        trace_id=payload.session_id,
-        name=f'tool.{_normalize_tool_name(tool)}',
-        attributes=attrs,
-        duration_ms=duration_ms,
-        start_time=start_time,
-        end_time=end_time,
-        span_id=span_id,
-    )
-
-    if is_send:
-        _record_agent_message(payload, tool_input, attrs, span_id)
 
 
 def _record_agent_message(payload, tool_input: dict, attrs: dict,

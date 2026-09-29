@@ -114,44 +114,51 @@ def cmd_pattern_import_dir(
         if only is not None else None
     )
 
-    status_glyph = {
-        "imported": "  + ",
-        "overwritten": "  ↻ ",
-        "renamed": "  ~ ",
-        "skipped": "  · ",
-        "failed": "  ! ",
-        "planned": "  · ",
-    }
-
-    def _print(entry):
-        glyph = status_glyph.get(entry.status, "  ? ")
-        suffix = ""
-        if entry.file_count is not None:
-            suffix = f"  ({entry.file_count} file(s))"
-        if entry.error and entry.status not in {"imported", "overwritten", "renamed"}:
-            suffix = f"  — {entry.error}"
-        elif entry.grit_rules:
-            suffix += f"  [+{len(entry.grit_rules)} grit rule(s)]"
-        slug_or_name = entry.slug or entry.name
-        print(f"{glyph}{slug_or_name}{suffix}")
-
     try:
         results = pattern_importer.batch_import_skill_directory(
             expanded, on_conflict=on_conflict, only=selected,
-            dry_run=dry_run, progress=_print,
+            dry_run=dry_run, progress=_print_import_entry,
         )
     except pattern_importer.ImportError_ as exc:
         print(str(exc), file=sys.stderr)
         raise typer.Exit(1)
 
     print()
+    counts = _print_import_summary(results)
+    if counts.get("failed"):
+        raise typer.Exit(1)
+
+
+_IMPORT_STATUS_GLYPH = {
+    "imported": "  + ",
+    "overwritten": "  ↻ ",
+    "renamed": "  ~ ",
+    "skipped": "  · ",
+    "failed": "  ! ",
+    "planned": "  · ",
+}
+
+
+def _print_import_entry(entry) -> None:
+    glyph = _IMPORT_STATUS_GLYPH.get(entry.status, "  ? ")
+    suffix = ""
+    if entry.file_count is not None:
+        suffix = f"  ({entry.file_count} file(s))"
+    if entry.error and entry.status not in {"imported", "overwritten", "renamed"}:
+        suffix = f"  — {entry.error}"
+    elif entry.grit_rules:
+        suffix += f"  [+{len(entry.grit_rules)} grit rule(s)]"
+    slug_or_name = entry.slug or entry.name
+    print(f"{glyph}{slug_or_name}{suffix}")
+
+
+def _print_import_summary(results) -> dict[str, int]:
     counts: dict[str, int] = {}
     for r in results:
         counts[r.status] = counts.get(r.status, 0) + 1
     summary_parts = [f"{k}={v}" for k, v in counts.items() if v]
     print("summary:", ", ".join(summary_parts) if summary_parts else "(no changes)")
-    if counts.get("failed"):
-        raise typer.Exit(1)
+    return counts
 
 
 @pattern_app.command(

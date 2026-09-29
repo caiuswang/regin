@@ -52,3 +52,20 @@ def test_table_empty_rows_no_output(monkeypatch):
     monkeypatch.setattr(output, "_stdout", buf)
     output.table([])
     assert buf.getvalue() == ""
+
+
+def test_table_edge_shapes(monkeypatch):
+    cases = [
+        (dict(rows=[], headers=("h1", "h2")), "h1  h2\n--  --\n"),
+        (dict(rows=[("a",), ("bb", "c", 7)]), "a \nbb  c   7 \n"),
+        (dict(rows=[("a", "b")], headers=("x",), min_col_width=3),
+         "x  \n---  ---\na    b  \n"),
+        (dict(rows=[("", None)], min_col_width=0), "  None\n"),
+    ]
+    got = []
+    for kwargs, _ in cases:
+        buf = io.StringIO()
+        monkeypatch.setattr(output, "_stdout", buf)
+        output.table(**kwargs)
+        got.append(buf.getvalue())
+    assert got == [expected for _, expected in cases]

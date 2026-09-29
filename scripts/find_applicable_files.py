@@ -40,27 +40,63 @@ def _content_trigger_matches(trig: str, file_content: str) -> bool:
     return re.search(pattern, file_content) is not None
 
 
-def _rule_applies(rule: dict, file_path: str, file_content: str) -> bool:
-    basename = os.path.basename(file_path)
+def _split_triggers(rule: dict) -> tuple:
     extensions = _extensions_for_rule(rule)
-
     filename_globs = []
     content_triggers = []
     for trig in rule.get('triggers', []):
-        if '*' in trig or any(trig.endswith(ext) for ext in extensions):
+        if '*' in trig or trig.endswith(extensions):
             filename_globs.append(trig)
         else:
             content_triggers.append(trig)
+    return filename_globs, content_triggers
 
-    if filename_globs:
-        if not any(fnmatch.fnmatch(basename, g) for g in filename_globs):
-            return False
 
-    if content_triggers:
-        if not any(_content_trigger_matches(t, file_content) for t in content_triggers):
-            return False
+def _any_glob_matches(basename: str, globs: list) -> bool:
+    return any(fnmatch.fnmatch(basename, g) for g in globs)
 
+
+def _any_content_matches(file_content: str, triggers: list) -> bool:
+    return any(_content_trigger_matches(t, file_content) for t in triggers)
+
+
+def _rule_applies(rule: dict, file_path: str, file_content: str) -> bool:
+    filename_globs, content_triggers = _split_triggers(rule)
+    if filename_globs and not _any_glob_matches(os.path.basename(file_path), filename_globs):
+        return False
+    if content_triggers and not _any_content_matches(file_content, content_triggers):
+        return False
     return bool(filename_globs or content_triggers)
+
+
+_SKIPPED_DIRS = ('target', 'build', 'node_modules')
+
+
+def _walk_files(repo_path: str):
+    for dirpath, dirnames, filenames in os.walk(repo_path):
+        # Skip hidden dirs and build output
+        dirnames[:] = [d for d in dirnames if not d.startswith('.') and d not in _SKIPPED_DIRS]
+        for fname in filenames:
+            yield dirpath, fname
+
+
+def _read_file(fpath: str):
+    try:
+        with open(fpath, 'r', errors='ignore') as fh:
+            return fh.read()
+    except (OSError, IOError):
+        return None
+
+
+def _candidate_files(repo_path: str, extensions: tuple):
+    """Yield (path, content) for readable files with a rule extension."""
+    for dirpath, fname in _walk_files(repo_path):
+        if not fname.endswith(extensions):
+            continue
+        fpath = os.path.join(dirpath, fname)
+        content = _read_file(fpath)
+        if content is not None:
+            yield fpath, content
 
 
 def main():
@@ -75,34 +111,16 @@ def main():
     with open(rules_json_path) as f:
         data = json.load(f)
 
-    rule = None
-    for r in data.get('rules', []):
-        if r['id'] == rule_id:
-            rule = r
-            break
-
+    rule = next((r for r in data.get('rules', []) if r['id'] == rule_id), None)
     if not rule:
         print(f"Rule '{rule_id}' not found", file=sys.stderr)
         sys.exit(2)
 
-    extensions = _extensions_for_rule(rule)
     found = 0
-    for dirpath, _dirnames, filenames in os.walk(repo_path):
-        # Skip hidden dirs and build output
-        _dirnames[:] = [d for d in _dirnames if not d.startswith('.') and d not in ('target', 'build', 'node_modules')]
-        for fname in filenames:
-            if not any(fname.endswith(ext) for ext in extensions):
-                continue
-            fpath = os.path.join(dirpath, fname)
-            try:
-                with open(fpath, 'r', errors='ignore') as fh:
-                    content = fh.read()
-            except (OSError, IOError):
-                continue
-            if _rule_applies(rule, fpath, content):
-                # Print relative to repo_path
-                print(os.path.relpath(fpath, repo_path))
-                found += 1
+    for fpath, content in _candidate_files(repo_path, _extensions_for_rule(rule)):
+        if _rule_applies(rule, fpath, content):
+            print(os.path.relpath(fpath, repo_path))
+            found += 1
 
     sys.exit(0 if found > 0 else 1)
 

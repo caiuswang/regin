@@ -139,59 +139,75 @@ def cmd_rules_run(
     repo: str = typer.Option(..., "--repo", help="Repository root"),
     file: list[str] = typer.Option(..., "--file", help="Target file path, glob, or directory; repeatable"),
 ) -> None:
-    from lib import rule_engines
-
-    try:
-        eng = rule_engines.get(engine)
-    except KeyError:
-        print(f"Engine not configured: {engine}")
-        raise typer.Exit(1)
+    eng = _configured_engine(engine)
     repo_root = os.path.abspath(repo)
-    rules = eng.parse_rules()
-    rule = next((r for r in rules if r.id == rule_id), None)
-    if rule is None:
-        print(f"Rule not found: {rule_id}")
-        raise typer.Exit(1)
+    rule = _find_rule(eng, rule_id)
     if not os.path.isdir(repo_root):
         print(f"Repo not found: {repo_root}")
         raise typer.Exit(1)
 
-    file_args = list(file) + list(ctx.args)
-    file_paths = _resolve_target_files(eng, rule, file_args)
-
-    violations = []
-    for target_file in file_paths:
-        violation = eng.run(rule, target_file, repo_root)
-        if violation is not None:
-            violations.append(violation)
-
+    file_paths = _resolve_target_files(eng, rule, list(file) + list(ctx.args))
+    violations = [
+        v for v in (eng.run(rule, target, repo_root) for target in file_paths)
+        if v is not None
+    ]
     if not violations:
-        if len(file_paths) == 1:
-            print(f"OK: {rule_id} reported no matches for {file_paths[0]}")
-        else:
-            print(f"OK: {rule_id} reported no matches across {len(file_paths)} file(s)")
+        _print_run_ok(rule_id, file_paths)
         return
-
     if len(file_paths) == 1:
-        violation = violations[0]
-        print(f"VIOLATION: {rule_id} matched {violation.match_count} time(s) in {violation.file_path}")
-        if violation.detail:
-            print(violation.detail)
+        _print_single_violation(rule_id, violations[0])
+    else:
+        _print_violation_summary(rule_id, violations, len(file_paths))
+    raise typer.Exit(1)
+
+
+def _configured_engine(engine: str):
+    from lib import rule_engines
+
+    try:
+        return rule_engines.get(engine)
+    except KeyError:
+        print(f"Engine not configured: {engine}")
         raise typer.Exit(1)
 
+
+def _find_rule(eng, rule_id: str):
+    rule = next((r for r in eng.parse_rules() if r.id == rule_id), None)
+    if rule is None:
+        print(f"Rule not found: {rule_id}")
+        raise typer.Exit(1)
+    return rule
+
+
+def _print_run_ok(rule_id: str, file_paths: list[str]) -> None:
+    if len(file_paths) == 1:
+        print(f"OK: {rule_id} reported no matches for {file_paths[0]}")
+    else:
+        print(f"OK: {rule_id} reported no matches across {len(file_paths)} file(s)")
+
+
+def _print_single_violation(rule_id: str, violation) -> None:
+    print(f"VIOLATION: {rule_id} matched {violation.match_count} time(s) in {violation.file_path}")
+    if violation.detail:
+        print(violation.detail)
+
+
+_VIOLATION_LIST_MAX = 10
+
+
+def _print_violation_summary(rule_id: str, violations: list, file_count: int) -> None:
     total_matches = sum(v.match_count for v in violations)
     print(
         f"VIOLATION: {rule_id} matched {total_matches} time(s) across "
-        f"{len(violations)} of {len(file_paths)} file(s)"
+        f"{len(violations)} of {file_count} file(s)"
     )
-    for violation in violations[:10]:
+    for violation in violations[:_VIOLATION_LIST_MAX]:
         line = f"  {violation.file_path}: {violation.match_count} match(es)"
         if violation.detail:
             line += f" - {violation.detail}"
         print(line)
-    if len(violations) > 10:
-        print(f"  ... {len(violations) - 10} more file(s)")
-    raise typer.Exit(1)
+    if len(violations) > _VIOLATION_LIST_MAX:
+        print(f"  ... {len(violations) - _VIOLATION_LIST_MAX} more file(s)")
 
 
 def _resolve_target_files(eng, rule, file_args: list[str]) -> list[str]:
@@ -204,31 +220,9 @@ def _resolve_target_files(eng, rule, file_args: list[str]) -> list[str]:
 
 def _resolve_one_target(eng, rule, file_arg: str, file_path: str) -> list[str]:
     if os.path.isdir(file_path):
-        extensions = _rule_extensions(eng, rule)
-        if extensions:
-            matched_files: list[str] = []
-            for ext in extensions:
-                pattern = os.path.join(file_path, '**', f'*{ext}')
-                matched_files.extend(
-                    os.path.abspath(path)
-                    for path in glob.glob(pattern, recursive=True)
-                    if os.path.isfile(path)
-                )
-        else:
-            matched_files = [
-                os.path.abspath(path)
-                for path in glob.glob(os.path.join(file_path, '**', '*'), recursive=True)
-                if os.path.isfile(path)
-            ]
-        if not matched_files:
-            print(f"No matching files found under directory: {file_path}")
-            raise typer.Exit(1)
-        return matched_files
+        return _resolve_directory_target(eng, rule, file_path)
 
-    matched_files = [
-        os.path.abspath(path) for path in glob.glob(file_arg, recursive=True)
-        if os.path.isfile(path)
-    ]
+    matched_files = _glob_files(file_arg)
     if matched_files:
         return matched_files
     if os.path.isfile(file_path):
@@ -236,6 +230,24 @@ def _resolve_one_target(eng, rule, file_arg: str, file_path: str) -> list[str]:
 
     print(f"Target file not found: {file_path}")
     raise typer.Exit(1)
+
+
+def _glob_files(pattern: str) -> list[str]:
+    return [
+        os.path.abspath(path) for path in glob.glob(pattern, recursive=True)
+        if os.path.isfile(path)
+    ]
+
+
+def _resolve_directory_target(eng, rule, dir_path: str) -> list[str]:
+    extensions = _rule_extensions(eng, rule) or ('',)
+    matched_files: list[str] = []
+    for ext in extensions:
+        matched_files.extend(_glob_files(os.path.join(dir_path, '**', f'*{ext}')))
+    if not matched_files:
+        print(f"No matching files found under directory: {dir_path}")
+        raise typer.Exit(1)
+    return matched_files
 
 
 def _rule_extensions(eng, rule) -> tuple[str, ...]:

@@ -100,3 +100,68 @@ def test_cmd_pattern_import_dir_no_only_imports_all(monkeypatch, capsys):
     patterns_cmd.cmd_pattern_import_dir(
         "/tmp/skills", on_conflict="skip", only=None, dry_run=False)
     assert captured["only"] is None
+
+
+def _entry(status, name, slug=None, file_count=None, error=None, grit_rules=()):
+    from types import SimpleNamespace
+    return SimpleNamespace(status=status, name=name, slug=slug, file_count=file_count,
+                           error=error, grit_rules=list(grit_rules))
+
+
+_IMPORT_DIR_ENTRIES = [
+    (_entry("imported", "a", slug="a-slug", file_count=2, grit_rules=["r1", "r2"]),
+     "  + a-slug  (2 file(s))  [+2 grit rule(s)]"),
+    (_entry("overwritten", "b", file_count=1, error="ignored"), "  ↻ b  (1 file(s))"),
+    (_entry("renamed", "c", slug="c-2", grit_rules=["r"]), "  ~ c-2  [+1 grit rule(s)]"),
+    (_entry("skipped", "d", file_count=3, error="exists"), "  · d  — exists"),
+    (_entry("failed", "e", error="boom", grit_rules=["r"]), "  ! e  — boom"),
+    (_entry("planned", "f"), "  · f"),
+    (_entry("weird", "g"), "  ? g"),
+]
+
+
+@pytest.mark.parametrize("entries,summary,exit_code", [
+    (_IMPORT_DIR_ENTRIES,
+     "summary: imported=1, overwritten=1, renamed=1, skipped=1, failed=1, planned=1, weird=1",
+     1),
+    (_IMPORT_DIR_ENTRIES[:1], "summary: imported=1", None),
+    ([], "summary: (no changes)", None),
+])
+def test_cmd_pattern_import_dir_progress_and_summary(
+        monkeypatch, capsys, entries, summary, exit_code):
+    from lib.patterns import pattern_importer
+    seen = {}
+
+    def fake_batch(root_dir, *, on_conflict="skip", dry_run=False,
+                   only=None, progress=None):
+        seen.update(root_dir=root_dir, on_conflict=on_conflict, dry_run=dry_run)
+        for entry, _ in entries:
+            progress(entry)
+        return [entry for entry, _ in entries]
+
+    monkeypatch.setattr(
+        pattern_importer, "batch_import_skill_directory", fake_batch)
+    monkeypatch.setenv("HOME", "/home/u")
+    try:
+        patterns_cmd.cmd_pattern_import_dir(
+            "~/skills", on_conflict=" Overwrite ", only=None, dry_run=True)
+        code = None
+    except click.exceptions.Exit as exc:
+        code = exc.exit_code
+    out = capsys.readouterr().out.splitlines()
+    assert (code, out) == (exit_code, [line for _, line in entries] + ["", summary])
+    assert seen == {"root_dir": "/home/u/skills", "on_conflict": "overwrite", "dry_run": True}
+
+
+def test_cmd_pattern_import_dir_importer_error_exits_1(monkeypatch, capsys):
+    from lib.patterns import pattern_importer
+
+    def fake_batch(root_dir, **_kw):
+        raise pattern_importer.ImportError_("no such dir")
+
+    monkeypatch.setattr(
+        pattern_importer, "batch_import_skill_directory", fake_batch)
+    with pytest.raises(click.exceptions.Exit) as exc:
+        patterns_cmd.cmd_pattern_import_dir(
+            "/nope", on_conflict=None, only=None, dry_run=False)
+    assert (exc.value.exit_code, capsys.readouterr().err) == (1, "no such dir\n")

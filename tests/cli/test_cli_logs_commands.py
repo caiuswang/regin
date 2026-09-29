@@ -197,3 +197,53 @@ def test_path_prints_single_log_path(configured_logs):
     result = CliRunner().invoke(logs_app, ["path"])
     assert result.exit_code == 0
     assert result.stdout.strip() == str(configured_logs / "regin.log")
+
+
+# ── tail/grep line-shape contract ───────────────────────────
+
+def _rec(feature, level, message, ts):
+    return json.dumps({"record": {
+        "time": {"repr": f"T{ts}", "timestamp": ts},
+        "level": {"name": level},
+        "message": message,
+        "extra": {"feature": feature, "k": 1},
+    }})
+
+
+def _write_lines(configured_logs, now):
+    lines = [
+        _rec("patterns", "INFO", "old hunt", now - 7200),
+        "plain hunt line",
+        "",
+        _rec("hooks", "ERROR", "fresh HUNT", now),
+        json.dumps({"record": {"message": "no ts hunt"}}),
+    ]
+    (configured_logs / "regin.log").write_text("\n".join(lines) + "\n")
+    return lines
+
+
+@pytest.mark.parametrize("args,code,expected", [
+    (["grep", "hunt"], 0,
+     ["Tnow-7200  INFO     [patterns] old hunt  k=1", "plain hunt line",
+      "?  ?        no ts hunt"]),
+    (["grep", "hunt", "-i", "--since", "1h"], 0,
+     ["plain hunt line", "Tnow  ERROR    [hooks] fresh HUNT  k=1", "?  ?        no ts hunt"]),
+    (["grep", "hunt", "-i", "--feature", "hooks", "--raw"], 0, ["RAW3"]),
+    (["grep", "old", "--since", "1m", "--feature", "patterns"], 1, []),
+    (["tail", "-n", "2"], 0,
+     ["Tnow  ERROR    [hooks] fresh HUNT  k=1", "?  ?        no ts hunt"]),
+    (["tail", "-n", "10", "--raw", "--level", "error"], 0, ["RAW3"]),
+    (["tail", "-n", "10", "--feature", "patterns", "--level", "ERROR"], 0, []),
+    (["tail", "-n", "10", "--feature", "patterns"], 0,
+     ["Tnow-7200  INFO     [patterns] old hunt  k=1"]),
+    (["tail", "-n", "3"], 0,
+     ["", "Tnow  ERROR    [hooks] fresh HUNT  k=1", "?  ?        no ts hunt"]),
+])
+def test_tail_and_grep_line_contract(configured_logs, args, code, expected):
+    import time
+    now = int(time.time())
+    lines = _write_lines(configured_logs, now)
+    result = CliRunner().invoke(logs_app, args)
+    want = [lines[3] if e == "RAW3" else e for e in expected]
+    want = [w.replace("Tnow-7200", f"T{now - 7200}").replace("Tnow", f"T{now}") for w in want]
+    assert (result.exit_code, result.stdout.splitlines()) == (code, want)

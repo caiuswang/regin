@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import sqlite3
 
+import pytest
+
 from cli.commands import db as db_cmd
 from lib.settings import settings
 
@@ -152,3 +154,98 @@ def test_reset_shared_auth_tables_drops_and_recreates(monkeypatch):
     assert committed is True
     assert closed is True
     assert init_called is True
+
+
+_KEEP = {"type": "command", "command": "python /keep/me.py"}
+_HM = {"type": "command", "command": "python -m hook_manager Stop"}
+
+
+@pytest.mark.parametrize("before,removed,after", [
+    ({"hooks": {
+        "Stop": [{"hooks": [_HM]}],
+        "PostToolUse": [{"matcher": "x", "hooks": [_HM, _KEEP]},
+                        {"hooks": "not-a-list"}],
+        "Weird": "not-a-list",
+    }, "other": 1}, 2,
+     {"hooks": {
+         "PostToolUse": [{"matcher": "x", "hooks": [_KEEP]}, {"hooks": "not-a-list"}],
+         "Weird": "not-a-list",
+     }, "other": 1}),
+    ({"hooks": {"Stop": [{"hooks": [_HM]}]}, "other": 1}, 1, {"other": 1}),
+    ({"hooks": {"Stop": [{"hooks": [_KEEP]}]}}, 0, None),
+    ({"hooks": ["x"]}, 0, None),
+    ({"other": 1}, 0, None),
+])
+def test_clear_hook_manager_settings_shapes(tmp_path, monkeypatch, before, removed, after):
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps(before))
+    monkeypatch.setattr(db_cmd, "CLAUDE_SETTINGS_PATH", str(path))
+    assert db_cmd._clear_hook_manager_settings() == removed
+    assert json.loads(path.read_text()) == (before if after is None else after)
+
+
+def test_clear_hook_manager_settings_missing_or_corrupt(tmp_path, monkeypatch):
+    path = tmp_path / "settings.json"
+    monkeypatch.setattr(db_cmd, "CLAUDE_SETTINGS_PATH", str(path))
+    assert db_cmd._clear_hook_manager_settings() == 0
+    path.write_text("{not json")
+    assert db_cmd._clear_hook_manager_settings() == 0
+
+
+@pytest.fixture
+def init_stubs(monkeypatch, tmp_path):
+    from lib import db_migrate, prompt_templates
+    calls: list[str] = []
+    monkeypatch.setattr(db_cmd, "_init_db", lambda: calls.append("init_db"))
+    monkeypatch.setattr(db_migrate, "stamp_head", lambda: calls.append("stamp"))
+    monkeypatch.setattr(prompt_templates, "seed_builtin_skeletons",
+                        lambda: calls.append("seed"))
+    monkeypatch.setattr(settings, "patterns_dir", str(tmp_path / "patterns"))
+    monkeypatch.setattr(db_cmd._engine, "DB_PATH", "/x/regin.db")
+    return calls
+
+
+@pytest.mark.parametrize("state,expected", [
+    ((1, True, True, 1), [
+        "Cleared existing local state before initialization.",
+        "Removed 1 deployed skill directory.",
+        "Removed JWT signing secret; existing login tokens are now invalid.",
+        "Removed hook-manager toggle state.",
+        "Removed 1 hook_manager routing entry from Claude settings.",
+    ]),
+    ((3, False, False, 2), [
+        "Cleared existing local state before initialization.",
+        "Removed 3 deployed skill directories.",
+        "Removed 2 hook_manager routing entries from Claude settings.",
+    ]),
+    ((0, False, False, 0), [
+        "Cleared existing local state before initialization.",
+    ]),
+])
+def test_cmd_init_force_messages(init_stubs, monkeypatch, capsys, state, expected):
+    monkeypatch.setattr(db_cmd, "db_exists", lambda: True)
+    monkeypatch.setattr(db_cmd, "_force_reset_state", lambda: state)
+    db_cmd.cmd_init(force=True)
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[:-2] == expected
+    assert lines[-2] == "Initialized database at /x/regin.db"
+    assert init_stubs == ["init_db", "stamp", "seed"]
+
+
+def test_cmd_init_existing_db_without_force(init_stubs, monkeypatch, capsys):
+    monkeypatch.setattr(db_cmd, "db_exists", lambda: True)
+    db_cmd.cmd_init(force=False)
+    assert capsys.readouterr().out.splitlines() == [
+        "Database already exists at /x/regin.db", "Use --force to reinitialize."]
+    assert init_stubs == []
+
+
+def test_cmd_init_fresh_without_force(init_stubs, monkeypatch, capsys, tmp_path):
+    monkeypatch.setattr(db_cmd, "db_exists", lambda: False)
+    monkeypatch.setattr(db_cmd, "_force_reset_state",
+                        lambda: pytest.fail("must not reset without --force"))
+    db_cmd.cmd_init(force=False)
+    assert capsys.readouterr().out.splitlines() == [
+        "Initialized database at /x/regin.db",
+        f"Pattern directory ready at {tmp_path / 'patterns'}"]
+    assert (tmp_path / "patterns" / "_index").is_dir()

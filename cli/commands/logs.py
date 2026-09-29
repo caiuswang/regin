@@ -145,24 +145,29 @@ def tail_cmd(
     level_norm = level.upper() if level else None
 
     def _accept(line: str) -> bool:
-        if feature is None and level_norm is None:
-            return True
-        rec = _read_record(line)
-        if rec is None:
-            return False
-        if feature is not None and _record_feature(rec) != feature:
-            return False
-        if level_norm is not None and _record_level(rec) != level_norm:
-            return False
-        return True
+        return _tail_accepts(line, feature, level_norm)
 
     text_lines = path.read_text().splitlines()
     matched: list[str] = [ln for ln in text_lines if _accept(ln)]
     for line in matched[-lines:]:
         _emit_line(line, raw)
 
-    if not follow:
-        return
+    if follow:
+        _follow(path, _accept, raw)
+
+
+def _tail_accepts(line: str, feature: str | None, level_norm: str | None) -> bool:
+    if feature is None and level_norm is None:
+        return True
+    rec = _read_record(line)
+    if rec is None:
+        return False
+    if feature is not None and _record_feature(rec) != feature:
+        return False
+    return level_norm is None or _record_level(rec) == level_norm
+
+
+def _follow(path: Path, accept, raw: bool) -> None:
     try:
         with path.open("r") as f:
             f.seek(0, 2)
@@ -172,7 +177,7 @@ def tail_cmd(
                     time.sleep(0.2)
                     continue
                 line = line.rstrip("\n")
-                if _accept(line):
+                if accept(line):
                     _emit_line(line, raw)
     except KeyboardInterrupt:
         return
@@ -201,32 +206,36 @@ def grep_cmd(
 ) -> None:
     """Regex-search the activity log (optionally filtered by feature)."""
     _ensure_configured()
-    flags = re.IGNORECASE if ignore_case else 0
-    try:
-        rx = re.compile(pattern, flags)
-    except re.error as e:
-        typer.echo(f"invalid regex: {e}", err=True)
-        raise typer.Exit(2)
+    rx = _compile_regex(pattern, ignore_case)
     cutoff = _parse_since(since) if since else None
     path = activity_log.log_path()
     if path is None or not path.exists():
         raise typer.Exit(1)
     matched = 0
     for line in path.read_text().splitlines():
-        record = _read_record(line)
-        if cutoff and record and not _record_after(record, cutoff):
-            continue
-        if feature is not None and (record is None or _record_feature(record) != feature):
-            continue
-        if not rx.search(line):
-            continue
-        matched += 1
-        if raw or record is None:
-            typer.echo(line)
-        else:
-            typer.echo(_pretty_record(record))
+        if _grep_accepts(line, _read_record(line), rx, feature, cutoff):
+            matched += 1
+            _emit_line(line, raw)
     if matched == 0:
         raise typer.Exit(1)
+
+
+def _compile_regex(pattern: str, ignore_case: bool) -> re.Pattern:
+    flags = re.IGNORECASE if ignore_case else 0
+    try:
+        return re.compile(pattern, flags)
+    except re.error as e:
+        typer.echo(f"invalid regex: {e}", err=True)
+        raise typer.Exit(2)
+
+
+def _grep_accepts(line: str, record: dict | None, rx: re.Pattern,
+                  feature: str | None, cutoff: datetime | None) -> bool:
+    if cutoff and record and not _record_after(record, cutoff):
+        return False
+    if feature is not None and (record is None or _record_feature(record) != feature):
+        return False
+    return bool(rx.search(line))
 
 
 # ── prune ───────────────────────────────────────────────────

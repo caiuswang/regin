@@ -99,6 +99,24 @@ def _is_hook_manager_command(command: str) -> bool:
     return bool(isinstance(command, str) and _HOOK_MANAGER_CMD_RE.search(command))
 
 
+def _strip_hook_manager_entries(entries: list) -> tuple[list, int]:
+    """Drop hook_manager commands from one event's entries; entries left with
+    no hooks are dropped too. Returns (kept entries, commands removed)."""
+    filtered_entries = []
+    removed = 0
+    for entry in entries:
+        entry_hooks = entry.get('hooks', [])
+        if not isinstance(entry_hooks, list):
+            filtered_entries.append(entry)
+            continue
+        kept_hooks = [h for h in entry_hooks
+                      if not _is_hook_manager_command(h.get('command', ''))]
+        removed += len(entry_hooks) - len(kept_hooks)
+        if kept_hooks:
+            filtered_entries.append({**entry, 'hooks': kept_hooks})
+    return filtered_entries, removed
+
+
 def _clear_hook_manager_settings() -> int:
     """Remove hook_manager dispatcher commands from ~/.claude/settings.json."""
     try:
@@ -116,26 +134,8 @@ def _clear_hook_manager_settings() -> int:
         entries = hooks[event_name]
         if not isinstance(entries, list):
             continue
-
-        filtered_entries = []
-        for entry in entries:
-            entry_hooks = entry.get('hooks', [])
-            if not isinstance(entry_hooks, list):
-                filtered_entries.append(entry)
-                continue
-
-            kept_hooks = []
-            for hook in entry_hooks:
-                if _is_hook_manager_command(hook.get('command', '')):
-                    removed += 1
-                else:
-                    kept_hooks.append(hook)
-
-            if kept_hooks:
-                next_entry = dict(entry)
-                next_entry['hooks'] = kept_hooks
-                filtered_entries.append(next_entry)
-
+        filtered_entries, event_removed = _strip_hook_manager_entries(entries)
+        removed += event_removed
         if filtered_entries:
             hooks[event_name] = filtered_entries
         else:
@@ -216,17 +216,7 @@ def cmd_init(
         print("Use --force to reinitialize.")
         return
 
-    removed_deployments = 0
-    cleared_jwt_secret = False
-    cleared_hook_config = False
-    removed_hook_routes = 0
-    if force:
-        (
-            removed_deployments,
-            cleared_jwt_secret,
-            cleared_hook_config,
-            removed_hook_routes,
-        ) = _force_reset_state()
+    reset_state = _force_reset_state() if force else None
 
     _init_db()
 
@@ -245,21 +235,30 @@ def cmd_init(
     # directories are created lazily by `sync` when a guide is written.
     os.makedirs(os.path.join(str(settings.patterns_dir), '_index'), exist_ok=True)
 
-    if force:
-        print("Cleared existing local state before initialization.")
-        if removed_deployments:
-            print(f"Removed {removed_deployments} deployed skill director"
-                  f"{'y' if removed_deployments == 1 else 'ies'}.")
-        if cleared_jwt_secret:
-            print("Removed JWT signing secret; existing login tokens are now invalid.")
-        if cleared_hook_config:
-            print("Removed hook-manager toggle state.")
-        if removed_hook_routes:
-            print(f"Removed {removed_hook_routes} hook_manager routing entr"
-                  f"{'y' if removed_hook_routes == 1 else 'ies'} from Claude settings.")
+    if reset_state is not None:
+        _print_reset_report(*reset_state)
 
     print(f"Initialized database at {_engine.DB_PATH}")
     print(f"Pattern directory ready at {settings.patterns_dir}")
+
+
+def _print_reset_report(
+    removed_deployments: int,
+    cleared_jwt_secret: bool,
+    cleared_hook_config: bool,
+    removed_hook_routes: int,
+) -> None:
+    print("Cleared existing local state before initialization.")
+    if removed_deployments:
+        print(f"Removed {removed_deployments} deployed skill director"
+              f"{'y' if removed_deployments == 1 else 'ies'}.")
+    if cleared_jwt_secret:
+        print("Removed JWT signing secret; existing login tokens are now invalid.")
+    if cleared_hook_config:
+        print("Removed hook-manager toggle state.")
+    if removed_hook_routes:
+        print(f"Removed {removed_hook_routes} hook_manager routing entr"
+              f"{'y' if removed_hook_routes == 1 else 'ies'} from Claude settings.")
 
 
 # ── rebuild ───────────────────────────────────────────────────

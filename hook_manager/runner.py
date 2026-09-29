@@ -130,54 +130,9 @@ def run(
                    ValueError(f'unknown event {payload.event!r}'), payload)
 
     agent_id = getattr(payload.resolved_provider, 'provider_id', None)
-    # Stash agent_type for span emission. build_span auto-injects it
-    # into every span's attrs so the ingest agent_type fallback works
-    # without each handler having to remember to pass it. Lazy import
-    # so non-hook entry points don't pay the trace stack's cost.
-    try:
-        from lib.hook_plugin import set_active_agent_type
-        set_active_agent_type(agent_id or agent_type)
-    except Exception:
-        pass
-    overrides = priority_overrides(agent_type=agent_id)
-    matching = sorted(
-        (
-            h for h in filter_enabled(handlers, agent_type=agent_id)
-            if h.matches(payload)
-        ),
-        key=lambda h: (overrides.get(h.name, h.priority), h.name),
-    )
-
-    # Activity-log dispatcher trace. Lazy import so `python -m hook_manager
-    # --help` and other fast paths don't pay the loguru cost.
-    from lib.activity_log import get_activity_logger
-    hooks_log = get_activity_logger("hooks").bind(
-        event=payload.event, agent_type=agent_id, pid=os.getpid(),
-    )
-
-    responses: list[HookResponse] = []
-    for h in matching:
-        t0 = time.monotonic()
-        try:
-            r = h.fn(payload)
-            if r is not None:
-                responses.append(r)
-            elapsed_ms = (time.monotonic() - t0) * 1000
-            hooks_log.write("handler_dispatched",
-                            handler=h.name, elapsed_ms=round(elapsed_ms, 2))
-        except Exception as exc:
-            elapsed_ms = (time.monotonic() - t0) * 1000
-            _log_error(h.name, payload.event, exc, payload)
-            hooks_log.error("handler_failed", exc_info=True,
-                            handler=h.name, elapsed_ms=round(elapsed_ms, 2),
-                            error_type=type(exc).__name__)
-        if elapsed_ms > _SLOW_HANDLER_MS:
-            _log_slow(h.name, payload.event, elapsed_ms, payload)
-            hooks_log.warn("handler_slow",
-                           handler=h.name, elapsed_ms=round(elapsed_ms, 2),
-                           threshold_ms=_SLOW_HANDLER_MS)
-
-    merged = merge_responses(responses)
+    _stash_agent_type(agent_id or agent_type)
+    matching = _matching_handlers(handlers, payload, agent_id)
+    merged = merge_responses(_dispatch_all(matching, payload, agent_id))
 
     # Decide exit code: only use 2 for events where the spec says so.
     exit_code = merged.exit_code
@@ -187,6 +142,65 @@ def run(
     out_format = getattr(payload.resolved_provider, 'hook_output_format', 'claude')
     _write_response(out_format, payload.event, merged, exit_code, stdout)
     return exit_code
+
+
+def _stash_agent_type(agent_type: str | None) -> None:
+    # Stash agent_type for span emission. build_span auto-injects it
+    # into every span's attrs so the ingest agent_type fallback works
+    # without each handler having to remember to pass it. Lazy import
+    # so non-hook entry points don't pay the trace stack's cost.
+    try:
+        from lib.hook_plugin import set_active_agent_type
+        set_active_agent_type(agent_type)
+    except Exception:
+        pass
+
+
+def _matching_handlers(handlers: Sequence[Handler], payload: HookPayload,
+                       agent_id: str | None) -> list[Handler]:
+    overrides = priority_overrides(agent_type=agent_id)
+    return sorted(
+        (
+            h for h in filter_enabled(handlers, agent_type=agent_id)
+            if h.matches(payload)
+        ),
+        key=lambda h: (overrides.get(h.name, h.priority), h.name),
+    )
+
+
+def _dispatch_all(matching: list[Handler], payload: HookPayload,
+                  agent_id: str | None) -> list[HookResponse]:
+    # Activity-log dispatcher trace. Lazy import so `python -m hook_manager
+    # --help` and other fast paths don't pay the loguru cost.
+    from lib.activity_log import get_activity_logger
+    hooks_log = get_activity_logger("hooks").bind(
+        event=payload.event, agent_type=agent_id, pid=os.getpid(),
+    )
+    responses = (_dispatch(h, payload, hooks_log) for h in matching)
+    return [r for r in responses if r is not None]
+
+
+def _dispatch(h: Handler, payload: HookPayload, hooks_log) -> HookResponse | None:
+    """Run one handler, logging failures and slowness. Never raises."""
+    r = None
+    t0 = time.monotonic()
+    try:
+        r = h.fn(payload)
+        elapsed_ms = (time.monotonic() - t0) * 1000
+        hooks_log.write("handler_dispatched",
+                        handler=h.name, elapsed_ms=round(elapsed_ms, 2))
+    except Exception as exc:
+        elapsed_ms = (time.monotonic() - t0) * 1000
+        _log_error(h.name, payload.event, exc, payload)
+        hooks_log.error("handler_failed", exc_info=True,
+                        handler=h.name, elapsed_ms=round(elapsed_ms, 2),
+                        error_type=type(exc).__name__)
+    if elapsed_ms > _SLOW_HANDLER_MS:
+        _log_slow(h.name, payload.event, elapsed_ms, payload)
+        hooks_log.warn("handler_slow",
+                       handler=h.name, elapsed_ms=round(elapsed_ms, 2),
+                       threshold_ms=_SLOW_HANDLER_MS)
+    return r
 
 
 def _write_response(out_format, event, merged, exit_code, stdout) -> None:

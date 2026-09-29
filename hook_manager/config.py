@@ -44,32 +44,37 @@ def config_path(agent_type: str | None = None) -> str:
 
 
 def _load_raw(agent_type: str | None = None) -> dict:
-    data: dict = {}
-    try:
-        with open(config_path(agent_type), 'r') as f:
-            file_data = json.load(f)
-        if isinstance(file_data, dict):
-            data = file_data
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        pass
+    data = _read_config_file(config_path(agent_type))
 
     # Merge per-provider handler overrides from regin settings. Settings-based
     # overrides take precedence over the standalone JSON file so the central
     # settings UI can tune providers without hunting for provider-specific files.
     agent_type = agent_type or _active_provider_id()
     if is_provider_id(agent_type):
-        cfg = provider_handler_config(str(agent_type))
-        if cfg.get('disabled_handlers'):
-            file_disabled = [x for x in data.get('disabled_handlers', []) if isinstance(x, str)]
-            merged_disabled = set(file_disabled) | set(cfg['disabled_handlers'])
-            data['disabled_handlers'] = sorted(merged_disabled)
-        if cfg.get('priority_overrides'):
-            file_overrides = data.get('priority_overrides') or {}
-            if not isinstance(file_overrides, dict):
-                file_overrides = {}
-            merged_overrides = {**file_overrides, **cfg['priority_overrides']}
-            data['priority_overrides'] = {k: merged_overrides[k] for k in sorted(merged_overrides)}
+        _merge_provider_config(data, provider_handler_config(str(agent_type)))
     return data
+
+
+def _read_config_file(path: str) -> dict:
+    try:
+        with open(path, 'r') as f:
+            file_data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+    return file_data if isinstance(file_data, dict) else {}
+
+
+def _merge_provider_config(data: dict, cfg: dict) -> None:
+    if cfg.get('disabled_handlers'):
+        file_disabled = [x for x in data.get('disabled_handlers', []) if isinstance(x, str)]
+        merged_disabled = set(file_disabled) | set(cfg['disabled_handlers'])
+        data['disabled_handlers'] = sorted(merged_disabled)
+    if cfg.get('priority_overrides'):
+        file_overrides = data.get('priority_overrides') or {}
+        if not isinstance(file_overrides, dict):
+            file_overrides = {}
+        merged_overrides = {**file_overrides, **cfg['priority_overrides']}
+        data['priority_overrides'] = {k: merged_overrides[k] for k in sorted(merged_overrides)}
 
 
 def _active_provider_id() -> str:
@@ -147,6 +152,25 @@ def effective_priority(handler_name: str, default: int, agent_type: str | None =
     return priority_overrides(agent_type).get(handler_name, default)
 
 
+def _is_priority(value: object) -> bool:
+    return not isinstance(value, bool) and isinstance(value, (int, float))
+
+
+def _sanitized_overrides(current: object) -> dict[str, int]:
+    if not isinstance(current, dict):
+        return {}
+    return {k: int(v) for k, v in current.items() if isinstance(k, str) and _is_priority(v)}
+
+
+def _apply_priority_update(merged: dict[str, int], name: object, value: object) -> None:
+    if not isinstance(name, str):
+        return
+    if value is None:
+        merged.pop(name, None)
+    elif _is_priority(value):
+        merged[name] = int(value)
+
+
 def set_priorities(updates: dict[str, int | None], agent_type: str | None = None) -> None:
     """Merge `updates` into the persisted override map.
 
@@ -158,24 +182,11 @@ def set_priorities(updates: dict[str, int | None], agent_type: str | None = None
         return
     with _lock:
         data = _load_raw(agent_type)
-        current = data.get('priority_overrides') or {}
-        if not isinstance(current, dict):
-            current = {}
         # Sanitize the existing map so we never write back a value we'd
         # have rejected on read (defensive against hand-edits).
-        merged: dict[str, int] = {}
-        for k, v in current.items():
-            if isinstance(k, str) and not isinstance(v, bool) and isinstance(v, (int, float)):
-                merged[k] = int(v)
+        merged = _sanitized_overrides(data.get('priority_overrides'))
         for name, value in updates.items():
-            if not isinstance(name, str):
-                continue
-            if value is None:
-                merged.pop(name, None)
-                continue
-            if isinstance(value, bool) or not isinstance(value, (int, float)):
-                continue
-            merged[name] = int(value)
+            _apply_priority_update(merged, name, value)
         data['schema_version'] = 1
         # Sort keys for stable on-disk diffs (same rationale as set_enabled).
         data['priority_overrides'] = {k: merged[k] for k in sorted(merged)}

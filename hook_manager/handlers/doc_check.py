@@ -72,25 +72,7 @@ def handle(payload: HookPayload) -> HookResponse | None:
     if not new_text:
         return None
 
-    findings: list[str] = []
-
-    for match in _ROT_PRONE_COUNTS.finditer(new_text):
-        if len(findings) >= _MAX_HITS_REPORTED:
-            findings.append('… (more hits truncated)')
-            break
-        findings.append(
-            f'rot-prone count "{match.group(0)}" — replace with a pointer '
-            f'to the source directory (see doc-hygiene skill, rule R1)'
-        )
-
-    for pattern in _STALE_PHRASES:
-        match = pattern.search(new_text)
-        if match:
-            findings.append(
-                f'stale phrase "{match.group(0)}" — drop it; git blame and '
-                f'tracker issues are authoritative (rules R3/R4)'
-            )
-
+    findings = _rot_prone_count_findings(new_text) + _stale_phrase_findings(new_text)
     if not findings:
         return None
 
@@ -101,6 +83,31 @@ def handle(payload: HookPayload) -> HookResponse | None:
             f'Invoke the `doc-hygiene` skill for the full ruleset.'
         ),
     )
+
+
+def _rot_prone_count_findings(new_text: str) -> list[str]:
+    findings: list[str] = []
+    for match in _ROT_PRONE_COUNTS.finditer(new_text):
+        if len(findings) >= _MAX_HITS_REPORTED:
+            findings.append('… (more hits truncated)')
+            break
+        findings.append(
+            f'rot-prone count "{match.group(0)}" — replace with a pointer '
+            f'to the source directory (see doc-hygiene skill, rule R1)'
+        )
+    return findings
+
+
+def _stale_phrase_findings(new_text: str) -> list[str]:
+    findings: list[str] = []
+    for pattern in _STALE_PHRASES:
+        match = pattern.search(new_text)
+        if match:
+            findings.append(
+                f'stale phrase "{match.group(0)}" — drop it; git blame and '
+                f'tracker issues are authoritative (rules R3/R4)'
+            )
+    return findings
 
 
 def _extract_new_text(payload: HookPayload) -> str:
