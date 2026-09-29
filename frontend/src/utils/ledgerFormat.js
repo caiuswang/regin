@@ -20,9 +20,6 @@ export const GAP_BLURB = {
   model_unpriced: 'sessions on a model with no entry in the price table',
   zero_duration: 'sessions with no measurable active work',
   traceless_runs: 'pipeline runs with no trace to attribute',
-  check_not_yet_written: 'closed defects naming a test that does not exist yet — the claim that a check would have caught it, unredeemed',
-  check_name_unverified: 'closed defects naming only a test FILE — the file is there, but nothing says it grew the case',
-  no_check_named: 'closed defects whose missing check names no test at all',
 }
 
 export function money(value) {
