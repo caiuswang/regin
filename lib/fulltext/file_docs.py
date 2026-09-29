@@ -201,14 +201,20 @@ def search_file_docs(touched: list[dict], query: str, limit: int) -> list[Scored
     counts = count_matches(existing, query, globs=[], suffixes=())
     scored: list[Scored] = []
     for order, path in enumerate(sorted(counts, key=lambda p: -counts[p])):
-        doc = _file_doc(path, by_path.get(path) or {})
-        if doc is None:
-            continue
-        hit = score_doc(doc, query, order)
+        hit = _score_file(path, by_path.get(path) or {}, query, order)
         if hit:
-            hit.doc.body = body_window(doc.body, query)
             scored.append(hit)
     return rank(scored)[:limit]
+
+
+def _score_file(path: str, row: dict, query: str, order: int) -> Scored | None:
+    doc = _file_doc(path, row)
+    if doc is None:
+        return None
+    hit = score_doc(doc, query, order)
+    if hit:
+        hit.doc.body = body_window(doc.body, query)
+    return hit
 
 
 def _diff_tag(row: dict) -> str:
