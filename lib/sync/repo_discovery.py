@@ -292,6 +292,19 @@ def prune_orphan_repos(*, dry_run: bool = False) -> list[dict]:
     return candidates
 
 
+def _delete_repo_named(name: str) -> int | None:
+    """Delete the `Repo` row called `name` and its dependents; returns its
+    id, or None when no such row exists."""
+    with SessionLocal() as session:
+        repo = session.exec(select(Repo).where(Repo.name == name)).first()
+        if repo is None:
+            return None
+        repo_id = repo.id
+        _delete_repos(session, [repo_id])
+        session.commit()
+    return repo_id
+
+
 def remove_repo(name: str) -> dict:
     """Unregister a repo by name.
 
@@ -300,32 +313,14 @@ def remove_repo(name: str) -> dict:
     tree on disk is untouched.
     """
     paths = _load_repo_paths()
-    target_path = None
-    for p in paths:
-        if os.path.basename(p.rstrip(os.sep)) == name:
-            target_path = p
-            break
+    target_path = next(
+        (p for p in paths if os.path.basename(p.rstrip(os.sep)) == name), None,
+    )
+    if target_path:
+        _save_repo_paths([p for p in paths if p != target_path])
 
-    new_paths = [p for p in paths if p != target_path] if target_path else paths
-    if new_paths != paths:
-        _save_repo_paths(new_paths)
-
-    removed = False
-    repo_id = None
-    with SessionLocal() as session:
-        repo = session.exec(select(Repo).where(Repo.name == name)).first()
-        if repo is not None:
-            repo_id = repo.id
-            for b in session.exec(
-                select(Branch).where(Branch.repo_id == repo.id)
-            ).all():
-                session.delete(b)
-            # session_repos has no FK cascade — drop its tags manually
-            # so removing a repo doesn't orphan session→repo links.
-            session.exec(delete(SessionRepo).where(SessionRepo.repo_id == repo.id))
-            session.delete(repo)
-            session.commit()
-            removed = True
+    repo_id = _delete_repo_named(name)
+    removed = repo_id is not None
 
     if removed or target_path is not None:
         _sync_log().write(
