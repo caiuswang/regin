@@ -23,12 +23,15 @@ const query = ref('')
 const sameFeature = ref([])
 const found = ref([])
 const foundTotal = ref(0)
+const foundQ = ref('')
 const keeper = ref(null)
 const error = ref('')
 const search = ref(null)
 let issued = 0
 
 const others = rows => rows.filter(r => r.id !== props.defect.id)
+// The server's `q` is a case-insensitive substring of the symptom.
+const matches = (row, q) => !q || (row.symptom || '').toLowerCase().includes(q.toLowerCase())
 
 async function read(params) {
   const body = await api.get(`/defects?${new URLSearchParams({
@@ -46,6 +49,7 @@ async function lookup() {
     const shown = new Set(sameFeature.value.map(r => r.id))
     found.value = others(body.items || []).filter(r => !shown.has(r.id))
     foundTotal.value = body.pagination?.total ?? found.value.length
+    foundQ.value = q
   } catch (e) {
     if (mine === issued) error.value = e?.message || String(e)
   }
@@ -62,6 +66,15 @@ onMounted(async () => {
   }
   await lookup()
   search.value?.focus()
+})
+
+// The server total counts every match, including this defect and the
+// same-feature rows already listed above; neither is "more".
+const more = computed(() => {
+  const q = foundQ.value
+  const self = props.defect.status === 'open' && matches(props.defect, q) ? 1 : 0
+  return foundTotal.value - found.value.length - self
+    - sameFeature.value.filter(r => matches(r, q)).length
 })
 
 const groups = computed(() => [
@@ -104,8 +117,8 @@ function onEscape() {
           </li>
         </ul>
       </div>
-      <p v-if="foundTotal > found.length" class="mp-note">
-        {{ foundTotal - found.length }} more — keep typing to narrow
+      <p v-if="more > 0" class="mp-note" data-testid="merge-more">
+        {{ more }} more — keep typing to narrow
       </p>
       <Button variant="ghost" size="sm" class="mp-cancel" @click="emit('cancel')">Cancel</Button>
     </template>

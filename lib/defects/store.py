@@ -853,6 +853,8 @@ def _narrowed(stmt, query):
         stmt = stmt.where(in_queue())
     if query.triage_position:
         stmt = stmt.where(_triage_position(query.triage_position))
+    if query.queue_out:
+        stmt = stmt.where(Defect.status == STATUS_OPEN, ~in_queue())
     if query.status:
         stmt = stmt.where(Defect.status == query.status)
     if query.q:

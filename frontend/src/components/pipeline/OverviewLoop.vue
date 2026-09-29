@@ -28,7 +28,7 @@ function linkOf(stage, key) {
   const scope = props.scope
   if (stage === 'Tasks') return { path: '/tasks', query: { ...scope, view: 'list', group: key } }
   if (stage === 'Features') return { path: '/features', query: { ...scope, stage: key } }
-  if (key === 'open') return { path: '/defects', query: { ...scope, status: 'open' } }
+  if (key === 'open') return { path: '/defects', query: { ...scope, status: 'open', queue: 'out' } }
   return { path: '/features', query: { ...scope } }
 }
 

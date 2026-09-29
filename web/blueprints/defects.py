@@ -177,6 +177,7 @@ def api_list_defects():
         body, population=store.population(query), sort=str(query.sort),
         filters={"scope": query.scope, "status": query.status, "q": query.q,
                  "triage": query.triage_position,
+                 "queue": defect_query.QUEUE_OUT if query.queue_out else None,
                  "feature_id": query.feature_id,
                  "fix_item": query.fix_task_id,
                  "project": "none" if query.project_none

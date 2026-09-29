@@ -215,7 +215,6 @@ useTaskShortcuts({
           ref="rail"
           v-model:folded="railFolded"
           :scope="route.query.project ? String(route.query.project) : ''"
-          :unattributed="extras.unattributed_defects || 0"
           :focus-id="route.query.triage || null"
           @changed="reload"
         />

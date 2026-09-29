@@ -3,9 +3,13 @@ restore, suspect-path edits, and refusals that carry their remedy."""
 
 from __future__ import annotations
 
+from sqlalchemy import text
+
 from lib.auth import create_token
 from lib.defects import store
 from lib.features import events
+from lib.orm import SessionLocal
+from lib.orm.models import Repo
 
 EDITOR = {"Authorization": f"Bearer {create_token(2, 'ed', 'editor')}"}
 
@@ -190,3 +194,55 @@ def test_feature_picker_server_search_excludes_abandoned(flask_client,
                             headers=EDITOR).get_json()
     assert [item["id"] for item in body["items"]] == [live.id]
     assert body["pagination"]["total"] == 1
+
+
+def test_defects_queue_out_filter(flask_client, feature_row):
+    queued, snoozed, woken, declined = _triage_population(feature_row)
+    blamed = store.record("blamed too", feature_id=feature_row("other").id)
+    store.close(blamed.id, missing_check="test_blamed_too")
+    ids, body = _ids(flask_client, "queue=out")
+    # The queued and woken rows wait in the queue; the declined row is closed.
+    assert snoozed.id in ids and blamed.id not in ids
+    assert not ids & {queued.id, woken.id, declined.id}
+    assert body["applied"]["filters"]["queue"] == "out"
+    assert ids == _ids(flask_client, "status=open&queue=out")[0]
+
+    overview = flask_client.get("/api/pipeline/overview",
+                                headers=EDITOR).get_json()
+    defects = next(s for s in overview["loop"]["stages"]
+                   if s["label"] == "Defects")
+    open_part = next(p["n"] for p in defects["parts"] if p["key"] == "open")
+    assert body["pagination"]["total"] == open_part == len(ids)
+
+
+def _in_project(feature_id: int, project_id: int):
+    with SessionLocal() as session:
+        if session.get(Repo, project_id) is None:
+            session.add(Repo(id=project_id, name="core", path="/tmp/core"))
+        session.exec(text("UPDATE features SET project_id = :p WHERE id = :i")
+                     .bindparams(p=project_id, i=feature_id))
+        session.commit()
+
+
+def test_defects_queue_out_filter_follows_project_scope(flask_client,
+                                                         feature_row):
+    core_project = 7
+    _triage_population(feature_row)
+    scoped = feature_row("in the project")
+    _in_project(scoped.id, core_project)
+    inside = store.record("inside", feature_id=scoped.id)
+    ids, body = _ids(flask_client, f"queue=out&project={core_project}")
+    assert ids == {inside.id}
+    overview = flask_client.get(
+        f"/api/pipeline/overview?project={core_project}",
+        headers=EDITOR).get_json()
+    defects = next(s for s in overview["loop"]["stages"]
+                   if s["label"] == "Defects")
+    assert next(p["n"] for p in defects["parts"]
+                if p["key"] == "open") == body["pagination"]["total"] == 1
+
+
+def test_defects_api_refuses_unknown_queue(flask_client):
+    bad = flask_client.get("/api/defects?queue=in", headers=EDITOR)
+    assert bad.status_code == 400
+    assert "unknown queue" in bad.get_json()["error"]

@@ -49,6 +49,11 @@ TRIAGE_SNOOZED = "snoozed"
 TRIAGE_DECLINED = "declined"
 TRIAGES = (TRIAGE_QUEUE, TRIAGE_SNOOZED, TRIAGE_DECLINED)
 
+#: `queue=out`: open and not waiting in the triage queue — the rows the
+#: Overview loop counts as Defects → Open, so its link lists exactly those.
+QUEUE_OUT = "out"
+QUEUES = (QUEUE_OUT,)
+
 STATUSES = (STATUS_OPEN, STATUS_CLOSED)
 STATUS_ANY = "all"
 
@@ -91,6 +96,7 @@ class DefectQuery:
     unattributed: bool = False
     triage: bool = False
     triage_position: Optional[str] = None
+    queue_out: bool = False
     status: Optional[str] = None
     q: str = ""
     project_id: Optional[int] = None
@@ -135,6 +141,15 @@ def parse_triage(raw) -> Optional[str]:
     if value not in TRIAGES:
         raise QueryError(f"unknown triage: {value}")
     return value
+
+
+def parse_queue(raw) -> bool:
+    value = (raw or "").strip()
+    if not value:
+        return False
+    if value not in QUEUES:
+        raise QueryError(f"unknown queue: {value}")
+    return True
 
 
 def parse_project(raw) -> tuple[Optional[int], bool]:
@@ -188,6 +203,7 @@ def from_args(args) -> DefectQuery:
                       and feature_id is None and fix_task_id is None),
         triage=triage,
         triage_position=position,
+        queue_out=parse_queue(args.get("queue")),
         status=parse_status(args.get("status")),
         q=(args.get("q") or "").strip()[:Q_MAX],
         project_id=project_id,

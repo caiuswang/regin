@@ -40,7 +40,7 @@ const SORT_OPTIONS = [
 const list = useListQuery({
   defaults: { q: '', status: '', triage: '', sort: 'opened:desc' },
   facets: ['status', 'triage'],
-  kept: ['feature_id'],
+  kept: ['feature_id', 'queue'],
 })
 const { state } = list
 
@@ -55,6 +55,7 @@ const {
     triage: state.value.triage,
     sort: state.value.sort,
     feature_id: route.query.feature_id,
+    queue: route.query.queue,
     project: scopeParam(route.query.project),
   }),
 })
@@ -78,6 +79,7 @@ const sortKey = computed(() => appliedSort.value.split(':')[0])
 const sortDir = computed(() => (appliedSort.value.split(':')[1] === 'asc' ? 'asc' : 'desc'))
 const canWrite = computed(() => api.getStoredUser()?.role !== 'viewer')
 const featureId = computed(() => route.query.feature_id || '')
+const queueOut = computed(() => route.query.queue === 'out')
 const status = computed(() => listStatusState({
   loaded: loaded.value, error: error.value, items: items.value,
   total: total.value, population: population.value,
@@ -89,9 +91,9 @@ function gotoPage(index) {
   list.patch({ page: String(Math.max(0, Math.min(pageCount.value - 1, index))) })
 }
 
-function clearFeature() {
+function clearKept(key) {
   const query = { ...route.query }
-  delete query.feature_id
+  delete query[key]
   delete query.page
   router.replace({ path: route.path, query })
 }
@@ -142,7 +144,14 @@ function onChanged(message, info) {
           <router-link :to="`/features/${featureId}`">feature #{{ featureId }}</router-link>
           <Button variant="ghost" size="icon" class="dv-chip__x"
                   :aria-label="`Show defects of every feature, not only #${featureId}`"
-                  data-testid="defects-feature-clear" @click="clearFeature"
+                  data-testid="defects-feature-clear" @click="clearKept('feature_id')"
+          ><Icon name="x" :size="12" /></Button>
+        </span>
+        <span v-if="queueOut" class="dv-chip" data-testid="defects-queue-chip">
+          out of the triage queue
+          <Button variant="ghost" size="icon" class="dv-chip__x"
+                  aria-label="Include defects still in the triage queue"
+                  data-testid="defects-queue-clear" @click="clearKept('queue')"
           ><Icon name="x" :size="12" /></Button>
         </span>
       </template>
