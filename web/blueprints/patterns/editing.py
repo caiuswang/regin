@@ -552,19 +552,17 @@ def api_import_dir():
     from lib.patterns import pattern_importer
 
     body = request.get_json(silent=True) or {}
-    raw = (body.get("path") or "").strip()
+    raw, on_conflict, dry_run = _import_dir_args(body)
     if not raw:
         return jsonify({"ok": False, "msg": "missing 'path'"}), 400
-    on_conflict = (body.get("on_conflict") or "skip").strip().lower()
-    dry_run = bool(body.get("dry_run", False))
 
     only, sel_err = _parse_selected(body)
     if sel_err is not None:
         return sel_err
 
-    expanded = os.path.abspath(os.path.expanduser(raw))
-    if not os.path.isdir(expanded):
-        return jsonify({"ok": False, "msg": f"not a directory: {expanded}"}), 400
+    expanded, dir_err = _existing_dir(raw)
+    if dir_err is not None:
+        return dir_err
 
     try:
         results = pattern_importer.batch_import_skill_directory(
@@ -573,23 +571,9 @@ def api_import_dir():
     except pattern_importer.ImportError_ as e:
         return jsonify({"ok": False, "msg": str(e)}), 400
 
-    counts: dict[str, int] = {}
-    for r in results:
-        counts[r.status] = counts.get(r.status, 0) + 1
-
-    if not dry_run and (counts.get("imported") or counts.get("overwritten")
-                         or counts.get("renamed")):
-        user = get_current_user()
-        audit.log_action(
-            user["id"] if user else None,
-            user["username"] if user else "anonymous",
-            "import_dir", f"path:{expanded}",
-            {
-                "on_conflict": on_conflict,
-                "counts": counts,
-                "selected": len(only) if only is not None else "all",
-            },
-        )
+    counts = _status_counts(results)
+    if not dry_run and _import_changed_anything(counts):
+        _audit_import_dir(expanded, on_conflict, counts, only)
 
     return jsonify({
         "ok": True,
@@ -597,21 +581,66 @@ def api_import_dir():
         "on_conflict": on_conflict,
         "dry_run": dry_run,
         "counts": counts,
-        "results": [
-            {
-                "name": r.name,
-                "status": r.status,
-                "slug": r.slug,
-                "title": r.title,
-                "file_count": r.file_count,
-                "error": r.error,
-                "grit_rules": r.grit_rules,
-                "grit_languages": r.grit_languages,
-                "enabled_languages": r.enabled_languages,
-            }
-            for r in results
-        ],
+        "results": [_import_entry_dict(r) for r in results],
     })
+
+
+def _import_dir_args(body: dict) -> tuple[str, str, bool]:
+    """`(path, on_conflict, dry_run)` from the import-dir request body."""
+    return (
+        (body.get("path") or "").strip(),
+        (body.get("on_conflict") or "skip").strip().lower(),
+        bool(body.get("dry_run", False)),
+    )
+
+
+def _existing_dir(raw: str):
+    """`(expanded_path, None)`, or `(expanded_path, 400 response)` when it
+    is not a directory."""
+    expanded = os.path.abspath(os.path.expanduser(raw))
+    if not os.path.isdir(expanded):
+        return expanded, (jsonify({"ok": False, "msg": f"not a directory: {expanded}"}), 400)
+    return expanded, None
+
+
+def _status_counts(results) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for r in results:
+        counts[r.status] = counts.get(r.status, 0) + 1
+    return counts
+
+
+def _import_changed_anything(counts: dict[str, int]) -> bool:
+    return bool(counts.get("imported") or counts.get("overwritten")
+                or counts.get("renamed"))
+
+
+def _audit_import_dir(expanded, on_conflict, counts, only) -> None:
+    user = get_current_user()
+    audit.log_action(
+        user["id"] if user else None,
+        user["username"] if user else "anonymous",
+        "import_dir", f"path:{expanded}",
+        {
+            "on_conflict": on_conflict,
+            "counts": counts,
+            "selected": len(only) if only is not None else "all",
+        },
+    )
+
+
+def _import_entry_dict(r) -> dict:
+    return {
+        "name": r.name,
+        "status": r.status,
+        "slug": r.slug,
+        "title": r.title,
+        "file_count": r.file_count,
+        "error": r.error,
+        "grit_rules": r.grit_rules,
+        "grit_languages": r.grit_languages,
+        "enabled_languages": r.enabled_languages,
+    }
 
 
 @patterns_bp.route("/api/skillhub-status")
