@@ -2386,11 +2386,11 @@ def api_session_subtrees(trace_id):
     Span bodies are deduplicated across the requested roots, which matters
     because a subagent's spans can hang under more than one of them.
     """
-    ids = [i for i in (request.args.get('ids') or '').split(',') if i]
+    ids = _csv_arg('ids')
     if not ids:
         return jsonify({'error': 'ids is required'}), 400
     known = _parse_known_watermarks(request.args.get('known'))
-    dirty = {i for i in (request.args.get('dirty') or '').split(',') if i}
+    dirty = set(_csv_arg('dirty'))
     seen = _parse_seen_digests(request.args.get('seen'))
     widened, tree = trace_service.fetch_session_projection(
         trace_id, drop_delegated=True)
@@ -2406,8 +2406,16 @@ def api_session_subtrees(trace_id):
         # clearing them. Silence could not carry both answers.
         'unchanged': unchanged,
         'digests': digests,
-        'spans': [by_id[i] for i in wanted if i in by_id],
+        'spans': _known_spans(by_id, wanted),
     })
+
+
+def _csv_arg(name) -> list:
+    return [i for i in (request.args.get(name) or '').split(',') if i]
+
+
+def _known_spans(by_id, wanted) -> list:
+    return [by_id[i] for i in wanted if i in by_id]
 
 
 def _parse_seen_digests(raw) -> dict:
