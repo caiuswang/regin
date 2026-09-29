@@ -1058,32 +1058,44 @@ def _attach_compaction_reclaim(conn, trace_id: str, spans: list[dict]) -> None:
     posts = [s for s in spans if s.get('name') == 'compact.post']
     if not posts:
         return
+    pre_times = _compact_pre_times(conn, trace_id)
+    turns = _turn_context_sizes(conn, trace_id)
+    for post in posts:
+        reclaimed = _reclaimed_for_post(post, pre_times, turns)
+        if reclaimed is not None:
+            post.setdefault('attributes', {})['reclaimed_tokens'] = reclaimed
+
+
+def _compact_pre_times(conn, trace_id: str) -> list[datetime]:
     pres = conn.execute(
         "SELECT start_time FROM session_spans "
         "WHERE trace_id = ? AND name = 'compact.pre' "
         "ORDER BY start_time ASC",
         (trace_id,),
     ).fetchall()
-    pre_times = sorted(
+    return sorted(
         t for t in (_to_utc(r['start_time']) for r in pres) if t
     )
+
+
+def _turn_context_sizes(conn, trace_id: str) -> list[tuple]:
     turn_rows = conn.execute(
         "SELECT timestamp, context_used_tokens FROM turn_usage "
         "WHERE trace_id = ? ORDER BY timestamp ASC",
         (trace_id,),
     ).fetchall()
-    turns = [(_to_utc(r['timestamp']), r['context_used_tokens']) for r in turn_rows]
-    for post in posts:
-        post_at = _to_utc(post.get('start_time'))
-        if post_at is None:
-            continue
-        # Pair with the latest compact.pre at/before this post.
-        pre_at = next((t for t in reversed(pre_times) if t <= post_at), None)
-        if pre_at is None:
-            continue
-        reclaimed = _reclaimed_for_pair(pre_at, post_at, turns)
-        if reclaimed is not None:
-            post.setdefault('attributes', {})['reclaimed_tokens'] = reclaimed
+    return [(_to_utc(r['timestamp']), r['context_used_tokens']) for r in turn_rows]
+
+
+def _reclaimed_for_post(post: dict, pre_times: list[datetime], turns: list[tuple]) -> int | None:
+    post_at = _to_utc(post.get('start_time'))
+    if post_at is None:
+        return None
+    # Pair with the latest compact.pre at/before this post.
+    pre_at = next((t for t in reversed(pre_times) if t <= post_at), None)
+    if pre_at is None:
+        return None
+    return _reclaimed_for_pair(pre_at, post_at, turns)
 
 
 def _enclosing_prompt_id(span: dict, by_id: dict) -> str | None:
