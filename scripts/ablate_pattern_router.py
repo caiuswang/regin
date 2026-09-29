@@ -58,25 +58,27 @@ def run_hybrid(query: str, k: int = 5, rerank: bool = False) -> list[str]:
     return [h["slug"] for h in hits]
 
 
+def _metrics(ranks: list[int | None]) -> dict[str, float]:
+    n = len(ranks)
+    return {
+        "top1": sum(1 for r in ranks if r == 1) / n,
+        "recall5": sum(1 for r in ranks if (r or 99) <= 5) / n,
+        "mrr5": sum(_mrr(r) for r in ranks) / n,
+    }
+
+
 def score(results: dict[str, list[str]]) -> dict:
-    per_family: dict[str, list[tuple[str, str, int | None]]] = {}
+    per_family: dict[str, list[int | None]] = {}
     rows = []
     for query, expected, family in EVAL_SET:
         rank = _rank_of(expected, results[query])
-        per_family.setdefault(family, []).append((query, expected, rank))
+        per_family.setdefault(family, []).append(rank)
         rows.append((family, query, expected, rank))
     out = {"n": len(EVAL_SET), "rows": rows}
-    out["top1"] = sum(1 for r in rows if r[3] == 1) / len(rows)
-    out["recall5"] = sum(1 for r in rows if (r[3] or 99) <= 5) / len(rows)
-    out["mrr5"] = sum(_mrr(r[3]) for r in rows) / len(rows)
-    out["families"] = {}
-    for fam, items in per_family.items():
-        out["families"][fam] = {
-            "n": len(items),
-            "top1": sum(1 for _, _, r in items if r == 1) / len(items),
-            "recall5": sum(1 for _, _, r in items if (r or 99) <= 5) / len(items),
-            "mrr5": sum(_mrr(r) for _, _, r in items) / len(items),
-        }
+    out.update(_metrics([r[3] for r in rows]))
+    out["families"] = {
+        fam: {"n": len(ranks), **_metrics(ranks)} for fam, ranks in per_family.items()
+    }
     return out
 
 
