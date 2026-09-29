@@ -1709,6 +1709,23 @@ def _entry_marker_facts(latest, stop) -> dict:
     }
 
 
+def _roster_is_waiting(ask_seen, last_seen) -> bool:
+    """Blocked on a human: the newest PENDING ask/permission IS the agent's
+    newest span (a later resolved span means the ask was answered)."""
+    ask_ts = _roster_ts(ask_seen)
+    seen_ts = _roster_ts(last_seen)
+    return bool(ask_ts and seen_ts and ask_ts >= seen_ts)
+
+
+def _roster_first_start_ts(seg_entry):
+    starts = (seg_entry or {}).get('starts') or []
+    return _roster_ts(starts[0]['start_time']) if starts else None
+
+
+def _roster_declared_done(latest) -> bool:
+    return bool(latest and latest['attrs'].get('state') == 'done')
+
+
 def _roster_entry_base(aid, seg_entry, activity, waiting) -> dict:
     """Segment + activity facts for one agent, before status/description."""
     latest, stop = _roster_latest_segment(
@@ -1718,13 +1735,8 @@ def _roster_entry_base(aid, seg_entry, activity, waiting) -> dict:
     # `started_at` anchors the LIVE elapsed, so it stays on the current run.
     # How long the agent took overall is a different question, and a resumed
     # one answers it from its first run — see `_roster_output_entry`.
-    starts = (seg_entry or {}).get('starts') or []
     started_at = latest['start_time'] if latest else act.get('first_ts')
     last_seen = act.get('last_ts') or facts['marker_seen']
-    # Blocked on a human: the newest PENDING ask/permission IS the agent's
-    # newest span (a later resolved span means the ask was answered).
-    ask_ts = _roster_ts(waiting.get(aid))
-    seen_ts = _roster_ts(last_seen)
     return {
         'agent_id': aid,
         'agent_type': _entry_agent_type(latest, stop, act),
@@ -1732,16 +1744,16 @@ def _roster_entry_base(aid, seg_entry, activity, waiting) -> dict:
         'start_ts': _roster_ts(started_at),
         'stop': stop,
         'start_span_id': facts['start_span_id'],
-        'first_start_ts': _roster_ts(starts[0]['start_time']) if starts else None,
+        'first_start_ts': _roster_first_start_ts(seg_entry),
         'last_seen': last_seen,
         'span_count': int(act.get('internal_count') or 0),
         'description': facts['description'],
         'prompt_preview': facts['prompt_preview'],
-        'waiting': bool(ask_ts and seen_ts and ask_ts >= seen_ts),
+        'waiting': _roster_is_waiting(waiting.get(aid), last_seen),
         'last_span': act.get('last_span'),
         # Workflow-run ingest records completion as `state: done` on the start
         # marker itself — those agents never get a subagent.stop span.
-        'declared_done': bool(latest and latest['attrs'].get('state') == 'done'),
+        'declared_done': _roster_declared_done(latest),
     }
 
 
