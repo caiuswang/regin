@@ -164,7 +164,10 @@ def _run_next(session, scope) -> dict:
     ready = session.exec(_run_next_stmt(
         select(func.count(AgentTask.id)), scope)
         .where(~next_step.has_unmet_dependency())).one()
-    return {"total": int(total), "ready": int(ready),
+    blocked = session.exec(_run_next_stmt(
+        select(func.count(AgentTask.id)), scope)
+        .where(next_step.has_unmet_dependency())).one()
+    return {"total": int(total), "ready": int(ready), "blocked": int(blocked),
             "rows": [_run_next_row(t) for t in tasks]}
 
 

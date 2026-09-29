@@ -40,7 +40,12 @@ const subOf = row => runNextSub({ ...row, feature_id: null })
     <RunningNow v-if="running?.total" :running="running" :compact="compact" @stopped="emit('ran')" />
     <header class="pl-panel__head" :class="{ 'rn-head--after': running?.total }">
       <h2 id="rn-title" class="pl-panel__title">Run next</h2>
-      <span class="pl-panel__sub" data-testid="run-next-count">{{ runNext.total }}</span>
+      <span class="pl-panel__sub" data-testid="run-next-count">{{ runNext.ready }}</span>
+      <router-link
+        v-if="runNext.blocked" :to="groupTo('blocked')"
+        class="pl-panel__sub rn-link focus-visible:outline-2 focus-visible:outline-blue-500"
+        data-testid="run-next-blocked"
+      >· {{ runNext.blocked }} blocked</router-link>
       <router-link :to="groupTo('ready')" class="pl-panel__link focus-visible:outline-2 focus-visible:outline-blue-500"
                    data-testid="run-next-all"
       >All in Tasks →</router-link>

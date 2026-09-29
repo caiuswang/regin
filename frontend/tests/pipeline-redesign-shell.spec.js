@@ -62,7 +62,7 @@ function overview({ empty = false, project = null, loop = LOOP } = {}) {
     loop,
     running: empty ? { total: 0, rows: [] } : RUNNING,
     run_next: empty ? { total: 0, ready: 0, rows: [] } : {
-      total: 9, ready: 4,
+      total: 9, ready: 4, blocked: 5,
       rows: [
         runRow(415, 'Stale lease blocks re-arm after runner crash', { kind: 'run' }, { fixes_defects: [91], feature_id: 31, feature_title: 'Live tail reconnect', step: null, status: 'queued' }),
         runRow(412, 'Retry budget for runner restarts', { kind: 'run' }),
@@ -148,6 +148,15 @@ async function stubPipeline(page, opts = {}) {
           attribution: { sessions_pct: 61, declared_sessions: 61, all_sessions: 100, declared_usd: 412.2, all_usd: 655 } } })
     }
     if (p === '/api/defects') {
+      if (url.searchParams.get('triage') === 'snoozed') {
+        return json(route, { items: [], pagination: { total: state.snoozed ?? 2 } })
+      }
+      if (url.searchParams.get('status') === 'open' && !url.searchParams.get('feature_id')) {
+        // Open outside the queue (LOOP's Defects → Open is 6); without `queue=out` the queue joins them.
+        const out = url.searchParams.get('queue') === 'out'
+        const rows = Array.from({ length: out ? 6 : 9 }, (_, i) => defect(300 + i, { queue_position: out ? null : 'queue' }))
+        return json(route, { items: rows, pagination: { total: rows.length, page: 0, size: 50 }, population: 40 })
+      }
       if (url.searchParams.get('scope') === 'triage') {
         return json(route, { items: state.triage, pagination: { total: state.triage.length } })
       }
@@ -320,7 +329,7 @@ test('test_overview_panels_and_empty_states', async ({ page }) => {
   expect(Number(await waiting.evaluate(el => getComputedStyle(el).opacity))).toBeLessThan(1)
   await expect(waiting.getByRole('button')).toHaveCount(0)
   await expect(page.getByTestId('run-next-run-412')).toBeVisible()
-  await expect(page.getByTestId('run-next-count')).toHaveText('9')
+  await expect(page.getByTestId('run-next-count')).toHaveText('4')
   await expect(page.getByTestId('run-next-all')).toHaveText('All in Tasks →')
   await expect(page.getByTestId('needs-decision-row-94')).toContainText('D-94')
   await expect(page.getByTestId('needs-decision-attribute-94')).toBeVisible()
@@ -932,7 +941,7 @@ test('test_overview_every_fact_links_to_filtered_tab', async ({ page }) => {
   expect(await href('loop-fact-building')).toBe('/features?stage=building')
   expect(await href('loop-fact-spec')).toBe('/features?stage=spec')
   expect(await href('loop-fact-escaped')).toBe('/features?stage=escaped')
-  expect(await href('loop-fact-open')).toBe('/defects?status=open')
+  expect(await href('loop-fact-open')).toBe('/defects?status=open&queue=out')
   expect(await href('loop-fact-triage')).toBe('/features')
   // Every printed fact is an anchor — none is left as plain text.
   await expect(page.locator('[data-testid^="loop-fact-"]:not(a)')).toHaveCount(0)
@@ -1164,4 +1173,56 @@ test('test_action_toasts_link_the_object', async ({ page }) => {
   await page.getByTestId('run-next-run-412').click()
   await expect(flash).toBeInViewport()
   await expect(link).toHaveAttribute('href', '/trace/sessions/tr-9')
+})
+
+test('test_overview_loop_open_link_matches_count', async ({ page }) => {
+  await stubPipeline(page)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto('/overview')
+  const open = page.getByTestId('loop-fact-open')
+  await expect(open).toHaveText('6 open')
+  await open.click()
+  await expect(page).toHaveURL(/\/defects\?status=open&queue=out$/)
+  await expect(page.getByTestId('defects-list').locator('> li')).toHaveCount(6)
+  await expect(page.getByTestId('defects-queue-chip')).toBeVisible()
+  // Clearing the chip widens the list to the queue as well.
+  await page.getByTestId('defects-queue-clear').click()
+  await expect(page).not.toHaveURL(/queue=out/)
+  await expect(page.getByTestId('defects-list').locator('> li')).toHaveCount(9)
+})
+
+test('test_run_next_count_is_ready_and_blocked_link', async ({ page }) => {
+  await stubPipeline(page)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto('/overview')
+  await expect(page.getByTestId('run-next-count')).toHaveText('4')
+  await expect(page.getByTestId('run-next-all')).toHaveAttribute('href', '/tasks?view=list&group=ready')
+  const blocked = page.getByTestId('run-next-blocked')
+  await expect(blocked).toHaveText('· 5 blocked')
+  await expect(blocked).toHaveAttribute('href', '/tasks?view=list&group=blocked')
+})
+
+test('test_run_next_without_blocked_prints_no_blocked_link', async ({ page }) => {
+  await stubPipeline(page, { empty: true })
+  await page.goto('/overview')
+  await expect(page.getByTestId('run-next-count')).toHaveText('0')
+  await expect(page.getByTestId('run-next-blocked')).toHaveCount(0)
+})
+
+test('test_triage_rail_snoozed_count_from_server', async ({ page }) => {
+  const state = await stubPipeline(page)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto('/features')
+  const rail = page.getByTestId('triage-rail')
+  await expect(rail.getByTestId('triage-card-94')).toBeVisible()
+  // `unattributed_defects − queue` would print 5; the server says 2 are snoozed.
+  const snoozed = rail.getByTestId('triage-snoozed')
+  await expect(snoozed).toHaveText('2 snoozed')
+  await expect(snoozed).toHaveAttribute('href', '/defects?triage=snoozed')
+  await expect(rail).not.toContainText('older')
+
+  state.snoozed = 0
+  await page.reload()
+  await expect(rail.getByTestId('triage-card-94')).toBeVisible()
+  await expect(rail.getByTestId('triage-snoozed')).toHaveCount(0)
 })

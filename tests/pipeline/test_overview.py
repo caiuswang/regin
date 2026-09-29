@@ -131,7 +131,8 @@ def test_overview_run_next_orders_dependency_clear_first(flask_client,
 
     # `after` over a failed task is satisfied; priority "none" ranks last.
     assert [r["id"] for r in rows] == [high, low, after_ok, waiting]
-    assert (run_next["total"], run_next["ready"]) == (4, 3)
+    assert (run_next["total"], run_next["ready"], run_next["blocked"]) \
+        == (4, 3, 1)
     assert [r["action"]["kind"] for r in rows] == ["run", "run", "run", "wait"]
     assert rows[-1]["action"] == {"kind": "wait", "on": running,
                                   "on_status": TASK_STATUS_RUNNING}
@@ -140,7 +141,7 @@ def test_overview_run_next_orders_dependency_clear_first(flask_client,
 def test_overview_run_next_empty_is_a_panel_not_a_gap(flask_client):
     run_next = _overview(flask_client)["run_next"]
 
-    assert run_next == {"total": 0, "ready": 0, "rows": []}
+    assert run_next == {"total": 0, "ready": 0, "blocked": 0, "rows": []}
 
 
 @pytest.fixture

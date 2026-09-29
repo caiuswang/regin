@@ -428,3 +428,33 @@ test('a refused fix task after Accept is reported about its own defect', async (
   await page.keyboard.press('s')
   await expect(page.getByTestId('triage-notice')).toHaveCount(0)
 })
+
+test('test_merge_picker_more_excludes_self_and_shown', async ({ page }) => {
+  const keeper = defect(9, { ...ATTRIBUTED, symptom: 'the keeper' })
+  const state = { row: defect(7, { ...ATTRIBUTED, symptom: 'the duplicate' }), rows: { 9: keeper } }
+  await page.route(/\/api\/defects\?/, (route) => {
+    const q = new URL(route.request().url()).searchParams
+    if (q.get('feature_id') === '81') return route.fulfill({ json: page0([state.row, keeper]) })
+    // The server counts this defect and the same-feature row it already listed.
+    if (q.get('q') === 'the') return route.fulfill({ json: page0([state.row, keeper], 2) })
+    if (q.get('q') === 'palette') return route.fulfill({ json: page0([defect(12, { symptom: 'palette is stale' })], 5) })
+    return route.fulfill({ json: page0([state.row, keeper, defect(12, { symptom: 'palette is stale' })], 40) })
+  })
+  await stubDetail(page, state)
+
+  await page.goto('/defects/7')
+  await page.getByTestId('defect-more-7').click()
+  await page.getByRole('menuitem', { name: 'Merge into…' }).click()
+  const picker = page.getByTestId('merge-picker')
+  // 40 open, minus #7 itself, #9 above and #12 below.
+  await expect(picker.getByTestId('merge-more')).toHaveText(/^37 more/)
+
+  // Every match is already shown or is this defect: nothing more, and no contradiction.
+  await picker.getByTestId('merge-search').fill('the')
+  await expect(picker.getByTestId('merge-option-9')).toBeVisible()
+  await expect(picker.getByTestId('merge-more')).toHaveCount(0)
+
+  await picker.getByTestId('merge-search').fill('palette')
+  await expect(picker.getByTestId('merge-option-12')).toBeVisible()
+  await expect(picker.getByTestId('merge-more')).toHaveText(/^4 more/)
+})

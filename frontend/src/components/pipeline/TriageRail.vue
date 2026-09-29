@@ -11,11 +11,9 @@ import DefectRefusal from '../defects/DefectRefusal.vue'
 import { chordOf, useDefectTriage } from '../../composables/useDefectTriage'
 import { invalidatePipelineCounts } from '../../composables/usePipelineCounts'
 import { isProjectScope } from '../../composables/usePipelineScope'
-import { defectRef } from '../../utils/pipelineFormat'
 
 const props = defineProps({
   scope: { type: String, default: '' },
-  unattributed: { type: Number, default: 0 },
   // A defect id to put the cursor on once the queue is read.
   focusId: { type: [Number, String], default: null },
   // Folded, the rail is a 52px strip that still counts the queue; the parent
@@ -97,17 +95,19 @@ async function focusRequested() {
     ?.scrollIntoView?.({ block: 'nearest' })
 }
 
-// Everything open and unattributed that is not in the queue — a snoozed report,
-// say. Both terms are unscoped, so the difference is never negative by accident.
-const older = computed(() => Math.max(0, props.unattributed - total.value))
-const showOlder = ref(false)
-const olderRows = ref([])
-async function toggleOlder() {
-  showOlder.value = !showOlder.value
-  if (!showOlder.value) return
-  const body = await api.get('/defects?scope=unattributed&status=open&sort=opened:desc&size=50')
-  const queued = new Set(items.value.map(d => d.id))
-  olderRows.value = (body.items || []).filter(d => !queued.has(d.id))
+// Held out of the queue by a snooze no write has ended — counted by the
+// server, never by subtracting one loaded page from another.
+const snoozed = ref(0)
+async function loadSnoozed() {
+  try {
+    const body = await api.get('/defects?triage=snoozed&size=1')
+    snoozed.value = body.pagination?.total ?? 0
+  } catch {
+    snoozed.value = 0
+  }
+}
+async function reload() {
+  await Promise.all([load(), loadSnoozed()])
 }
 
 const stripCaption = computed(() => {
@@ -134,7 +134,7 @@ onMounted(async () => {
   // Bound on the element, not the window: a chord only counts while focus is
   // inside the rail.
   rail.value?.addEventListener('keydown', onKeydown)
-  await load()
+  await reload()
   focusRequested()
 })
 onBeforeUnmount(() => rail.value?.removeEventListener('keydown', onKeydown))
@@ -142,13 +142,13 @@ onBeforeUnmount(() => rail.value?.removeEventListener('keydown', onKeydown))
 // focus is re-applied here.
 onActivated(async () => {
   if (arrived) {
-    await load()
+    await reload()
     await focusRequested()
   }
   arrived = true
 })
 
-defineExpose({ load })
+defineExpose({ load: reload })
 </script>
 
 <template>
@@ -225,24 +225,11 @@ defineExpose({ load })
       />
     </ul>
 
-    <div v-if="older" class="tr-older" data-testid="triage-older">
-      <Icon name="alert-triangle" :size="12" />
-      <span>{{ older }} older defect{{ older === 1 ? '' : 's' }} still unattributed</span>
-      <Button
-        variant="link"
-        size="sm"
-        class="tr-older__open"
-        :aria-expanded="showOlder"
-        @click="toggleOlder"
-      >{{ showOlder ? 'Hide' : 'Open →' }}</Button>
-    </div>
-    <ul v-if="showOlder" class="tr-older-list">
-      <li v-for="d in olderRows" :key="d.id">
-        <router-link :to="`/defects/${d.id}`" class="tr-older-link focus-visible:outline-2 focus-visible:outline-blue-500">
-          <b>{{ defectRef(d.id) }}</b> {{ d.symptom }}
-        </router-link>
-      </li>
-    </ul>
+    <router-link
+      v-if="snoozed" to="/defects?triage=snoozed"
+      class="tr-snoozed focus-visible:outline-2 focus-visible:outline-blue-500"
+      data-testid="triage-snoozed"
+    ><Icon name="pause" :size="12" /> {{ snoozed }} snoozed</router-link>
     <router-link to="/defects" class="tr-all focus-visible:outline-2 focus-visible:outline-blue-500"
                  data-testid="triage-all-defects">All defects →</router-link>
     </template>
@@ -295,14 +282,11 @@ defineExpose({ load })
     border-radius: var(--radius-lg); background: var(--color-danger-soft);
     padding: 0.35rem 0.6rem; font-size: 11.5px; color: var(--color-danger);
 }
-.tr-older { display: flex; align-items: center; gap: 0.4rem; font-size: 12px; color: var(--color-fg-muted); }
-.tr-older .tr-older__open { margin-left: auto; font-size: 12px; }
-.tr-older-list { display: flex; flex-direction: column; gap: 0.3rem; font-size: 12px; }
-.tr-older-link {
-    display: block; color: var(--color-fg-muted); text-decoration: none;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
 .tr-all { align-self: flex-start; font-size: 12px; color: var(--color-primary); text-decoration: none; }
 .tr-all:hover { text-decoration: underline; }
-.tr-older-link b { font-family: var(--font-mono, monospace); color: var(--color-fg); }
+.tr-snoozed {
+    display: flex; align-items: center; gap: 0.4rem; align-self: flex-start;
+    font-size: 12px; color: var(--color-fg-muted); text-decoration: none;
+}
+.tr-snoozed:hover { color: var(--color-fg); text-decoration: underline; }
 </style>
