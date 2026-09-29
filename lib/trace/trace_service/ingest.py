@@ -597,6 +597,21 @@ def ingest_tool_attribution(payload: dict) -> tuple[int, int]:
     return updated, skipped
 
 
+def _merged_status_model(incoming, current):
+    # Keep the richer id when the incoming one is a bare base.
+    if not (isinstance(incoming, str) and incoming):
+        return current
+    return current if _is_less_specific_model(incoming, current) else incoming
+
+
+def _merged_status_peak(incoming, current):
+    if not isinstance(current, int):
+        return incoming
+    if not isinstance(incoming, int) or incoming < current:
+        return current
+    return incoming
+
+
 def ingest_session_status(
     trace_id: str,
     model: str | None = None,
@@ -647,19 +662,8 @@ def ingest_session_status(
             )
             return
 
-        current_model = row['model']
-        # Keep the richer id when the incoming one is a bare base.
-        if isinstance(model, str) and model:
-            if _is_less_specific_model(model, current_model):
-                model = current_model
-        else:
-            model = current_model
-
-        current_peak = row['peak_context_tokens']
-        peak = context_used_tokens
-        if isinstance(current_peak, int):
-            if not isinstance(peak, int) or peak < current_peak:
-                peak = current_peak
+        model = _merged_status_model(model, row['model'])
+        peak = _merged_status_peak(context_used_tokens, row['peak_context_tokens'])
 
         updates = ['model = ?', 'peak_context_tokens = ?']
         params: list = [model, peak]
