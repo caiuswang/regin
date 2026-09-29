@@ -170,6 +170,47 @@ def _rewrite_existing_fixtures(apply: bool) -> int:
     return 0
 
 
+def _parse_line(line: str) -> dict | None:
+    line = line.strip()
+    if not line:
+        return None
+    try:
+        return json.loads(line)
+    except json.JSONDecodeError:
+        return None
+
+
+def _unwrap_record(record: dict) -> tuple[str, dict] | None:
+    """(event, payload) for one log record, or None when it names no event."""
+    # The log wraps each hook payload in a meta envelope. Unwrap
+    # if present so fixtures are pure hook payloads (matching the
+    # shape the dispatcher reads from stdin).
+    payload = record.get('payload') if isinstance(record.get('payload'), dict) else record
+    event = payload.get('hook_event_name') or record.get('hook_event')
+    if not event:
+        return None
+    # Ensure hook_event_name is present on the stored payload.
+    if 'hook_event_name' not in payload:
+        payload = {'hook_event_name': event, **payload}
+    return event, payload
+
+
+def _sample_payloads(log_path: Path) -> dict[tuple[str, str | None], dict]:
+    """First scrubbed payload per (event, tool) pair in the log."""
+    seen: dict[tuple[str, str | None], dict] = {}
+    with open(log_path, encoding='utf-8') as f:
+        for line in f:
+            record = _parse_line(line)
+            unwrapped = _unwrap_record(record) if record is not None else None
+            if unwrapped is None:
+                continue
+            event, payload = unwrapped
+            key = (event, payload.get('tool_name'))
+            if key not in seen:
+                seen[key] = _scrub(payload)
+    return seen
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--log', type=Path, default=DEFAULT_SOURCE,
@@ -187,31 +228,7 @@ def main() -> int:
         print(f'error: source log not found at {args.log}', file=sys.stderr)
         return 1
 
-    seen: dict[tuple[str, str | None], dict] = {}
-    with open(args.log, encoding='utf-8') as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            # The log wraps each hook payload in a meta envelope. Unwrap
-            # if present so fixtures are pure hook payloads (matching the
-            # shape the dispatcher reads from stdin).
-            payload = record.get('payload') if isinstance(record.get('payload'), dict) else record
-            event = payload.get('hook_event_name') or record.get('hook_event')
-            if not event:
-                continue
-            tool = payload.get('tool_name')
-            key = (event, tool)
-            if key in seen:
-                continue
-            # Ensure hook_event_name is present on the stored payload.
-            if 'hook_event_name' not in payload:
-                payload = {'hook_event_name': event, **payload}
-            seen[key] = _scrub(payload)
+    seen = _sample_payloads(args.log)
 
     FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
 
