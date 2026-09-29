@@ -370,19 +370,8 @@ def api_skills_remove_project_deployment(skill_id, project_id):
     if repo is None:
         return jsonify({'ok': False, 'msg': f'project {project_id} not found'}), 404
 
-    fs_removed_any = False
-    row_removed_any = False
-    provider_ids = []
-    for provider in providers:
-        pid = provider.provider_id
-        provider_ids.append(pid)
-        target_dir = os.path.join(repo.path, *provider.project_skills_subpath())
-        fs_removed = undeploy_skill(skill_id, target_dir=target_dir)
-        row_removed = pattern_deployments.remove_deployment(
-            skill_id, 'project', project_id, provider=pid,
-        )
-        fs_removed_any = fs_removed_any or fs_removed
-        row_removed_any = row_removed_any or row_removed
+    fs_removed_any, row_removed_any, provider_ids = _undeploy_from_project(
+        skill_id, repo, providers)
 
     # Also strip the pattern's grit rules from the repo's `.grit/` (mirror of
     # the sync done on project push). Best-effort — never block the undeploy.
@@ -392,22 +381,46 @@ def api_skills_remove_project_deployment(skill_id, project_id):
     except Exception:
         pass
 
-    user = get_current_user()
+    _audit_project_undeploy(get_current_user(), skill_id, repo, {
+        'filesystem_removed': fs_removed_any, 'row_removed': row_removed_any,
+        'providers': provider_ids})
+    return jsonify({
+        'ok': True,
+        'msg': f'removed {skill_id} from {repo.name}'
+               f' (files: {_yes_no(fs_removed_any)}, row: {_yes_no(row_removed_any)})',
+    })
+
+
+def _yes_no(flag) -> str:
+    return "yes" if flag else "no"
+
+
+def _undeploy_from_project(skill_id, repo, providers) -> tuple[bool, bool, list]:
+    fs_removed_any = False
+    row_removed_any = False
+    provider_ids = []
+    for provider in providers:
+        pid = provider.provider_id
+        provider_ids.append(pid)
+        target_dir = os.path.join(repo.path, *provider.project_skills_subpath())
+        fs_removed = undeploy_skill(skill_id, target_dir=target_dir)
+        row_removed = pattern_deployments.remove_deployment(
+            skill_id, 'project', repo.id, provider=pid,
+        )
+        fs_removed_any = fs_removed_any or fs_removed
+        row_removed_any = row_removed_any or row_removed
+    return fs_removed_any, row_removed_any, provider_ids
+
+
+def _audit_project_undeploy(user, skill_id, repo, outcome: dict) -> None:
     audit.log_action(
         user['id'] if user else None,
         user['username'] if user else 'anon',
         'undeploy_pattern',
         f'pattern:{skill_id}',
         {'scope': 'project', 'project_id': repo.id,
-         'project_name': repo.name,
-         'filesystem_removed': fs_removed_any, 'row_removed': row_removed_any,
-         'providers': provider_ids},
+         'project_name': repo.name, **outcome},
     )
-    return jsonify({
-        'ok': True,
-        'msg': f'removed {skill_id} from {repo.name}'
-               f' (files: {"yes" if fs_removed_any else "no"}, row: {"yes" if row_removed_any else "no"})',
-    })
 
 
 # GET /api/repos lives in web/blueprints/repos.py. The skills push-to-project
