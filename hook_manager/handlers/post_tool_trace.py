@@ -605,19 +605,25 @@ def _build_toolsearch_attrs(attrs: dict, tool_input: dict, tool_response: dict, 
     q = tool_input.get('query')
     if isinstance(q, str) and q:
         attrs['query'] = q
-        if q.startswith('select:'):
-            names = [n.strip() for n in q[len('select:'):].split(',') if n.strip()]
-            if names:
-                attrs['selected_tools'] = names
-    mr = tool_input.get('max_results')
-    if isinstance(mr, int):
-        attrs['max_results'] = mr
+        names = _selected_tool_names(q)
+        if names:
+            attrs['selected_tools'] = names
+    _set_int(attrs, 'max_results', tool_input.get('max_results'))
     m = tool_response.get('matches')
     if isinstance(m, list) and m:
         attrs['loaded_tools'] = [str(x) for x in m if isinstance(x, str)]
-    tdt = tool_response.get('total_deferred_tools')
-    if isinstance(tdt, int):
-        attrs['total_deferred_tools'] = tdt
+    _set_int(attrs, 'total_deferred_tools', tool_response.get('total_deferred_tools'))
+
+
+def _selected_tool_names(query: str) -> list[str]:
+    if not query.startswith('select:'):
+        return []
+    return [n.strip() for n in query[len('select:'):].split(',') if n.strip()]
+
+
+def _set_int(attrs: dict, key: str, value: object) -> None:
+    if isinstance(value, int):
+        attrs[key] = value
 
 
 def _build_taskcreate_attrs(attrs: dict, tool_input: dict, tool_response: dict, payload: HookPayload) -> None:
