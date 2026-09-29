@@ -39,11 +39,16 @@ log = get_activity_logger("tasks")
 ACCEPTANCE_HEADING_RE = re.compile(
     r"(?:^|[^0-9a-z])(?:acceptance|验收)(?:[^0-9a-z]|$)", re.IGNORECASE)
 
-#: What a *named* acceptance item looks like. A Gherkin `Scenario:` whose
-#: name is a test identifier, or a bare `test_…` token. A scenario whose
-#: name is a sentence is deliberately NOT a match: the point of the column
-#: is that a slice carries a name a runner can be handed.
+#: A bare `test_…` token anywhere in the acceptance section names a test.
 TEST_NAME_RE = re.compile(r"\btest_[0-9a-z_]+\b")
+
+#: A Gherkin scenario's title is a test name too, once transcribed to
+#: `test_<snake_case>`: spec-notation lets Acceptance be Gherkin, and a
+#: titled scenario is as falsifiable as a `test_` token. Only the title is
+#: read — a paragraph of prose still names nothing a runner can be handed.
+SCENARIO_RE = re.compile(
+    r"^\s*(?:Scenario(?: Outline)?|Example):\s*(.+?)\s*$")
+_SLUG_WORD_RE = re.compile(r"[0-9a-z]+")
 
 #: Text that claims a slice changes the database's shape. Slicing reads the
 #: `delivers` cell for these because that cell is where a slice says what it
@@ -147,6 +152,26 @@ def _acceptance_sections(body: str) -> list[str]:
     return sections
 
 
+def _scenario_test_names(title: str) -> list[str]:
+    """The test names a scenario title yields — its `test_` tokens, else its slug."""
+    explicit = TEST_NAME_RE.findall(title)
+    if explicit:
+        return explicit
+    words = _SLUG_WORD_RE.findall(title.lower())
+    return ["test_" + "_".join(words)] if words else []
+
+
+def _section_test_names(section: str) -> list[str]:
+    seen: dict[str, None] = {}
+    for line in section.splitlines():
+        scenario = SCENARIO_RE.match(line)
+        names = (_scenario_test_names(scenario.group(1)) if scenario
+                 else TEST_NAME_RE.findall(line))
+        for name in names:
+            seen.setdefault(name, None)
+    return list(seen)
+
+
 def acceptance_section(body: str) -> Optional[str]:
     """The spec's acceptance section verbatim, or None if it has none.
 
@@ -158,9 +183,10 @@ def acceptance_section(body: str) -> Optional[str]:
     sections = _acceptance_sections(body)
     if not sections:
         return None
-    for section in sections:
-        if TEST_NAME_RE.search(section):
-            return section
+    for names_tests in (TEST_NAME_RE.search, _section_test_names):
+        for section in sections:
+            if names_tests(section):
+                return section
     return sections[0]
 
 
@@ -169,10 +195,7 @@ def acceptance_test_names(body: str) -> list[str]:
     section = acceptance_section(body)
     if section is None:
         return []
-    seen: dict[str, None] = {}
-    for name in TEST_NAME_RE.findall(section):
-        seen.setdefault(name, None)
-    return list(seen)
+    return _section_test_names(section)
 
 
 def _acceptance_missing(body: str) -> tuple[list[str], list[str]]:
@@ -188,7 +211,8 @@ def _acceptance_missing(body: str) -> tuple[list[str], list[str]]:
         return names, []
     return [], [
         "the Acceptance section names no test — a slice's Tests column "
-        "holds test names (test_…), not descriptions of behaviour"]
+        "holds test names, so give it test_… names or titled Gherkin "
+        "`Scenario:` lines, not a paragraph of prose"]
 
 
 def _acceptance_refusal(missing: list[str]) -> SlicingRefusal:

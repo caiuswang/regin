@@ -27,7 +27,7 @@ prints every reason on stderr. Two refusals are yours to respect:
 
 | Refusal | What it means | What you do |
 |---|---|---|
-| The spec names no acceptance test | Its acceptance is prose — there is nothing to put in a slice's Tests column | **Stop and report what is missing.** Do not invent test names; a name you made up is a slice verified against your own guess |
+| The spec names no acceptance test | Its acceptance is prose — no `test_…` name and no titled Gherkin `Scenario:` — there is nothing to put in a slice's Tests column | **Stop and report what is missing.** Do not invent test names; a name you made up is a slice verified against your own guess |
 | Two slices own one schema change | Two slices both claim a migration | Give the migration to **one** slice and make the others depend on it |
 
 A spec whose acceptance section is a paragraph of "it should feel fast" is
@@ -72,7 +72,7 @@ carry the base and both are load-bearing:
 | `Delivers` | what this slice delivers |
 | `Schema` | a tick (`yes`) on the one slice that owns the install-wide schema move, blank on every other. Naming a migration in `Delivers` also counts — either way, two owners is a refusal |
 | `Spec refs` | the Rules / Acceptance paragraph numbers |
-| `Tests` | acceptance test **names**, not descriptions |
+| `Tests` | acceptance test **names**, not descriptions — a `test_…` token, or a `Scenario:` title as `task slice-check` transcribes it (`test_<snake_case_title>`) |
 | `Depends on` | other slice ids. `S3` means this slice consumes S3's result and parks if S3 fails; `S3 (after)` means ordering only — it runs once S3 has stopped, succeeded or not |
 | `Base` | branch name. A human fills it when reviewing the spec; a machine cannot derive it |
 | `Skill` | optional; defaults to `goal-verified-treenav` |

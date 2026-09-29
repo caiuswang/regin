@@ -70,6 +70,8 @@ spec lives.
 ### Acceptance
 Gherkin, or test names. Each item maps to a test that runs. An acceptance item
 you cannot phrase as Given/When/Then is not an acceptance item — it is a wish.
+Title each `Scenario:` — slicing reads the title as the test's name
+(`test_<snake_case_title>`), so an untitled Given/When/Then block names no test.
 
 ## Relation to doc-hygiene
 

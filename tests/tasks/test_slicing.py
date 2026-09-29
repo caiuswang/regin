@@ -69,6 +69,48 @@ well. It should feel fast.
     assert "test_" in str(caught.value)
 
 
+GHERKIN_ACCEPTANCE = """
+## Acceptance
+Feature: production Python complexity
+
+  Scenario: no production function at radon grade C or worse
+    When I run radon
+    Then it prints no block lines
+
+  Scenario Outline: 1.1 — the list is readable
+    Then no file exceeds 1000 lines
+
+## Build vehicle
+"""
+
+
+def test_a_gherkin_scenario_title_is_a_test_name():
+    """spec-notation lets Acceptance be Gherkin; its titles are the names."""
+    assert check_spec_is_sliceable(GHERKIN_ACCEPTANCE) == [
+        "test_no_production_function_at_radon_grade_c_or_worse",
+        "test_1_1_the_list_is_readable",
+    ]
+
+
+def test_an_explicit_test_name_in_a_scenario_title_wins_over_its_slug():
+    body = ("## Acceptance\n\nScenario: test_reader_refuses — the reader "
+            "refuses a missing key\n  Then it refuses\n")
+    assert acceptance_test_names(body) == ["test_reader_refuses"]
+
+
+def test_an_explicit_test_name_section_beats_a_titled_scenario_draft():
+    body = ("## Acceptance (superseded)\n\nScenario: we discussed whether it "
+            "should feel fast\n\n## Acceptance\n\n- test_real_one\n")
+    assert acceptance_test_names(body) == ["test_real_one"]
+
+
+def test_a_scenario_title_with_no_ascii_word_names_no_test():
+    body = "## 验收\n\nScenario: 侧边栏只有一个\n  Then 通过\n"
+    with pytest.raises(SlicingRefusal) as caught:
+        check_spec_is_sliceable(body)
+    assert "names no test" in caught.value.missing[0]
+
+
 def test_slicing_refuses_a_spec_with_no_acceptance_section_at_all():
     with pytest.raises(SlicingRefusal) as caught:
         check_spec_is_sliceable("## Intent\n\nmake it nice.\n")
