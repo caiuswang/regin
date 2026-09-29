@@ -697,3 +697,37 @@ test('test_tasks_bulk_bar_on_grouped_list', async ({ page }) => {
   await page.getByRole('button', { name: 'Cancel', exact: true }).click()
   await expect(row(b)).toBeVisible()
 })
+
+// Defect #196: a graph node clamps its title to two lines, and both lines must
+// sit inside the box — at the old 72px height the second was sliced in half,
+// so the ellipsis never showed. The full title rides on the link's tooltip.
+test('test_graph_node_title_fits_its_box', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const tag = mark()
+  const title = `${tag} S12 — MANUAL — restart from S1 and S2 once the lane settles, then re-run every open defect check`
+  const script = `
+import json, sys
+sys.path.insert(0, ".")
+from lib.orm import SessionLocal
+from lib.orm.models.tasks import AgentTask
+with SessionLocal() as s:
+    row = AgentTask(title=sys.argv[2], status="done", source="test", tags_json=json.dumps([sys.argv[1]]))
+    s.add(row); s.commit(); s.refresh(row)
+    print(row.id)
+`
+  const id = execFileSync(PY, ['-c', script, tag, title], { cwd: ROOT, encoding: 'utf8' }).trim().split('\n').pop()
+  await page.goto(`/tasks?view=graph&tag=${tag}&open=0`)
+  const node = page.getByTestId(`graph-node-${id}`)
+  const link = node.locator('.tln-title')
+  await expect(link).toHaveAttribute('title', title)
+  const geo = await node.evaluate((el) => {
+    const t = el.querySelector('.tln-title')
+    const box = el.getBoundingClientRect()
+    const pad = parseFloat(getComputedStyle(el).paddingBottom)
+    const lh = parseFloat(getComputedStyle(t).lineHeight)
+    return { inner: box.bottom - pad, bottom: t.getBoundingClientRect().bottom, height: t.clientHeight, full: t.scrollHeight, lh }
+  })
+  expect(geo.full).toBeGreaterThan(geo.height)
+  expect(geo.height).toBeGreaterThanOrEqual(2 * geo.lh - 1)
+  expect(geo.bottom).toBeLessThanOrEqual(geo.inner + 0.5)
+})

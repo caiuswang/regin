@@ -12,7 +12,9 @@
 
 export const LANE_W = 196
 export const NODE_W = 188
-export const NODE_H = 72
+// Fits the node's top row plus both lines of its clamped title; at 72 the
+// second line was sliced mid-glyph and its ellipsis never showed.
+export const NODE_H = 88
 export const COL_GAP = 40
 export const ROW_GAP = 18
 export const LANE_PAD = 20

@@ -38,7 +38,7 @@ const emit = defineEmits(['verb', 'hover'])
         @verb="v => emit('verb', v, node)"
       />
     </span>
-    <router-link :to="`/tasks/${node.id}`" class="tln-title">{{ node.title }}</router-link>
+    <router-link :to="`/tasks/${node.id}`" class="tln-title" :title="node.title">{{ node.title }}</router-link>
   </div>
 </template>
 
