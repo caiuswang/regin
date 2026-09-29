@@ -126,10 +126,7 @@ def api_patterns_route():
     query = (request.args.get("q") or "").strip()
     if not query:
         return jsonify({"error": "missing q"}), 400
-    try:
-        top_k = int(request.args.get("top_k", 10))
-    except ValueError:
-        top_k = 10
+    top_k = _route_top_k(request.args.get("top_k", 10))
     rerank_flag = request.args.get("rerank", "true").lower() not in {"false", "0", "no"}
 
     try:
@@ -147,20 +144,42 @@ def api_patterns_route():
             "hint": "no patterns indexed — run `regin pattern embed`",
         })
 
+    return jsonify({
+        "query": query,
+        "docs": _routed_docs(hits),
+        "score_kind": hits[0]["score_kind"],
+    })
+
+
+def _route_top_k(raw) -> int:
+    try:
+        return int(raw)
+    except ValueError:
+        return 10
+
+
+def _tags_by_doc(session, doc_ids) -> dict[int, list[str]]:
+    tags_by_doc: dict[int, list[str]] = {}
+    if not doc_ids:
+        return tags_by_doc
+    tag_stmt = (
+        select(DocTag.doc_id, Tag.name)
+        .join(Tag, Tag.id == DocTag.tag_id)
+        .where(DocTag.doc_id.in_(doc_ids))
+    )
+    for doc_id, tag_name in session.exec(tag_stmt).all():
+        tags_by_doc.setdefault(doc_id, []).append(tag_name)
+    return tags_by_doc
+
+
+def _routed_docs(hits) -> list[dict]:
+    """Pattern dicts for the routed slugs, scored and kept in route order."""
     slug_to_score = {h["slug"]: (h["score"], h["score_kind"]) for h in hits}
     with SessionLocal() as session:
         stmt = select(PatternDoc).where(PatternDoc.slug.in_(list(slug_to_score.keys())))
         docs = session.exec(stmt).all()
-        doc_ids = [d.id for d in docs if d.id is not None]
-        tags_by_doc: dict[int, list[str]] = {}
-        if doc_ids:
-            tag_stmt = (
-                select(DocTag.doc_id, Tag.name)
-                .join(Tag, Tag.id == DocTag.tag_id)
-                .where(DocTag.doc_id.in_(doc_ids))
-            )
-            for doc_id, tag_name in session.exec(tag_stmt).all():
-                tags_by_doc.setdefault(doc_id, []).append(tag_name)
+        tags_by_doc = _tags_by_doc(
+            session, [d.id for d in docs if d.id is not None])
 
     results = []
     for d in docs:
@@ -172,11 +191,7 @@ def api_patterns_route():
     # Preserve route-order rather than alphabetical.
     order = {h["slug"]: i for i, h in enumerate(hits)}
     results.sort(key=lambda r: order.get(r["slug"], 999))
-    return jsonify({
-        "query": query,
-        "docs": results,
-        "score_kind": hits[0]["score_kind"] if hits else None,
-    })
+    return results
 
 
 @patterns_bp.route("/api/patterns/embedding-coverage")
