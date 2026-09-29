@@ -421,6 +421,11 @@ _REPLICA_WRITE_ALLOWED_ENDPOINTS = frozenset({
     "notifications.api_auth_stream_ticket",
     "notifications.api_notifications_stream_topics",
 })
+# A WebSocket upgrade arrives as a GET, but the pane terminal writes keystrokes
+# into live tmux panes.
+_REPLICA_READ_REFUSED_ENDPOINTS = frozenset({
+    "bridge_terminal.api_session_terminal",
+})
 
 
 def _install_replica_guard(app: Flask) -> None:
@@ -432,6 +437,8 @@ def _install_replica_guard(app: Flask) -> None:
     """
     @app.before_request
     def _refuse_replica_writes():
+        if request.endpoint in _REPLICA_READ_REFUSED_ENDPOINTS:
+            return jsonify({"error": "replica"}), 403
         if request.method in _REPLICA_READ_METHODS:
             return None
         if not request.path.startswith("/api/"):

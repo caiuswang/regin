@@ -101,6 +101,24 @@ def test_replica_allows_the_realtime_handshake(tmp_db):
     assert topics.get_json() != {"error": "replica"}
 
 
+_WS_UPGRADE = {"Upgrade": "websocket", "Connection": "Upgrade",
+               "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+               "Sec-WebSocket-Version": "13"}
+
+
+def test_replica_refuses_the_pane_terminal(tmp_db):
+    replica = _client(replica=True)
+    resp = replica.get("/api/sessions/some-trace/terminal?ticket=t",
+                       headers=_WS_UPGRADE)
+    assert resp.status_code == 403
+    assert resp.get_json() == {"error": "replica"}
+
+    live = _client(replica=False)
+    resp = live.get("/api/sessions/some-trace/terminal?ticket=t",
+                    headers=_WS_UPGRADE)
+    assert resp.get_json() != {"error": "replica"}
+
+
 def test_serve_without_replica_unchanged(tmp_db, boot_calls, stub_run):
     _serve(replica=False)
 
