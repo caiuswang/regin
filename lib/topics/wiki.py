@@ -127,42 +127,50 @@ def render_topic_page(topic_id: str, topic: dict[str, Any], topics: dict[str, An
         "## Aliases",
         "",
     ]
-    aliases = topic.get("aliases", [])
-    lines.extend([f"- `{alias}`" for alias in aliases] or ["- None"])
+    lines.extend(_code_bullets(topic.get("aliases", [])))
     lines.extend(["", "## References", ""])
-    refs = sorted(topic.get("refs", []), key=_ref_sort_key)
-    if refs:
-        current_role = None
-        for ref in refs:
-            role = ref.get("role", "implementation")
-            if role != current_role:
-                current_role = role
-                lines.extend([f"### {role.title()}", ""])
-            lines.append(f"- `{ref.get('path', '')}`")
-        lines.append("")
-    else:
-        lines.extend(["- No approved refs.", ""])
+    lines.extend(_ref_lines(topic.get("refs", [])))
 
     lines.extend(["## Commands", ""])
-    commands = topic.get("commands", [])
-    lines.extend([f"- `{command}`" for command in commands] or ["- None"])
+    lines.extend(_code_bullets(topic.get("commands", [])))
 
     lines.extend(["", "## Relationships", ""])
-    edges = topic.get("edges", [])
-    if edges:
-        for edge in edges:
-            target = edge.get("target")
-            label = topics.get(target, {}).get("label", target)
-            lines.append(f"- {edge.get('type', 'related')}: `{target}` ({label})")
-    else:
-        lines.append("- None")
+    lines.extend(_edge_lines(topic.get("edges", []), topics))
 
     lines.extend(["", "## Globs", "", "### Include", ""])
-    lines.extend([f"- `{glob}`" for glob in topic.get("include_globs", [])] or ["- None"])
+    lines.extend(_code_bullets(topic.get("include_globs", [])))
     lines.extend(["", "### Exclude", ""])
-    lines.extend([f"- `{glob}`" for glob in topic.get("exclude_globs", [])] or ["- None"])
+    lines.extend(_code_bullets(topic.get("exclude_globs", [])))
     lines.append("")
     return "\n".join(lines)
+
+
+def _code_bullets(items: list[Any]) -> list[str]:
+    return [f"- `{item}`" for item in items] or ["- None"]
+
+
+def _ref_lines(refs: list[dict[str, Any]]) -> list[str]:
+    if not refs:
+        return ["- No approved refs.", ""]
+    lines: list[str] = []
+    current_role = None
+    for ref in sorted(refs, key=_ref_sort_key):
+        role = ref.get("role", "implementation")
+        if role != current_role:
+            current_role = role
+            lines.extend([f"### {role.title()}", ""])
+        lines.append(f"- `{ref.get('path', '')}`")
+    lines.append("")
+    return lines
+
+
+def _edge_lines(edges: list[dict[str, Any]], topics: dict[str, Any]) -> list[str]:
+    lines = []
+    for edge in edges:
+        target = edge.get("target")
+        label = topics.get(target, {}).get("label", target)
+        lines.append(f"- {edge.get('type', 'related')}: `{target}` ({label})")
+    return lines or ["- None"]
 
 
 def _ref_sort_key(ref: dict[str, Any]) -> tuple[int, str]:
