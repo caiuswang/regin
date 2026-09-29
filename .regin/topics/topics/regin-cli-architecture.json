@@ -116,7 +116,7 @@
       "path": "cli/commands/skills.py"
     },
     {
-      "path": "cli/commands/topics.py"
+      "path": "cli/commands/topics/__init__.py"
     },
     {
       "path": "cli/commands/trace.py"
