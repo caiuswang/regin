@@ -159,6 +159,53 @@ def api_triggers():
 from lib.auth import require_role
 
 
+def _reset_cutoff_iso(older_than_days) -> tuple[str | None, str | None]:
+    """`(cutoff_iso, error)` for the reset retention window; `None` or 0
+    days means no age cutoff."""
+    from datetime import datetime, timedelta, timezone
+    if older_than_days is None:
+        return None, None
+    try:
+        n = int(older_than_days)
+    except (TypeError, ValueError):
+        return None, 'older_than_days must be an integer'
+    if n < 0:
+        return None, 'older_than_days must be non-negative'
+    if n == 0:
+        return None, None
+    cutoff = datetime.now(timezone.utc) - timedelta(days=n)
+    return cutoff.strftime('%Y-%m-%d %H:%M:%S'), None
+
+
+def _delete_triggers_scoped(rule_filter, session_filter, cutoff_iso) -> int:
+    """Delete the matching rule_triggers rows; returns how many matched."""
+    from sqlalchemy import delete, func as sa_func
+    from sqlmodel import select as sm_select
+
+    clauses = []
+    if rule_filter:
+        clauses.append(RuleTrigger.rule_id == rule_filter)
+    if session_filter:
+        clauses.append(RuleTrigger.session_id == session_filter)
+    if cutoff_iso:
+        clauses.append(RuleTrigger.checked_at < cutoff_iso)
+    with _pkg.SessionLocal() as session:
+        before = session.exec(
+            sm_select(sa_func.count(RuleTrigger.id)).where(*clauses)).one()
+        session.execute(delete(RuleTrigger).where(*clauses))
+        session.commit()
+    return before
+
+
+def _reset_scope_label(rule_filter, session_filter, cutoff_iso,
+                       older_than_days) -> str:
+    scope_bits: list[str] = []
+    if rule_filter:    scope_bits.append(f"rule={rule_filter}")
+    if session_filter: scope_bits.append(f"session={session_filter}")
+    if cutoff_iso:     scope_bits.append(f"older_than_days={older_than_days}")
+    return ', '.join(scope_bits) or 'all'
+
+
 @rules_bp.route('/api/triggers/reset', methods=['POST'])
 @require_role('admin')
 def api_reset_triggers():
@@ -176,55 +223,21 @@ def api_reset_triggers():
     for rule X older than 30 days. Suppressed rows are NOT exempt —
     the suppression metadata gets cleaned by ON DELETE cascade.
     """
-    from datetime import datetime, timedelta, timezone
-    from sqlalchemy import delete, func as sa_func
-    from sqlmodel import select as sm_select
-    from lib.orm.models import RuleTrigger
-
     data = request.get_json(silent=True) or {}
     rule_filter = data.get('rule')
     session_filter = data.get('session')
     older_than_days = data.get('older_than_days')
-    cutoff_iso: str | None = None
-    if older_than_days is not None:
-        try:
-            n = int(older_than_days)
-        except (TypeError, ValueError):
-            return jsonify({
-                'ok': False, 'error': 'older_than_days must be an integer',
-            }), 400
-        if n < 0:
-            return jsonify({
-                'ok': False, 'error': 'older_than_days must be non-negative',
-            }), 400
-        if n > 0:
-            cutoff = datetime.now(timezone.utc) - timedelta(days=n)
-            cutoff_iso = cutoff.strftime('%Y-%m-%d %H:%M:%S')
+    cutoff_iso, error = _reset_cutoff_iso(older_than_days)
+    if error:
+        return jsonify({'ok': False, 'error': error}), 400
 
-    with _pkg.SessionLocal() as session:
-        count_stmt = sm_select(sa_func.count(RuleTrigger.id))
-        del_stmt = delete(RuleTrigger)
-        if rule_filter:
-            count_stmt = count_stmt.where(RuleTrigger.rule_id == rule_filter)
-            del_stmt = del_stmt.where(RuleTrigger.rule_id == rule_filter)
-        if session_filter:
-            count_stmt = count_stmt.where(RuleTrigger.session_id == session_filter)
-            del_stmt = del_stmt.where(RuleTrigger.session_id == session_filter)
-        if cutoff_iso:
-            count_stmt = count_stmt.where(RuleTrigger.checked_at < cutoff_iso)
-            del_stmt = del_stmt.where(RuleTrigger.checked_at < cutoff_iso)
-        before = session.exec(count_stmt).one()
-        session.execute(del_stmt)
-        session.commit()
+    before = _delete_triggers_scoped(rule_filter, session_filter, cutoff_iso)
 
     from lib import audit
     from lib.auth import get_current_user
     user = get_current_user() or {}
-    scope_bits: list[str] = []
-    if rule_filter:    scope_bits.append(f"rule={rule_filter}")
-    if session_filter: scope_bits.append(f"session={session_filter}")
-    if cutoff_iso:     scope_bits.append(f"older_than_days={older_than_days}")
-    scope = ', '.join(scope_bits) or 'all'
+    scope = _reset_scope_label(rule_filter, session_filter, cutoff_iso,
+                               older_than_days)
     audit.log_action(
         user.get('id'), user.get('username') or 'unknown',
         action='reset_triggers', target=scope,
