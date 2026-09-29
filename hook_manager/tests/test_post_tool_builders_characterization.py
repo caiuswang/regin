@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from hook_manager.handlers import post_tool_trace as ptt
+from hook_manager.handlers import post_tool_builders as ptt
 
 _BIG = 'x' * (ptt._BASH_STDOUT_MAX + 100)
 

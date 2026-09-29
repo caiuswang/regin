@@ -13,7 +13,7 @@ from lib.topics import TopicGraphError, ValidationResult
 
 def test_cmd_topics_bootstrap_prints_paths(monkeypatch, capsys, tmp_path):
     monkeypatch.setattr(
-        topics_cmd,
+        topics_cmd.graph,
         "bootstrap",
         lambda repo, seeds=False, force=False: {"topic": tmp_path / ".regin" / "topics" / "topics"},
     )
@@ -26,7 +26,7 @@ def test_cmd_topics_bootstrap_prints_paths(monkeypatch, capsys, tmp_path):
 
 def test_cmd_topics_scan_prints_counts(monkeypatch, capsys, tmp_path):
     monkeypatch.setattr(
-        topics_cmd,
+        topics_cmd.graph,
         "scan",
         lambda repo, staged=False: {
             "updated_topics": ["web"],
@@ -43,7 +43,7 @@ def test_cmd_topics_scan_prints_counts(monkeypatch, capsys, tmp_path):
 
 def test_cmd_topics_check_exits_on_invalid(monkeypatch, capsys, tmp_path):
     monkeypatch.setattr(
-        topics_cmd,
+        topics_cmd.sync,
         "validate",
         lambda repo: ValidationResult(errors=["broken ref"], warnings=["duplicate ref"]),
     )
@@ -60,7 +60,7 @@ def test_cmd_topics_check_exits_on_invalid(monkeypatch, capsys, tmp_path):
 def test_cmd_topics_install_hook_prints_path(monkeypatch, capsys, tmp_path):
     hooks_dir = tmp_path / ".git/hooks"
     monkeypatch.setattr(
-        topics_cmd, "install_topic_hooks",
+        topics_cmd.sync, "install_topic_hooks",
         lambda repo: {
             "pre-commit": hooks_dir / "pre-commit",
             "post-merge": hooks_dir / "post-merge",
@@ -78,7 +78,7 @@ def test_cmd_topics_install_hook_prints_path(monkeypatch, capsys, tmp_path):
 
 def test_cmd_topics_wiki_prints_written_files(monkeypatch, capsys, tmp_path):
     monkeypatch.setattr(
-        topics_cmd,
+        topics_cmd.wiki,
         "generate_wiki",
         lambda repo: [tmp_path / ".regin/topics/wiki/index.md", tmp_path / ".regin/topics/wiki/web.md"],
     )
@@ -94,7 +94,7 @@ def test_cmd_topics_wiki_exits_on_error(monkeypatch, tmp_path):
     def fail(repo):
         raise ValueError("invalid graph")
 
-    monkeypatch.setattr(topics_cmd, "generate_wiki", fail)
+    monkeypatch.setattr(topics_cmd.wiki, "generate_wiki", fail)
 
     with pytest.raises(click.exceptions.Exit) as exc:
         topics_cmd.cmd_topics_wiki(repo=str(tmp_path))
@@ -104,7 +104,7 @@ def test_cmd_topics_wiki_exits_on_error(monkeypatch, tmp_path):
 
 def test_cmd_topics_route_prints_json(monkeypatch, capsys, tmp_path):
     monkeypatch.setattr(
-        topics_cmd,
+        topics_cmd.wiki,
         "route_topic",
         lambda repo, query: {"status": "approved", "query": query, "topic": {"id": "web"}},
     )
@@ -145,7 +145,7 @@ def test_cmd_topics_bootstrap_exits_on_error(monkeypatch, tmp_path):
     def fail(*args, **kwargs):
         raise TopicGraphError("exists")
 
-    monkeypatch.setattr(topics_cmd, "bootstrap", fail)
+    monkeypatch.setattr(topics_cmd.graph, "bootstrap", fail)
 
     with pytest.raises(click.exceptions.Exit) as exc:
         topics_cmd.cmd_topics_bootstrap(repo=str(tmp_path), seeds=False, force=False)
