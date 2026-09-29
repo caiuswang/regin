@@ -181,47 +181,48 @@ def validate_topic(
 
     tid = topic_id or topic.get("id") or "<unknown>"
     ctx = graph_context or GraphContext()
-    issues: list[ValidationIssue] = []
-
-    if not _valid_id(tid):
-        issues.append(ValidationIssue(
-            severity="error",
-            code="topic.invalid_id",
-            message=f"topic id {tid!r} must use lowercase letters, digits, dots, underscores, or hyphens",
-            topic_ids=(tid,),
-        ))
-
-    for fname in _REQUIRED_STR_FIELDS:
-        v = topic.get(fname)
-        if not isinstance(v, str) or not v:
-            issues.append(ValidationIssue(
-                severity="error",
-                code="topic.missing_field",
-                message=f"topic {tid} field {fname} must be a non-empty string",
-                topic_ids=(tid,),
-            ))
-
-    if topic.get("status") not in TOPIC_STATUSES:
-        issues.append(ValidationIssue(
-            severity="error",
-            code="topic.invalid_status",
-            message=f"topic {tid} has invalid status {topic.get('status')!r}",
-            topic_ids=(tid,),
-        ))
-
-    for fname in _LIST_FIELDS:
-        if not isinstance(topic.get(fname, []), list):
-            issues.append(ValidationIssue(
-                severity="error",
-                code="topic.invalid_field",
-                message=f"topic {tid} field {fname} must be a list",
-                topic_ids=(tid,),
-            ))
-
+    issues = list(_validate_topic_shape(tid, topic))
     issues.extend(_validate_aliases(tid, topic, ctx, mode))
     issues.extend(_validate_refs(tid, topic, ctx, mode))
     issues.extend(_validate_edges(tid, topic, ctx, mode))
     return issues
+
+
+def _validate_topic_shape(tid: str, topic: dict[str, Any]) -> Iterable[ValidationIssue]:
+    if not _valid_id(tid):
+        yield ValidationIssue(
+            severity="error",
+            code="topic.invalid_id",
+            message=f"topic id {tid!r} must use lowercase letters, digits, dots, underscores, or hyphens",
+            topic_ids=(tid,),
+        )
+
+    for fname in _REQUIRED_STR_FIELDS:
+        v = topic.get(fname)
+        if not isinstance(v, str) or not v:
+            yield ValidationIssue(
+                severity="error",
+                code="topic.missing_field",
+                message=f"topic {tid} field {fname} must be a non-empty string",
+                topic_ids=(tid,),
+            )
+
+    if topic.get("status") not in TOPIC_STATUSES:
+        yield ValidationIssue(
+            severity="error",
+            code="topic.invalid_status",
+            message=f"topic {tid} has invalid status {topic.get('status')!r}",
+            topic_ids=(tid,),
+        )
+
+    for fname in _LIST_FIELDS:
+        if not isinstance(topic.get(fname, []), list):
+            yield ValidationIssue(
+                severity="error",
+                code="topic.invalid_field",
+                message=f"topic {tid} field {fname} must be a list",
+                topic_ids=(tid,),
+            )
 
 
 def _validate_aliases(
