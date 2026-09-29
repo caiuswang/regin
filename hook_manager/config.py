@@ -147,6 +147,25 @@ def effective_priority(handler_name: str, default: int, agent_type: str | None =
     return priority_overrides(agent_type).get(handler_name, default)
 
 
+def _is_priority(value: object) -> bool:
+    return not isinstance(value, bool) and isinstance(value, (int, float))
+
+
+def _sanitized_overrides(current: object) -> dict[str, int]:
+    if not isinstance(current, dict):
+        return {}
+    return {k: int(v) for k, v in current.items() if isinstance(k, str) and _is_priority(v)}
+
+
+def _apply_priority_update(merged: dict[str, int], name: object, value: object) -> None:
+    if not isinstance(name, str):
+        return
+    if value is None:
+        merged.pop(name, None)
+    elif _is_priority(value):
+        merged[name] = int(value)
+
+
 def set_priorities(updates: dict[str, int | None], agent_type: str | None = None) -> None:
     """Merge `updates` into the persisted override map.
 
@@ -158,24 +177,11 @@ def set_priorities(updates: dict[str, int | None], agent_type: str | None = None
         return
     with _lock:
         data = _load_raw(agent_type)
-        current = data.get('priority_overrides') or {}
-        if not isinstance(current, dict):
-            current = {}
         # Sanitize the existing map so we never write back a value we'd
         # have rejected on read (defensive against hand-edits).
-        merged: dict[str, int] = {}
-        for k, v in current.items():
-            if isinstance(k, str) and not isinstance(v, bool) and isinstance(v, (int, float)):
-                merged[k] = int(v)
+        merged = _sanitized_overrides(data.get('priority_overrides'))
         for name, value in updates.items():
-            if not isinstance(name, str):
-                continue
-            if value is None:
-                merged.pop(name, None)
-                continue
-            if isinstance(value, bool) or not isinstance(value, (int, float)):
-                continue
-            merged[name] = int(value)
+            _apply_priority_update(merged, name, value)
         data['schema_version'] = 1
         # Sort keys for stable on-disk diffs (same rationale as set_enabled).
         data['priority_overrides'] = {k: merged[k] for k in sorted(merged)}
