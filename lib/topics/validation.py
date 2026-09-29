@@ -426,6 +426,44 @@ def _validate_edges(
                 )
 
 
+def _audit_graph_envelope(graph: dict[str, Any]) -> Iterable[ValidationIssue]:
+    if graph.get("version") != SCHEMA_VERSION:
+        yield ValidationIssue(
+            severity="error",
+            code="graph.schema_drift",
+            message="topic graph version must be 1",
+        )
+    if not isinstance(graph.get("repo"), str) or not graph.get("repo"):
+        yield ValidationIssue(
+            severity="error",
+            code="graph.invalid_repo",
+            message="topic graph repo must be a non-empty string",
+        )
+
+
+def _alias_owners(topics: dict[str, Any]) -> dict[str, str]:
+    """normalized alias -> first topic_id that declares it."""
+    alias_owners: dict[str, str] = {}
+    for tid, topic in topics.items():
+        if not isinstance(topic, dict):
+            continue
+        for alias in topic.get("aliases", []) or []:
+            if isinstance(alias, str) and alias:
+                alias_owners.setdefault(normalize(alias), tid)
+    return alias_owners
+
+
+def _audit_graph_topic(tid: str, topic: Any, ctx: GraphContext) -> list[ValidationIssue]:
+    if not isinstance(topic, dict):
+        return [ValidationIssue(
+            severity="error",
+            code="graph.invalid_topic_value",
+            message=f"topic {tid} must be an object",
+            topic_ids=(tid,),
+        )]
+    return validate_topic(topic, mode="approved", topic_id=tid, graph_context=ctx)
+
+
 def audit_graph(
     graph: dict[str, Any],
     *,
@@ -462,20 +500,7 @@ def audit_graph(
     stay mutually consistent — classify one side only and the pair no longer
     cancels — which an opt-in flag makes easy to get wrong (CAI-30).
     """
-    issues: list[ValidationIssue] = []
-
-    if graph.get("version") != SCHEMA_VERSION:
-        issues.append(ValidationIssue(
-            severity="error",
-            code="graph.schema_drift",
-            message="topic graph version must be 1",
-        ))
-    if not isinstance(graph.get("repo"), str) or not graph.get("repo"):
-        issues.append(ValidationIssue(
-            severity="error",
-            code="graph.invalid_repo",
-            message="topic graph repo must be a non-empty string",
-        ))
+    issues = list(_audit_graph_envelope(graph))
 
     topics = graph.get("topics")
     if not isinstance(topics, dict):
@@ -487,35 +512,14 @@ def audit_graph(
         return issues
 
     # Build the cross-topic context once so per-topic checks share it.
-    alias_owners: dict[str, str] = {}
-    for tid, topic in topics.items():
-        if not isinstance(topic, dict):
-            continue
-        for alias in topic.get("aliases", []) or []:
-            if isinstance(alias, str) and alias:
-                alias_owners.setdefault(normalize(alias), tid)
-
     ctx = GraphContext(
         topic_ids=frozenset(topics.keys()),
-        alias_owners=alias_owners,
+        alias_owners=_alias_owners(topics),
         repo_path=Path(repo_path) if repo_path else None,
     )
 
     for tid, topic in topics.items():
-        if not isinstance(topic, dict):
-            issues.append(ValidationIssue(
-                severity="error",
-                code="graph.invalid_topic_value",
-                message=f"topic {tid} must be an object",
-                topic_ids=(tid,),
-            ))
-            continue
-        issues.extend(validate_topic(
-            topic,
-            mode="approved",
-            topic_id=tid,
-            graph_context=ctx,
-        ))
+        issues.extend(_audit_graph_topic(tid, topic, ctx))
     issues.extend(_audit_taxonomy_placement(topics))
     issues.extend(_audit_shared_primary_refs(topics))
     return _recode_branch_owned_refs(issues, ctx.repo_path)
