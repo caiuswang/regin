@@ -1027,18 +1027,18 @@ def _reclaimed_for_pair(pre_at, post_at, turns: list[tuple]) -> int | None:
     later poll: this is recomputed on every read, and the live tail's
     `mergeLoadedSpans` overwrites the cached span's attributes by span_id
     when the fresh fetch carries a non-empty attributes dict."""
-    before = next(
-        (ctx for ts, ctx in reversed(turns) if ts and ts <= pre_at and ctx),
-        None,
-    )
-    after = next(
-        (ctx for ts, ctx in turns if ts and ts >= post_at and ctx),
-        None,
-    )
+    before = _first_context(reversed(turns), lambda ts: ts <= pre_at)
+    after = _first_context(turns, lambda ts: ts >= post_at)
     if before is None or after is None:
         return None
     delta = before - after
     return delta if delta > 0 else None
+
+
+def _first_context(turns, accept) -> int | None:
+    """First non-zero context size among `turns` whose timestamp is set and
+    satisfies `accept`."""
+    return next((ctx for ts, ctx in turns if ts and ctx and accept(ts)), None)
 
 
 def _attach_compaction_reclaim(conn, trace_id: str, spans: list[dict]) -> None:
