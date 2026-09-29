@@ -108,7 +108,7 @@
       "path": "lib/memory/skill_experience.py"
     },
     {
-      "path": "lib/memory/store.py",
+      "path": "lib/memory/store/",
       "tier": "reference"
     },
     {
