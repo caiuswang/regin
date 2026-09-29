@@ -91,9 +91,7 @@ def api_enable_pattern_rules(slug):
     return _toggle_pattern_rules(slug, False, "enabled")
 
 
-def _bundle_toggle_error(action, engine_id, rule_ids) -> str | None:
-    if action not in ("disable", "enable"):
-        return "action must be disable or enable"
+def _bundle_toggle_error(engine_id, rule_ids) -> str | None:
     if not engine_id:
         return "engine_id required"
     if not isinstance(rule_ids, list) or not rule_ids:
@@ -114,10 +112,12 @@ def _engine_rule_ids_subset(engine_id, rule_ids) -> list:
 @patterns_bp.route("/api/patterns/<path:slug>/bundle-rules/<action>", methods=["POST"])
 @require_editor
 def api_toggle_bundle_rules(slug, action):
+    if action not in ("disable", "enable"):
+        return jsonify({"ok": False, "msg": "action must be disable or enable"}), 400
     payload = request.get_json(silent=True) or {}
     engine_id = payload.get("engine_id")
     rule_ids = payload.get("rule_ids") or []
-    error = _bundle_toggle_error(action, engine_id, rule_ids)
+    error = _bundle_toggle_error(engine_id, rule_ids)
     if error:
         return jsonify({"ok": False, "msg": error}), 400
 

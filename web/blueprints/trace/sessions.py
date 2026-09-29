@@ -859,12 +859,12 @@ def _workflow_date_hidden_count(session, q):
 
 
 def _session_list_envelope_extras(session, q):
-    # Per-tag counts for the facet, over the shared filters but NOT the
-    # tag selection itself (so a selected facet still shows sibling counts).
     extras = {
         'workflow_hidden_count': _hidden_workflow_count(session, q),
         'empty_hidden_count': _empty_hidden_count(session, q),
         'workflow_date_hidden_count': _workflow_date_hidden_count(session, q),
+        # Per-tag counts for the facet, over the shared filters but NOT the
+        # tag selection itself (so a selected facet still shows sibling counts).
         'tag_counts': _tag_counts(session, q.apply_filters),
     }
     # Envelope facets: total/active over the SAME population the page

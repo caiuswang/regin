@@ -552,9 +552,10 @@ def api_import_dir():
     from lib.patterns import pattern_importer
 
     body = request.get_json(silent=True) or {}
-    raw, on_conflict, dry_run = _import_dir_args(body)
+    raw = (body.get("path") or "").strip()
     if not raw:
         return jsonify({"ok": False, "msg": "missing 'path'"}), 400
+    on_conflict, dry_run = _import_dir_options(body)
 
     only, sel_err = _parse_selected(body)
     if sel_err is not None:
@@ -585,10 +586,8 @@ def api_import_dir():
     })
 
 
-def _import_dir_args(body: dict) -> tuple[str, str, bool]:
-    """`(path, on_conflict, dry_run)` from the import-dir request body."""
+def _import_dir_options(body: dict) -> tuple[str, bool]:
     return (
-        (body.get("path") or "").strip(),
         (body.get("on_conflict") or "skip").strip().lower(),
         bool(body.get("dry_run", False)),
     )
