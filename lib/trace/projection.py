@@ -1557,33 +1557,28 @@ def _compute_active_work_ms(spans: list[dict]) -> int:
     consistency with what the UI renders, but the answer only depends
     on operation timestamps.
     """
-    if not spans:
-        return 0
-    has_children: set[str] = set()
-    by_id = {s['span_id']: s for s in spans}
-    for s in spans:
-        pid = s.get('parent_id')
-        if pid and pid in by_id:
-            has_children.add(pid)
+    timestamps = sorted(_operation_timestamps(spans))
+    total_ms = 0
+    for prev, cur in zip(timestamps, timestamps[1:]):
+        gap_ms = int((cur - prev).total_seconds() * 1000)
+        if 0 < gap_ms <= _ACTIVE_GAP_THRESHOLD_MS:
+            total_ms += gap_ms
+    return total_ms
+
+
+def _operation_timestamps(spans: list[dict]) -> list[datetime]:
+    """Start times of the leaf, non-container spans (unparseable ones dropped)."""
+    span_ids = {s['span_id'] for s in spans}
+    has_children = {s.get('parent_id') for s in spans if s.get('parent_id') in span_ids}
     timestamps: list[datetime] = []
     for s in spans:
-        if s['span_id'] in has_children:
-            continue
-        if s.get('name') in _ACTIVE_CONTAINER_NAMES:
+        if s['span_id'] in has_children or s.get('name') in _ACTIVE_CONTAINER_NAMES:
             continue
         try:
             timestamps.append(datetime.fromisoformat(s['start_time']))
         except (TypeError, ValueError):
             continue
-    if len(timestamps) < 2:
-        return 0
-    timestamps.sort()
-    total_ms = 0
-    for i in range(1, len(timestamps)):
-        gap_ms = int((timestamps[i] - timestamps[i - 1]).total_seconds() * 1000)
-        if 0 < gap_ms <= _ACTIVE_GAP_THRESHOLD_MS:
-            total_ms += gap_ms
-    return total_ms
+    return timestamps
 
 
 def _build_span_tree(spans: list[dict]) -> list[dict]:
