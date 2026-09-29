@@ -33,5 +33,6 @@ from web.blueprints.rules import (  # noqa: E402,F401
     applicability,
     crud,
     listing,
+    trigger_rules,
     triggers,
 )

@@ -1,12 +1,12 @@
 """Characterization of the `/api/triggers/rules` query parsing and row
-filters (web/blueprints/rules/triggers.py)."""
+filters (web/blueprints/rules/trigger_rules.py)."""
 
 from __future__ import annotations
 
 import pytest
 from werkzeug.datastructures import MultiDict
 
-from web.blueprints.rules import triggers as t
+from web.blueprints.rules import trigger_rules as t
 
 
 class _Req:
