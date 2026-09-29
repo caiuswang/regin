@@ -22,7 +22,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-from lib.defects import checks as checks_module
 from lib.defects import escapes as escapes_module
 from lib.defects import store
 from lib.features import attribution, cost as cost_module
@@ -30,8 +29,6 @@ from lib.features import events as events_module
 from lib.features import store as feature_store
 
 TRACE_PREFIX = 8
-#: A claim can run to a paragraph; a terminal line cannot.
-CHECK_PREFIX = 88
 
 
 @dataclass(frozen=True)
@@ -95,17 +92,12 @@ class Ledger:
     open_defects: int
     total_defects: int
     escapes: escapes_module.EscapeCounts
-    #: Whether the check each closed defect named was ever written. A derived
-    #: reading over `missing_check`, so it costs no column and cannot go
-    #: stale — the claim and the test tree are both read at build time.
-    checks: checks_module.CheckCounts
     coverage: cost_module.Coverage
 
     def to_dict(self) -> dict:
         """Nested, unlike `Stage.to_dict()`: each figure carries its own gap
         counter, and flattened those read as noise — a reader cannot tell which
         number `no_usage_captured` qualifies."""
-        checks = self.checks.to_dict()
         return {
             "id": self.id,
             "title": self.title,
@@ -133,11 +125,10 @@ class Ledger:
             "defects": {
                 "open": self.open_defects, "total": self.total_defects,
                 "escapes": self.escapes.escapes,
-                "checks": checks,
-                # The tile already draws a gap strip from this key, and a
-                # named check nobody wrote is a gap in exactly its sense: the
-                # open/total count above is not wrong, it is unredeemed.
-                "gaps": checks["gaps"],
+                # `missing_check` is the closer's note and is never parsed
+                # into a figure: guessing from free text whether it names a
+                # test that exists misread one suite as another (#219).
+                "gaps": {},
             },
             "coverage": self.coverage.to_dict(),
         }
@@ -192,7 +183,6 @@ def build(feature_id: int) -> Ledger:
         open_defects=sum(1 for d in defects if d.status == "open"),
         total_defects=len(defects),
         escapes=escapes,
-        checks=checks_module.counts_for(defects),
         coverage=cost_module.coverage(),
     )
 
@@ -275,18 +265,6 @@ def _render_sessions(report: Ledger) -> list[str]:
     return lines
 
 
-def _render_checks(checks) -> list[str]:
-    lines = [f"checks  {checks.written} written of "
-             f"{_plural(len(checks.rows), 'closed defect')}"]
-    lines.extend(filter(None, [_gap_line(checks.to_dict()["gaps"])]))
-    for row in checks.rows:
-        if row.reading != checks_module.WRITTEN:
-            named = (row.missing_check or "")[:CHECK_PREFIX]
-            lines.append(f"    #{row.defect_id}  {row.reading}"
-                         f"{f'  ({named})' if named else ''}")
-    return lines
-
-
 def render(report: Ledger) -> list[str]:
     """The human report, stage line first."""
     lines = _render_header(report)
@@ -306,7 +284,6 @@ def render(report: Ledger) -> list[str]:
     lines.append(f"defects  {report.open_defects} open / "
                  f"{report.total_defects} total      "
                  f"escapes {report.escapes.escapes}")
-    lines.extend(_render_checks(report.checks))
 
     cov = report.coverage
     lines.append("")

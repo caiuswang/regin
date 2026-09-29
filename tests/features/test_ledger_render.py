@@ -5,12 +5,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace as NS
 
-from lib.defects import checks as checks_module
 from lib.features.ledger import SessionRow, render
-
-
-def _checks(written, rows, gaps):
-    return NS(written=written, rows=rows, to_dict=lambda: {"gaps": gaps})
 
 
 def _report(**over):
@@ -31,11 +26,6 @@ def _report(**over):
                          title="recalled", cost_usd=None,
                          provenance="recalled", round=None, is_primary=0)],
         traceless_runs=1,
-        checks=_checks(1, [
-            NS(defect_id=11, reading=checks_module.WRITTEN, missing_check=None),
-            NS(defect_id=12, reading="missing", missing_check="test_it_works"),
-            NS(defect_id=13, reading="missing", missing_check=None),
-        ], {"unverified": 1}),
         coverage=NS(declared_sessions=3, all_sessions=4,
                     declared_usd=12.5, all_usd=20.0),
     )
@@ -53,7 +43,7 @@ def test_render_sparse_report():
         cost=NS(recalled=0, usd=None, sessions=0, shared=0, gaps={}),
         work_time=NS(active_work_ms=0, gaps={}),
         human_prompts=NS(prompts=0, sessions=0, run_sessions=0, gaps={}),
-        tokens={}, rows=[], traceless_runs=0, checks=_checks(0, [], {}),
+        tokens={}, rows=[], traceless_runs=0,
         coverage=NS(declared_sessions=0, all_sessions=0,
                     declared_usd=0.0, all_usd=0.0),
     )
@@ -84,10 +74,6 @@ FULL = [
     '    gaps: traceless-runs 1',
     '',
     'defects  1 open / 3 total      escapes 1',
-    'checks  1 written of 3 closed defects',
-    '    gaps: unverified 1',
-    '    #12  missing  (test_it_works)',
-    '    #13  missing',
     '',
     'coverage  3 of 4 sessions (75.0%) · $12.50 of $20.00 (62.5%)',
 ]
@@ -106,7 +92,6 @@ SPARSE = [
     '  none declared',
     '',
     'defects  1 open / 3 total      escapes 1',
-    'checks  0 written of 0 closed defects',
     '',
     'coverage  0 of 0 sessions (—) · $0.00 of $0.00 (—)',
 ]

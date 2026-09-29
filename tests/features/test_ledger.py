@@ -189,11 +189,7 @@ def test_feature_ledger_json_groups_each_gap_under_its_figure(
     """Flattened they read as noise: a reader cannot tell which number
     `no_usage_captured` qualifies.
 
-    `defects` carries the three readings a named check can fail on. Its two
-    former gaps — `state_unknown` and
-    `unknown_vocabulary` — are gone for good, because they described the
-    readings a cached state *string* could have and a pointer at an
-    append-only row has none.
+    `defects` carries no gap: nothing in it is a reading that can be missing.
     """
     feature = _feature()
     session_row("t-nousage", cost=None)
@@ -207,7 +203,25 @@ def test_feature_ledger_json_groups_each_gap_under_its_figure(
     assert payload["cost"]["gaps"]["no_usage_captured"] == 1
     assert payload["work_time"]["gaps"]["zero_duration"] == 1
     assert "traceless_runs" in payload["sessions"]["gaps"]
-    assert set(payload["defects"]["gaps"]) == {
-        "check_not_yet_written", "check_name_unverified", "no_check_named"}
-    assert "state_unknown" not in payload["defects"]["gaps"]
+    assert payload["defects"]["gaps"] == {}
     assert "gaps" not in payload
+
+
+def test_ledger_reads_no_check_text():
+    """`missing_check` is the closer's note. The ledger reports a count of
+    closed defects and never judges, from the text, whether the test it names
+    exists — that guess misread `x.spec.js::test_y` as pytest (#219)."""
+    feature = _feature()
+    for check in ("tests/defects/test_x.py::test_nobody_wrote",
+                  "frontend/tests/a.spec.js::test_y", "fixed"):
+        row = store.record(f"broke: {check}", feature_id=feature.id)
+        store.close(row.id, missing_check=check)
+
+    payload = json.loads(runner.invoke(
+        app, ["feature", "ledger", str(feature.id), "--json"]).output)
+    text = runner.invoke(app, ["feature", "ledger", str(feature.id)]).output
+
+    assert "checks" not in payload["defects"]
+    assert payload["defects"]["gaps"] == {}
+    assert payload["defects"]["total"] == 3
+    assert not any(line.startswith("checks") for line in text.splitlines())
