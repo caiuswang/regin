@@ -1454,36 +1454,39 @@ def _widen_envelopes(spans: list[dict]) -> list[dict]:
     out = [dict(s) for s in spans]
     by_id = {s['span_id']: s for s in out}
 
-    children_by_parent: dict[str, list[str]] = {}
-    for s in out:
+    for parent_id, child_spans in _children_by_parent(out).items():
+        parent = by_id.get(parent_id)
+        if parent:
+            _widen_parent(parent, child_spans)
+    return out
+
+
+def _children_by_parent(spans: list[dict]) -> dict[str, list[dict]]:
+    children: dict[str, list[dict]] = {}
+    for s in spans:
         pid = s.get('parent_id')
         if pid:
-            children_by_parent.setdefault(pid, []).append(s['span_id'])
+            children.setdefault(pid, []).append(s)
+    return children
 
-    for parent_id, child_ids in children_by_parent.items():
-        parent = by_id.get(parent_id)
-        if not parent:
-            continue
-        child_spans = [by_id[c] for c in child_ids if c in by_id]
-        if not child_spans:
-            continue
-        child_starts = [c['start_time'] for c in child_spans]
-        child_ends = [c.get('end_time') or c['start_time'] for c in child_spans]
-        new_start = min(parent['start_time'], *child_starts)
-        new_end = max(parent.get('end_time') or parent['start_time'], *child_ends)
-        parent['start_time'] = new_start
-        parent['end_time'] = new_end
-        # Widen start/end for layout, but never shrink a semantic duration.
-        # Point-in-time spans (assistant_response / assistant.thinking carry
-        # inference latency with start==end) would otherwise have their real
-        # duration_ms overwritten by the trivial child-envelope width when a
-        # server-side tool nests under them. Children fire during inference,
-        # so the envelope never legitimately exceeds the semantic value.
-        envelope_ms = int(
-            (datetime.fromisoformat(new_end) - datetime.fromisoformat(new_start)).total_seconds() * 1000
-        )
-        parent['duration_ms'] = max(int(parent.get('duration_ms') or 0), envelope_ms)
-    return out
+
+def _widen_parent(parent: dict, child_spans: list[dict]) -> None:
+    child_starts = [c['start_time'] for c in child_spans]
+    child_ends = [c.get('end_time') or c['start_time'] for c in child_spans]
+    new_start = min(parent['start_time'], *child_starts)
+    new_end = max(parent.get('end_time') or parent['start_time'], *child_ends)
+    parent['start_time'] = new_start
+    parent['end_time'] = new_end
+    # Widen start/end for layout, but never shrink a semantic duration.
+    # Point-in-time spans (assistant_response / assistant.thinking carry
+    # inference latency with start==end) would otherwise have their real
+    # duration_ms overwritten by the trivial child-envelope width when a
+    # server-side tool nests under them. Children fire during inference,
+    # so the envelope never legitimately exceeds the semantic value.
+    envelope_ms = int(
+        (datetime.fromisoformat(new_end) - datetime.fromisoformat(new_start)).total_seconds() * 1000
+    )
+    parent['duration_ms'] = max(int(parent.get('duration_ms') or 0), envelope_ms)
 
 
 def _persist_projection(conn, trace_id: str, raw: list[dict], projected: list[dict]) -> dict:
