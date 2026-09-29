@@ -2019,22 +2019,29 @@ def _session_phase(by_aid: dict, roster, ended: bool,
     session always rolls up to 'ended': once the session itself ended nothing
     can be genuinely waiting, so a ghost unstopped subagent (rolled up as
     inactive-stale) must not mask the 'ended' verdict."""
-    now = datetime.now()
-    span_phase = _main_phase(by_aid.get(None), now, ended)
-    # The screen only arbitrates between working/idle/inactive-stale. It never
-    # overrides 'ended' (a settled session's pane can still show the last frame
-    # of a finished turn) nor either 'waiting-' verdict, which come from a
-    # structured hook payload and beat reading a menu off the terminal.
-    screen_phase = (_screen_phase(screen, span_phase)
-                    if span_phase in _SCREEN_ARBITRABLE else None)
-    main = main_override or screen_phase or span_phase
-    agent_phase = {'main': main}
+    agent_phase = {'main': _main_agent_phase(by_aid, ended, main_override, screen)}
     for r in roster:
         aid = r['agent_id']
         agent_phase[aid] = _phase_from_roster(
             r['status'], _waiting_kind(by_aid.get(aid) or {}))
     if agent_phase['main'] == 'ended':
         return 'ended', agent_phase
+    votes = _rollup_votes(agent_phase, main_override)
+    return _phase_rollup(votes) or agent_phase['main'], agent_phase
+
+
+def _main_agent_phase(by_aid, ended, main_override, screen):
+    span_phase = _main_phase(by_aid.get(None), datetime.now(), ended)
+    # The screen only arbitrates between working/idle/inactive-stale. It never
+    # overrides 'ended' (a settled session's pane can still show the last frame
+    # of a finished turn) nor either 'waiting-' verdict, which come from a
+    # structured hook payload and beat reading a menu off the terminal.
+    screen_phase = (_screen_phase(screen, span_phase)
+                    if span_phase in _SCREEN_ARBITRABLE else None)
+    return main_override or screen_phase or span_phase
+
+
+def _rollup_votes(agent_phase, main_override):
     # A runner reporting `idle` has no turn in flight AND no delegated
     # background agent still running (`run_phase` reports those as
     # `working`) — so a roster still claiming a subagent is RUNNING is a ghost
@@ -2048,11 +2055,10 @@ def _session_phase(by_aid: dict, roster, ended: bool,
     # health. And the roster stays the only source for each subagent's own
     # entry in `agent_phase` either way; this narrows what votes, not what is
     # reported per agent.
-    votes = agent_phase.values()
-    if main_override == 'idle':
-        votes = [p for aid, p in agent_phase.items()
-                 if aid == 'main' or p != 'working']
-    return _phase_rollup(votes) or agent_phase['main'], agent_phase
+    if main_override != 'idle':
+        return agent_phase.values()
+    return [p for aid, p in agent_phase.items()
+            if aid == 'main' or p != 'working']
 
 
 def _pct(value, window) -> float | None:
