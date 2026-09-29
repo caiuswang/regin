@@ -583,6 +583,15 @@ def _sort_triggers_rules(rows: list[dict], sort_by: str) -> list[dict]:
     return sorted(rows, key=key_fn)
 
 
+def _triggers_rules_kpis(engine_rules: dict, rules_out: list[dict]) -> dict:
+    return {
+        'configured': len(engine_rules),
+        'active': sum(1 for r in rules_out if r['status'] == 'active' and r['fires'] > 0),
+        'noisy':   sum(1 for r in rules_out if r['status'] == 'noisy'),
+        'dead':    sum(1 for r in rules_out if r['status'] == 'dead'),
+    }
+
+
 @rules_bp.route('/api/triggers/rules')
 def api_triggers_rules():
     """List per-rule health + spark + top files over the active range."""
@@ -619,12 +628,7 @@ def api_triggers_rules():
 
     # KPIs reflect the unfiltered population so the strip is a stable
     # orientation, not a filter echo.
-    kpis = {
-        'configured': len(engine_rules),
-        'active': sum(1 for r in rules_out if r['status'] == 'active' and r['fires'] > 0),
-        'noisy':   sum(1 for r in rules_out if r['status'] == 'noisy'),
-        'dead':    sum(1 for r in rules_out if r['status'] == 'dead'),
-    }
+    kpis = _triggers_rules_kpis(engine_rules, rules_out)
 
     # Apply filters after enrichment (status/severity/source need the row).
     rules_out = [r for r in rules_out if _passes_triggers_rules_filters(r, params)]
