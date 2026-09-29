@@ -1,6 +1,28 @@
-// A task row's secondary actions sit behind its ⋯ menu, which Reka portals to
-// <body> — so the item is looked up on the page, not inside the row.
-export async function rowAction(row, testid) {
-  await row.getByTestId('task-row-menu').click()
-  await row.page().getByRole('menu').getByTestId(testid).click()
+// A task row offers a verb either as its primary action (`task-action-<verb>`)
+// or inside its ⋯ menu (`task-verb-<verb>`), by state — the server decides
+// which (lib/tasks/verbs.py). The menu is portalled to <body>, so its item is
+// looked up on the page, not inside the row.
+export async function rowAction(row, verb) {
+  const primary = row.getByTestId(`task-action-${verb}`)
+  if (await primary.count()) {
+    await primary.click()
+    return
+  }
+  await row.getByTestId('task-menu').click()
+  await row.page().getByRole('menu').getByTestId(`task-verb-${verb}`).click()
+}
+
+// lib/tasks/verbs.py's table, for rows a spec serves itself: a mocked row
+// without `action`/`menu` would render no controls at all.
+const PRIMARY = { idea: 'arm', armed: 'run', running: 'watch', failed: 'retry' }
+const MENU = {
+  idea: ['edit', 'deps', 'mark_done', 'archive', 'delete'],
+  armed: ['disarm', 'arm', 'edit', 'deps', 'mark_done', 'archive', 'delete'],
+  running: ['interrupt'],
+  failed: ['arm', 'mark_done', 'archive', 'delete'],
+  done: ['reopen', 'archive'],
+  archived: ['restore', 'delete'],
+}
+export function verbsFor(status) {
+  return { action: PRIMARY[status] ?? null, menu: MENU[status] ?? [] }
 }

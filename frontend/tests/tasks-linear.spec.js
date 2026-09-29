@@ -392,7 +392,7 @@ test('the edit sheet files a single task, and unfiles it again',
     const row = page.locator('[data-testid="task-row"]',
       { hasText: `${SFX}-filing` }).first()
     await row.hover()
-    await rowAction(row, 'task-edit')
+    await rowAction(row, 'edit')
     await expect(page.getByTestId('task-edit-form')).toBeVisible()
 
     await page.getByTestId('task-edit-project').click()
@@ -408,7 +408,7 @@ test('the edit sheet files a single task, and unfiles it again',
     const back = page.locator('[data-testid="task-row"]',
       { hasText: `${SFX}-filing` }).first()
     await back.hover()
-    await rowAction(back, 'task-edit')
+    await rowAction(back, 'edit')
     await page.getByTestId('task-edit-project').click()
     await page.getByRole('option', { name: 'No project', exact: true }).click()
     await page.getByTestId('task-edit-save').click()
@@ -427,7 +427,7 @@ test('the edit sheet sets priority on a single task', async ({ page }) => {
   const row = page.locator('[data-testid="task-row"]',
     { hasText: `${SFX}-filing` }).first()
   await row.hover()
-  await rowAction(row, 'task-edit')
+  await rowAction(row, 'edit')
   await page.getByTestId('task-edit-priority').click()
   await page.getByRole('option', { name: 'Urgent', exact: true }).click()
   await page.getByTestId('task-edit-save').click()

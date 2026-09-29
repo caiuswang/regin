@@ -21,8 +21,7 @@ const props = defineProps({
   busyId: { type: Number, default: null },
   projectFor: { type: Function, default: () => null },
 })
-const emit = defineEmits(['toggle', 'open', 'control', 'focus', 'select',
-                          'loaded', 'hidden', 'delete'])
+const emit = defineEmits(['verb', 'open', 'focus', 'select', 'loaded', 'hidden'])
 
 // Whether the group is open is the LIST's state, not this component's: it has
 // to outlive the group's unmount to survive a filter change or a tab switch,
@@ -101,12 +100,10 @@ defineExpose({ reload: () => { fetched.value = false; if (open.value) load() } }
           :selection="selection"
           :busy-id="busyId"
           :project-for="projectFor"
-          @toggle="t => emit('toggle', t)"
+          @verb="(v, t) => emit('verb', v, t)"
           @open="(kind, t) => emit('open', kind, t)"
-          @control="(t, action) => emit('control', t, action)"
           @focus="id => emit('focus', id)"
           @select="t => emit('select', t)"
-          @delete="t => emit('delete', t)"
         />
         <div v-if="feed.hasNext.value" class="tg-more">
           <Button

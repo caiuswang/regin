@@ -1,5 +1,5 @@
 import { test, expect } from './auth-fixture.js'
-import { rowAction } from './helpers/rowAction.js'
+import { rowAction, verbsFor } from './helpers/rowAction.js'
 import { contentOverflow, settle } from './helpers/overflow.js'
 
 // Serial: these share one `agent_tasks` table, and the 0-task assertion is
@@ -155,7 +155,7 @@ test.describe('/tasks', () => {
   test('archive and restore, with the status filter following', async ({ page }) => {
     await gotoTasks(page)
     const row = page.locator('.task-row').first()
-    await rowAction(row, 'task-archive')
+    await rowAction(row, 'archive')
 
     // Archived is a world of its own: it is reached by asking for it by name,
     // so an archived task leaves the unfiltered feed.
@@ -166,7 +166,7 @@ test.describe('/tasks', () => {
     await expect(page.locator('.task-row').first())
       .toHaveAttribute('data-status', 'archived')
 
-    await rowAction(page.locator('.task-row').first(), 'task-restore')
+    await rowAction(page.locator('.task-row').first(), 'restore')
     await expect(page.locator('.task-row')).toHaveCount(0)
 
     await selectStatus(page, 'Any status')
@@ -198,7 +198,8 @@ function fakeTask(id, over = {}) {
     id, title: `mock task ${id}`, body: '', status: 'idea', source: 'web',
     external_id: null, tags: [], links: [], created_by: 1,
     created_at: NOW, updated_at: NOW, params: {}, verify_cmd: null,
-    autorun: false, project_id: null, priority: 'none', ...over,
+    autorun: false, project_id: null, priority: 'none',
+    ...verbsFor(over.status || 'idea'), ...over,
   }
 }
 
@@ -290,7 +291,7 @@ test.describe('/tasks — arming', () => {
     })
     await gotoTasks(page)
     const row = page.locator('.task-row', { hasText: 'browser routes only' }).first()
-    await rowAction(row, 'task-arm')
+    await rowAction(row, 'arm')
     await expect(page.getByTestId('task-arm-form')).toBeVisible()
     expect(optionCalls.length).toBeGreaterThan(0)
     // The worktree section asks its own, per-repo question.
@@ -331,7 +332,7 @@ test.describe('/tasks — arming', () => {
       body: JSON.stringify({ error: 'unknown field: bogus', field: 'bogus' }),
     }))
     await gotoTasks(page)
-    await rowAction(page.locator('.task-row').first(), 'task-arm')
+    await rowAction(page.locator('.task-row').first(), 'arm')
     await page.getByTestId('task-arm-submit').click()
     const refusal = page.getByTestId('task-arm-refusal')
     await expect(refusal).toContainText('unknown field: bogus')
@@ -352,7 +353,7 @@ test.describe('/tasks — arming', () => {
   test('the skill field is the shared listbox, offering the served skills', async ({ page }) => {
     await serveSkills(page)
     await gotoTasks(page)
-    await rowAction(page.locator('.task-row').first(), 'task-arm')
+    await rowAction(page.locator('.task-row').first(), 'arm')
     const form = page.getByTestId('task-arm-form')
     await expect(form).toBeVisible()
     // The native suggestion popup is gone: nothing in the sheet is a datalist.
@@ -374,7 +375,7 @@ test.describe('/tasks — arming', () => {
     await gotoTasks(page)
     await capture(page, 'run as a skill')
     const row = page.locator('.task-row', { hasText: 'run as a skill' }).first()
-    await rowAction(row, 'task-arm')
+    await rowAction(row, 'arm')
     await expect(page.getByTestId('task-arm-form')).toBeVisible()
 
     // The args field only appears once a skill is named: with no skill there
@@ -402,7 +403,7 @@ test.describe('/tasks — arming', () => {
     await gotoTasks(page)
     await selectStatus(page, 'Armed')
     const armed = page.locator('.task-row', { hasText: 'run as a skill' }).first()
-    await rowAction(armed, 'task-arm')
+    await rowAction(armed, 'arm')
     await expect(page.getByTestId('task-arm-skill')).toContainText('goal-verified')
     await expect(page.getByTestId('task-arm-skill-args')).toHaveValue('--strict')
   })
@@ -412,7 +413,7 @@ test.describe('/tasks — arming', () => {
     await gotoTasks(page)
     await capture(page, 'run a local skill')
     const row = page.locator('.task-row', { hasText: 'run a local skill' }).first()
-    await rowAction(row, 'task-arm')
+    await rowAction(row, 'arm')
     await expect(page.getByTestId('task-arm-form')).toBeVisible()
 
     await expect(page.getByTestId('task-arm-skill-custom')).toHaveCount(0)
@@ -433,7 +434,7 @@ test.describe('/tasks — arming', () => {
     await gotoTasks(page)
     await selectStatus(page, 'Armed')
     const armed = page.locator('.task-row', { hasText: 'run a local skill' }).first()
-    await rowAction(armed, 'task-arm')
+    await rowAction(armed, 'arm')
     await expect(page.getByTestId('task-arm-skill')).toContainText('custom…')
     await expect(page.getByTestId('task-arm-skill-custom')).toHaveValue('my-local-skill')
   })
@@ -454,7 +455,7 @@ test.describe('/tasks — arming', () => {
     })
 
     const first = page.locator('.task-row', { hasText: 'first quick arm' }).first()
-    await rowAction(first, 'task-arm')
+    await rowAction(first, 'arm')
     await expect(page.getByTestId('task-arm-form')).toBeVisible()
     // Nothing has been armed in this browser yet, so there is nothing to recall.
     await expect(page.getByTestId('task-arm-recalled')).toHaveCount(0)
@@ -479,13 +480,13 @@ test.describe('/tasks — arming', () => {
 
     // Re-opening the task that WAS armed reads its own attempt, and must not
     // claim to have been filled from somewhere else.
-    await rowAction(first, 'task-arm')
+    await rowAction(first, 'arm')
     await expect(page.getByTestId('task-arm-form')).toBeVisible()
     await expect(page.getByTestId('task-arm-recalled')).toHaveCount(0)
     await page.getByRole('button', { name: 'Cancel' }).click()
 
     const second = page.locator('.task-row', { hasText: 'second quick arm' }).first()
-    await rowAction(second, 'task-arm')
+    await rowAction(second, 'arm')
     await expect(page.getByTestId('task-arm-recalled')).toBeVisible()
     await expect(page.getByTestId('task-arm-verify')).toHaveValue('echo remembered')
     await expect(page.getByTestId('task-arm-model')).toContainText(served.models[0])
@@ -513,7 +514,7 @@ test.describe('/tasks — arming', () => {
     await capture(page, 'second custom arm')
 
     const first = page.locator('.task-row', { hasText: 'first custom arm' }).first()
-    await rowAction(first, 'task-arm')
+    await rowAction(first, 'arm')
     await expect(page.getByTestId('task-arm-form')).toBeVisible()
     await page.getByTestId('task-arm-model').click()
     await page.getByRole('option', { name: 'custom…', exact: true }).click()
@@ -530,7 +531,7 @@ test.describe('/tasks — arming', () => {
     expect(stored.skill).toBe('my-local-skill')
 
     const second = page.locator('.task-row', { hasText: 'second custom arm' }).first()
-    await rowAction(second, 'task-arm')
+    await rowAction(second, 'arm')
     await expect(page.getByTestId('task-arm-recalled')).toBeVisible()
     await expect(page.getByTestId('task-arm-model')).toContainText('custom…')
     await expect(page.getByTestId('task-arm-model-custom')).toHaveValue('claude-opus-4-8')
@@ -557,7 +558,7 @@ test.describe('/tasks — arming', () => {
       skill: '', skillArgs: '--strict', verify_cmd: '', one_shot: false,
     })))
     const row = page.locator('.task-row', { hasText: 'sentinel preset target' }).first()
-    await rowAction(row, 'task-arm')
+    await rowAction(row, 'arm')
     await expect(page.getByTestId('task-arm-form')).toBeVisible()
     await expect(page.getByTestId('task-arm-model-custom')).toHaveCount(0)
     await expect(page.getByTestId('task-arm-skill-args')).toHaveCount(0)
@@ -567,7 +568,7 @@ test.describe('/tasks — arming', () => {
     // Nor may they be written: args typed under a skill that is then cleared
     // are not part of the selection.
     const again = page.locator('.task-row', { hasText: 'sentinel preset target' }).first()
-    await rowAction(again, 'task-arm')
+    await rowAction(again, 'arm')
     await page.getByTestId('task-arm-skill').click()
     await page.getByRole('option', { name: 'custom…', exact: true }).click()
     await page.getByTestId('task-arm-skill-custom').fill('throwaway')
@@ -593,7 +594,7 @@ test.describe('/tasks — arming', () => {
       skill: '', skillArgs: '', verify_cmd: '', one_shot: false,
     })))
     const row = page.locator('.task-row', { hasText: 'stale preset target' }).first()
-    await rowAction(row, 'task-arm')
+    await rowAction(row, 'arm')
     await expect(page.getByTestId('task-arm-form')).toBeVisible()
     await expect(page.getByTestId('task-arm-cwd')).toContainText('server working directory')
     await expect(page.getByTestId('task-arm-recalled')).toHaveCount(0)
@@ -606,10 +607,10 @@ test.describe('/tasks — dependencies and refusals', () => {
     await gotoTasks(page)
     await capture(page, 'the dependent task')
     const blockerId = await rowIdFor(page, 'first captured idea')
-    const dependentId = await rowIdFor(page, 'the dependent task')
+    await rowIdFor(page, 'the dependent task')
 
     const dependent = page.locator('.task-row', { hasText: 'the dependent task' }).first()
-    await rowAction(dependent, 'task-deps')
+    await rowAction(dependent, 'deps')
     await page.getByTestId(`task-dep-${blockerId}`).click()
     await page.getByTestId('task-deps-save').click()
     await expect(page.getByTestId('task-deps-list')).toHaveCount(0)
@@ -617,16 +618,16 @@ test.describe('/tasks — dependencies and refusals', () => {
     // Arm it for real, then ask it to run: the dependency is not done, so the
     // server refuses with 409 and names what is in the way.
     const armedRow = page.locator('.task-row', { hasText: 'the dependent task' }).first()
-    await rowAction(armedRow, 'task-arm')
+    await rowAction(armedRow, 'arm')
     await page.getByTestId('task-arm-submit').click()
 
-    const runnable = page.locator('.task-row', { hasText: 'the dependent task' }).first()
-    await runnable.getByTestId('task-run').click()
-    const refusal = noteAfter(page, dependentId, 'task-refusal')
-    await expect(refusal).toContainText('blocked by')
-    const link = refusal.getByTestId(`task-blocker-${blockerId}`)
+    // Armed but blocked: the row offers no Run, only the link to what it waits
+    // on — the same primary the board card and the graph node draw.
+    const blocked = page.locator('.task-row', { hasText: 'the dependent task' }).first()
+    await expect(blocked.getByTestId('task-action-run')).toHaveCount(0)
+    const link = blocked.getByTestId('task-action-waits')
     await expect(link).toBeVisible()
-    await expect(link).toHaveAttribute('href', `/tasks#task-${blockerId}`)
+    await expect(link).toHaveAttribute('href', `/tasks/${blockerId}`)
   })
 
   test('a cycle is refused, naming the pair', async ({ page }) => {
@@ -637,7 +638,7 @@ test.describe('/tasks — dependencies and refusals', () => {
     // The reverse edge would close the loop the previous test opened.
     const blocker = page.locator('.task-row', { hasText: 'first captured idea' }).first()
     const blockerId = await rowIdFor(page, 'first captured idea')
-    await rowAction(blocker, 'task-deps')
+    await rowAction(blocker, 'deps')
     await page.getByTestId(`task-dep-${dependentId}`).click()
     await page.getByTestId('task-deps-save').click()
 
@@ -670,8 +671,12 @@ test.describe('/tasks — a run and its liveness', () => {
     await expect(row.getByTestId('task-live')).toBeVisible()
     await expect(noteAfter(page, 901, 'task-stale')).toHaveCount(0)
 
-    await rowAction(row, 'task-interrupt')
-    await row.getByTestId('task-stop').click()
+    await expect(row.getByTestId('task-action-watch')).toBeVisible()
+    await rowAction(row, 'interrupt')
+    await expect.poll(() => posted.length).toBe(1)
+    await row.getByTestId('task-action-stop').click()
+    await page.getByRole('button', { name: 'Stop run', exact: true }).click()
+    await expect.poll(() => posted.length).toBe(2)
     expect(posted).toEqual(['/api/tasks/901/interrupt', '/api/tasks/901/stop'])
   })
 
@@ -708,15 +713,16 @@ test.describe('/tasks — a run and its liveness', () => {
 
     await page.goto('/tasks')
     const row = page.locator('.task-row', { hasText: 'about to run' }).first()
-    await row.getByTestId('task-run').click()
-    expect(posted).toEqual(['/api/tasks/905/run'])
+    await row.getByTestId('task-action-run').click()
+    await expect.poll(() => posted).toEqual(['/api/tasks/905/run'])
 
     const after = page.locator('.task-row', { hasText: 'about to run' }).first()
     await expect(after).toHaveAttribute('data-status', 'running')
     await expect(after.getByTestId('task-live')).toBeVisible()
-    await expect(after.getByTestId('task-stop')).toBeVisible()
-    await after.getByTestId('task-row-menu').click()
-    await expect(page.getByRole('menu').getByTestId('task-interrupt')).toBeVisible()
+    await expect(after.getByTestId('task-action-watch')).toBeVisible()
+    await expect(after.getByTestId('task-action-stop')).toBeVisible()
+    await after.getByTestId('task-menu').click()
+    await expect(page.getByRole('menu').getByTestId('task-verb-interrupt')).toBeVisible()
   })
 
   test('a running row with nothing behind it reads distinctly', async ({ page }) => {
@@ -733,8 +739,8 @@ test.describe('/tasks — a run and its liveness', () => {
     await expect(noteAfter(page, 902, 'task-stale')).toBeVisible()
     await expect(row.getByTestId('task-live')).toHaveCount(0)
     // The way out of a stranded row is another attempt, so Run stays offered.
-    await expect(row.getByTestId('task-run')).toHaveText(/Run again/)
-    await expect(row.getByTestId('task-stop')).toHaveCount(0)
+    await expect(row.getByTestId('task-action-run')).toHaveText(/Run again/)
+    await expect(row.getByTestId('task-action-stop')).toHaveCount(0)
   })
 
   test('a group holding no running rows does not strand another group', async ({ page }) => {
@@ -756,7 +762,7 @@ test.describe('/tasks — a run and its liveness', () => {
     await page.goto('/tasks')
     const row = page.locator('.task-row', { hasText: 'a grouped live run' }).first()
     await expect(row.getByTestId('task-live')).toBeVisible()
-    await expect(row.getByTestId('task-stop')).toBeVisible()
+    await expect(row.getByTestId('task-action-stop')).toBeVisible()
 
     release()
     await expect(page.locator('.task-row', { hasText: 'an idea beside it' })).toBeVisible()
@@ -790,14 +796,14 @@ test.describe('/tasks — a run and its liveness', () => {
     // and no "Run again" that would launch a second agent over a live one.
     await expect(row.getByTestId('task-not-live')).toHaveCount(0)
     await expect(noteAfter(page, 908, 'task-stale')).toHaveCount(0)
-    await expect(row.getByTestId('task-run')).toHaveCount(0)
+    await expect(row.getByTestId('task-action-run')).toHaveCount(0)
 
     release()
     await expect(row.getByTestId('task-live')).toBeVisible()
   })
 
   test('run history lists attempts, each linking to its trace', async ({ page }) => {
-    await mockList(page, [fakeTask(903, { title: 'a task with history', status: 'failed' })])
+    await mockList(page, [fakeTask(903, { title: 'a task with history', status: 'failed', run_count: 2 })])
     await mockRuns(page, [
       {
         id: 8, task_id: 903, trace_id: 'sdk-attempt-2', attempt: 2, status: 'failed',
@@ -812,7 +818,8 @@ test.describe('/tasks — a run and its liveness', () => {
     ])
 
     await page.goto('/tasks')
-    await rowAction(page.locator('.task-row', { hasText: 'a task with history' }).first(), 'task-runs-open')
+    await page.locator('.task-row', { hasText: 'a task with history' }).first()
+      .getByTestId('task-run-count').click()
     await expect(page.getByTestId('task-runs').locator('.task-run')).toHaveCount(2)
     await expect(page.getByTestId('task-run-trace-2'))
       .toHaveAttribute('href', '/trace/sessions/sdk-attempt-2')
@@ -821,12 +828,13 @@ test.describe('/tasks — a run and its liveness', () => {
     await expect(page.getByTestId('task-runs')).toContainText('verify exit 1')
   })
 
-  test('a task never run says so', async ({ page }) => {
+  test('a task never run offers no attempts chip', async ({ page }) => {
     await mockList(page, [fakeTask(904, { title: 'never run', status: 'armed' })])
     await mockRuns(page, [])
     await page.goto('/tasks')
-    await rowAction(page.locator('.task-row', { hasText: 'never run' }).first(), 'task-runs-open')
-    await expect(page.getByTestId('task-runs-empty')).toBeVisible()
+    const row = page.locator('.task-row', { hasText: 'never run' }).first()
+    await expect(row.getByTestId('task-action-run')).toBeVisible()
+    await expect(row.getByTestId('task-run-count')).toHaveCount(0)
   })
 })
 
@@ -852,7 +860,7 @@ test.describe('/tasks — the dependency picker', () => {
     await mockList(page, tasks)
     await mockGraph(page, nodes, edges)
     await page.goto('/tasks')
-    await rowAction(page.locator('.task-row', { hasText: tasks[0].title }).first(), 'task-deps')
+    await rowAction(page.locator('.task-row', { hasText: tasks[0].title }).first(), 'deps')
     await expect(page.getByTestId('task-deps-list')).toBeVisible()
   }
 
@@ -1105,7 +1113,7 @@ test.describe('/tasks images', () => {
     async ({ page }) => {
       await gotoTasks(page)
       const row = page.locator('.task-row').first()
-      await rowAction(row, 'task-edit')
+      await rowAction(row, 'edit')
 
       const form = page.getByTestId('task-edit-form')
       await expect(form.locator('.task-image-thumb')).toHaveCount(1)
@@ -1129,7 +1137,7 @@ test.describe('/tasks images', () => {
   test('the edit sheet shows the server refusal for a file that is not an image',
     async ({ page }) => {
       await gotoTasks(page)
-      await rowAction(page.locator('.task-row').first(), 'task-edit')
+      await rowAction(page.locator('.task-row').first(), 'edit')
 
       const form = page.getByTestId('task-edit-form')
       await form.getByTestId('task-image-file').setInputFiles({

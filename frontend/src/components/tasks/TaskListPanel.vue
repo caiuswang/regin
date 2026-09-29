@@ -28,17 +28,17 @@ import { usePage } from '../../composables/usePage.js'
 import { invalidatePipelineCounts } from '../../composables/usePipelineCounts.js'
 import { useGroupCollapse } from '../../composables/useGroupCollapse.js'
 import { useProjects } from '../../composables/useProjects.js'
-import { useTaskExec } from '../../composables/useTaskExec.js'
 import { useTaskQuery } from '../../composables/useTaskQuery.js'
 import { useTaskSelection } from '../../composables/useTaskSelection.js'
 import { useTaskShortcuts } from '../../composables/useTaskShortcuts.js'
+import { useTaskVerbs } from '../../composables/useTaskVerbs.js'
 
 const FLAT = 'flat'
 
 const route = useRoute()
 const query = useTaskQuery()
 const { counts, error: countsError, load: loadCounts } = useTaskCounts(query.params)
-const { patch, bulk, remove, bulkRemove } = useTaskMutations()
+const { bulk, bulkRemove } = useTaskMutations()
 const { confirm } = useConfirm()
 const { items: projects, ensure: ensureProjects, byId } = useProjects()
 const { isOpen, setOpen } = useGroupCollapse()
@@ -112,7 +112,7 @@ async function reload() {
   groupRefs.value.forEach(g => g?.reload?.())
 }
 
-const { refusals, liveness, busyId, control, syncLiveness } = useTaskExec(reload)
+const { refusals, liveness, busyId, syncLiveness, act } = useTaskVerbs(afterWrite, { openSheet })
 
 // A write changes a count the shell shows, and the shell cannot see it.
 async function afterWrite() {
@@ -142,23 +142,6 @@ const paramsKey = computed(() => (route.path !== '/tasks' ? null : JSON.stringif
   [query.params.value, query.page.value, query.size.value, groupMode.value])))
 let lastKey = null
 watch(paramsKey, (key) => { if (key != null && key !== lastKey) reload() })
-
-async function toggleArchive(task) {
-  const ok = await patch(task,
-    { status: task.status === 'archived' ? 'idea' : 'archived' })
-  if (ok) await afterWrite()
-}
-
-// Named in the prompt, not counted: "delete 1 task" is a number the operator
-// has to trust, while the title is the thing they were looking at.
-async function deleteTask(task) {
-  const ok = await confirm(
-    'Delete task',
-    `Delete “${task.title}” and its run history, images and links? `
-    + 'This cannot be undone — archive it instead to keep it.', true)
-  if (!ok) return
-  if (await remove(task)) await afterWrite()
-}
 
 async function deleteSelected() {
   const ids = [...selection.ids.value]
@@ -295,12 +278,10 @@ defineExpose({ reload: afterWrite })
         @update:open="v => setOpen(query.state.value.group, group.key, v)"
         @loaded="onGroupLoaded"
         @hidden="selection.withdrawVisible"
-        @toggle="toggleArchive"
+        @verb="act"
         @open="openSheet"
-        @control="control"
         @focus="focusTask"
         @select="selection.toggle"
-        @delete="deleteTask"
       />
     </template>
 
@@ -313,13 +294,11 @@ defineExpose({ reload: afterWrite })
           :selection="selection.ids.value"
           :busy-id="busyId"
           :project-for="t => byId(t.project_id)"
-          @toggle="toggleArchive"
+          @verb="act"
           @open="openSheet"
-          @control="control"
-          @focus="focusTask"
+            @focus="focusTask"
           @select="selection.toggle"
-          @delete="deleteTask"
-        />
+          />
       </div>
     </template>
 

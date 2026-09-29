@@ -2,10 +2,10 @@
 // One task, on one line.
 //
 // Density is the point: an identifier, a priority glyph, a status glyph, the
-// title, and the few facts that fit, then ONE primary control and a ⋯ menu.
-// A backlog is read by scanning a column; seven controls standing in every
-// row (defect #197) made each row a toolbar and hid the one that mattered —
-// Run or Stop — among glyphs nobody could tell apart.
+// title, and the few facts that fit, then the row's primary action and ⋯ menu.
+// Both are the server's (`task.action`, `task.menu` — feature #119 R4a) drawn
+// by the same components as the next-step row, the board card and the graph
+// node, so a task offers the same buttons whichever view it is seen in.
 //
 // The liveness badge is not decoration: `status` is a claim that outlives the
 // process that wrote it, so a `running` task whose run is gone says so instead
@@ -15,13 +15,12 @@ import { computed } from 'vue'
 import Badge from '../Badge.vue'
 import Button from '../ui/Button.vue'
 import Checkbox from '../ui/Checkbox.vue'
-import DropdownMenu from '../ui/DropdownMenu.vue'
-import Icon from '../ui/Icon.vue'
 import TaskKindChip from './TaskKindChip.vue'
+import TaskPrimaryAction from './TaskPrimaryAction.vue'
 import TaskPriorityIcon from './TaskPriorityIcon.vue'
 import TaskRefusal from './TaskRefusal.vue'
-import TaskRunControls from './TaskRunControls.vue'
 import TaskStatusIcon from './TaskStatusIcon.vue'
+import TaskVerbMenu from './TaskVerbMenu.vue'
 import { shortDate } from '../../utils/ledgerFormat'
 import { taskRef } from '../../utils/taskMeta.js'
 
@@ -36,7 +35,7 @@ const props = defineProps({
   selected: { type: Boolean, default: false },
   selectable: { type: Boolean, default: true },
 })
-const emit = defineEmits(['toggle', 'open', 'control', 'focus', 'select', 'delete'])
+const emit = defineEmits(['verb', 'open', 'focus', 'select'])
 
 const archived = computed(() => props.task.status === 'archived')
 const imageCount = computed(() => (props.task.images || []).length)
@@ -51,29 +50,6 @@ const day = computed(() => shortDate(props.task.created_at))
 // inferred from the title or the status.
 const runCount = computed(() => props.task.run_count || 0)
 
-const menu = computed(() => {
-  const t = props.task
-  const open = kind => () => emit('open', kind, t)
-  return [
-    answered.value && live.value && {
-      label: 'Interrupt', testid: 'task-interrupt', disabled: props.busy,
-      onSelect: () => emit('control', t, 'interrupt'),
-    },
-    { label: 'Edit', testid: 'task-edit', onSelect: open('edit') },
-    !archived.value && {
-      label: t.status === 'idea' ? 'Arm…' : 'Re-arm…', testid: 'task-arm', onSelect: open('arm'),
-    },
-    { label: 'Dependencies', testid: 'task-deps', onSelect: open('deps') },
-    { label: 'Run history', testid: 'task-runs-open', onSelect: open('runs') },
-    { separator: true },
-    {
-      label: archived.value ? 'Restore' : 'Archive',
-      testid: archived.value ? 'task-restore' : 'task-archive',
-      onSelect: () => emit('toggle', t),
-    },
-    { label: 'Delete', testid: 'task-delete', danger: true, onSelect: () => emit('delete', t) },
-  ].filter(Boolean)
-})
 </script>
 
 <template>
@@ -166,26 +142,14 @@ const menu = computed(() => {
 
     <div class="task-actions">
       <span class="task-primary">
-        <TaskRunControls
+        <TaskPrimaryAction
           :task="task"
-          :liveness="liveness"
           :busy="busy"
-          @control="action => $emit('control', task, action)"
+          :liveness="liveness"
+          @verb="v => emit('verb', v, task)"
         />
       </span>
-      <DropdownMenu :items="menu">
-        <template #trigger>
-          <Button
-            variant="ghost"
-            size="sm"
-            class="task-menu-trigger"
-            :aria-label="`More actions for ${ref_}`"
-            data-testid="task-row-menu"
-          >
-            <Icon name="more-horizontal" :size="14" />
-          </Button>
-        </template>
-      </DropdownMenu>
+      <TaskVerbMenu :task="task" :busy="busy" @verb="v => emit('verb', v, task)" />
     </div>
   </div>
 
@@ -284,8 +248,8 @@ const menu = computed(() => {
 
 /* Always drawn: an action reachable only on hover is one a touch screen or a
    scanning eye never finds (feature #119 I2). The primary slot is a fixed
-   width so the date column lines up whether a row offers Run, Stop, or
-   nothing. */
+   width so the date column lines up whether a row offers Arm, Run, Watch and
+   Stop, or nothing. */
 .task-actions {
     display: flex;
     align-items: center;
@@ -295,14 +259,7 @@ const menu = computed(() => {
 .task-primary {
     display: flex;
     justify-content: flex-end;
-    width: 6.5rem;
-}
-@media (max-width: 767px) {
-    .task-menu-trigger,
-    .task-primary :deep(button) {
-        min-width: 2.75rem;
-        min-height: 2.75rem;
-    }
+    width: 8.5rem;
 }
 
 .task-stale {

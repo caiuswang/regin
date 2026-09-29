@@ -18,8 +18,7 @@ defineProps({
   busyId: { type: Number, default: null },
   projectFor: { type: Function, default: () => null },
 })
-const emit = defineEmits(['toggle', 'open', 'control', 'focus', 'select',
-                          'delete'])
+const emit = defineEmits(['verb', 'open', 'focus', 'select'])
 </script>
 
 <template>
@@ -32,11 +31,9 @@ const emit = defineEmits(['toggle', 'open', 'control', 'focus', 'select',
     :project="projectFor(task)"
     :selected="selection.has(task.id)"
     :busy="busyId === task.id"
-    @toggle="t => emit('toggle', t)"
+    @verb="(v, t) => emit('verb', v, t)"
     @open="(kind, t) => emit('open', kind, t)"
-    @control="(t, action) => emit('control', t, action)"
     @focus="id => emit('focus', id)"
     @select="t => emit('select', t)"
-    @delete="t => emit('delete', t)"
   />
 </template>

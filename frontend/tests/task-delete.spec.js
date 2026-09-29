@@ -64,7 +64,7 @@ test.describe('/tasks — delete', () => {
     await capture(page, 'cancel this delete')
     await expect(page.locator('.task-row')).toHaveCount(1)
 
-    await rowAction(page.locator('.task-row').first(), 'task-delete')
+    await rowAction(page.locator('.task-row').first(), 'delete')
     // Named, not counted: the dialog quotes the title the operator was looking
     // at, and says what archiving would have kept.
     await expect(page.getByText('cancel this delete', { exact: false }).last())
@@ -79,7 +79,7 @@ test.describe('/tasks — delete', () => {
     await capture(page, 'delete this one')
     await expect(page.locator('.task-row')).toHaveCount(2)
 
-    await rowAction(page.locator('.task-row', { hasText: 'delete this one' }).first(), 'task-delete')
+    await rowAction(page.locator('.task-row', { hasText: 'delete this one' }).first(), 'delete')
     await confirmButton(page, 'Delete task').click()
 
     await expect(page.locator('.task-row')).toHaveCount(1)
