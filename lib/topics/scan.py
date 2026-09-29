@@ -351,14 +351,18 @@ def _under_dir_refs(matched: list[dict[str, str]], topic: dict[str, Any]) -> lis
     per file. Scan therefore has to *keep* them — a plain glob reconcile would
     drop the curated entry and re-expand the subtree it replaced. Files a dir
     ref covers are dropped from the match set for the same reason."""
-    curated = {ref.get("path") for ref in topic.get("refs", []) or []
-               if isinstance(ref, dict)}
+    curated = _curated_ref_paths(topic)
     dir_paths = [p for p in curated if is_dir_ref(p)]
     if not dir_paths:
         return matched
     kept = [r for r in matched if _survives_collapse(r["path"], curated, dir_paths)]
     seen = {r["path"] for r in kept}
     return kept + [{"path": d} for d in dir_paths if d not in seen]
+
+
+def _curated_ref_paths(topic: dict[str, Any]) -> set[str]:
+    return {ref.get("path") for ref in topic.get("refs", []) or []
+            if isinstance(ref, dict)}
 
 
 def _survives_collapse(path: str, curated: set[str], dir_paths: list[str]) -> bool:
