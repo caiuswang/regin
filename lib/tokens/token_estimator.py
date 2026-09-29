@@ -62,31 +62,52 @@ def _jpeg_dimensions(head: bytes) -> tuple[int, int] | None:
     i = 2
     n = len(head)
     while i + 8 < n:
-        if head[i] != 0xFF:
+        marker, i = _jpeg_next_marker(head, i)
+        if marker is None:
             return None
-        while i + 1 < n and head[i + 1] == 0xFF:
-            i += 1
-        if i + 1 >= n:
-            return None
-        marker = head[i + 1]
-        i += 2
-        if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
-            if i + 7 >= n:
-                return None
-            height = (head[i + 3] << 8) | head[i + 4]
-            width = (head[i + 5] << 8) | head[i + 6]
-            if width <= 0 or height <= 0:
-                return None
-            return width, height
-        if marker in (0xD8, 0xD9):
-            return None
-        if i + 1 >= n:
-            return None
-        seg_len = (head[i] << 8) | head[i + 1]
-        if seg_len < 2:
+        if _is_jpeg_sof(marker):
+            return _jpeg_sof_dimensions(head, i)
+        seg_len = _jpeg_segment_length(head, i, marker)
+        if seg_len is None:
             return None
         i += seg_len
     return None
+
+
+def _jpeg_next_marker(head: bytes, i: int) -> tuple[int | None, int]:
+    """Read the marker at `head[i]` (skipping 0xFF fill bytes); returns the
+    marker and the offset just past it, or (None, i) on malformed input."""
+    n = len(head)
+    if head[i] != 0xFF:
+        return None, i
+    while i + 1 < n and head[i + 1] == 0xFF:
+        i += 1
+    if i + 1 >= n:
+        return None, i
+    return head[i + 1], i + 2
+
+
+def _is_jpeg_sof(marker: int) -> bool:
+    return 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC)
+
+
+def _jpeg_sof_dimensions(head: bytes, i: int) -> tuple[int, int] | None:
+    if i + 7 >= len(head):
+        return None
+    height = (head[i + 3] << 8) | head[i + 4]
+    width = (head[i + 5] << 8) | head[i + 6]
+    if width <= 0 or height <= 0:
+        return None
+    return width, height
+
+
+def _jpeg_segment_length(head: bytes, i: int, marker: int) -> int | None:
+    if marker in (0xD8, 0xD9) or i + 1 >= len(head):
+        return None
+    seg_len = (head[i] << 8) | head[i + 1]
+    if seg_len < 2:
+        return None
+    return seg_len
 
 
 def _decode_b64_head(b64data: str, max_chars: int = 2048) -> bytes:

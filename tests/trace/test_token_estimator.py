@@ -133,3 +133,36 @@ def test_text_tokens_handles_special_token_strings():
     # tiktoken raises on `<|endoftext|>` by default — we must NOT.
     n = estimate_text_tokens('<|endoftext|> please summarize')
     assert n > 0
+
+
+def _sof(width: int, height: int, marker: int = 0xC0) -> bytes:
+    return (bytes([0xFF, marker]) + b'\x00\x11\x08' + struct.pack('>HH', height, width)
+            + b'\x03\x01\x22\x00\x02\x11\x01\x03\x11\x01')
+
+
+_SOI = b'\xff\xd8'
+_APP0 = b'\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00'
+_JPEG_CASES = [
+    (b'', None),
+    (b'\xff\xd8\xff', None),
+    (b'\x89PNG' + b'\x00' * 20, None),
+    (_SOI + _APP0 + _sof(800, 600), (800, 600)),
+    (_SOI + _sof(640, 480, 0xC2), (640, 480)),
+    (_SOI + b'\xff\xff\xff' + _sof(10, 20)[1:], (10, 20)),
+    (_SOI + b'\xff\xc4\x00\x04\xaa\xbb' + _sof(30, 40), (30, 40)),
+    (_SOI + b'\x00' * 20, None),
+    (_SOI + b'\xff\xd9' + b'\x00' * 20, None),
+    (_SOI + b'\xff\xd8' + b'\x00' * 20, None),
+    (_SOI + b'\xff\xe0\x00\x01' + b'\x00' * 20, None),
+    (_SOI + _sof(0, 600), None),
+    (_SOI + _APP0 + b'\xff\xc0\x00\x11\x08\x02', None),
+    (_SOI + b'\xff' * 20, None),
+    (_SOI + b'\xff\xe0\x7f\xff' + b'\x00' * 20, None),
+]
+
+
+def test_jpeg_dimensions_edge_cases():
+    from lib.tokens.token_estimator import _jpeg_dimensions
+
+    got = [_jpeg_dimensions(head) for head, _ in _JPEG_CASES]
+    assert got == [want for _, want in _JPEG_CASES]
