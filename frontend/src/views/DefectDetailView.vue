@@ -14,7 +14,10 @@ import { rememberedQuery } from '../composables/usePipelineTabState'
 import { useDetailBack } from '../composables/useDetailBack'
 import { useFlash } from '../composables/useFlash'
 import { usePipelineLive } from '../composables/usePipelineEvents'
+import { usePipelineCreate } from '../composables/usePipelineCreate'
+import { useTaskShortcuts } from '../composables/useTaskShortcuts'
 import DefectRow from '../components/defects/DefectRow.vue'
+import PipelineCreateButton from '../components/pipeline/PipelineCreateButton.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -45,7 +48,7 @@ async function load() {
     const body = await api.get(`/defects/${want}`)
     if (want !== route.params.id) return
     defect.value = body.defect
-    publish({ subtitle: `Defect #${body.defect.id}, on its own address.` })
+    publish({ subline: `Defect #${body.defect.id}, on its own address.` })
   } catch (e) {
     if (want === route.params.id) loadError.value = e?.message || String(e)
   } finally {
@@ -55,6 +58,15 @@ async function load() {
 usePipelineLive(load)
 watch(() => route.params.id, () => { defect.value = null; load() },
       { immediate: true })
+
+// A defect reported from here is most likely another symptom of the same
+// feature, so the picker opens on it — still a chip the operator can clear.
+const createPrefill = computed(() => (defect.value?.feature_id
+  ? { feature: { id: defect.value.feature_id,
+                 title: defect.value.feature_title || `#${defect.value.feature_id}` } }
+  : null))
+const { openCreate } = usePipelineCreate()
+useTaskShortcuts({ c: () => { if (canWrite.value) openCreate('defect', createPrefill.value) } })
 
 // A write here re-reads this one row rather than the list it came from. A
 // merge is the one write that deletes the row this address names, so it moves
@@ -74,6 +86,10 @@ function onChanged(message, info) {
 
 <template>
   <div class="space-y-4">
+    <Teleport v-if="canWrite" defer to="#pipeline-actions">
+      <PipelineCreateButton kind="defect" testid="defect-new" :prefill="createPrefill" />
+    </Teleport>
+
     <p class="back">
       <router-link v-slot="{ href }" :to="back.to.value" custom>
         <a :href="href" class="focus-visible:outline-2 focus-visible:outline-blue-500" data-testid="defect-back" @click="back.go">← {{ back.label.value }}</a>

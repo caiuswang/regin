@@ -16,12 +16,15 @@ import { listStatusState, useListQuery } from '../composables/useListQuery'
 import { useFlash } from '../composables/useFlash'
 import { invalidatePipelineCounts } from '../composables/usePipelineCounts'
 import { usePipelineLive } from '../composables/usePipelineEvents'
+import { usePipelineCreate } from '../composables/usePipelineCreate'
+import { useTaskShortcuts } from '../composables/useTaskShortcuts'
 import Button from '../components/ui/Button.vue'
 import Icon from '../components/ui/Icon.vue'
 import ListStatus from '../components/ListStatus.vue'
 import PageControls from '../components/PageControls.vue'
 import PipelineListToolbar from '../components/PipelineListToolbar.vue'
 import DefectRow from '../components/defects/DefectRow.vue'
+import PipelineCreateButton from '../components/pipeline/PipelineCreateButton.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -85,7 +88,10 @@ const status = computed(() => listStatusState({
   total: total.value, population: population.value,
 }))
 
-publish({ subtitle: 'Every defect, open or closed, triaged or not.' })
+publish({ subline: 'Every defect, open or closed, triaged or not.' })
+
+const { openCreate } = usePipelineCreate()
+useTaskShortcuts({ c: () => { if (canWrite.value) openCreate('defect') } })
 
 function gotoPage(index) {
   list.patch({ page: String(Math.max(0, Math.min(pageCount.value - 1, index))) })
@@ -124,6 +130,10 @@ function onChanged(message, info) {
 
 <template>
   <div class="dv" data-testid="defects-list-page">
+    <Teleport v-if="canWrite" defer to="#pipeline-actions">
+      <PipelineCreateButton kind="defect" testid="defect-new" />
+    </Teleport>
+
     <PipelineListToolbar
       :q="state.q"
       search-label="Search defects by symptom"

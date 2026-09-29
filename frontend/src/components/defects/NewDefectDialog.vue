@@ -4,7 +4,8 @@
 // The feature is optional on purpose: a report blamed on nothing is what the
 // triage queue exists for, and a picker that nudged the operator toward a
 // guess would file a wrong parent — which inflates one feature's rounds and
-// exonerates another. Nothing is preselected.
+// exonerates another. Nothing is preselected unless the page it was opened
+// from already names the feature (a defect's own page).
 import { computed, ref, watch } from 'vue'
 import api from '../../api'
 import Button from '../ui/Button.vue'
@@ -16,6 +17,10 @@ import { useAttachedImages } from '../../composables/useAttachedImages.js'
 import { imageFilesFrom } from '../../utils/imageFiles'
 
 const open = defineModel('open', { type: Boolean, default: false })
+const props = defineProps({
+  // `{ id, title }` — shown as the picker's chip, so it reads as a choice.
+  feature: { type: Object, default: null },
+})
 const emit = defineEmits(['created'])
 
 const symptom = ref('')
@@ -38,7 +43,18 @@ function reset() {
   resetImages()
 }
 
-watch(open, (isOpen) => { if (!isOpen) resetImages() })
+// The dialog outlives the page that prefilled it, so a prefill the operator
+// left untouched is withdrawn when a page naming no feature opens it again.
+let prefilled = ''
+watch(open, (isOpen) => {
+  if (!isOpen) {
+    resetImages()
+  } else if (props.feature?.id) {
+    featureId.value = prefilled = String(props.feature.id)
+  } else if (prefilled && featureId.value === prefilled) {
+    featureId.value = prefilled = ''
+  }
+})
 
 async function onPaste(e) {
   if (!imageFilesFrom(e.clipboardData).length) return
@@ -89,7 +105,7 @@ async function submit() {
       />
 
       <span class="nd-label">Feature <span class="nd-optional">(optional — none sends it to triage)</span></span>
-      <FeaturePicker v-model="featureId" label="The feature that caused this" testid="new-defect-feature" />
+      <FeaturePicker v-model="featureId" :current="feature" label="The feature that caused this" testid="new-defect-feature" />
 
       <label class="nd-label" for="nd-paths">Suspect paths <span class="nd-optional">(one per line)</span></label>
       <Textarea

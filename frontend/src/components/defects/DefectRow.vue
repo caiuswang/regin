@@ -5,7 +5,7 @@
 // no ellipsis. `regin defects list` truncates at 88 characters because a
 // terminal line is finite; a page is not, and the wording is the whole
 // evidence a reader needs to decide which feature caused it.
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
 import DefectActions from './DefectActions.vue'
@@ -31,6 +31,7 @@ const props = defineProps({
 defineEmits(['changed'])
 
 const open = ref(!props.collapsible)
+const heldOut = computed(() => ['snoozed', 'declined'].includes(props.defect.queue_position))
 </script>
 
 <template>
@@ -50,11 +51,13 @@ const open = ref(!props.collapsible)
             :class="defect.status === 'open' ? 'ledger-tag-amber' : 'ledger-tag-green'"
       >{{ defect.status }}</span>
       <span v-if="reopenedLabel(defect.round)" class="ledger-tag">{{ reopenedLabel(defect.round) }}</span>
-      <!-- How it left triage, and only when it did. Separate from `status`
+      <!-- Held out of the queue, and only while it is. Separate from `status`
            because a declined report and a fixed bug are both closed, and only
-           one of them was ever looked at. -->
-      <span v-if="defect.triage_state" class="ledger-tag"
-            :data-testid="`defect-triage-${defect.id}`">{{ defect.triage_state }}</span>
+           one of them was ever looked at. `queue_position`, not
+           `triage_state`: a snoozed report that woke still carries the old
+           state but is back in the queue, offering the queue's verbs. -->
+      <span v-if="heldOut" class="ledger-tag"
+            :data-testid="`defect-triage-${defect.id}`">{{ defect.queue_position }}</span>
       <template v-if="!hideFeature">
         <router-link v-if="defect.feature_id" class="key"
                      :to="`/features/${defect.feature_id}`">

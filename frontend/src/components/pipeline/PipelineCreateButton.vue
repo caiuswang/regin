@@ -11,6 +11,7 @@ import { CREATE_KINDS, usePipelineCreate } from '../../composables/usePipelineCr
 const props = defineProps({
   kind: { type: String, required: true },
   testid: { type: String, required: true },
+  prefill: { type: Object, default: null },
 })
 
 const { openCreate } = usePipelineCreate()
@@ -18,13 +19,13 @@ const label = computed(() => `New ${props.kind}`)
 const items = CREATE_KINDS.map(k => ({
   label: k.label,
   testid: `pipeline-new-${k.kind}`,
-  onSelect: () => openCreate(k.kind),
+  onSelect: () => openCreate(k.kind, props.prefill),
 }))
 </script>
 
 <template>
   <span class="pcb">
-    <Button variant="primary" class="pcb-main" :data-testid="testid" @click="openCreate(kind)">
+    <Button variant="primary" class="pcb-main" :data-testid="testid" @click="openCreate(kind, prefill)">
       <Icon name="plus" :size="14" />
       <span>{{ label }}</span>
       <kbd class="pcb-kbd">c</kbd>

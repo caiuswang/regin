@@ -80,3 +80,65 @@ test('the shell renders no console error on a cold load of any tab',
     }
     expect(errors.join('\n---\n')).toBe('')
   })
+
+// Feature #125 S2 + S3: the defect pages head the shell like the tabs do, and
+// offer New ▾ with Defect as the default.
+test('test_defect_pages_publish_subline_and_create', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const row = {
+    id: 12, feature_id: 81, feature_title: 'The ledger', symptom: 'the rail clips',
+    status: 'open', round: 0, blamed_event_kind: 'started', missing_check: null,
+    suspect_paths: [], fix_task_id: null, fix_state: null, triage_state: null,
+    triage_reason: null, queue_position: null, images: [],
+    opened_at: '2026-09-14 12:00:00', updated_at: '2026-09-14 12:00:00', closed_at: null,
+  }
+  await page.route(/\/api\/defects(\?.*)?$/, (route) => route.fulfill({ json: {
+    items: [row], population: 1,
+    pagination: { total: 1, page: 0, size: 50, has_next: false, has_prev: false } } }))
+  await page.route(/\/api\/defects\/12$/, (route) => route.fulfill({ json: { defect: row } }))
+
+  await page.goto('/defects')
+  await expect(page.getByTestId('pipeline-subline'))
+    .toHaveText('Every defect, open or closed, triaged or not.')
+  const create = page.locator('#pipeline-actions [data-testid="defect-new"]')
+  await expect(create).toContainText('New defect')
+  await create.click()
+  await expect(page.getByTestId('new-defect-symptom')).toBeVisible()
+  // The list names no feature, so nothing is preselected.
+  await expect(page.getByTestId('new-defect-feature-chosen')).toHaveCount(0)
+  await page.keyboard.press('Escape')
+
+  // In-app, so the shell and its dialog stay mounted across both pages.
+  await page.getByTestId('defect-permalink-12').click()
+  await expect(page.getByTestId('pipeline-subline')).toHaveText('Defect #12, on its own address.')
+  await page.locator('#pipeline-actions [data-testid="defect-new"]').click()
+  await expect(page.getByTestId('new-defect-feature-chosen')).toContainText('#81 The ledger')
+  await page.keyboard.press('Escape')
+
+  // The ▾ still offers every kind, and `c` opens the page's default.
+  await page.getByTestId('pipeline-new').click()
+  await expect(page.getByTestId('pipeline-new-task')).toBeVisible()
+  await expect(page.getByTestId('pipeline-new-defect')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await page.locator('body').click({ position: { x: 5, y: 5 } })
+  await page.keyboard.press('c')
+  await expect(page.getByTestId('new-defect-feature-chosen')).toContainText('#81 The ledger')
+  await page.keyboard.press('Escape')
+
+  // The prefill belongs to the page that made it: reopened from the list, the
+  // report names no feature, on screen or in the request.
+  const posted = []
+  await page.route(/\/api\/defects$/, (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    posted.push(route.request().postDataJSON())
+    return route.fulfill({ status: 201, json: { outcome: 'opened', defect: { ...row, id: 13, feature_id: null } } })
+  })
+  await page.goBack()
+  await expect(page).toHaveURL(/\/defects$/)
+  await page.locator('#pipeline-actions [data-testid="defect-new"]').click()
+  await expect(page.getByTestId('new-defect-feature-chosen')).toHaveCount(0)
+  await page.getByTestId('new-defect-symptom').fill('another symptom')
+  await page.getByTestId('new-defect-submit').click()
+  await expect.poll(() => posted.length).toBe(1)
+  expect(posted[0].feature_id).toBeUndefined()
+})
