@@ -1,0 +1,272 @@
+{
+  "title": "regin：AI 编码代理的流水线与会话追踪",
+  "voice": "Tingting",
+  "pins": {
+    "feature": 125,
+    "task": 284,
+    "defect": 218,
+    "sessions": [
+      "bcfdb002-1581-40e1-abf2-e3c57203934b"
+    ]
+  },
+  "scenes": [
+    {
+      "id": "intro",
+      "surface": "card",
+      "route": null,
+      "hero": null,
+      "lines": [
+        {
+          "id": "intro-1",
+          "text": "AI 编码代理写代码，越来越快。"
+        },
+        {
+          "id": "intro-2",
+          "text": "可它到底做了什么？做对了没有？花了多少？"
+        },
+        {
+          "id": "intro-3",
+          "text": "regin 让这些，都看得见。",
+          "speak": "瑞金让这些，都看得见。"
+        }
+      ]
+    },
+    {
+      "id": "overview",
+      "surface": "pipeline",
+      "route": "/overview",
+      "hero": "[data-testid=\"overview-loop\"]",
+      "lines": [
+        {
+          "id": "overview-1",
+          "text": "一个需求从规格到交付，是一条流水线。"
+        },
+        {
+          "id": "overview-2",
+          "text": "Overview 一屏看全：功能、任务、缺陷，各自走到了哪一步。",
+          "speak": "总览页一屏看全：功能、任务、缺陷，各自走到了哪一步。"
+        },
+        {
+          "id": "overview-3",
+          "text": "正在跑的任务、排在下一个的任务，也都摆在这里。"
+        },
+        {
+          "id": "overview-4",
+          "text": "卡住的、失败的、等人拍板的，一眼就能看到。"
+        }
+      ]
+    },
+    {
+      "id": "features",
+      "surface": "pipeline",
+      "route": "/features",
+      "hero": "[data-testid=\"feature-table\"]",
+      "lines": [
+        {
+          "id": "features-1",
+          "text": "每个功能都有自己的阶段、返工轮次和逃逸缺陷。"
+        },
+        {
+          "id": "features-2",
+          "text": "“做完了”不再是一句话，而是一个能数出来的状态。"
+        },
+        {
+          "id": "features-3",
+          "text": "哪个功能卡在哪一步、下一步该做什么，每一行都写着。"
+        },
+        {
+          "id": "features-4",
+          "text": "我们就拿 regin 自己的一个功能来看。",
+          "speak": "我们就拿瑞金自己的一个功能来看。"
+        }
+      ]
+    },
+    {
+      "id": "ledger",
+      "surface": "pipeline",
+      "route": "/features/{feature}",
+      "hero": "[data-testid=\"feature-slices\"]",
+      "lines": [
+        {
+          "id": "ledger-1",
+          "text": "打开功能页：阶段、返工、缺陷，一行说清。"
+        },
+        {
+          "id": "ledger-2",
+          "text": "成本、工时和会话，都按真实记录汇总，没有估算。"
+        },
+        {
+          "id": "ledger-3",
+          "text": "规格就写在功能上，验收项就是测试名。"
+        },
+        {
+          "id": "ledger-4",
+          "text": "说做完了，就得有测试来证明。"
+        },
+        {
+          "id": "ledger-5",
+          "text": "规格里的切片表，会生成一个个任务，连同它们之间的依赖。"
+        },
+        {
+          "id": "ledger-6",
+          "text": "每个任务跑没跑、成没成，都挂在功能下面。"
+        },
+        {
+          "id": "ledger-7",
+          "text": "缺陷和会话也挂在这一页，一路往下，就是一本完整的账。"
+        }
+      ]
+    },
+    {
+      "id": "tasks",
+      "surface": "pipeline",
+      "route": "/tasks",
+      "hero": "[role=\"dialog\"]",
+      "lines": [
+        {
+          "id": "tasks-1",
+          "text": "任务页按下一步分组：正在跑的、被阻塞的、失败待重试的。"
+        },
+        {
+          "id": "tasks-2",
+          "text": "依赖一满足，任务就自动开跑，不用人盯着。"
+        },
+        {
+          "id": "tasks-3",
+          "text": "打开一个切片任务：它交付什么、依据哪条规格，一目了然。"
+        },
+        {
+          "id": "tasks-4",
+          "text": "完成与否由验证命令判定，而不是代理自己说了算。"
+        },
+        {
+          "id": "tasks-5",
+          "text": "每一次尝试都留档，失败了也查得到原因。"
+        }
+      ]
+    },
+    {
+      "id": "defects",
+      "surface": "pipeline",
+      "route": "/defects",
+      "hero": "[data-testid=\"defect-detail\"]",
+      "lines": [
+        {
+          "id": "defects-1",
+          "text": "缺陷单独成表，每一条都归属到一个功能。"
+        },
+        {
+          "id": "defects-2",
+          "text": "发布之后才发现的记为逃逸；这一条在构建中就被发现了。"
+        },
+        {
+          "id": "defects-3",
+          "text": "它漏掉了哪条检查、该算在哪一步头上，都有据可查。"
+        }
+      ]
+    },
+    {
+      "id": "bridge",
+      "surface": "pipeline",
+      "route": "/features/{feature}#feature-sessions",
+      "hero": "#feature-sessions",
+      "lines": [
+        {
+          "id": "bridge-1",
+          "text": "每一轮工作的背后，是一个个代理会话。"
+        },
+        {
+          "id": "bridge-2",
+          "text": "每个会话都能单独打开，先看看全部会话。"
+        }
+      ]
+    },
+    {
+      "id": "sessions",
+      "surface": "session",
+      "route": "/trace/sessions",
+      "hero": "[aria-label^=\"Copy session id\"]",
+      "lines": [
+        {
+          "id": "sessions-1",
+          "text": "Sessions 列出每一个代理会话：在哪个仓库、做了多少、跑了多久。",
+          "speak": "会话列表列出每一个代理会话：在哪个仓库、做了多少、跑了多久。"
+        },
+        {
+          "id": "sessions-2",
+          "text": "正在跑的排在最前，结束的按时间往下排。"
+        },
+        {
+          "id": "sessions-3",
+          "text": "我们要看的那一次，就在这里。"
+        }
+      ]
+    },
+    {
+      "id": "trace",
+      "surface": "session",
+      "route": "/trace/sessions/{session0}",
+      "hero": "[data-testid=\"trace-conversation-feed\"]",
+      "lines": [
+        {
+          "id": "trace-1",
+          "text": "会话页的头部，是这次运行的全部事实：分支、模型、耗时和花费。"
+        },
+        {
+          "id": "trace-2",
+          "text": "上下文用到多满、哪一轮最贵，这里都有。"
+        },
+        {
+          "id": "trace-3",
+          "text": "收起头部，对话按轮次展开：每一次思考、每一次工具调用。"
+        },
+        {
+          "id": "trace-4",
+          "text": "哪条命令失败了、失败时输出了什么，都摆在明处。"
+        },
+        {
+          "id": "trace-5",
+          "text": "子代理单独列出：主代理负责构建，验证者在全新上下文里独立复核。"
+        },
+        {
+          "id": "trace-6",
+          "text": "切到时间线，整次会话就是一棵调用树。"
+        },
+        {
+          "id": "trace-7",
+          "text": "点开任意一次工具调用：输入、输出、耗时和用量，都在右侧。"
+        }
+      ]
+    },
+    {
+      "id": "messages",
+      "surface": "session",
+      "route": "/trace/sessions/{session0}",
+      "hero": "li.scroll-mt-28",
+      "lines": [
+        {
+          "id": "messages-1",
+          "text": "代理边做边汇报：做了什么、证据是什么，都留在会话里。"
+        },
+        {
+          "id": "messages-2",
+          "text": "这些汇报同时进入收件箱，换一个会话也找得回来。"
+        }
+      ]
+    },
+    {
+      "id": "outro",
+      "surface": "card",
+      "route": null,
+      "hero": null,
+      "caption": "regin serve",
+      "lines": [
+        {
+          "id": "outro-1",
+          "text": "regin：让 AI 编码代理的每一步，都看得见、算得清、验得过。",
+          "speak": "瑞金：让 AI 编码代理的每一步，都看得见、算得清、验得过。"
+        }
+      ]
+    }
+  ]
+}
