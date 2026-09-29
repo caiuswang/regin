@@ -201,28 +201,40 @@ _TOPIC_JSON_LIST_FIELDS: tuple[str, ...] = (
 )
 
 
+# ORM column -> (legacy topic key, value used when the key is missing/falsy)
+_TOPIC_DEFAULTED_FIELDS: dict[str, tuple[str, str]] = {
+    "topic_id": ("id", ""),
+    "intent": ("intent", ""),
+    "status": ("status", "active"),
+    "blurb": ("blurb", ""),
+    "wiki_md": ("wiki", ""),
+}
+
+# ORM column -> legacy topic key, copied as-is (None when absent)
+_TOPIC_NULLABLE_FIELDS: dict[str, str] = {
+    "source": "source",
+    "review_status": "review_status",
+    "accepted_topic_id": "accepted_topic",
+    "accepted_at": "accepted_at",
+    "merged_topic_id": "merged_topic",
+    "merged_at": "merged_at",
+    "ignored_at": "ignored_at",
+    "downgraded_from": "downgraded_from",
+    "downgraded_at": "downgraded_at",
+    "parent_id": "parent_id",
+}
+
+
 def _proposed_topic_kwargs(topic: dict[str, Any]) -> dict[str, Any]:
     """Translate a legacy topic dict into kwargs for ProposalTopic /
     ProposalRevisionTopic construction."""
     kwargs: dict[str, Any] = {
-        "topic_id": topic.get("id") or "",
-        "label": topic.get("label") or topic.get("id") or "",
-        "intent": topic.get("intent") or "",
-        "status": topic.get("status") or "active",
-        "source": topic.get("source"),
-        "review_status": topic.get("review_status"),
-        "accepted_topic_id": topic.get("accepted_topic"),
-        "accepted_at": topic.get("accepted_at"),
-        "merged_topic_id": topic.get("merged_topic"),
-        "merged_at": topic.get("merged_at"),
-        "ignored_at": topic.get("ignored_at"),
-        "downgraded_from": topic.get("downgraded_from"),
-        "downgraded_at": topic.get("downgraded_at"),
-        "replaced_existing": 1 if topic.get("replaced_existing") else 0,
-        "parent_id": topic.get("parent_id"),
-        "blurb": topic.get("blurb") or "",
-        "wiki_md": topic.get("wiki") or "",
+        column: topic.get(key) or default
+        for column, (key, default) in _TOPIC_DEFAULTED_FIELDS.items()
     }
+    kwargs.update({column: topic.get(key) for column, key in _TOPIC_NULLABLE_FIELDS.items()})
+    kwargs["label"] = topic.get("label") or kwargs["topic_id"]
+    kwargs["replaced_existing"] = 1 if topic.get("replaced_existing") else 0
     for field in _TOPIC_JSON_LIST_FIELDS:
         kwargs[f"{field}_json"] = json.dumps(topic.get(field) or [])
     return kwargs
