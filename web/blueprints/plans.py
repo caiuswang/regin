@@ -148,51 +148,70 @@ def api_ingest_plan_session():
     """
     data = request.get_json(silent=True) or {}
     event = data.get("event")
-    session_id = data.get("session_id")
+    handler = _PLAN_EVENT_HANDLERS.get(event) if isinstance(event, str) else None
     skipped_duplicate = False
 
     with SessionLocal() as session:
-        if event == "enter":
-            plan_filename = data.get("plan_filename")
-            started_at = data.get("started_at")
-            if session_id and plan_filename:
-                existing = session.exec(
-                    select(PlanSession).where(
-                        PlanSession.session_id == session_id,
-                        PlanSession.plan_filename == plan_filename,
-                    ).limit(1)
-                ).first()
-                if existing is not None:
-                    skipped_duplicate = True
-            if not skipped_duplicate and session_id and plan_filename and started_at:
-                session.add(PlanSession(
-                    session_id=session_id, plan_filename=plan_filename,
-                    started_at=started_at,
-                ))
-        elif event == "draft_completed" and session_id:
-            rows = session.exec(
-                select(PlanSession).where(
-                    PlanSession.session_id == session_id,
-                    PlanSession.ended_at.is_(None),
-                )
-            ).all()
-            for row in rows:
-                row.draft_completed_at = data.get("draft_completed_at")
-                row.review_started_at = data.get("review_started_at")
-                session.add(row)
-        elif event == "exit" and session_id:
-            rows = session.exec(
-                select(PlanSession).where(
-                    PlanSession.session_id == session_id,
-                    PlanSession.ended_at.is_(None),
-                )
-            ).all()
-            for row in rows:
-                row.ended_at = data.get("ended_at")
-                session.add(row)
+        if handler is not None:
+            skipped_duplicate = handler(session, data, data.get("session_id"))
         session.commit()
 
     return jsonify({"ok": True, "skipped_duplicate": skipped_duplicate})
+
+
+def _plan_enter(session, data: dict, session_id) -> bool:
+    """Add the PlanSession row; True when it already existed."""
+    plan_filename = data.get("plan_filename")
+    started_at = data.get("started_at")
+    if not (session_id and plan_filename):
+        return False
+    existing = session.exec(
+        select(PlanSession).where(
+            PlanSession.session_id == session_id,
+            PlanSession.plan_filename == plan_filename,
+        ).limit(1)
+    ).first()
+    if existing is not None:
+        return True
+    if started_at:
+        session.add(PlanSession(
+            session_id=session_id, plan_filename=plan_filename,
+            started_at=started_at,
+        ))
+    return False
+
+
+def _open_plan_rows(session, session_id) -> list:
+    if not session_id:
+        return []
+    return session.exec(
+        select(PlanSession).where(
+            PlanSession.session_id == session_id,
+            PlanSession.ended_at.is_(None),
+        )
+    ).all()
+
+
+def _plan_draft_completed(session, data: dict, session_id) -> bool:
+    for row in _open_plan_rows(session, session_id):
+        row.draft_completed_at = data.get("draft_completed_at")
+        row.review_started_at = data.get("review_started_at")
+        session.add(row)
+    return False
+
+
+def _plan_exit(session, data: dict, session_id) -> bool:
+    for row in _open_plan_rows(session, session_id):
+        row.ended_at = data.get("ended_at")
+        session.add(row)
+    return False
+
+
+_PLAN_EVENT_HANDLERS = {
+    "enter": _plan_enter,
+    "draft_completed": _plan_draft_completed,
+    "exit": _plan_exit,
+}
 
 
 @plans_bp.route("/api/plan-sessions")
