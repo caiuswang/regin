@@ -653,27 +653,30 @@ def scan_skill_directory(root_dir: str) -> list[BatchScanEntry]:
             continue
         skill_dir = os.path.join(root_dir, name)
         skill_md = os.path.join(skill_dir, 'SKILL.md')
-        if not (os.path.isdir(skill_dir) and os.path.isfile(skill_md)):
-            continue
-        derived: str | None = None
-        err: str | None = None
-        try:
-            with open(skill_md, 'r', encoding='utf-8') as f:
-                fm, _ = _parse_frontmatter(f.read())
-            derived = (fm.get('name') or fm.get('procedure') or '').strip() or None
-            if derived:
-                _validate_slug(derived)
-        except ImportError_ as e:
-            err = str(e)
-        except OSError as e:
-            err = f'cannot read SKILL.md: {e}'
-
-        conflict = bool(derived and _slug_exists(derived))
-        entries.append(BatchScanEntry(
-            name=name, skill_dir=skill_dir, derived_slug=derived,
-            conflict=conflict, error=err,
-        ))
+        if os.path.isdir(skill_dir) and os.path.isfile(skill_md):
+            entries.append(_scan_entry(name, skill_dir, skill_md))
     return entries
+
+
+def _scan_entry(name: str, skill_dir: str, skill_md: str) -> BatchScanEntry:
+    derived: str | None = None
+    err: str | None = None
+    try:
+        with open(skill_md, 'r', encoding='utf-8') as f:
+            fm, _ = _parse_frontmatter(f.read())
+        derived = (fm.get('name') or fm.get('procedure') or '').strip() or None
+        if derived:
+            _validate_slug(derived)
+    except ImportError_ as e:
+        err = str(e)
+    except OSError as e:
+        err = f'cannot read SKILL.md: {e}'
+
+    conflict = bool(derived and _slug_exists(derived))
+    return BatchScanEntry(
+        name=name, skill_dir=skill_dir, derived_slug=derived,
+        conflict=conflict, error=err,
+    )
 
 
 def _grit_fields(result: ImportResult) -> dict:
