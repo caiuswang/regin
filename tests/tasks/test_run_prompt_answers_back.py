@@ -18,7 +18,7 @@ from typer.testing import CliRunner
 from cli.commands.tasks import tasks_app
 from lib.comments import store as comments
 from lib.orm.models.comments import RESOLUTION_OPEN, RESOLUTION_RESOLVED
-from lib.tasks import runs
+from lib.tasks import run_prompt, runs
 
 
 @pytest.fixture
@@ -199,7 +199,7 @@ def test_an_envelope_edited_to_drop_the_finish_block_still_carries_it(
 
     seed_builtin_skeletons()
     update_template(LAUNCH_SURFACE_ID, {"body": "{{body}}{{feature}}"})
-    monkeypatch.setattr(runs, "_feature_block", lambda task: "")
+    monkeypatch.setattr(run_prompt, "_feature_block", lambda task: "")
     task = {"id": 1, "title": "t", "body": "the idea", "feature_id": None}
 
     prompt = runs._prompt(task, 7, None)

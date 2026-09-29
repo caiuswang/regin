@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from lib.tasks import runs
+from lib.tasks import run_prompt, runs
 
 
 def _reference_finish(run_id: int, linked: bool = False,
@@ -162,8 +162,8 @@ def test_tracker_block_parity_without_url():
 @pytest.mark.parametrize("dropped", [0, 1, 3])
 def test_followup_block_parity(monkeypatch, dropped):
     lines = ["  [user] first\n", "\n  [agent] second\n"]
-    monkeypatch.setattr(runs, "_followup_rows", lambda task_id: [(1, {})])
-    monkeypatch.setattr(runs, "_followup_lines",
+    monkeypatch.setattr(run_prompt, "_followup_rows", lambda task_id: [(1, {})])
+    monkeypatch.setattr(run_prompt, "_followup_lines",
                         lambda rows: (list(lines), dropped))
     assert runs._followup_block(1) == _reference_followup(lines, dropped)
 
@@ -188,10 +188,10 @@ def test_feature_block_parity_unknown_feature(monkeypatch):
 
 def test_launch_envelope_parity(monkeypatch):
     """The whole prompt, every block present, in the pre-refactor order."""
-    monkeypatch.setattr(runs, "_tracker_block", lambda feature: "<T>")
-    monkeypatch.setattr(runs, "_followup_block", lambda task_id: "<U>")
-    monkeypatch.setattr(runs, "_feature_block", lambda task: "<F>")
-    monkeypatch.setattr(runs, "_finish_block",
+    monkeypatch.setattr(run_prompt, "_tracker_block", lambda feature: "<T>")
+    monkeypatch.setattr(run_prompt, "_followup_block", lambda task_id: "<U>")
+    monkeypatch.setattr(run_prompt, "_feature_block", lambda task: "<F>")
+    monkeypatch.setattr(run_prompt, "_finish_block",
                         lambda run_id, linked=False, base="", task_id=None: "<D>")
     task = {"id": 1, "title": "t", "body": "the idea", "feature_id": None}
     params = {"skill": {"name": "goal-verified", "args": "go"}}
@@ -200,10 +200,10 @@ def test_launch_envelope_parity(monkeypatch):
 
 
 def test_launch_envelope_parity_empty_blocks(monkeypatch):
-    monkeypatch.setattr(runs, "_tracker_block", lambda feature: "")
-    monkeypatch.setattr(runs, "_followup_block", lambda task_id: "")
-    monkeypatch.setattr(runs, "_feature_block", lambda task: "")
-    monkeypatch.setattr(runs, "_finish_block",
+    monkeypatch.setattr(run_prompt, "_tracker_block", lambda feature: "")
+    monkeypatch.setattr(run_prompt, "_followup_block", lambda task_id: "")
+    monkeypatch.setattr(run_prompt, "_feature_block", lambda task: "")
+    monkeypatch.setattr(run_prompt, "_finish_block",
                         lambda run_id, linked=False, base="", task_id=None: "<D>")
     task = {"id": 1, "title": "shelf label", "body": "", "feature_id": None}
     assert runs._prompt(task, 7, None) == "shelf label<D>"
@@ -212,10 +212,10 @@ def test_launch_envelope_parity_empty_blocks(monkeypatch):
 def test_task_body_braces_are_not_re_rendered(monkeypatch):
     """A captured idea containing `{{foo}}` is data, not a placeholder — the
     engine substitutes once and never rescans its own output."""
-    monkeypatch.setattr(runs, "_tracker_block", lambda feature: "")
-    monkeypatch.setattr(runs, "_followup_block", lambda task_id: "")
-    monkeypatch.setattr(runs, "_feature_block", lambda task: "")
-    monkeypatch.setattr(runs, "_finish_block",
+    monkeypatch.setattr(run_prompt, "_tracker_block", lambda feature: "")
+    monkeypatch.setattr(run_prompt, "_followup_block", lambda task_id: "")
+    monkeypatch.setattr(run_prompt, "_feature_block", lambda task: "")
+    monkeypatch.setattr(run_prompt, "_finish_block",
                         lambda run_id, linked=False, base="", task_id=None: "")
     task = {"id": 1, "title": "t", "body": "use {{finish}} and {literal}",
             "feature_id": None}
