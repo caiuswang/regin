@@ -320,24 +320,7 @@ def _pull_pattern(skill_id):
     if disc is None and anti is None and not extras_changed:
         return f"noop: {skill_id} — nothing to pull"
 
-    with open(src_md) as f:
-        pattern_text = f.read()
-
-    changed = False
-    if disc is not None:
-        new_text = _replace_section(pattern_text, '## Disciplines', disc + '\n')
-        if new_text != pattern_text:
-            pattern_text = new_text
-            changed = True
-    if anti is not None:
-        new_text = _replace_section(pattern_text, '## Anti-Patterns', anti + '\n')
-        if new_text != pattern_text:
-            pattern_text = new_text
-            changed = True
-
-    if changed:
-        with open(src_md, 'w') as f:
-            f.write(pattern_text)
+    changed = _fold_sections_into(src_md, disc, anti)
 
     parts = []
     if changed:
@@ -347,6 +330,24 @@ def _pull_pattern(skill_id):
     if not parts:
         return f"noop: {skill_id} already in sync"
     return f"pulled pattern {skill_id} -> {src_dir} ({', '.join(parts)} updated)"
+
+
+def _fold_sections_into(src_md, disc, anti):
+    """Replace the Disciplines / Anti-Patterns sections of `src_md` with the
+    given bodies (None = leave alone). Returns True when the file changed."""
+    with open(src_md) as f:
+        original = f.read()
+
+    pattern_text = original
+    for header, body in (('## Disciplines', disc), ('## Anti-Patterns', anti)):
+        if body is not None:
+            pattern_text = _replace_section(pattern_text, header, body + '\n')
+
+    if pattern_text == original:
+        return False
+    with open(src_md, 'w') as f:
+        f.write(pattern_text)
+    return True
 
 
 def _mirror_pattern_extras(deployed_dir, source_dir):
