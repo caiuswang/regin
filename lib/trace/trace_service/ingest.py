@@ -1213,6 +1213,24 @@ def _active_repos_normalized():
     return normalize_repos(repos)
 
 
+def _span_repo_signal(span: dict, attrs, norm) -> tuple | None:
+    """((trace_id, repo_id), is_primary) for a span that points into a
+    registered repo, else None."""
+    name = span.get('name') or ''
+    if name not in _REPO_CWD_NAMES and name not in _REPO_EDIT_NAMES:
+        return None
+    from lib.rule_engines.repo_scope import repo_for_path_norm
+
+    path, primary = _repo_signal_path(name, attrs)
+    tid = span.get('trace_id')
+    if not path or tid is None:
+        return None
+    repo = repo_for_path_norm(path, norm)
+    if repo is None:
+        return None
+    return (tid, repo.id), primary
+
+
 def _resolve_session_repos(conn, normalised, duplicates) -> None:
     """Tag each session in the batch with the registered repos it touched.
 
@@ -1221,8 +1239,6 @@ def _resolve_session_repos(conn, normalised, duplicates) -> None:
     short-circuit on a single name-set check, and writes are bounded by
     the number of distinct repos per session.
     """
-    from lib.rule_engines.repo_scope import repo_for_path_norm
-
     norm = _active_repos_normalized()
     if not norm:
         return
@@ -1230,18 +1246,10 @@ def _resolve_session_repos(conn, normalised, duplicates) -> None:
     for span, attrs in normalised:
         if (span.get('trace_id'), span.get('span_id')) in duplicates:
             continue
-        name = span.get('name') or ''
-        if name not in _REPO_CWD_NAMES and name not in _REPO_EDIT_NAMES:
-            continue
-        path, primary = _repo_signal_path(name, attrs)
-        tid = span.get('trace_id')
-        if not path or tid is None:
-            continue
-        repo = repo_for_path_norm(path, norm)
-        if repo is None:
-            continue
-        key = (tid, repo.id)
-        found[key] = max(found.get(key, 0), primary)
+        hit = _span_repo_signal(span, attrs, norm)
+        if hit is not None:
+            key, primary = hit
+            found[key] = max(found.get(key, 0), primary)
     for (tid, repo_id), is_primary in found.items():
         conn.execute(_SESSION_REPOS_UPSERT_SQL, (tid, repo_id, is_primary))
 
