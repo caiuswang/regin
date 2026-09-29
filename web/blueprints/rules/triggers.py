@@ -848,6 +848,18 @@ def api_rule_trigger_thresholds():
     return jsonify(_settings.rule_trigger_thresholds.model_dump())
 
 
+def _threshold_int(body: dict, key: str, default: int, is_valid,
+                   bound_msg: str, errors: list) -> int | None:
+    try:
+        value = int(body.get(key, default))
+    except (TypeError, ValueError):
+        errors.append(f'{key} must be an integer')
+        return None
+    if not is_valid(value):
+        errors.append(bound_msg)
+    return value
+
+
 @rules_bp.route('/api/settings/rule-triggers/thresholds', methods=['PUT'])
 @require_role('admin')
 def api_update_rule_trigger_thresholds():
@@ -864,27 +876,12 @@ def api_update_rule_trigger_thresholds():
 
     # Validate before persisting — bad input shouldn't pollute the file.
     errors = []
-    try:
-        rate = int(body.get('noisy_min_rate_pct', 30))
-        if not 0 <= rate <= 100:
-            errors.append('noisy_min_rate_pct must be 0–100')
-    except (TypeError, ValueError):
-        errors.append('noisy_min_rate_pct must be an integer')
-        rate = None
-    try:
-        fires = int(body.get('noisy_min_fires', 5))
-        if fires < 0:
-            errors.append('noisy_min_fires must be non-negative')
-    except (TypeError, ValueError):
-        errors.append('noisy_min_fires must be an integer')
-        fires = None
-    try:
-        checks = int(body.get('dead_min_checks', 3))
-        if checks < 1:
-            errors.append('dead_min_checks must be at least 1')
-    except (TypeError, ValueError):
-        errors.append('dead_min_checks must be an integer')
-        checks = None
+    rate = _threshold_int(body, 'noisy_min_rate_pct', 30, lambda v: 0 <= v <= 100,
+                          'noisy_min_rate_pct must be 0–100', errors)
+    fires = _threshold_int(body, 'noisy_min_fires', 5, lambda v: v >= 0,
+                           'noisy_min_fires must be non-negative', errors)
+    checks = _threshold_int(body, 'dead_min_checks', 3, lambda v: v >= 1,
+                            'dead_min_checks must be at least 1', errors)
     rng = body.get('default_range', '7d')
     if rng not in _buckets.VALID_RANGES:
         errors.append(

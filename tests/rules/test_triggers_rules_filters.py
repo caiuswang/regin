@@ -60,3 +60,35 @@ def _params(**over):
 def test_passes_filters(row_over, param_over, expected):
     row = dict(_ROW, **row_over)
     assert t._passes_triggers_rules_filters(row, _params(**param_over)) is expected
+
+
+def _admin_auth():
+    from lib.auth import create_token
+    return {"Authorization": f"Bearer {create_token(1, 'admin-tester', 'admin')}"}
+
+
+@pytest.mark.parametrize('body,errors', [
+    ({'noisy_min_rate_pct': 'x', 'noisy_min_fires': None,
+      'dead_min_checks': [1], 'default_range': '7d'},
+     ['noisy_min_rate_pct must be an integer',
+      'noisy_min_fires must be an integer',
+      'dead_min_checks must be an integer']),
+    ({'noisy_min_rate_pct': -1, 'noisy_min_fires': -1,
+      'dead_min_checks': 0, 'default_range': 'bogus'},
+     ['noisy_min_rate_pct must be 0–100',
+      'noisy_min_fires must be non-negative',
+      'dead_min_checks must be at least 1',
+      "default_range must be one of ('24h', '7d', '30d', 'all')"]),
+])
+def test_thresholds_validation_errors(flask_client, tmp_db, body, errors):
+    resp = flask_client.put('/api/settings/rule-triggers/thresholds',
+                            json=body, headers=_admin_auth())
+    assert (resp.status_code, resp.get_json()) == (
+        400, {'ok': False, 'errors': errors})
+
+
+def test_thresholds_rejects_non_object(flask_client, tmp_db):
+    resp = flask_client.put('/api/settings/rule-triggers/thresholds',
+                            json=[1], headers=_admin_auth())
+    assert (resp.status_code, resp.get_json()) == (
+        400, {'ok': False, 'error': 'invalid JSON body'})
