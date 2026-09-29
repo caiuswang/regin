@@ -40,33 +40,43 @@ def _toggle_pattern_rules(slug: str, disabled: bool, verb: str):
         return jsonify({"ok": False, "msg": "no rules linked"})
 
     payload = request.get_json(silent=True) or {}
-    requested = payload.get("rule_ids")
-    if requested:
-        linked_ids = {r["id"] for r in rules}
-        ids = [rid for rid in requested if rid in linked_ids]
-        if not ids:
-            return jsonify({"ok": False, "msg": "no requested rules belong to this pattern"})
-    else:
-        ids = [r["id"] for r in rules]
+    ids = _linked_rule_ids(rules, payload.get("rule_ids"))
+    if not ids:
+        return jsonify({"ok": False, "msg": "no requested rules belong to this pattern"})
 
     grit_rule_index.set_rules_disabled(ids, disabled)
 
     deploy_note = ""
-    if not disabled:
-        skill_id = skill_registry.skill_id_for_procedure(slug)
-        if skill_id and not skill_registry.deployed_exists(skill_id):
-            try:
-                msg = skill_sync.push(skill_id, force=True)
-                deploy_note = f" (deployed skill: {msg})"
-            except Exception as e:
-                return jsonify({
-                    "ok": False,
-                    "msg": f"enabled {len(ids)} rule(s) but skill deploy failed: {e}",
-                }), 500
+    skill_id = None if disabled else _undeployed_skill_id(slug)
+    if skill_id:
+        try:
+            deploy_note = f" (deployed skill: {skill_sync.push(skill_id, force=True)})"
+        except Exception as e:
+            return jsonify({
+                "ok": False,
+                "msg": f"enabled {len(ids)} rule(s) but skill deploy failed: {e}",
+            }), 500
 
     grit_rule_index.regenerate(write_guides=False)
     _pkg.deploy_rules_index_skill(RULES_MD_PATH)
     return jsonify({"ok": True, "msg": f'{verb} {len(ids)} rule(s): {", ".join(ids)}{deploy_note}'})
+
+
+def _linked_rule_ids(rules, requested) -> list:
+    """The requested ids that belong to the pattern, or every linked id when
+    none were requested."""
+    if not requested:
+        return [r["id"] for r in rules]
+    linked_ids = {r["id"] for r in rules}
+    return [rid for rid in requested if rid in linked_ids]
+
+
+def _undeployed_skill_id(slug: str) -> str | None:
+    """The pattern's skill id when it exists but is not deployed yet."""
+    skill_id = skill_registry.skill_id_for_procedure(slug)
+    if not skill_id or skill_registry.deployed_exists(skill_id):
+        return None
+    return skill_id
 
 
 @patterns_bp.route("/api/patterns/<path:slug>/rules/disable", methods=["POST"])
