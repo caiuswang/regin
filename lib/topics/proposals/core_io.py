@@ -286,6 +286,45 @@ def list_proposal_runs(repo_path: str | Path) -> list[dict[str, Any]]:
     return rows
 
 
+def _import_disk_proposal_run(repo_path: str | Path, child: Path) -> None:
+    from lib.topics.proposal_orm import (
+        orm_create_proposal_run, orm_save_proposal, orm_update_proposal_status,
+    )
+
+    topics_path = child / "topics.json"
+    wiki_path = child / "wiki.md"
+    try:
+        status = load_proposal_status(repo_path, child.name)
+    except TopicGraphError:
+        status = {}
+    if topics_path.exists():
+        # Full content import: orm_save_proposal upserts the run row
+        # AND a revision with topics, using provider / topic_request
+        # from the proposal payload.
+        proposal = json.loads(topics_path.read_text())
+        wiki = wiki_path.read_text() if wiki_path.exists() else None
+        orm_save_proposal(repo_path, child.name, proposal, wiki=wiki)
+    else:
+        # No topics yet (e.g. an external-agent run that wrote
+        # status.json before drafting). Create a minimal row so
+        # feedback / status updates can find it.
+        orm_create_proposal_run(
+            repo_path,
+            child.name,
+            provider=status.get("agent") or "external",
+            state=status.get("state") or "queued",
+            agent=status.get("agent"),
+            started_at=status.get("started_at"),
+        )
+    # Apply state from status.json (orm_save_proposal hardcodes
+    # state="completed" on insert, which is right for proposals with
+    # topics.json but masks failed/stopped runs that recorded a
+    # different state on disk).
+    disk_state = status.get("state")
+    if disk_state and disk_state != "completed":
+        orm_update_proposal_status(repo_path, child.name, state=disk_state)
+
+
 def backfill_disk_proposals_to_orm(repo_path: str | Path) -> dict[str, int]:
     """Upsert any on-disk proposal directories into the `proposal_runs`
     ORM table. Idempotent — existing rows are skipped by
@@ -297,57 +336,20 @@ def backfill_disk_proposals_to_orm(repo_path: str | Path) -> dict[str, int]:
     git calls this so a teammate-shipped `.regin/topics/proposals/`
     becomes fully usable on the receiving machine.
     """
-    from lib.topics.proposal_orm import (
-        orm_create_proposal_run, orm_list_proposal_runs,
-        orm_save_proposal, orm_update_proposal_status,
-    )
+    from lib.topics.proposal_orm import orm_list_proposal_runs
 
     base = topic_dir(repo_path) / "proposals"
     if not base.exists():
         return {"scanned": 0, "imported": 0}
 
     existing_ids = {run["id"] for run in orm_list_proposal_runs(repo_path)}
-    scanned = 0
+    run_dirs = [child for child in sorted(base.iterdir()) if child.is_dir()]
+    scanned = len(run_dirs)
     imported = 0
-    for child in sorted(base.iterdir()):
-        if not child.is_dir():
-            continue
-        scanned += 1
-        if child.name in existing_ids:
-            continue
-        topics_path = child / "topics.json"
-        wiki_path = child / "wiki.md"
-        try:
-            status = load_proposal_status(repo_path, child.name)
-        except TopicGraphError:
-            status = {}
-        if topics_path.exists():
-            # Full content import: orm_save_proposal upserts the run row
-            # AND a revision with topics, using provider / topic_request
-            # from the proposal payload.
-            proposal = json.loads(topics_path.read_text())
-            wiki = wiki_path.read_text() if wiki_path.exists() else None
-            orm_save_proposal(repo_path, child.name, proposal, wiki=wiki)
-        else:
-            # No topics yet (e.g. an external-agent run that wrote
-            # status.json before drafting). Create a minimal row so
-            # feedback / status updates can find it.
-            orm_create_proposal_run(
-                repo_path,
-                child.name,
-                provider=status.get("agent") or "external",
-                state=status.get("state") or "queued",
-                agent=status.get("agent"),
-                started_at=status.get("started_at"),
-            )
-        # Apply state from status.json (orm_save_proposal hardcodes
-        # state="completed" on insert, which is right for proposals with
-        # topics.json but masks failed/stopped runs that recorded a
-        # different state on disk).
-        disk_state = status.get("state")
-        if disk_state and disk_state != "completed":
-            orm_update_proposal_status(repo_path, child.name, state=disk_state)
-        imported += 1
+    for child in run_dirs:
+        if child.name not in existing_ids:
+            _import_disk_proposal_run(repo_path, child)
+            imported += 1
     _topics_log().write(
         "proposal_backfill_to_orm",
         repo_path=str(repo_path), scanned=scanned, imported=imported,
