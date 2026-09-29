@@ -9,7 +9,16 @@ from flask import request, jsonify
 from lib.orm.models import RuleTrigger
 from web.blueprints import rules as _pkg
 from web.blueprints.rules import rules_bp
-from web.blueprints.rules.triggers import _suppression_to_dict
+
+
+def _suppression_to_dict(row) -> dict:
+    return {
+        'rule_trigger_id': row.rule_trigger_id,
+        'suppressed_by_id': row.suppressed_by_id,
+        'suppressed_by_username': row.suppressed_by_username,
+        'suppressed_at': row.suppressed_at,
+        'reason': row.reason,
+    }
 
 
 # ── Per-rule operator view (Option B Rule-Triggers redesign) ───────────────

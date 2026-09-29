@@ -27,7 +27,7 @@ from datetime import datetime
 
 # The silence window (seconds) after which an unstopped agent / stuck pending
 # span is considered dead. Shared by the roster stale gate
-# (web/blueprints/trace/sessions.py) and the merge demotion (lib/trace/merge.py)
+# (web/blueprints/trace/sessions/) and the merge demotion (lib/trace/merge.py)
 # so the two verdicts can never drift.
 INACTIVE_THRESHOLD_SEC = 600
 

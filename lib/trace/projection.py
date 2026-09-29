@@ -29,6 +29,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from lib.trace.projection_agents import (
+    AGENT_ROOT_KEY,
     _AGENT_RESULT_MAX_BYTES,
     _attach_agent_rollups,
     _normalize_agent_ids,

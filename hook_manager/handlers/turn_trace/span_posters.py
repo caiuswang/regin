@@ -419,7 +419,7 @@ def _add_message_id(turn, attrs: dict) -> None:
 
     Cross-writer identity, not display: an SDK-launched run is traced twice and
     this is the only id both writers see for one assistant message
-    (`lib.trace.merge._row_identity`). Absent on turns the transcript keyed by
+    (`lib.trace.merge_cross_source._row_identity`). Absent on turns the transcript keyed by
     request-id or entry-uuid instead. Every hook-side writer of an assistant
     span must stamp it — including `subagent_lifecycle` — because the merge
     reads a missing id as "no opinion", so a pair where only one side names

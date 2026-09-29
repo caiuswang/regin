@@ -88,8 +88,8 @@ The tree only helps if memories are linked to nodes and nodes have good blurbs.
 ## Underlying code
 
 - `lib/topics/tree.py` — `build_tree` / `subtree_ids` / `node_card` (pure tree helpers over the graph dict).
-- `lib/memory/store.py::memories_for_topic_subtree` — subtree memory lookup.
+- `lib/memory/store/::memories_for_topic_subtree` — subtree memory lookup.
 - `lib/memory/tree_nav.py` — the shared renderers behind both front-ends.
-- `lib/memory/mcp_server.py` / `cli/commands/memory.py` — the MCP and CLI
+- `lib/memory/mcp_server.py` / `cli/commands/memory/` — the MCP and CLI
   entry points that delegate to them.
 - `lib/topics/graph_io.py::load_authoritative_graph` — loads the graph the tools walk.

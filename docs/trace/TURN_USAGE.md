@@ -166,7 +166,7 @@ Step 2 is what keeps this honest in practice: `claude-opus-5` and
 user is on its 1M variant — then a session whose peak stays under 200K
 reads as 200K. The opt-in statusline ingest below closes that case.
 
-`_session_summary` and `_row_to_dict` in `web/blueprints/trace/sessions.py`
+`_session_summary` and `_row_to_dict` in `web/blueprints/trace/sessions/`
 call `infer_window(sessions.model, peak)` at API **read** time, so
 the UI derives its window from the live `sessions.model` column —
 whatever the freshest writer pushed there. This means fixing

@@ -2,7 +2,7 @@
 live status the operator reads off the real terminal.
 
 Why this exists: regin's `phase` verdict is derived from span recency
-(`_main_phase` in `web/blueprints/trace/sessions.py`), and spans only arrive
+(`_main_phase` in `web/blueprints/trace/sessions/phase.py`), and spans only arrive
 from hooks. Every hook-silent interval — extended thinking, one long tool
 call, a long streamed response — decays to `idle` within seconds while the
 terminal plainly shows the agent at work. The rendered screen is the only

@@ -92,7 +92,7 @@ def _new_session_bucket() -> dict:
 # (`skill.read`), a slash-command expansion (`skill.invoke`), and an
 # assistant `Skill` tool launch (`skill.launch`). `plan_enters` is no
 # longer derived here: the Sessions list computes plans live from the
-# `plan_sessions` table (see web/blueprints/trace/sessions.py).
+# `plan_sessions` table (see web/blueprints/trace/sessions/).
 _NAME_TO_COUNTER = {
     'skill.read': 'skill_reads',
     'skill.invoke': 'skill_reads',

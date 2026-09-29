@@ -724,7 +724,7 @@ def _has_tz_marker(stamp) -> bool:
 
 
 def _is_live_session(status, last_seen, cutoff: datetime) -> bool:
-    """Inverse of `lib.trace.merge._session_is_inactive`, and it must stay
+    """Inverse of `lib.trace.merge_pending._session_is_inactive`, and it must stay
     that way — the CLI and the renderer disagreeing about who is running is
     exactly how a live session gets synthetic `subagent.stop` markers.
 

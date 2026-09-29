@@ -325,7 +325,7 @@ class _TranscriptScan(_UserEntryScanMixin, _FinalizeScanMixin):
         (the recovered `prompt-<uuid>` anchor). Only the queued prompt's own
         descendants chain through this entry, so nothing else is affected.
         Text/timestamp come from the attachment itself
-        (span_posters._post_queued_command_span), so it stays out of
+        (prompt_anchor_spans._post_queued_command_span), so it stays out of
         `prompt_texts` — no duplicate anchor from _post_prompt_anchor_spans."""
         if att_n.get('type') != 'queued_command':
             return

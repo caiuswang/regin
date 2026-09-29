@@ -38,5 +38,22 @@ from web.blueprints.trace.sessions.tasks import (  # noqa: F401
     _fetch_session_task_list,
 )
 from web.blueprints.trace.sessions.admin import (  # noqa: F401
-    _SESSION_DELETE_TARGETS,
+    _SESSION_DELETE_TARGETS, api_session_batch_delete, api_session_close,
+    api_session_delete, api_session_features, api_session_materialize,
+    api_session_repair_spans, api_session_tag_add, api_session_tag_remove,
+    api_session_tags,
+)
+from web.blueprints.trace.sessions.listing import api_sessions  # noqa: F401
+from web.blueprints.trace.sessions.map_view import (  # noqa: F401
+    api_background_shell_output, api_session_map,
+)
+from web.blueprints.trace.sessions.phase import (  # noqa: F401
+    IDLE_SETTLE_SEC, INACTIVE_THRESHOLD_SEC, WORKING_WINDOW_SEC,
+)
+from web.blueprints.trace.sessions.spans import (  # noqa: F401
+    api_session_workflow_runs, api_span_ancestors, api_span_content,
+    api_span_rewind,
+)
+from web.blueprints.trace.sessions.subtrees import (  # noqa: F401
+    api_session_detail, api_session_span_children, api_session_subtrees,
 )

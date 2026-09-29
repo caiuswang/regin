@@ -79,7 +79,7 @@ def _drop_stale_blockers(spans: list[dict], prompt_id_ceiling=None) -> list[dict
 # resolved-interrupted rendering here. `_STALE_PENDING_OLDER_THAN_SEC` guards
 # the session-inactive path so a tool that only just started on a
 # just-abandoned session isn't prematurely called dead. `INACTIVE_THRESHOLD`
-# mirrors the roster stale window (web/blueprints/trace/sessions.py).
+# mirrors the roster stale window (web/blueprints/trace/sessions/roster.py).
 INTERRUPT_SOURCE_STALE = 'stale'
 
 

@@ -68,7 +68,7 @@ _DENY_INPUT_MAX_BYTES = 16 * 1024
 # as this attachment instead of firing UserPromptSubmit. So it leaves
 # no `prompt` span behind (same blind spot as local commands) — the
 # transcript scan is the only way to recover it. See
-# `span_posters._post_queued_command_span`.
+# `prompt_anchor_spans._post_queued_command_span`.
 _TRACED_ATTACHMENT_KINDS: frozenset[str] = frozenset({
     'task_reminder',
     'skill_listing',

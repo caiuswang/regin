@@ -229,7 +229,7 @@ the tail keeps the majority:
   session-switcher (`LiveSessionPicker.vue`, shipped) lists recent 20,
   active-first.
 - **Window + fold + tail = the existing shallow map pagination**
-  (`web/blueprints/trace/sessions.py::_shallow_map_response`, `?shallow=1`).
+  (`web/blueprints/trace/sessions/map_view.py::_shallow_map_response`, `?shallow=1`).
   **v7.2 correction (found by verification):** `limit` pages **turn anchors**
   (prompt/compact/session spans), NOT individual spans — `limit=50` on a heavy session
   hydrates every span. The window unit is therefore **turns**:

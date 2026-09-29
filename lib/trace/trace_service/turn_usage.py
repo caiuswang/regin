@@ -3,10 +3,37 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
-from lib.trace.trace_service.queries import _to_utc
+
+def _to_utc(ts: str | None) -> datetime | None:
+    """Parse an ISO-8601 timestamp into a timezone-aware UTC datetime.
+
+    The join between `turn_usage` and `session_spans` straddles two
+    timestamp conventions: `turn_usage.timestamp` is UTC with a `Z`
+    suffix (Claude Code's transcript writes it that way), whereas
+    `session_spans.start_time` is naive-local ISO (every hook emitter
+    calls `datetime.now().isoformat()`, which omits tz info). A naive
+    string compare would silently mis-group turns and spans whenever
+    the user isn't in UTC. This helper returns one tz-aware datetime
+    from either shape so callers can compare safely; naive inputs are
+    promoted to the host's local zone first, then converted to UTC.
+
+    Returns None for empty / unparseable input so the caller can treat
+    a missing timestamp as "no constraint" instead of crashing.
+    """
+    if not isinstance(ts, str) or not ts.strip():
+        return None
+    try:
+        dt = datetime.fromisoformat(ts)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        # Naive → assume host local.
+        dt = dt.astimezone()
+    return dt.astimezone(timezone.utc)
+
 
 # Span names that are structural scaffolding (prompt boundaries,
 # session/turn lifecycle markers, conversation root) rather than

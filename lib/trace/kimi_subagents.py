@@ -60,7 +60,7 @@ _RESULT_PREVIEW_MAX = 200
 # the git-context-wrapped copy in the subagent wire.
 _PROMPT_MATCH_CHARS = 200
 # Same clamp the hook-side prompt anchors use
-# (`turn_trace.span_posters._PROMPT_ANCHOR_TEXT_MAX_BYTES`), so a scoped
+# (`turn_trace.prompt_anchor_spans._PROMPT_ANCHOR_TEXT_MAX_BYTES`), so a scoped
 # subagent view opens with the same truncation regardless of which path wrote
 # the anchor.
 _PROMPT_TEXT_MAX_BYTES = 8 * 1024

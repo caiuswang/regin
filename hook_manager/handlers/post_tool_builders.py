@@ -655,7 +655,7 @@ _TOOL_BUILDERS: dict = {
     'TaskUpdate': _build_taskupdate_attrs,
     # Claude Code's own `TodoWrite` is deliberately absent: its main agent and
     # each of its subagents write independent lists into the SAME trace_id, so
-    # folding them as one snapshot stream (web/blueprints/trace/sessions.py)
+    # folding them as one snapshot stream (web/blueprints/trace/sessions/tasks.py)
     # makes every subagent write retire the main agent's live tasks and vice
     # versa. Claude's task list reaches the trace via TaskCreate/TaskUpdate.
     'TodoList': _build_todolist_attrs,

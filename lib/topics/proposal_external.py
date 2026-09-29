@@ -18,6 +18,7 @@ from lib.settings import settings
 from lib.topics import TopicGraphError, utc_now
 from lib.topics.proposal_artifacts import (
     OUTPUT_FILE,
+    PRIOR_PROPOSAL_FILE,
     STATUS_FILE,
     TEMP_OUTPUT_DIR,
     TEMP_OUTPUT_FILE,

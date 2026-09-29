@@ -262,7 +262,7 @@ def _subagent_capture(transcript_path, agent_id) -> tuple[bool, int | None]:
 
 
 # Prompt-span text cap — mirrors the main-agent anchor
-# (`span_posters._PROMPT_ANCHOR_TEXT_MAX_BYTES`) so a scoped subagent view opens
+# (`prompt_anchor_spans._PROMPT_ANCHOR_TEXT_MAX_BYTES`) so a scoped subagent view opens
 # with the same clamp as a normal prompt card. The full launch prompt already
 # lives on the `tool.Agent` span; this is the scoped-view fallback.
 _SUBAGENT_PROMPT_MAX_BYTES = 8 * 1024

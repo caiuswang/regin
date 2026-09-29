@@ -101,7 +101,7 @@ RECALL_ARM = SpanGate(
 )
 
 # `regin memory recall-for-task` emits one `memory.recall.task` span per call
-# (see cli/commands/memory.py:cmd_recall_for_task). This gate proves the
+# (see cli/commands/memory/recall.py:cmd_recall_for_task). This gate proves the
 # task-scoped recall arm fired — the spawner-baked recall the goal-verified loop
 # relies on. v0 is session-level ("did any task-recall happen this session"),
 # not per-stage correlation.

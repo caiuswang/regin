@@ -19,7 +19,7 @@ It owns four things, in order:
      whose resolved counterpart is present in the window (this replaces the
      old ingest-time DELETE/promote machinery: `_retire_superseded_pending`,
      `_retire_pending_permissions`, `_sweep_superseded_pending_blockers`).
-  2. **reparent** — `_graft_orphans` (the 3-tier ladder in projection.py).
+  2. **reparent** — `_graft_orphans` (the 3-tier ladder in projection_graft.py).
   3. **reorder** — `_graft_orphans` already sorts; `_build_span_tree`
      (downstream) does the final stable sort by (start_time, id).
   4. **link** — `_link_background_tasks` joins a backgrounded `Bash` call to
@@ -46,10 +46,15 @@ from lib.trace.merge_gates import (
     open_gate_placeholder_ids,
 )
 from lib.trace.merge_cross_source import (
+    QUEUED_STATUS_MESSAGE,
     _collapse_shared_span_ids,
     _dedup_cross_source,
 )
-from lib.trace.merge_pending import _demote_stale_pending, _drop_stale_blockers
+from lib.trace.merge_pending import (
+    INTERRUPT_SOURCE_STALE,
+    _demote_stale_pending,
+    _drop_stale_blockers,
+)
 
 
 # Attribute keys the background-shell join stamps on a launching `tool.Bash`
@@ -60,7 +65,7 @@ _BG_RUNNING = 'running'
 
 #: Row id of the OTHER span a serve-time-derived body was built from.
 #:
-#: `_body_needed` (web/blueprints/trace/sessions.py) withholds a span the
+#: `_body_needed` (web/blueprints/trace/sessions/subtrees.py) withholds a span the
 #: client already holds once it is below the watermark and settled — resting
 #: on "a body only changes when its own row changes". That holds for every
 #: attribute a hook wrote and fails for one derived here: the source row is an

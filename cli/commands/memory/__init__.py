@@ -12,4 +12,22 @@ from __future__ import annotations
 # commands on `memory_app` as it is imported.
 from ._common import memory_app
 from . import recall, authoring, linking, curation  # noqa: F401
-from .linking import _apply_assignments, _fmt_link, _select_link_rows
+from ._common import tree_nav_module  # noqa: F401
+from .authoring import (  # noqa: F401
+    cmd_backfill_titles, cmd_distill, cmd_exemplar_add, cmd_exemplar_forget,
+    cmd_exemplar_list, cmd_exemplar_rm, cmd_export_tree, cmd_import_tree,
+    cmd_list, cmd_reflect, cmd_remember, cmd_retitle, cmd_stats,
+    cmd_topic_decide, cmd_topic_feedback,
+)
+from .curation import (  # noqa: F401
+    cmd_approve, cmd_curate_apply, cmd_eval, cmd_forget, cmd_restore,
+    cmd_supersede,
+)
+from .linking import (  # noqa: F401
+    _apply_assignments, _fmt_link, _select_link_rows, cmd_consolidate_skills,
+    cmd_link_topics,
+)
+from .recall import (  # noqa: F401
+    cmd_index_expand, cmd_index_fetch, cmd_index_root, cmd_read, cmd_recall,
+    cmd_recall_for_task,
+)

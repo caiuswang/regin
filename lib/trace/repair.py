@@ -78,7 +78,7 @@ def _turn_expected_span_ids(turn, capture_text: bool) -> set[str]:
 
 def _queued_command_expected_span_id(att) -> str | None:
     """`prompt-<uuid[:13]>` for a prompt-mode queued command, else None.
-    Mirrors `span_posters._post_queued_command_span`."""
+    Mirrors `prompt_anchor_spans._post_queued_command_span`."""
     from lib.trace.transcript_usage import queued_prompt_content
 
     text, images = queued_prompt_content(att.payload or {})
@@ -89,7 +89,7 @@ def _queued_command_expected_span_id(att) -> str | None:
 
 def _attachment_expected_span_ids(trace_id: str, att) -> set[str]:
     """Span_ids turn_trace emits for one traced attachment. Mirrors
-    `span_posters._ATTACHMENT_HANDLERS`; an unhandled/skip case returns
+    `event_spans._ATTACHMENT_HANDLERS`; an unhandled/skip case returns
     the empty set so the uuid isn't falsely unlocked on every repair."""
     if att.kind in ('task_reminder', 'deferred_tools_delta'):
         return {f'att-{att.uuid[:13]}'}

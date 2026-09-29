@@ -1,4 +1,4 @@
-"""Per-agent phase verdict + agent_id backfill (web/blueprints/trace/sessions.py).
+"""Per-agent phase verdict + agent_id backfill (web/blueprints/trace/sessions/phase.py).
 
 `phase` (session rollup) and `agent_phase` ("main" + each subagent id) are a
 SERVER verdict the /live card renders without re-deriving. These tests cover

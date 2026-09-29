@@ -11,6 +11,9 @@ from lib.utils.pagination import clamp_size
 
 from web.blueprints import rules as _pkg
 from web.blueprints.rules import rules_bp
+from web.blueprints.rules.trigger_rules import (  # noqa: F401
+    _suppression_to_dict, api_triggers_rule_detail, api_triggers_rules,
+)
 
 
 def _active_experiment_ids(events: list) -> dict:
@@ -568,16 +571,6 @@ def api_unsuppress_trigger(trigger_id: int):
         detail={'rule_id': rt.rule_id},
     )
     return jsonify({'ok': True})
-
-
-def _suppression_to_dict(row) -> dict:
-    return {
-        'rule_trigger_id': row.rule_trigger_id,
-        'suppressed_by_id': row.suppressed_by_id,
-        'suppressed_by_username': row.suppressed_by_username,
-        'suppressed_at': row.suppressed_at,
-        'reason': row.reason,
-    }
 
 
 RETENTION_WINDOWS_DAYS = (7, 30, 90, 365)

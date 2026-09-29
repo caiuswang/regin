@@ -14,7 +14,12 @@ from __future__ import annotations
 
 from lib.trace.pending_spans import is_pending_span_id
 from lib.trace.session_tags import parse_prompt_tags
-from lib.trace.trace_service.ingest_usage import ingest_tool_attribution
+from lib.trace.trace_service.ingest_usage import (
+    backfill_session_models,
+    ingest_session_status,
+    ingest_tool_attribution,
+    ingest_turn_usage,
+)
 from lib.trace.trace_service.session_buckets import (
     _TITLE_MAX_CHARS,
     _span_counter_buckets,
