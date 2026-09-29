@@ -417,15 +417,20 @@ def _row_from(record) -> FeatureRow:
     return FeatureRow(
         id=feature_id, title=title, origin=origin, external_ref=external_ref,
         stage=stage,
-        rounds=int(rounds or 1),
-        sessions=int(sessions or 0),
-        tasks=int(tasks or 0),
-        tasks_done=int(tasks_done or 0),
+        rounds=_count(rounds, 1),
+        sessions=_count(sessions),
+        tasks=_count(tasks),
+        tasks_done=_count(tasks_done),
         cost_usd=None if cost_usd is None else float(cost_usd),
-        no_usage_captured=int(no_usage or 0),
-        total_defects=int(total or 0), open_defects=int(open_count or 0),
-        escapes=int(escapes or 0), last_activity=activity,
-        body=body, blamed_now=int(blamed_now or 0))
+        no_usage_captured=_count(no_usage),
+        total_defects=_count(total), open_defects=_count(open_count),
+        escapes=_count(escapes), last_activity=activity,
+        body=body, blamed_now=_count(blamed_now))
+
+
+def _count(value, default: int = 0) -> int:
+    """A nullable SQL aggregate as an int; NULL and 0 both read as `default`."""
+    return int(value or default)
 
 
 def _with_next_steps(items: list[FeatureRow]) -> list[FeatureRow]:
