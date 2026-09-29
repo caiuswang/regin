@@ -43,52 +43,69 @@ def _current_settings():
     return _settings_mod.settings
 
 
-def _build_engine(cfg) -> RuleEngine:
+def _build_grit_engine(cfg) -> RuleEngine:
     import os as _os
+    raw = cfg.grit_dir if cfg.grit_dir else _current_settings().grit_dir
+    # Expand `~` and env vars — settings.json may contain literal
+    # tildes that pydantic preserves in Path objects.
+    grit_dir = _os.path.expanduser(str(raw))
+    return GritEngine(
+        id=cfg.id,
+        grit_dir=grit_dir,
+        language_ids=tuple(cfg.language_ids),
+        project_root=str(_settings_mod.settings.project_root),
+    )
+
+
+def _build_bundle_engine(cfg) -> RuleEngine:
+    import os as _os
+    if cfg.bundle_root is None:
+        raise ValueError(
+            f"rule_engines entry {cfg.id!r}: kind='bundle' requires bundle_root",
+        )
+    bundle_root = Path(_os.path.expanduser(str(cfg.bundle_root))).resolve()
+    mpath = manifest_path(bundle_root)
+    if mpath is None:
+        raise ValueError(
+            f"bundle {cfg.id!r} at {bundle_root} has no regin-bundle.{{yaml,json}}",
+        )
+    manifest = load_manifest(mpath)
+    return BundleEngine(
+        id=cfg.id,
+        bundle_root=bundle_root,
+        manifest=manifest,
+    )
+
+
+def _build_radon_engine(cfg) -> RuleEngine:
+    kwargs: dict = {
+        'id': cfg.id,
+        'language_ids': tuple(cfg.language_ids) or ('python',),
+        'project_root': str(_settings_mod.settings.project_root),
+    }
+    if cfg.min_grade is not None:
+        kwargs['min_grade'] = cfg.min_grade
+    if cfg.severity is not None:
+        kwargs['severity'] = cfg.severity
+    return RadonEngine(**kwargs)
+
+
+_ENGINE_BUILDERS = {
+    'grit': _build_grit_engine,
+    'bundle': _build_bundle_engine,
+    'radon': _build_radon_engine,
+}
+
+
+def _build_engine(cfg) -> RuleEngine:
     kind = cfg.kind
     if kind not in _ENGINE_KINDS:
         raise ValueError(f"unknown rule engine kind: {kind}")
-    if kind == 'grit':
-        raw = cfg.grit_dir if cfg.grit_dir else _current_settings().grit_dir
-        # Expand `~` and env vars — settings.json may contain literal
-        # tildes that pydantic preserves in Path objects.
-        grit_dir = _os.path.expanduser(str(raw))
-        return GritEngine(
-            id=cfg.id,
-            grit_dir=grit_dir,
-            language_ids=tuple(cfg.language_ids),
-            project_root=str(_settings_mod.settings.project_root),
-        )
-    if kind == 'bundle':
-        if cfg.bundle_root is None:
-            raise ValueError(
-                f"rule_engines entry {cfg.id!r}: kind='bundle' requires bundle_root",
-            )
-        bundle_root = Path(_os.path.expanduser(str(cfg.bundle_root))).resolve()
-        mpath = manifest_path(bundle_root)
-        if mpath is None:
-            raise ValueError(
-                f"bundle {cfg.id!r} at {bundle_root} has no regin-bundle.{{yaml,json}}",
-            )
-        manifest = load_manifest(mpath)
-        return BundleEngine(
-            id=cfg.id,
-            bundle_root=bundle_root,
-            manifest=manifest,
-        )
-    if kind == 'radon':
-        kwargs: dict = {
-            'id': cfg.id,
-            'language_ids': tuple(cfg.language_ids) or ('python',),
-            'project_root': str(_settings_mod.settings.project_root),
-        }
-        if cfg.min_grade is not None:
-            kwargs['min_grade'] = cfg.min_grade
-        if cfg.severity is not None:
-            kwargs['severity'] = cfg.severity
-        return RadonEngine(**kwargs)
-    # Unreachable — _ENGINE_KINDS membership has already been checked.
-    raise ValueError(f"unhandled kind: {kind}")
+    builder = _ENGINE_BUILDERS.get(kind)
+    if builder is None:
+        # Unreachable — _ENGINE_KINDS membership has already been checked.
+        raise ValueError(f"unhandled kind: {kind}")
+    return builder(cfg)
 
 
 def _discovered_bundle_engines(already_taken_ids: set[str]) -> dict[str, RuleEngine]:
