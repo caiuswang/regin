@@ -90,34 +90,37 @@ def parse_filters(args) -> dict:
     """
     # `project_id=none` is a real filter, not an absent one: "tasks in no
     # project" is the backlog, and it has to be expressible.
-    raw_project = (args.get("project_id") or "").strip()
+    raw_project = _arg(args, "project_id")
     unassigned = raw_project == "none"
-
-    # `root_only` narrows the feed to the tasks under no feature. Off by
-    # default and deliberately so: hiding a feature's steps by default would
-    # make the counts beside the feed describe something other than the backlog.
-    root_only = (args.get("root_only") or "").strip() in ("1", "true", "yes")
 
     return {
         "status": _enum(args, "status", TASK_STATUSES),
-        "unfeatured": root_only,
-        "feature_id": parse_int((args.get("feature_id") or "").strip() or None,
-                                "feature_id"),
+        # `root_only` narrows the feed to the tasks under no feature. Off by
+        # default and deliberately so: hiding a feature's steps by default would
+        # make the counts beside the feed describe something other than the backlog.
+        "unfeatured": _flag(args, "root_only"),
+        "feature_id": parse_int(_arg(args, "feature_id") or None, "feature_id"),
         # Who claimed it. A filter, never a write: claiming is an act the task
         # surface leaves to `PATCH /tasks/<id>`.
-        "assignee": parse_int((args.get("assignee") or "").strip() or None,
-                              "assignee"),
+        "assignee": parse_int(_arg(args, "assignee") or None, "assignee"),
         "sort": parse_sort(args.get("sort")),
         "priority": _enum_list(args, "priority", TASK_PRIORITIES),
-        "q": (args.get("q") or "").strip()[:Q_MAX],
-        "tag": (args.get("tag") or "").strip()[:TAG_MAX],
-        "source": (args.get("source") or "").strip(),
+        "q": _arg(args, "q")[:Q_MAX],
+        "tag": _arg(args, "tag")[:TAG_MAX],
+        "source": _arg(args, "source"),
         "project_id": None if unassigned else parse_int(raw_project,
                                                            "project_id"),
         "unassigned": unassigned,
-        "include_archived": (args.get("include_archived") or "").strip()
-        in ("1", "true", "yes"),
+        "include_archived": _flag(args, "include_archived"),
     }
+
+
+def _arg(args, field: str) -> str:
+    return (args.get(field) or "").strip()
+
+
+def _flag(args, field: str) -> bool:
+    return _arg(args, field) in ("1", "true", "yes")
 
 
 def parse_sort(raw) -> str:
