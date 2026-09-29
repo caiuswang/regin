@@ -58,16 +58,27 @@ def _match_score(label: str, topic_id: str, title: str) -> float:
     match. Exact/slug are decisive; prefix-stripped equality and containment
     are strong; token overlap is the last resort. Used only by the one-time
     legacy backfill."""
+    if _is_exact_match(label, topic_id, title):
+        return 5.0
+    return _core_score(label, title) or _token_score(label, title)
+
+
+def _is_exact_match(label: str, topic_id: str, title: str) -> bool:
     if _norm(label) and _norm(label) == _norm(title):
-        return 5.0
-    if _slug(topic_id) and _slug(topic_id) == _slug(title):
-        return 5.0
+        return True
+    return bool(_slug(topic_id)) and _slug(topic_id) == _slug(title)
+
+
+def _core_score(label: str, title: str) -> float:
+    """4 for prefix-stripped equality, 3 for containment, else 0."""
     label_core, title_core = _core(label), _core(title)
-    if label_core and label_core == title_core:
+    if not label_core:
+        return 0.0
+    if label_core == title_core:
         return 4.0
-    if label_core and title_core and (label_core in title_core or title_core in label_core):
+    if title_core and (label_core in title_core or title_core in label_core):
         return 3.0
-    return _token_score(label, title)
+    return 0.0
 
 
 def split_wiki_sections(wiki_md: str) -> tuple[str, list[tuple[str, str]]]:

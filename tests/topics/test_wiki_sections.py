@@ -121,3 +121,20 @@ def test_two_topics_never_claim_the_same_section():
     ]
     assigned = assign_wiki_sections(_WIKI, topics)
     assert list(assigned) == ["agent-loop-engine"]
+
+
+def test_match_score_tiers():
+    from lib.topics.wiki_sections import _match_score
+
+    cases = [
+        (("Auth Flow", "auth", "Auth Flow"), 5.0),
+        (("X", "auth-flow", "Auth flow"), 5.0),
+        (("Topic 3: Auth", "x", "Auth"), 4.0),
+        (("Auth", "x", "Auth and sessions"), 3.0),
+        (("Session trace ingest", "x", "Trace ingest of sessions"), 1.5),
+        (("Billing", "billing-x", "Weather"), 0.0),
+        (("", "", "Something"), 0.0),
+        (("Auth", "", ""), 0.0),
+    ]
+    got = [_match_score(*args) for args, _ in cases]
+    assert got == [want for _, want in cases]
