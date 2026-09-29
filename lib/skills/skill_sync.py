@@ -361,32 +361,32 @@ def _mirror_pattern_extras(deployed_dir, source_dir):
 
     changed = 0
     deployed_rels = set()
-    for dirpath, _dirnames, filenames in os.walk(deployed_dir):
-        for name in filenames:
-            full = os.path.join(dirpath, name)
-            rel = os.path.relpath(full, deployed_dir)
-            if rel in ('SKILL.md', 'content.md'):
-                continue
-            deployed_rels.add(rel)
-            dst = os.path.join(source_dir, rel)
-            os.makedirs(os.path.dirname(dst), exist_ok=True)
-            if not os.path.isfile(dst) or _hash_file(full) != _hash_file(dst):
-                shutil.copy2(full, dst)
-                changed += 1
+    for full, rel in _iter_extra_files(deployed_dir):
+        deployed_rels.add(rel)
+        dst = os.path.join(source_dir, rel)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        if not os.path.isfile(dst) or _hash_file(full) != _hash_file(dst):
+            shutil.copy2(full, dst)
+            changed += 1
 
     # Remove source files that no longer exist in deployed.
-    if os.path.isdir(source_dir):
-        for dirpath, _dirnames, filenames in os.walk(source_dir):
-            for name in filenames:
-                full = os.path.join(dirpath, name)
-                rel = os.path.relpath(full, source_dir)
-                if rel in ('SKILL.md', 'content.md'):
-                    continue
-                if rel not in deployed_rels:
-                    os.remove(full)
-                    changed += 1
+    for full, rel in list(_iter_extra_files(source_dir)):
+        if rel not in deployed_rels:
+            os.remove(full)
+            changed += 1
 
     return changed
+
+
+def _iter_extra_files(root):
+    """Yield (full_path, rel_path) for every file under `root` except the
+    top-level SKILL.md / content.md. Yields nothing when `root` is absent."""
+    for dirpath, _dirnames, filenames in os.walk(root):
+        for name in filenames:
+            full = os.path.join(dirpath, name)
+            rel = os.path.relpath(full, root)
+            if rel not in ('SKILL.md', 'content.md'):
+                yield full, rel
 
 
 # ---------- push ----------------------------------------------------------
