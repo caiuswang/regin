@@ -35,6 +35,9 @@ export function armDraft(task) {
     worktreeBase: worktree.base || '',
     verify_cmd: armed.verify_cmd || '',
     autorun: !!armed.autorun,
+    // '' is the SDK default, so an unset launch stays empty for R4b's
+    // first-non-empty-wins fill and only an explicit tmux carries over.
+    launch: params.launch === 'tmux' ? 'tmux' : '',
   }
 }
 
@@ -47,6 +50,7 @@ function armBody(draft) {
     one_shot: draft.one_shot,
     verify_cmd: draft.verify_cmd.trim(),
     autorun: draft.autorun,
+    launch: draft.launch || 'sdk',
   }
   if (draft.useWorktree && draft.worktreeBranch.trim()) {
     body.worktree = {

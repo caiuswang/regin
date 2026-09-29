@@ -22,8 +22,11 @@ from lib.tasks.capture import CaptureRejected
 
 ARM_FIELDS = frozenset({
     "cwd", "model", "permission_mode", "effort", "one_shot", "worktree",
-    "env", "verify_cmd", "autorun", "skill",
+    "env", "verify_cmd", "autorun", "skill", "launch",
 })
+
+LAUNCH_SDK, LAUNCH_TMUX = "sdk", "tmux"
+LAUNCH_MODES = (LAUNCH_SDK, LAUNCH_TMUX)
 
 # The subset handed to `launch_run`; the rest are regin's own bookkeeping.
 LAUNCH_FIELDS = ("cwd", "model", "permission_mode", "effort", "one_shot",
@@ -157,6 +160,7 @@ def parse_arm(payload) -> dict:
         "env": _env(payload),
         "worktree": _worktree(payload),
         "skill": _skill(payload),
+        "launch": _choice(payload, "launch", LAUNCH_MODES) or LAUNCH_SDK,
     }
     return {
         "params": params,
