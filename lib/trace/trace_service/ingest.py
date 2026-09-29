@@ -513,6 +513,32 @@ def _attribute_one_call(
     return cur.rowcount > 0
 
 
+def _parse_attribution_payload(payload) -> tuple | None:
+    """(trace_id, turn_uuid, tool_calls, parent_span_id) from a
+    tool-attribution body, or None when it is unusable."""
+    if not isinstance(payload, dict):
+        return None
+    trace_id = payload.get('trace_id')
+    tool_calls = payload.get('tool_calls')
+    if not isinstance(trace_id, str) or not trace_id:
+        return None
+    if not isinstance(tool_calls, list):
+        return None
+    turn_uuid = payload.get('turn_uuid')
+    # Issuing turn's resp-/think- span (or None). Backfills the live
+    # tool.* span's parent_id, which is posted parent-less at PostToolUse
+    # time. Name-scoped in SQL so it never disturbs the parentage of a
+    # permission.request / task.notification row that happens to share a
+    # tool_use_id.
+    parent_span_id = payload.get('parent_span_id')
+    return (
+        trace_id,
+        turn_uuid if isinstance(turn_uuid, str) else None,
+        tool_calls,
+        parent_span_id if isinstance(parent_span_id, str) and parent_span_id else None,
+    )
+
+
 def ingest_tool_attribution(payload: dict) -> tuple[int, int]:
     """Attach per-tool token estimates to existing `tool.*` spans.
 
@@ -533,25 +559,10 @@ def ingest_tool_attribution(payload: dict) -> tuple[int, int]:
     """
     from lib.orm.engine import get_connection
 
-    if not isinstance(payload, dict):
+    parsed = _parse_attribution_payload(payload)
+    if parsed is None:
         return 0, 1
-    trace_id = payload.get('trace_id')
-    turn_uuid = payload.get('turn_uuid')
-    tool_calls = payload.get('tool_calls')
-    # Issuing turn's resp-/think- span (or None). Backfills the live
-    # tool.* span's parent_id, which is posted parent-less at PostToolUse
-    # time. Name-scoped in SQL so it never disturbs the parentage of a
-    # permission.request / task.notification row that happens to share a
-    # tool_use_id.
-    parent_span_id = payload.get('parent_span_id')
-    if not isinstance(parent_span_id, str) or not parent_span_id:
-        parent_span_id = None
-    if not isinstance(trace_id, str) or not trace_id:
-        return 0, 1
-    if not isinstance(tool_calls, list):
-        return 0, 1
-    if not isinstance(turn_uuid, str):
-        turn_uuid = None
+    trace_id, turn_uuid, tool_calls, parent_span_id = parsed
 
     conn = get_connection()
     try:
@@ -561,16 +572,15 @@ def ingest_tool_attribution(payload: dict) -> tuple[int, int]:
         model = sess_row[0] if sess_row else None
         turn_ctx = _turn_context_tokens(conn, trace_id, turn_uuid)
 
-        updated = 0
-        skipped = 0
-        for tc in tool_calls:
-            if _attribute_one_call(
+        attributed = [
+            _attribute_one_call(
                 conn, tc, model=model, turn_ctx=turn_ctx, turn_uuid=turn_uuid,
                 parent_span_id=parent_span_id, trace_id=trace_id,
-            ):
-                updated += 1
-            else:
-                skipped += 1
+            )
+            for tc in tool_calls
+        ]
+        updated = sum(1 for ok in attributed if ok)
+        skipped = len(attributed) - updated
         conn.commit()
     except Exception:
         try:
