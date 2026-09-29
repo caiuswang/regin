@@ -19,7 +19,7 @@ import api from '../../api'
 import { useConfirm } from '../../composables/useConfirm'
 import { refusalOf, runRemedy } from '../../composables/useDefectRemedy'
 import { defectState, GROUP, MENU, PRIMARY } from '../../utils/defectVerbs'
-import { toBase64 } from '../../utils/imageFiles'
+import { imageFilesFrom, toBase64 } from '../../utils/imageFiles'
 import Button from '../ui/Button.vue'
 import DropdownMenu from '../ui/DropdownMenu.vue'
 import FeaturePicker from '../pipeline/FeaturePicker.vue'
@@ -189,6 +189,19 @@ async function reopen() {
 async function attach(event) {
   const files = [...(event.target.files || [])]
   event.target.value = ''
+  await attachFiles(files)
+}
+
+// A screenshot pasted while correcting the wording is evidence for this
+// defect, written at once like the picker's; a text paste is left alone.
+async function onPaste(e) {
+  const files = imageFilesFrom(e.clipboardData)
+  if (!files.length) return
+  e.preventDefault()
+  await attachFiles(files)
+}
+
+async function attachFiles(files) {
   if (!files.length) return
   for (const file of files) {
     const data_b64 = await toBase64(file)
@@ -265,6 +278,7 @@ async function onRemedy(remedy) {
       v-model="value"
       :form="form" :spec="FORMS[form]" :defect-id="defect.id" :busy="busy"
       @submit="submit()"
+      @paste="form === 'edit' && onPaste($event)"
     />
 
     <div v-if="offered" class="offer" role="status"

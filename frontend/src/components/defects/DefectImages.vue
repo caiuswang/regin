@@ -22,7 +22,7 @@ const { items, bind } = useAttachedImages('defects')
 const zoomed = ref(null)
 
 onMounted(() => bind(props.defect))
-watch(() => props.defect.id, () => bind(props.defect))
+watch([() => props.defect.id, () => props.defect.images?.length], () => bind(props.defect))
 </script>
 
 <template>

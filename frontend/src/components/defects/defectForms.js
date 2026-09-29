@@ -18,7 +18,7 @@ export const FORMS = {
     multiline: true,
     initial: d => d.symptom,
     invalid: raw => (raw.trim() ? '' : 'A defect needs a symptom.'),
-    hint: 'The wording is the dedup key too: a rewrite that matches another defect of the same feature is refused, and merge is the remedy.',
+    hint: 'The wording is the dedup key too: a rewrite that matches another defect of the same feature is refused, and merge is the remedy. Paste a screenshot to attach it.',
     send: (id, raw) => api.patch(`/defects/${id}`, { symptom: raw.trim() }),
     done: 'edited',
   },

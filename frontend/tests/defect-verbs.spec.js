@@ -242,6 +242,71 @@ test('test_defect_attach_image_on_detail', async ({ page }) => {
   await expect(page.getByRole('status')).toContainText('1 image attached')
 })
 
+/** Paste a PNG and/or text into `locator`; resolves false when a handler claimed it. */
+async function pasteInto(locator, { png = null, text = null }) {
+  return locator.evaluate((el, { b64, text }) => {
+    const dt = new DataTransfer()
+    if (b64) {
+      const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
+      dt.items.add(new File([bytes], 'shot.png', { type: 'image/png' }))
+    }
+    if (text) dt.setData('text/plain', text)
+    return el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }))
+  }, { b64: png ? png.toString('base64') : null, text })
+}
+
+test('test_defect_edit_paste_attaches_image', async ({ page }) => {
+  const state = { row: defect(7, { ...ATTRIBUTED, images: [{ idx: 1 }] }) }
+  const posts = await stubDetail(page, state, (path) => {
+    if (!path.endsWith('/images')) return { defect: state.row }
+    const idx = state.row.images.length + 1
+    state.row = { ...state.row, images: [...state.row.images, { idx }] }
+    return { status: 201, json: { image: { idx } } }
+  })
+  let imageGets = 0
+  await page.route(/\/api\/defects\/7\/images\/\d+$/, (route) => {
+    imageGets += 1
+    return route.fulfill({ body: PNG, contentType: 'image/png' })
+  })
+
+  await page.goto('/defects/7')
+  await expect(page.getByTestId('defect-image-thumb')).toHaveCount(1)
+  await page.getByTestId('defect-more-7').click()
+  await page.getByRole('menuitem', { name: 'Edit symptom' }).click()
+  const field = page.getByTestId('defect-edit-field-7')
+  await field.fill('reworded, not saved yet')
+
+  expect(await pasteInto(field, { png: PNG })).toBe(false)
+  await expect.poll(() => posts.length).toBe(1)
+  expect(posts[0].path).toBe('/api/defects/7/images')
+  expect(posts[0].body.data_b64).toBeTruthy()
+  await expect(page.getByTestId('defect-image-thumb')).toHaveCount(2)
+  await expect(page.getByRole('status')).toContainText('1 image attached')
+  await expect(field).toHaveValue('reworded, not saved yet')
+
+  // A reload that brings back the same images must not re-pull them.
+  const before = imageGets
+  await page.getByTestId('defect-edit-submit-7').click()
+  await expect(page.getByRole('status')).toContainText('#7 edited')
+  await expect(page.getByTestId('defect-image-thumb')).toHaveCount(2)
+  expect(imageGets).toBe(before)
+})
+
+test('test_defect_paste_text_or_other_form_posts_nothing', async ({ page }) => {
+  const state = { row: defect(7, ATTRIBUTED) }
+  const posts = await stubDetail(page, state)
+  await page.goto('/defects/7')
+
+  await page.getByTestId('defect-more-7').click()
+  await page.getByRole('menuitem', { name: 'Edit symptom' }).click()
+  expect(await pasteInto(page.getByTestId('defect-edit-field-7'), { text: 'plain words' })).toBe(true)
+
+  await page.getByTestId('defect-more-7').click()
+  await page.getByRole('menuitem', { name: 'Edit suspect paths' }).click()
+  expect(await pasteInto(page.getByTestId('defect-paths-field-7'), { png: PNG })).toBe(true)
+  expect(posts).toEqual([])
+})
+
 /** The Features tab with a stubbed queue; everything else hits the suite's server. */
 async function stubTriage(page, queue) {
   const state = { queue, posts: [] }
