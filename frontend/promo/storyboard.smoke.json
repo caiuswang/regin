@@ -1,0 +1,32 @@
+{
+  "title": "regin：AI 编码代理的流水线与会话追踪",
+  "voice": "Tingting",
+  "pins": {
+    "feature": 125,
+    "task": 284,
+    "defect": 218,
+    "sessions": ["bcfdb002-1581-40e1-abf2-e3c57203934b"]
+  },
+  "scenes": [
+    {
+      "id": "intro",
+      "surface": "card",
+      "route": null,
+      "hero": null,
+      "lines": [
+        { "id": "intro-1", "text": "AI 编码代理写代码越来越快。" },
+        { "id": "intro-2", "text": "regin 让它做了什么、做对了没有，都看得见。" }
+      ]
+    },
+    {
+      "id": "overview",
+      "surface": "pipeline",
+      "route": "/overview",
+      "hero": "[data-testid=\"overview-loop\"]",
+      "lines": [
+        { "id": "overview-1", "text": "一个需求从 spec 到交付，是一条流水线。" },
+        { "id": "overview-2", "text": "Overview 一屏看到每个 feature 走到了哪一步。" }
+      ]
+    }
+  ]
+}

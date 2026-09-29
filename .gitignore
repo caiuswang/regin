@@ -104,3 +104,6 @@ docs/ui-sketches/
 
 # SQLite backups taken before destructive migrations. Local-only.
 db/*.db.bak*
+
+# Promo video build output (snapshot DB, voice clips, frames, the mp4)
+frontend/promo/out/

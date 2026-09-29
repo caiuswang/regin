@@ -88,6 +88,19 @@ def test_replica_refuses_writes_but_allows_login(tmp_db):
     assert client.head("/api/auth/me").status_code == 200
 
 
+def test_replica_allows_the_realtime_handshake(tmp_db):
+    from lib.auth import register_user
+
+    register_user("alice", "Alice", "pw-alice-123")
+    client = _client(replica=True)
+
+    ticket = client.post("/api/auth/stream-ticket")
+    assert ticket.status_code == 200
+    assert "ticket" in ticket.get_json()
+    topics = client.post("/api/notifications/stream/topics", json={})
+    assert topics.get_json() != {"error": "replica"}
+
+
 def test_serve_without_replica_unchanged(tmp_db, boot_calls, stub_run):
     _serve(replica=False)
 

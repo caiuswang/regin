@@ -412,7 +412,15 @@ def _task_finish_loopback_ok() -> bool:
 
 
 _REPLICA_READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
-_REPLICA_WRITE_ALLOWED_ENDPOINTS = frozenset({"auth.api_auth_login"})
+# The realtime handshake is a POST only because EventSource cannot carry a
+# bearer header: the ticket and the topic set live in process memory and touch
+# no store, and the SPA opens the stream on every page, so refusing them turns
+# every recorded frame into a reconnect loop.
+_REPLICA_WRITE_ALLOWED_ENDPOINTS = frozenset({
+    "auth.api_auth_login",
+    "notifications.api_auth_stream_ticket",
+    "notifications.api_notifications_stream_topics",
+})
 
 
 def _install_replica_guard(app: Flask) -> None:
