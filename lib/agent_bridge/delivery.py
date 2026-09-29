@@ -604,17 +604,26 @@ def _send_answer(row: dict, option_index: int, free_text: str | None,
         if r.returncode != 0:
             return DeliveryResult(False, f"send-keys failed: {r.stderr.strip()}")
         return DeliveryResult(True, f"selected option {option_index + 1} in {pane}")
-    baseline = None
-    if is_chat:
-        # Chat: this Enter dismisses the menu into the composer before typing.
-        _tmux(socket, "send-keys", "-t", pane, "Enter")
-        time.sleep(0.1)
-        # A long chat body collapses to a `[Pasted text #N]` chip that echoes
-        # neither head nor tail, so only a chip numbered above this pre-type
-        # baseline can prove the send landed. A read that FAILED is unknown,
-        # not zero — see `_type_and_ack`.
-        read = _tmux(socket, "capture-pane", "-pt", pane, "-S", "-40")
-        baseline = _paste_chip_high_water(read.stdout) if read.returncode == 0 else None
+    return _send_free_text_answer(socket, pane, free_text, is_chat)
+
+
+def _open_chat_composer(socket: str | None, pane: str) -> int | None:
+    """Dismiss the menu into the composer; return the pre-type paste-chip
+    baseline (None when the pane read failed)."""
+    # Chat: this Enter dismisses the menu into the composer before typing.
+    _tmux(socket, "send-keys", "-t", pane, "Enter")
+    time.sleep(0.1)
+    # A long chat body collapses to a `[Pasted text #N]` chip that echoes
+    # neither head nor tail, so only a chip numbered above this pre-type
+    # baseline can prove the send landed. A read that FAILED is unknown,
+    # not zero — see `_type_and_ack`.
+    read = _tmux(socket, "capture-pane", "-pt", pane, "-S", "-40")
+    return _paste_chip_high_water(read.stdout) if read.returncode == 0 else None
+
+
+def _send_free_text_answer(socket: str | None, pane: str, free_text: str,
+                           is_chat: bool) -> DeliveryResult:
+    baseline = _open_chat_composer(socket, pane) if is_chat else None
     # Chat lands in the REAL composer, so it is pasted and acked exactly as a
     # steer is. The non-chat branch types into the ask's own inline field — a
     # different widget, unprobed, which neither scrolls nor collapses and which
