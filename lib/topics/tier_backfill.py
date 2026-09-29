@@ -75,6 +75,27 @@ def _read_wiki(wiki_root: Path, topic_id: str) -> str | None:
         return None
 
 
+def _scan_topics(graph: dict[str, Any], wiki_root: Path, topic_id: str | None,
+                 ) -> tuple[dict[str, list[dict[str, Any]]], list[str]]:
+    """({topic_id: refs to demote}, [topic_ids with no wiki]) in graph order."""
+    to_demote: dict[str, list[dict[str, Any]]] = {}
+    skipped: list[str] = []
+    for tid, topic in graph.get("topics", {}).items():
+        if topic_id is not None and tid != topic_id:
+            continue
+        wiki_text = _read_wiki(wiki_root, tid)
+        if wiki_text is None:
+            skipped.append(tid)
+        else:
+            to_demote[tid] = _refs_to_demote(topic, wiki_text)
+    return to_demote, skipped
+
+
+def _demote(refs: list[dict[str, Any]]) -> None:
+    for ref in refs:
+        ref["tier"] = "reference"
+
+
 def backfill_reference_tiers(repo_path: str | Path, *, apply: bool = False,
                              topic_id: str | None = None) -> dict[str, Any]:
     """Tag wiki-unmentioned refs as `tier: "reference"`. Dry-run unless
@@ -90,31 +111,19 @@ def backfill_reference_tiers(repo_path: str | Path, *, apply: bool = False,
         return {"demotions": [], "skipped_no_wiki": [], "applied": False,
                 "topics_changed": []}
 
-    wiki_root = wiki_dir(repo_path)
-    demotions: list[dict[str, str]] = []
-    skipped: list[str] = []
-    changed: list[str] = []
-    for tid, topic in graph.get("topics", {}).items():
-        if topic_id is not None and tid != topic_id:
-            continue
-        wiki_text = _read_wiki(wiki_root, tid)
-        if wiki_text is None:
-            skipped.append(tid)
-            continue
-        refs = _refs_to_demote(topic, wiki_text)
-        for ref in refs:
-            demotions.append({"topic_id": tid, "path": ref["path"]})
-            if apply:
-                ref["tier"] = "reference"
-        if apply and refs:
-            changed.append(tid)
+    to_demote, skipped = _scan_topics(graph, wiki_dir(repo_path), topic_id)
+    demotions = [{"topic_id": tid, "path": ref["path"]}
+                 for tid, refs in to_demote.items() for ref in refs]
+    changed = [tid for tid, refs in to_demote.items() if refs] if apply else []
+    for tid in changed:
+        _demote(to_demote[tid])
 
-    if apply and changed:
+    if changed:
         save_graph(repo_path, graph)
         log.write("tier_backfill_applied", repo_path=str(repo_path),
                   refs=len(demotions), topics=len(changed))
     return {"demotions": demotions, "skipped_no_wiki": skipped,
-            "applied": bool(apply and changed), "topics_changed": changed}
+            "applied": bool(changed), "topics_changed": changed}
 
 
 __all__ = ["backfill_reference_tiers"]
