@@ -43,6 +43,27 @@ def iter_grit_files(grit_patterns_dir: str) -> Iterator[str]:
             yield os.path.join(grit_patterns_dir, name)
 
 
+def _rule_from_block(pending: dict, pattern_name: str, rel: str) -> dict | None:
+    """The rule dict for a complete `@rule` block that precedes `pattern_name`,
+    or None when the block is incomplete."""
+    if not all(f in pending for f in REQUIRED_FIELDS):
+        return None
+    if pending['id'] != pattern_name:
+        raise RuleMetadataError(
+            f"{rel}: @rule id='{pending['id']}' does not match "
+            f"pattern name '{pattern_name}'"
+        )
+    return {
+        'id': pending['id'],
+        'layer': pending['layer'],
+        'triggers': [t.strip() for t in pending['triggers'].split(',') if t.strip()],
+        'severity': pending['severity'],
+        'guide': pending['guide'],
+        'summary': pending['summary'],
+        'source_file': rel,
+    }
+
+
 def parse_file(path: str, project_root: str) -> list[dict]:
     """Parse one `.grit` file into a list of rule dicts.
 
@@ -68,22 +89,9 @@ def parse_file(path: str, project_root: str) -> list[dict]:
 
         m_decl = _PATTERN_DECL_RE.match(line)
         if m_decl:
-            pattern_name = m_decl.group(1)
-            if all(f in pending for f in REQUIRED_FIELDS):
-                if pending['id'] != pattern_name:
-                    raise RuleMetadataError(
-                        f"{rel}: @rule id='{pending['id']}' does not match "
-                        f"pattern name '{pattern_name}'"
-                    )
-                rules.append({
-                    'id': pending['id'],
-                    'layer': pending['layer'],
-                    'triggers': [t.strip() for t in pending['triggers'].split(',') if t.strip()],
-                    'severity': pending['severity'],
-                    'guide': pending['guide'],
-                    'summary': pending['summary'],
-                    'source_file': rel,
-                })
+            rule = _rule_from_block(pending, m_decl.group(1), rel)
+            if rule is not None:
+                rules.append(rule)
             pending = {}
             continue
 
