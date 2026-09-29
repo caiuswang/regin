@@ -38,14 +38,28 @@ def api_rules():
     rules = [_decorate_rule(r, engines_by_id) for r in data.get('rules', [])]
 
     repo_filter = (request.args.get('repo') or '').strip()
-    if repo_filter:
-        rules = [
-            r for r in rules
-            if pattern_scope.pattern_allowed_for_repo(r.get('guide'), repo_filter)
-        ]
-
+    rules = _rules_for_repo(rules, repo_filter)
     group_by = request.args.get('by', 'guide')
 
+    return jsonify({
+        'grouped': _group_rules(rules, group_by),
+        'group_by': group_by,
+        'repo_filter': repo_filter or None,
+        'total': len(rules),
+        'engines': _engine_descriptors(engines, rules),
+    })
+
+
+def _rules_for_repo(rules: list, repo_filter: str) -> list:
+    if not repo_filter:
+        return rules
+    return [
+        r for r in rules
+        if pattern_scope.pattern_allowed_for_repo(r.get('guide'), repo_filter)
+    ]
+
+
+def _group_rules(rules: list, group_by: str) -> list:
     groups: dict = {}
     for r in rules:
         key = r['guide'] if group_by == 'guide' else r['layer']
@@ -56,17 +70,14 @@ def api_rules():
     # `guide=None` or `layer=None` even after the helper defaults; mixed
     # None/str keys would otherwise raise TypeError on `<` comparison).
     grouped = sorted(groups.items(), key=lambda kv: (kv[0] is None, kv[0] or ''))
+    return [[k, v] for k, v in grouped]
 
-    return jsonify({
-        'grouped': [[k, v] for k, v in grouped],
-        'group_by': group_by,
-        'repo_filter': repo_filter or None,
-        'total': len(rules),
-        'engines': [
-            _engine_descriptor(engine, rule_count=sum(1 for r in rules if r['engine'] == engine.id))
-            for engine in engines
-        ],
-    })
+
+def _engine_descriptors(engines: list, rules: list) -> list:
+    return [
+        _engine_descriptor(engine, rule_count=sum(1 for r in rules if r['engine'] == engine.id))
+        for engine in engines
+    ]
 
 
 _LANG_BY_EXT = {
