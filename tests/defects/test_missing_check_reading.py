@@ -181,6 +181,25 @@ def test_a_quoted_title_nobody_wrote_reads_as_not_yet_written(tmp_path):
                           oracle) == checks.NOT_WRITTEN
 
 
+NODE_SPEC = """import { test } from './auth-fixture.js'
+test('test_the_rail_folds', async ({ page }) => {})
+"""
+
+
+def test_a_spec_node_id_is_a_claim_about_its_playwright_title(tmp_path):
+    """Defect #219: `x.spec.js::test_y` read `test_y` as a pytest function,
+    found no `def`, and called an existing Playwright test not written."""
+    oracle = checks.read_oracle(_tree(tmp_path, spec=NODE_SPEC))
+
+    assert checks.reading(
+        "frontend/tests/rail.spec.js::test_the_rail_folds (fixed in abc123)",
+        oracle) == checks.WRITTEN
+    assert checks.reading("rail.spec.js::test_the_rail_is_clipped",
+                          oracle) == checks.NOT_WRITTEN
+    assert checks.reading("rail.spec.js::a prose title with no end",
+                          oracle) == checks.UNVERIFIED
+
+
 def test_a_bare_spec_filename_is_the_spelling_playwright_accepts(tmp_path):
     """`playwright test rail.spec.js` is what the operator ran, so it is what
     they paste — a reading that only knew the full path called it missing.

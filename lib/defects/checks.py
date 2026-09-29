@@ -93,6 +93,11 @@ _PYTEST_NAME = re.compile(r"\btest_[A-Za-z0-9_]+(?!\.py)\b")
 _PYTEST_MODULE = re.compile(r"\btest_[A-Za-z0-9_]+(?=\.py\b)")
 _PYTEST_DEF = re.compile(r"^\s*(?:async\s+)?def\s+(test_[A-Za-z0-9_]+)", re.M)
 _SPEC_FILE = re.compile(r"[\w./-]+\.spec\.[jt]s")
+#: `nav.spec.js::test_the_rail_folds` — a spec title in node-id spelling.
+#: This repo titles its specs like pytest functions, so without this the
+#: token after `::` is judged against `def test_…` and a Playwright test
+#: that exists reads as not written.
+_SPEC_NODE = re.compile(r"(\.spec\.[jt]s)::\s*(test_[A-Za-z0-9_]+)\b")
 #: A title is quoted because that is how it is written in the spec and how it
 #: is pasted out of a Playwright report. The floor keeps `'a'` in prose from
 #: being read as a claim.
@@ -193,10 +198,13 @@ def claims_in(missing_check: Optional[str]) -> Claims:
     if not missing_check:
         return Claims([], [], [], [])
     outside = _unquoted(missing_check)
+    node_titles = [title for _ext, title in _SPEC_NODE.findall(outside)]
+    outside = _SPEC_NODE.sub(r"\1 ", outside)
     return Claims(
         pytest_names=list(dict.fromkeys(_PYTEST_NAME.findall(outside))),
         pytest_modules=list(dict.fromkeys(_PYTEST_MODULE.findall(outside))),
-        spec_titles=[t.strip() for t in _QUOTED.findall(missing_check)],
+        spec_titles=[t.strip() for t in _QUOTED.findall(missing_check)]
+        + node_titles,
         spec_files=list(dict.fromkeys(_SPEC_FILE.findall(outside))))
 
 
