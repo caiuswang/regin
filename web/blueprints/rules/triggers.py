@@ -246,6 +246,41 @@ def api_reset_triggers():
     return jsonify({'ok': True, 'msg': f'cleared {before} row(s)'})
 
 
+def _rule_trigger_event_error(ev) -> str | None:
+    # Validators live in web.helpers since Phase 8 of the web refactor.
+    # Import from there directly rather than via web.app's re-export —
+    # matches the pattern every other ingest endpoint follows.
+    from web.helpers import _is_non_blank_str
+    if not isinstance(ev, dict):
+        return 'event must be an object'
+    if not _is_non_blank_str(ev.get('rule_id')):
+        return 'missing or blank rule_id'
+    if not _is_non_blank_str(ev.get('file_path')):
+        return 'missing or blank file_path'
+    return None
+
+
+def _insert_rule_triggers(data, exp_by_guide) -> None:
+    with _pkg.SessionLocal() as session:
+        for ev in data:
+            match_count = int(ev.get('match_count') or 0)
+            session.add(RuleTrigger(
+                rule_id=ev.get('rule_id'),
+                file_path=ev.get('file_path'),
+                repo=ev.get('repo'),
+                match_count=match_count,
+                triggered=1 if match_count > 0 else 0,
+                severity=ev.get('severity'),
+                guide=ev.get('guide'),
+                summary=ev.get('summary'),
+                source=ev.get('source'),
+                session_id=ev.get('session_id'),
+                span_id=ev.get('span_id'),
+                experiment_id=exp_by_guide.get(ev.get('guide')),
+            ))
+        session.commit()
+
+
 @rules_bp.route('/api/rule-triggers', methods=['POST'])
 def api_ingest_rule_trigger():
     """Ingest one or more GritQL rule-check events.
@@ -260,10 +295,7 @@ def api_ingest_rule_trigger():
     Oversized batches (>`_ingest_max_batch_size()`) return 413 —
     a runaway hook that fires on every keystroke won't fill memory.
     """
-    # Validators live in web.helpers since Phase 8 of the web refactor.
-    # Import from there directly rather than via web.app's re-export —
-    # matches the pattern every other ingest endpoint follows.
-    from web.helpers import _is_non_blank_str, _ingest_max_batch_size
+    from web.helpers import _ingest_max_batch_size
 
     data = request.get_json(silent=True)
     if data is None:
@@ -278,17 +310,9 @@ def api_ingest_rule_trigger():
             'error': f'batch too large: {len(data)} events (max: {max_batch})',
         }), 413
 
-    errors = []
-    for i, ev in enumerate(data):
-        if not isinstance(ev, dict):
-            errors.append({'index': i, 'reason': 'event must be an object'})
-            continue
-        if not _is_non_blank_str(ev.get('rule_id')):
-            errors.append({'index': i, 'reason': 'missing or blank rule_id'})
-            continue
-        if not _is_non_blank_str(ev.get('file_path')):
-            errors.append({'index': i, 'reason': 'missing or blank file_path'})
-            continue
+    errors = [{'index': i, 'reason': reason}
+              for i, reason in enumerate(map(_rule_trigger_event_error, data))
+              if reason]
     if errors:
         return jsonify({'ok': False, 'ingested': 0, 'errors': errors}), 400
 
@@ -299,24 +323,7 @@ def api_ingest_rule_trigger():
     exp_by_guide = _active_experiment_ids(data)
 
     try:
-        with _pkg.SessionLocal() as session:
-            for ev in data:
-                match_count = int(ev.get('match_count') or 0)
-                session.add(RuleTrigger(
-                    rule_id=ev.get('rule_id'),
-                    file_path=ev.get('file_path'),
-                    repo=ev.get('repo'),
-                    match_count=match_count,
-                    triggered=1 if match_count > 0 else 0,
-                    severity=ev.get('severity'),
-                    guide=ev.get('guide'),
-                    summary=ev.get('summary'),
-                    source=ev.get('source'),
-                    session_id=ev.get('session_id'),
-                    span_id=ev.get('span_id'),
-                    experiment_id=exp_by_guide.get(ev.get('guide')),
-                ))
-            session.commit()
+        _insert_rule_triggers(data, exp_by_guide)
     except Exception as exc:
         return jsonify({
             'ok': False,
