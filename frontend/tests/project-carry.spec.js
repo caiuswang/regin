@@ -7,6 +7,7 @@
  * The server half of the carry is pinned in tests/features/test_project_carry.py.
  */
 import { test, expect } from './auth-fixture.js'
+import { rowAction } from './helpers/rowAction.js'
 
 const REPOS = [
   { id: 7, name: 'regin', path: '/r/regin' },
@@ -268,7 +269,7 @@ test('the arm sheet seeds cwd from the task project, not the last arm',
       'regin.tasks.arm.last', JSON.stringify({ cwd: '/r/regin' })))
     await stubArm(page, task())
     await page.goto('/tasks?group=none')
-    await page.locator('.task-row').first().getByTestId('task-arm').click()
+    await rowAction(page.locator('.task-row').first(), 'task-arm')
 
     await expect(page.getByTestId('task-arm-form')).toBeVisible()
     await expect(page.getByTestId('task-arm-cwd')).toContainText('/r/atlas')
@@ -280,7 +281,7 @@ test('an arm cwd outside the task project is flagged, not refused',
   async ({ page }) => {
     const armed = await stubArm(page, task())
     await page.goto('/tasks?group=none')
-    await page.locator('.task-row').first().getByTestId('task-arm').click()
+    await rowAction(page.locator('.task-row').first(), 'task-arm')
 
     await page.getByTestId('task-arm-cwd').click()
     await page.getByRole('option', { name: '/r/regin', exact: true }).click()
@@ -297,7 +298,7 @@ test('a task with no project keeps the recalled cwd', async ({ page }) => {
     'regin.tasks.arm.last', JSON.stringify({ cwd: '/r/regin' })))
   await stubArm(page, task({ project_id: null }))
   await page.goto('/tasks?group=none')
-  await page.locator('.task-row').first().getByTestId('task-arm').click()
+  await rowAction(page.locator('.task-row').first(), 'task-arm')
 
   await expect(page.getByTestId('task-arm-cwd')).toContainText('/r/regin')
   await expect(page.getByTestId('task-arm-recalled')).toBeVisible()

@@ -1,4 +1,5 @@
 import { test, expect } from './auth-fixture.js'
+import { rowAction } from './helpers/rowAction.js'
 
 // Serial: every test here counts rows in one shared `agent_tasks` table, and
 // the count is only meaningful if nothing else in this file is capturing
@@ -63,7 +64,7 @@ test.describe('/tasks — delete', () => {
     await capture(page, 'cancel this delete')
     await expect(page.locator('.task-row')).toHaveCount(1)
 
-    await page.locator('.task-row').first().getByTestId('task-delete').click()
+    await rowAction(page.locator('.task-row').first(), 'task-delete')
     // Named, not counted: the dialog quotes the title the operator was looking
     // at, and says what archiving would have kept.
     await expect(page.getByText('cancel this delete', { exact: false }).last())
@@ -78,8 +79,7 @@ test.describe('/tasks — delete', () => {
     await capture(page, 'delete this one')
     await expect(page.locator('.task-row')).toHaveCount(2)
 
-    await page.locator('.task-row', { hasText: 'delete this one' }).first()
-      .getByTestId('task-delete').click()
+    await rowAction(page.locator('.task-row', { hasText: 'delete this one' }).first(), 'task-delete')
     await confirmButton(page, 'Delete task').click()
 
     await expect(page.locator('.task-row')).toHaveCount(1)

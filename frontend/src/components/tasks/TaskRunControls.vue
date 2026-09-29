@@ -1,5 +1,5 @@
 <script setup>
-// The control strip on a task row. What it offers is decided by the status the
+// The primary control of a task row. What it offers is decided by the status the
 // server reports MERGED with liveness, never by the status alone: a `running`
 // row with nothing behind it is exactly what a killed runner leaves, and the
 // operator's way out of that is another Run — so the button stays.
@@ -27,30 +27,20 @@ const canRun = computed(() => !running.value
 </script>
 
 <template>
-  <template v-if="running">
-    <Button
-      variant="secondary"
-      size="sm"
-      :disabled="busy"
-      :aria-label="`Interrupt ${task.title}`"
-      data-testid="task-interrupt"
-      @click="$emit('control', 'interrupt')"
-    >
-      <Icon name="pause" :size="13" />
-      Interrupt
-    </Button>
-    <Button
-      variant="danger"
-      size="sm"
-      :disabled="busy"
-      :aria-label="`Stop ${task.title}`"
-      data-testid="task-stop"
-      @click="$emit('control', 'stop')"
-    >
-      <Icon name="square" :size="13" />
-      Stop
-    </Button>
-  </template>
+  <!-- Interrupt lives in the row's ⋯ menu, as it does on the board card: one
+       primary control per row, so the column of them can be scanned. -->
+  <Button
+    v-if="running"
+    variant="danger"
+    size="sm"
+    :disabled="busy"
+    :aria-label="`Stop ${task.title}`"
+    data-testid="task-stop"
+    @click="$emit('control', 'stop')"
+  >
+    <Icon name="square" :size="13" />
+    Stop
+  </Button>
   <Button
     v-else-if="canRun"
     variant="primary"

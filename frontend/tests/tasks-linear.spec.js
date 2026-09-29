@@ -11,6 +11,7 @@
  */
 import { fileURLToPath } from 'node:url'
 import { test, expect } from './auth-fixture.js'
+import { rowAction } from './helpers/rowAction.js'
 
 test.describe.configure({ mode: 'serial' })
 
@@ -391,7 +392,7 @@ test('the edit sheet files a single task, and unfiles it again',
     const row = page.locator('[data-testid="task-row"]',
       { hasText: `${SFX}-filing` }).first()
     await row.hover()
-    await row.getByTestId('task-edit').click()
+    await rowAction(row, 'task-edit')
     await expect(page.getByTestId('task-edit-form')).toBeVisible()
 
     await page.getByTestId('task-edit-project').click()
@@ -407,7 +408,7 @@ test('the edit sheet files a single task, and unfiles it again',
     const back = page.locator('[data-testid="task-row"]',
       { hasText: `${SFX}-filing` }).first()
     await back.hover()
-    await back.getByTestId('task-edit').click()
+    await rowAction(back, 'task-edit')
     await page.getByTestId('task-edit-project').click()
     await page.getByRole('option', { name: 'No project', exact: true }).click()
     await page.getByTestId('task-edit-save').click()
@@ -426,7 +427,7 @@ test('the edit sheet sets priority on a single task', async ({ page }) => {
   const row = page.locator('[data-testid="task-row"]',
     { hasText: `${SFX}-filing` }).first()
   await row.hover()
-  await row.getByTestId('task-edit').click()
+  await rowAction(row, 'task-edit')
   await page.getByTestId('task-edit-priority').click()
   await page.getByRole('option', { name: 'Urgent', exact: true }).click()
   await page.getByTestId('task-edit-save').click()
