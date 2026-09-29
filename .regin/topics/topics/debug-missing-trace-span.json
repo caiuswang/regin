@@ -34,7 +34,7 @@
     "hook_manager/handlers/turn_trace/**",
     "hook_manager/runner.py",
     "web/app.py",
-    "web/blueprints/trace/sessions.py",
+    "web/blueprints/trace/sessions/**",
     "web/blueprints/trace/ingest_errors.py",
     "cli/commands/logs.py",
     "tests/trace/test_trace_repair.py",
@@ -61,7 +61,7 @@
       "tier": "reference"
     },
     {
-      "path": "web/blueprints/trace/sessions.py",
+      "path": "web/blueprints/trace/sessions/",
       "role": "api",
       "tier": "reference"
     },

@@ -26,7 +26,7 @@ def _seed(db_module, rows):
 def _split(monkeypatch, live_ids):
     from lib.orm.engine import SessionLocal
     from lib.orm.models import Session as SessionModel
-    from web.blueprints.trace import sessions as S
+    from web.blueprints.trace.sessions import listing as S
     monkeypatch.setattr(S, '_live_sdk_session_ids', lambda: live_ids)
     with SessionLocal() as db:
         def ids(want):

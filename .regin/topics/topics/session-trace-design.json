@@ -50,7 +50,7 @@
       "tier": "reference"
     },
     {
-      "path": "web/blueprints/trace/sessions.py",
+      "path": "web/blueprints/trace/sessions/",
       "role": "api"
     },
     {

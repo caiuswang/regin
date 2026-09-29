@@ -145,7 +145,7 @@ def test_roster_status_stays_live_under_the_memo(flask_client):
     `_roster_status` stales an unstopped agent on age alone, so caching the
     built roster would freeze a badge that must still flip with the clock.
     """
-    import web.blueprints.trace.sessions as sessions_bp
+    import web.blueprints.trace.sessions.roster as sessions_bp
 
     tid = 'cache-roster'
     ingest_session_spans([_span(tid, 'prompt-1', 'prompt', 'go')])

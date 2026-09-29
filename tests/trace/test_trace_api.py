@@ -1198,7 +1198,7 @@ def test_sessions_rows_carry_the_runner_phase_only_for_owned_runs(
     carry it.
     """
     _seed_origin_mix(trace_db)
-    from web.blueprints.trace import sessions as S
+    from web.blueprints.trace.sessions import listing as S
     monkeypatch.setattr(
         S, '_owned_run_phase', lambda tid: 'idle' if tid == 'sess_a' else None)
 
