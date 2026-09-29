@@ -311,16 +311,19 @@ def log_path() -> Path | None:
     return _LOG_DIR / _LOG_FILENAME
 
 
-def _parse_log_record(raw: str) -> dict | None:
+_SKIP_LINE = object()
+
+
+def _parse_log_record(raw: str):
     import json
 
     raw = raw.strip()
     if not raw:
-        return None
+        return _SKIP_LINE
     try:
         return json.loads(raw).get("record", {})
     except (json.JSONDecodeError, AttributeError):
-        return None
+        return _SKIP_LINE
 
 
 def _bucket_record(buckets: dict[str, list[int | float | None]], rec: dict) -> None:
@@ -350,7 +353,7 @@ def iter_features() -> list[FeatureFileInfo]:
     with path.open("r") as f:
         for raw in f:
             rec = _parse_log_record(raw)
-            if rec is not None:
+            if rec is not _SKIP_LINE:
                 _bucket_record(buckets, rec)
     return [
         FeatureFileInfo(

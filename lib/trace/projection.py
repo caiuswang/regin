@@ -1457,7 +1457,7 @@ def _widen_envelopes(spans: list[dict]) -> list[dict]:
     for parent_id, child_spans in _children_by_parent(out).items():
         parent = by_id.get(parent_id)
         if parent:
-            _widen_parent(parent, child_spans)
+            _widen_parent(parent, [by_id[c['span_id']] for c in child_spans])
     return out
 
 
