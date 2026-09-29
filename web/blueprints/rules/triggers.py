@@ -554,18 +554,18 @@ def _build_rule_row(rid: str, aggregates: dict, engine_rule, thresholds,
     }
 
 
+def _in_filter(value, allowed: set) -> bool:
+    return not allowed or (value or '') in allowed
+
+
 def _passes_triggers_rules_filters(row: dict, params: _TriggersRulesParams) -> bool:
-    if params.search and params.search not in row['rule_id'].lower():
-        return False
-    if params.sev_filter and (row['severity'] or '') not in params.sev_filter:
-        return False
-    if params.eng_filter and (row['source'] or '') not in params.eng_filter:
-        return False
-    if params.status_filter != 'all' and row['status'] != params.status_filter:
-        return False
-    if params.marks_only and not row['suppressed_count']:
-        return False
-    return True
+    return (
+        (not params.search or params.search in row['rule_id'].lower())
+        and _in_filter(row['severity'], params.sev_filter)
+        and _in_filter(row['source'], params.eng_filter)
+        and params.status_filter in ('all', row['status'])
+        and (not params.marks_only or bool(row['suppressed_count']))
+    )
 
 
 _SORT_KEYS = {
