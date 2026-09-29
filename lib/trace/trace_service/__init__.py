@@ -8,7 +8,8 @@ SQLite-specific `json_extract` + CTEs with `ROW_NUMBER()` + the
 cleanly to SQLAlchemy expression language — but blueprints no longer
 need to know about `get_connection` to call it.
 
-Implementation is split across the read side (``queries``) and the write
+Implementation is split across the read side (``queries``,
+``tool_rollup``, ``turn_usage``, ``prompt_expansions``) and the write
 side (``ingest``, ``ingest_usage``, ``session_buckets``, ``span_rows``);
 this package re-exports the public surface so
 ``from lib.trace.trace_service import X`` stays stable.
@@ -31,11 +32,11 @@ from lib.trace.trace_service.session_buckets import _span_counter_buckets
 from lib.trace.trace_service.queries import (
     fetch_session_paginated,
     fetch_session_projection,
-    fetch_tool_token_rollup,
-    fetch_turn_usage,
     list_mcp_calls_page,
     list_skill_reads_page,
 )
+from lib.trace.trace_service.tool_rollup import fetch_tool_token_rollup
+from lib.trace.trace_service.turn_usage import fetch_turn_usage
 
 
 __all__ = [
