@@ -1015,25 +1015,50 @@ def _emit_span(payload: HookPayload) -> None:
         tool, tool_input, tool_response
     )
 
-    attrs: dict = {'tool_name': tool}
-    # `tool_use_id` is the `toolu_…` Anthropic assigns to this call.
-    # Without it the tool-attribution backfill can't match the span to
-    # the transcript's tool_use block when it later assigns token costs.
-    tu_id = raw.get('tool_use_id')
-    if isinstance(tu_id, str) and tu_id:
-        attrs['tool_use_id'] = tu_id
-    anchor = (payload.cwd
-              if provider.provider_id in _CWD_RELATIVE_PATH_PROVIDERS else None)
-    fp = _file_path(tool_input, anchor)
-    if fp:
-        attrs['file_path'] = fp
-
+    attrs = _call_identity_attrs(payload, provider, tool, tool_input, raw)
     builder = _TOOL_BUILDERS.get(tool)
     if builder is not None:
         builder(attrs, tool_input, tool_response, payload)
     elif tool.startswith('mcp__'):
         _build_mcp_attrs(attrs, tool, tool_input, tool_response)
+    _attach_origin_attrs(attrs, raw)
 
+    # send_to_user lands a durable row in `agent_messages`; pin the span_id
+    # up front so that row can deep-link back to this exact tool span.
+    is_send = tool.endswith('__send_to_user')
+    span_id = uuid.uuid4().hex[:16] if is_send else None
+
+    duration_ms, start_time, end_time = _span_timing(raw)
+    post_span(
+        trace_id=payload.session_id,
+        name=f'tool.{_normalize_tool_name(tool)}',
+        attributes=attrs,
+        duration_ms=duration_ms,
+        start_time=start_time,
+        end_time=end_time,
+        span_id=span_id,
+    )
+
+    if is_send:
+        _record_agent_message(payload, tool_input, attrs, span_id)
+
+
+def _call_identity_attrs(payload: HookPayload, provider, tool: str,
+                         tool_input: dict, raw: dict) -> dict:
+    attrs: dict = {'tool_name': tool}
+    # `tool_use_id` is the `toolu_…` Anthropic assigns to this call.
+    # Without it the tool-attribution backfill can't match the span to
+    # the transcript's tool_use block when it later assigns token costs.
+    _set_str(attrs, 'tool_use_id', raw.get('tool_use_id'))
+    anchor = (payload.cwd
+              if provider.provider_id in _CWD_RELATIVE_PATH_PROVIDERS else None)
+    fp = _file_path(tool_input, anchor)
+    if fp:
+        attrs['file_path'] = fp
+    return attrs
+
+
+def _attach_origin_attrs(attrs: dict, raw: dict) -> None:
     # If this tool call originated inside a subagent, Claude Code tags the
     # payload with the subagent's `agent_id` (+ optional `agent_type`).
     # Persist both so the trace projection can re-parent the span under
@@ -1055,25 +1080,6 @@ def _emit_span(payload: HookPayload) -> None:
     prompt_id = raw.get('prompt_id')
     if prompt_id:
         attrs['source_prompt_id'] = prompt_id
-
-    # send_to_user lands a durable row in `agent_messages`; pin the span_id
-    # up front so that row can deep-link back to this exact tool span.
-    is_send = tool.endswith('__send_to_user')
-    span_id = uuid.uuid4().hex[:16] if is_send else None
-
-    duration_ms, start_time, end_time = _span_timing(raw)
-    post_span(
-        trace_id=payload.session_id,
-        name=f'tool.{_normalize_tool_name(tool)}',
-        attributes=attrs,
-        duration_ms=duration_ms,
-        start_time=start_time,
-        end_time=end_time,
-        span_id=span_id,
-    )
-
-    if is_send:
-        _record_agent_message(payload, tool_input, attrs, span_id)
 
 
 def _record_agent_message(payload, tool_input: dict, attrs: dict,
