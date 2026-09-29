@@ -46,7 +46,7 @@ from lib.trace.projection import (  # noqa: F401
 )
 
 
-def create_app():
+def create_app(replica: bool = False):
     configure_logging()
     configure_activity_log()
     app = Flask(__name__,
@@ -61,6 +61,8 @@ def create_app():
     Compress(app)
 
     _install_request_logging(app)
+    if replica:
+        _install_replica_guard(app)
 
     # Seed/heal builtin prompt skeletons on startup, not only on init/rebuild:
     # inserts rows for newly registered surfaces and replaces stored bodies
@@ -177,7 +179,8 @@ def create_app():
     # ── Agent SDK tier (sessions regin launches and owns) ─────────
     from web.blueprints.agent_runs import agent_runs_bp
     app.register_blueprint(agent_runs_bp)
-    _reap_orphaned_agent_runs()
+    if not replica:
+        _reap_orphaned_agent_runs()
 
     from web.blueprints.notifications import notifications_bp
     app.register_blueprint(notifications_bp)
@@ -406,6 +409,28 @@ def _task_finish_loopback_ok() -> bool:
     if request.endpoint != "tasks.api_finish_task_run":
         return False
     return (request.remote_addr or "") in _LOOPBACK_ADDRS
+
+
+_REPLICA_READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+_REPLICA_WRITE_ALLOWED_ENDPOINTS = frozenset({"auth.api_auth_login"})
+
+
+def _install_replica_guard(app: Flask) -> None:
+    """Refuse every /api/ write on a replica serving a copy of the live DB.
+
+    Installed ahead of the auth gate so an anonymous write is refused as a
+    replica write rather than as a missing login. Login stays open because a
+    viewer has to mint a token to read at all.
+    """
+    @app.before_request
+    def _refuse_replica_writes():
+        if request.method in _REPLICA_READ_METHODS:
+            return None
+        if not request.path.startswith("/api/"):
+            return None
+        if request.endpoint in _REPLICA_WRITE_ALLOWED_ENDPOINTS:
+            return None
+        return jsonify({"error": "replica"}), 403
 
 
 def _install_auth_gate(app: Flask) -> None:

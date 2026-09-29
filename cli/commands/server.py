@@ -67,15 +67,24 @@ def cmd_serve(
     ),
     port: int = typer.Option(settings.web_port, "--port"),
     debug: bool = typer.Option(False, "--debug"),
+    replica: bool = typer.Option(
+        False, "--replica",
+        help="Read-only replica for a copy of the live DB: skip the boot "
+             "reap, workflow watcher and pending reaper; refuse /api writes "
+             "except login",
+    ),
 ) -> None:
     from web.app import create_app
-    server = create_app()
+    server = create_app(replica=replica)
     display_host = 'localhost' if host in ('127.0.0.1', '0.0.0.0') else host
     print(f"Starting dashboard at http://{display_host}:{port}")
     if host == '0.0.0.0':
         print("  (bound to 0.0.0.0 — dashboard is reachable from the network)")
-    _start_workflow_watcher(debug)
-    _start_pending_reaper(debug)
+    if replica:
+        print("  (replica — boot reap and background writers off, /api writes refused)")
+    else:
+        _start_workflow_watcher(debug)
+        _start_pending_reaper(debug)
     server.run(host=host, port=port, debug=debug)
 
 
