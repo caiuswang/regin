@@ -71,4 +71,4 @@ def _column_widths(rows: list[Sequence[str]], min_col_width: int) -> list[int]:
     return widths
 
 
-__all__ =["echo", "error", "table"]
+__all__ = ["echo", "error", "table"]

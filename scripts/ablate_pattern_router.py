@@ -141,7 +141,6 @@ def _fmt_rank(r: int | None) -> str:
 
 
 def _print_per_query(per_query_ranks: dict[str, dict[str, int | None]]) -> None:
-    # Where do the configs disagree?
     print("\n=== Per-query ranks (∞ = miss / not in top-5) ===")
     print(f"{'fam':<3} {'expected':<30} {'BM25':>5} {'dense':>5} {'RRF':>5} {'+rr':>5}  query")
     for query, expected, family in EVAL_SET:
