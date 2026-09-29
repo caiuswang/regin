@@ -407,22 +407,26 @@ def _first_checker_name(bundle_root: Path, manifest: BundleManifest) -> str | No
     bundle. Used by the runner dry-run to exercise checker module loading."""
     rules_root = bundle_root / manifest.rules_dir
     for path in _walk_rule_files(rules_root):
-        try:
-            text = path.read_text(encoding='utf-8')
-            data = (json.loads(text) if path.suffix.lower() == '.json'
-                    else yaml.safe_load(text))
-        except Exception:
-            continue
-        items: list = []
-        if isinstance(data, dict):
-            items = [data]
-        elif isinstance(data, list):
-            items = [x for x in data if isinstance(x, dict)]
-        for raw in items:
+        for raw in _rule_dicts(path):
             checker = raw.get('checker')
             if isinstance(checker, str) and checker.strip():
                 return checker.strip()
     return None
+
+
+def _rule_dicts(path: Path) -> list[dict]:
+    """The rule mappings in one rule file; [] when unreadable/unparseable."""
+    try:
+        text = path.read_text(encoding='utf-8')
+        data = (json.loads(text) if path.suffix.lower() == '.json'
+                else yaml.safe_load(text))
+    except Exception:
+        return []
+    if isinstance(data, dict):
+        return [data]
+    if isinstance(data, list):
+        return [x for x in data if isinstance(x, dict)]
+    return []
 
 
 def _dry_run_runner(bundle_root: Path, manifest: BundleManifest) -> list[BundleDiagnostic]:
