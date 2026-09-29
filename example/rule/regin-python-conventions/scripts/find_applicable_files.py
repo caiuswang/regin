@@ -40,26 +40,32 @@ def _content_trigger_matches(trig: str, file_content: str) -> bool:
     return re.search(pattern, file_content) is not None
 
 
-def _rule_applies(rule: dict, file_path: str, file_content: str) -> bool:
-    basename = os.path.basename(file_path)
+def _split_triggers(rule: dict) -> tuple:
     extensions = _extensions_for_rule(rule)
-
     filename_globs = []
     content_triggers = []
     for trig in rule.get('triggers', []):
-        if '*' in trig or any(trig.endswith(ext) for ext in extensions):
+        if '*' in trig or trig.endswith(extensions):
             filename_globs.append(trig)
         else:
             content_triggers.append(trig)
+    return filename_globs, content_triggers
 
-    if filename_globs:
-        if not any(fnmatch.fnmatch(basename, g) for g in filename_globs):
-            return False
 
-    if content_triggers:
-        if not any(_content_trigger_matches(t, file_content) for t in content_triggers):
-            return False
+def _any_glob_matches(basename: str, globs: list) -> bool:
+    return any(fnmatch.fnmatch(basename, g) for g in globs)
 
+
+def _any_content_matches(file_content: str, triggers: list) -> bool:
+    return any(_content_trigger_matches(t, file_content) for t in triggers)
+
+
+def _rule_applies(rule: dict, file_path: str, file_content: str) -> bool:
+    filename_globs, content_triggers = _split_triggers(rule)
+    if filename_globs and not _any_glob_matches(os.path.basename(file_path), filename_globs):
+        return False
+    if content_triggers and not _any_content_matches(file_content, content_triggers):
+        return False
     return bool(filename_globs or content_triggers)
 
 
