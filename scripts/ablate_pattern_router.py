@@ -93,25 +93,36 @@ def main():
     all_scores = OrderedDict()
     per_query_ranks: dict[str, dict[str, int | None]] = {}
     for label, fn in configs.items():
-        results = {}
-        for query, _, _ in EVAL_SET:
-            try:
-                results[query] = fn(query, 5)
-            except Exception as e:
-                print(f"  !! {label} crashed on {query!r}: {e}")
-                results[query] = []
+        results = _run_config(label, fn)
         all_scores[label] = score(results)
         for query, expected, family in EVAL_SET:
             per_query_ranks.setdefault(query, {})[label] = _rank_of(expected, results[query])
 
-    # ── Aggregate table ─────────────────────────────────────────
+    _print_aggregate(all_scores)
+    _print_per_family(all_scores)
+    _print_per_query(per_query_ranks)
+
+
+def _run_config(label: str, fn) -> dict[str, list[str]]:
+    results = {}
+    for query, _, _ in EVAL_SET:
+        try:
+            results[query] = fn(query, 5)
+        except Exception as e:
+            print(f"  !! {label} crashed on {query!r}: {e}")
+            results[query] = []
+    return results
+
+
+def _print_aggregate(all_scores: dict) -> None:
     n_total = next(iter(all_scores.values()))["n"]
     print(f"\n=== Aggregate (N={n_total}) ===")
     print(f"{'config':<24}  top-1   R@5    MRR@5")
     for label, s in all_scores.items():
         print(f"{label:<24}  {s['top1']:.2f}   {s['recall5']:.2f}   {s['mrr5']:.2f}")
 
-    # ── Per-family ──────────────────────────────────────────────
+
+def _print_per_family(all_scores: dict) -> None:
     print("\n=== Per-family ===")
     print("  T/D/L = pattern title-paraphrase / description / lexical")
     print("  WT/WD/WL = wiki   title-paraphrase / description / lexical")
@@ -124,17 +135,21 @@ def main():
             cells.append(f"{fs.get('top1', 0):.2f}/{fs.get('recall5', 0):.2f}")
         print(f"{label:<24}  " + "  ".join(f"  {c}   " for c in cells))
 
-    # ── Per-query rank diff (where do they disagree?) ───────────
+
+def _fmt_rank(r: int | None) -> str:
+    return "∞" if r is None or r > 5 else str(r)
+
+
+def _print_per_query(per_query_ranks: dict[str, dict[str, int | None]]) -> None:
+    # Where do the configs disagree?
     print("\n=== Per-query ranks (∞ = miss / not in top-5) ===")
     print(f"{'fam':<3} {'expected':<30} {'BM25':>5} {'dense':>5} {'RRF':>5} {'+rr':>5}  query")
     for query, expected, family in EVAL_SET:
         rs = per_query_ranks[query]
-        def fmt(r):
-            return "∞" if r is None or r > 5 else str(r)
         print(
             f"{family:<3} {expected:<30} "
-            f"{fmt(rs['BM25-only']):>5} {fmt(rs['dense-only']):>5} "
-            f"{fmt(rs['hybrid RRF (no rerank)']):>5} {fmt(rs['hybrid + rerank']):>5}  "
+            f"{_fmt_rank(rs['BM25-only']):>5} {_fmt_rank(rs['dense-only']):>5} "
+            f"{_fmt_rank(rs['hybrid RRF (no rerank)']):>5} {_fmt_rank(rs['hybrid + rerank']):>5}  "
             f"{query}"
         )
 
