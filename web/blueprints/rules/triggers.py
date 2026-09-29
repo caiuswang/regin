@@ -958,6 +958,47 @@ def api_triggers_by_span(span_id: str):
 
 # ── Per-event suppression (PR-4) ───────────────────────────
 
+def _suppress_reason(body: dict) -> str | None:
+    reason = body.get('reason')
+    if reason is None:
+        return None
+    return str(reason).strip() or None
+
+
+def _refresh_suppression_reason(session, existing, reason) -> bool:
+    """Already suppressed. Update the reason if the caller passed a new one —
+    otherwise the second click silently drops the user's text. Leaves
+    who/when intact to preserve the original authorship."""
+    if reason is None or reason == existing.reason:
+        return False
+    existing.reason = reason
+    session.add(existing)
+    session.commit()
+    session.refresh(existing)
+    return True
+
+
+def _insert_suppression(session, trigger_id: int, user: dict, reason):
+    from sqlalchemy import update as sa_update
+    from lib.orm.models import RuleTriggerSuppression
+
+    row = RuleTriggerSuppression(
+        rule_trigger_id=trigger_id,
+        suppressed_by_id=user.get('id') or 0,
+        suppressed_by_username=user.get('username') or 'unknown',
+        reason=reason,
+    )
+    session.add(row)
+    session.execute(
+        sa_update(RuleTrigger)
+        .where(RuleTrigger.id == trigger_id)
+        .values(suppressed=1)
+    )
+    session.commit()
+    session.refresh(row)
+    return row
+
+
 @rules_bp.route('/api/triggers/<int:trigger_id>/suppress', methods=['POST'])
 @require_editor
 def api_suppress_trigger(trigger_id: int):
@@ -969,17 +1010,13 @@ def api_suppress_trigger(trigger_id: int):
     transaction so the hot-path aggregate filter stays consistent
     with the metadata row.
     """
-    from sqlalchemy import update as sa_update
     from sqlmodel import select as sm_select
     from lib.orm.models import RuleTrigger, RuleTriggerSuppression
     from lib import audit
     from lib.auth import get_current_user
 
     user = get_current_user() or {}
-    body = request.get_json(silent=True) or {}
-    reason = body.get('reason')
-    if reason is not None:
-        reason = str(reason).strip() or None
+    reason = _suppress_reason(request.get_json(silent=True) or {})
 
     with _pkg.SessionLocal() as session:
         rt = session.get(RuleTrigger, trigger_id)
@@ -991,36 +1028,12 @@ def api_suppress_trigger(trigger_id: int):
             .where(RuleTriggerSuppression.rule_trigger_id == trigger_id)
         ).first()
         if existing is not None:
-            # Already suppressed. Update the reason if the caller passed
-            # a new one — otherwise the second click silently drops the
-            # user's text. Leaves who/when intact to preserve the
-            # original authorship.
-            updated = False
-            if reason is not None and reason != existing.reason:
-                existing.reason = reason
-                session.add(existing)
-                session.commit()
-                session.refresh(existing)
-                updated = True
+            updated = _refresh_suppression_reason(session, existing, reason)
             return jsonify({
                 'ok': True, 'idempotent': True, 'reason_updated': updated,
                 'suppression': _suppression_to_dict(existing),
             })
-
-        row = RuleTriggerSuppression(
-            rule_trigger_id=trigger_id,
-            suppressed_by_id=user.get('id') or 0,
-            suppressed_by_username=user.get('username') or 'unknown',
-            reason=reason,
-        )
-        session.add(row)
-        session.execute(
-            sa_update(RuleTrigger)
-            .where(RuleTrigger.id == trigger_id)
-            .values(suppressed=1)
-        )
-        session.commit()
-        session.refresh(row)
+        row = _insert_suppression(session, trigger_id, user, reason)
 
     audit.log_action(
         user.get('id'), user.get('username') or 'unknown',
