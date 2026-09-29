@@ -56,14 +56,17 @@ const { items: projects, ensure: ensureProjects } = useProjects()
 const { isMdUp } = useBreakpoint()
 
 const isLegalScope = v => v === SCOPE_NONE || /^\d+$/.test(v)
+// `/defects` is not a tab, but its list is filtered by `?project=`, so the chip
+// over it has to name that same scope.
+const readsQuery = computed(() => onTab.value || route.path === '/defects')
 // A detail page has no `?project=` of its own, so the strip beside it carries
-// the scope a tab was last left under in this visit (a URL-only scope is never
-// persisted), else the stored one.
+// the scope a list was last left under in this visit (a URL-only scope is
+// never persisted), else the stored one.
 const lastScoped = ref(null)
-watch([onTab, scope], ([isTab, value]) => { if (isTab) lastScoped.value = value },
+watch([readsQuery, scope], ([scoped, value]) => { if (scoped) lastScoped.value = value },
   { immediate: true })
 const carried = computed(() => {
-  if (onTab.value) return scope.value
+  if (readsQuery.value) return scope.value
   const candidate = lastScoped.value || storedScope()
   return isLegalScope(candidate) ? candidate : SCOPE_ALL
 })
@@ -84,7 +87,7 @@ function parentList(path) {
 }
 
 function pickScope(next) {
-  if (onTab.value || route.path === '/defects') {
+  if (readsQuery.value) {
     setScope(next)
     return
   }
@@ -120,7 +123,7 @@ useTaskShortcuts({ p: () => picker.value?.open() })
 
 // The three create dialogs live here, not in the tabs, so every tab's "New ▾"
 // reaches every kind. Each prefills from the scope the strip names.
-const { creating, openCreate } = usePipelineCreate()
+const { creating, prefill, openCreate } = usePipelineCreate()
 const { flash } = useFlash()
 const canWrite = computed(() => api.getStoredUser()?.role !== 'viewer')
 const createProject = computed(() => (/^\d+$/.test(carried.value) ? carried.value : ''))
@@ -237,7 +240,7 @@ usePipelineLive(() => loadCounts(carried.value))
         @created="taskCreated"
       />
       <NewFeatureDialog v-model:open="featureOpen" :scope="createProject" @declared="featureDeclared" />
-      <NewDefectDialog v-model:open="defectOpen" @created="defectCreated" />
+      <NewDefectDialog v-model:open="defectOpen" :feature="prefill?.feature" @created="defectCreated" />
     </template>
   </div>
 </template>

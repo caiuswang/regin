@@ -48,6 +48,9 @@ async function load() {
   } catch (e) {
     if (mine !== issued) return
     missing.value = e?.status === 404
+    // The last good read belongs to the scope the operator just left; kept
+    // under the new chip it would read as that scope's panels.
+    if (missing.value) data.value = null
     error.value = e?.message || String(e)
   } finally {
     if (mine === issued) loading.value = false

@@ -40,8 +40,7 @@ export function isProjectScope(raw) {
   return /^\d+$/.test(scopeParam(raw))
 }
 
-/** The remembered scope, or `all`. */
-export function storedScope() {
+function readStored() {
   try {
     return localStorage.getItem(STORAGE_KEY) || SCOPE_ALL
   } catch {
@@ -49,8 +48,18 @@ export function storedScope() {
   }
 }
 
+// A ref rather than a bare localStorage read, so a computed that names the
+// stored scope (the shell's chip beside a detail page) relabels on a pick.
+const stored = ref(readStored())
+
+/** The remembered scope, or `all`. */
+export function storedScope() {
+  return stored.value
+}
+
 /** Remember a scope as the one a bare path restores to. */
 export function persistScope(scope) {
+  stored.value = scope || SCOPE_ALL
   try {
     if (!scope || scope === SCOPE_ALL) localStorage.removeItem(STORAGE_KEY)
     else localStorage.setItem(STORAGE_KEY, scope)
@@ -101,15 +110,14 @@ export function usePipelineScope() {
    */
   function restoreStored(isLegal) {
     if (route.query.project != null) return
-    let stored = null
-    try { stored = localStorage.getItem(STORAGE_KEY) } catch { stored = null }
-    if (!stored || stored === SCOPE_ALL) return
-    if (isLegal && !isLegal(stored)) {
-      try { localStorage.removeItem(STORAGE_KEY) } catch { /* see above */ }
+    const remembered = storedScope()
+    if (remembered === SCOPE_ALL) return
+    if (isLegal && !isLegal(remembered)) {
+      persistScope(SCOPE_ALL)
       return
     }
     router.replace({ path: route.path,
-                     query: { ...route.query, project: stored } })
+                     query: { ...route.query, project: remembered } })
   }
 
   return { scope, setScope, restoreStored }

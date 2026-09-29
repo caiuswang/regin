@@ -54,6 +54,10 @@ const filePick = ref(null)
 const ATTRIBUTE_FIRST = 'Attribute it to a feature to create its fix task.'
 
 const state = computed(() => defectState(props.defect))
+// Only where Attribute is on offer: a declined row has no such verb, so the
+// note would point at a control that is not there.
+const attributeNote = computed(() => !props.defect.feature_id && !props.defect.fix_task_id
+  && MENU[state.value].includes('attribute'))
 
 const VERB = {
   attribute: d => ({ label: d.feature_id ? 'Re-attribute' : 'Attribute', run: () => reveal('attribute'),
@@ -245,7 +249,7 @@ async function onRemedy(remedy) {
                   :data-testid="`defect-more-${defect.id}`">⋯</Button>
         </template>
       </DropdownMenu>
-      <span v-if="!defect.feature_id && !defect.fix_task_id" class="note"
+      <span v-if="attributeNote" class="note"
             :data-testid="`defect-fix-create-blocked-${defect.id}`">{{ ATTRIBUTE_FIRST }}</span>
       <input
         ref="filePick" type="file" accept="image/*" multiple class="sr-only"

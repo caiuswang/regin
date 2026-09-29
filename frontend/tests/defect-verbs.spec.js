@@ -458,3 +458,43 @@ test('test_merge_picker_more_excludes_self_and_shown', async ({ page }) => {
   await expect(picker.getByTestId('merge-option-12')).toBeVisible()
   await expect(picker.getByTestId('merge-more')).toHaveText(/^4 more/)
 })
+
+// Feature #125 S5: the tag names where the row sits now. A snoozed report that
+// woke keeps `triage_state = snoozed` but is back in the queue.
+test('test_defect_row_tag_uses_queue_position', async ({ page }) => {
+  const state = { row: defect(7, { triage_state: 'snoozed', queue_position: 'snoozed' }) }
+  await stubDetail(page, state)
+
+  await page.goto('/defects/7')
+  await expect(page.getByTestId('defect-triage-7')).toHaveText('snoozed')
+
+  state.row = defect(7, { triage_state: 'snoozed', queue_position: 'queue' })
+  await page.goto('/defects/7')
+  await expect(page.getByTestId('defect-primary-7')).toHaveText('Attribute')
+  await expect(page.getByTestId('defect-triage-7')).toHaveCount(0)
+
+  state.row = defect(7, { status: 'closed', triage_state: 'declined', queue_position: 'declined' })
+  await page.goto('/defects/7')
+  await expect(page.getByTestId('defect-triage-7')).toHaveText('declined')
+})
+
+// Feature #125 V5: the note points at Attribute, so it is drawn only where the
+// row's verb set holds Attribute.
+test('test_attribute_note_follows_verb_set', async ({ page }) => {
+  const state = { row: defect(7) }
+  await stubDetail(page, state)
+  const note = page.getByTestId('defect-fix-create-blocked-7')
+
+  for (const [row, shown] of [
+    [defect(7), true],
+    [defect(7, { triage_state: 'snoozed', queue_position: 'snoozed' }), true],
+    [defect(7, { status: 'closed', triage_state: 'declined', queue_position: 'declined' }), false],
+    [defect(7, { status: 'closed', queue_position: null }), false],
+    [defect(7, ATTRIBUTED), false],
+  ]) {
+    state.row = row
+    await page.goto('/defects/7')
+    await expect(page.getByTestId('defect-primary-7')).toBeVisible()
+    await expect(note).toHaveCount(shown ? 1 : 0)
+  }
+})

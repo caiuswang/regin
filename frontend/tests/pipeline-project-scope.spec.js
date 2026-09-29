@@ -232,3 +232,58 @@ test('a narrowing does not widen the scope on the features tab either',
     await expect(page).toHaveURL(/project=7/)
     await expect.poll(() => last(seen).get('project_id')).toBe('7')
   })
+
+// Feature #125 S1: `/defects` is filtered by `?project=`, so the chip over it
+// has to name that scope — on arrival, and after a pick made on the page.
+test('test_defects_scope_chip_follows_query', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const seen = await stubDefects(page)
+  await page.route(/\/api\/defects\/2$/, (route) =>
+    route.fulfill({ json: { defect: { ...FOLLOWER, queue_position: null, images: [] } } }))
+
+  await page.goto('/defects?project=7')
+  await expect(page.getByTestId('pipeline-project')).toContainText('regin')
+  await expect.poll(() => last(seen).get('project')).toBe('7')
+
+  await chooseScope(page, 'atlas')
+  await expect(page).toHaveURL(/\/defects\?project=9$/)
+  await expect(page.getByTestId('pipeline-project')).toContainText('atlas')
+  await expect.poll(() => last(seen).get('project')).toBe('9')
+
+  // New ▾ files under the scope the chip now names.
+  await page.getByTestId('pipeline-new').click()
+  await page.getByTestId('pipeline-new-task').click()
+  await expect(page.getByTestId('task-composer-project')).toContainText('atlas')
+  await page.keyboard.press('Escape')
+
+  // A defect's own page carries the scope its list was left under.
+  await chooseScope(page, 'regin')
+  await expect(page.getByTestId('pipeline-project')).toContainText('regin')
+  await page.getByTestId('defect-permalink-2').click()
+  await expect(page).toHaveURL(/\/defects\/2$/)
+  await expect(page.getByTestId('pipeline-project')).toContainText('regin')
+})
+
+// Feature #125 S4: a scope the server has never heard of replaces the panels
+// rather than leaving the previous scope's under the new chip.
+test('test_overview_bad_scope_shows_not_found', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.route('**/api/pipeline/overview*', (route) => {
+    const project = new URL(route.request().url()).searchParams.get('project')
+    if (!project) return route.fallback()
+    return route.fulfill({ status: 404, json: { error: `no project #${project}` } })
+  })
+
+  await page.goto('/overview')
+  await expect(page.getByTestId('overview-loop')).toBeVisible()
+
+  await chooseScope(page, 'atlas')
+  await expect(page).toHaveURL(/project=9/)
+  const error = page.getByTestId('overview-error')
+  await expect(error).toContainText('No project #9')
+  await expect(page.getByTestId('overview-loop')).toHaveCount(0)
+
+  await error.getByRole('button', { name: 'Show all projects' }).click()
+  await expect(page).toHaveURL(/\/overview$/)
+  await expect(page.getByTestId('overview-loop')).toBeVisible()
+})
