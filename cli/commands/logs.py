@@ -201,32 +201,36 @@ def grep_cmd(
 ) -> None:
     """Regex-search the activity log (optionally filtered by feature)."""
     _ensure_configured()
-    flags = re.IGNORECASE if ignore_case else 0
-    try:
-        rx = re.compile(pattern, flags)
-    except re.error as e:
-        typer.echo(f"invalid regex: {e}", err=True)
-        raise typer.Exit(2)
+    rx = _compile_regex(pattern, ignore_case)
     cutoff = _parse_since(since) if since else None
     path = activity_log.log_path()
     if path is None or not path.exists():
         raise typer.Exit(1)
     matched = 0
     for line in path.read_text().splitlines():
-        record = _read_record(line)
-        if cutoff and record and not _record_after(record, cutoff):
-            continue
-        if feature is not None and (record is None or _record_feature(record) != feature):
-            continue
-        if not rx.search(line):
-            continue
-        matched += 1
-        if raw or record is None:
-            typer.echo(line)
-        else:
-            typer.echo(_pretty_record(record))
+        if _grep_accepts(line, _read_record(line), rx, feature, cutoff):
+            matched += 1
+            _emit_line(line, raw)
     if matched == 0:
         raise typer.Exit(1)
+
+
+def _compile_regex(pattern: str, ignore_case: bool) -> re.Pattern:
+    flags = re.IGNORECASE if ignore_case else 0
+    try:
+        return re.compile(pattern, flags)
+    except re.error as e:
+        typer.echo(f"invalid regex: {e}", err=True)
+        raise typer.Exit(2)
+
+
+def _grep_accepts(line: str, record: dict | None, rx: re.Pattern,
+                  feature: str | None, cutoff: datetime | None) -> bool:
+    if cutoff and record and not _record_after(record, cutoff):
+        return False
+    if feature is not None and (record is None or _record_feature(record) != feature):
+        return False
+    return bool(rx.search(line))
 
 
 # ── prune ───────────────────────────────────────────────────
