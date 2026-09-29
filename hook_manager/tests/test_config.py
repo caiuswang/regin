@@ -187,6 +187,52 @@ def test_set_priorities_empty_input_is_noop(isolated_config):
     assert cfg.priority_overrides() == {'x': 50}
 
 
+@pytest.mark.parametrize('file_data,provider_cfg,expected', [
+    ({'disabled_handlers': ['b', 3], 'priority_overrides': {'x': 1, 'y': 2}},
+     {'disabled_handlers': ['a'], 'priority_overrides': {'y': 9, 'w': 4}},
+     {'disabled_handlers': ['a', 'b'], 'priority_overrides': {'w': 4, 'x': 1, 'y': 9}}),
+    ({'priority_overrides': 'bad'}, {'priority_overrides': {'z': 5}},
+     {'priority_overrides': {'z': 5}}),
+    ({'disabled_handlers': ['b']}, {},
+     {'disabled_handlers': ['b']}),
+    ([1, 2], {'disabled_handlers': ['a']},
+     {'disabled_handlers': ['a']}),
+])
+def test_load_raw_merges_provider_settings_over_file(
+        isolated_config, monkeypatch, file_data, provider_cfg, expected):
+    import json
+    isolated_config.write_text(json.dumps(file_data))
+    monkeypatch.setattr(cfg, '_active_provider_id', lambda: 'claude')
+    monkeypatch.setattr(cfg, 'provider_handler_config', lambda _pid: provider_cfg)
+    assert cfg._load_raw() == expected
+
+
+def test_load_raw_skips_merge_for_non_provider_agent(isolated_config, monkeypatch):
+    import json
+    isolated_config.write_text(json.dumps({'disabled_handlers': ['b']}))
+    monkeypatch.setattr(cfg, '_active_provider_id', lambda: 'not-a-provider')
+    monkeypatch.setattr(cfg, 'provider_handler_config',
+                        lambda _pid: {'disabled_handlers': ['a']})
+    assert cfg._load_raw() == {'disabled_handlers': ['b']}
+
+
+def test_set_priorities_sanitizes_existing_and_updates(isolated_config):
+    import json
+    isolated_config.write_text(json.dumps({'priority_overrides': {
+        'keep': 1.7, 'flag': True, 'text': 'x', 'drop': 3}}))
+    cfg.set_priorities({'drop': None, 'new': 4, 'bad': 'x', 'b': False, 5: 1})
+    data = json.loads(isolated_config.read_text())
+    assert data['priority_overrides'] == {'keep': 1, 'new': 4}
+    assert data['schema_version'] == 1
+
+
+def test_set_priorities_non_dict_existing_is_replaced(isolated_config):
+    import json
+    isolated_config.write_text(json.dumps({'priority_overrides': ['x']}))
+    cfg.set_priorities({'a': 2})
+    assert cfg.priority_overrides() == {'a': 2}
+
+
 def test_provider_specific_config_paths(tmp_path, monkeypatch):
     claude_cfg = tmp_path / 'claude-config.json'
     codex_cfg = tmp_path / 'codex-config.json'
