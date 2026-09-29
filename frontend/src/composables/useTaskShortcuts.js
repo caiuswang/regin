@@ -11,10 +11,14 @@ function isTyping(event) {
     || el.isContentEditable
 }
 
-// A key pressed inside an open menu or dialog is that overlay's: reka closes
-// on a window-level Escape only when nobody has called preventDefault on it.
+// While a menu or dialog is open every key is that overlay's: reka closes on a
+// window-level Escape only when nobody has called preventDefault on it. The
+// target alone is not enough — a menu that opened a dialog hands focus back
+// to its trigger, outside the dialog, so the key arrives from the page.
+const OVERLAY = '[role="menu"], [role="dialog"], [role="alertdialog"], [role="listbox"]'
 function inOverlay(event) {
-  return !!event.target?.closest?.('[role="menu"], [role="dialog"], [role="alertdialog"], [role="listbox"]')
+  return !!event.target?.closest?.(OVERLAY)
+    || !!document.querySelector(`:is(${OVERLAY})[data-state="open"]`)
 }
 
 /**
