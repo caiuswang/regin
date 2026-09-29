@@ -45,8 +45,11 @@ Package layout (this module is the public surface):
                           `_emit_assistant_response_only`,
                           `_latest_turn_model`
   * `span_posters.py`   — `_post_live_turn_data`, plus the
-                          attachment / system-event / local-command
-                          / server-tool / deny / error emitters
+                          server-tool / deny / error emitters
+  * `event_spans.py`    — attachment / system-event / local-command
+                          / rewind emitters
+  * `prompt_anchor_spans.py` — prompt-anchor + queued-command prompt
+                          spans and their images
   * `deny_detection.py` — sentinel matchers + synth-span attribute
                           builders for denies and tool_use_errors
   * `cache.py`          — `_load_seen`, `_mark_seen`, `_load_ai_title`,
