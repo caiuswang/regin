@@ -81,25 +81,37 @@ def api_enable_pattern_rules(slug):
     return _toggle_pattern_rules(slug, False, "enabled")
 
 
-@patterns_bp.route("/api/patterns/<path:slug>/bundle-rules/<action>", methods=["POST"])
-@require_editor
-def api_toggle_bundle_rules(slug, action):
+def _bundle_toggle_error(action, engine_id, rule_ids) -> str | None:
     if action not in ("disable", "enable"):
-        return jsonify({"ok": False, "msg": "action must be disable or enable"}), 400
-    payload = request.get_json(silent=True) or {}
-    engine_id = payload.get("engine_id")
-    rule_ids = payload.get("rule_ids") or []
+        return "action must be disable or enable"
     if not engine_id:
-        return jsonify({"ok": False, "msg": "engine_id required"}), 400
+        return "engine_id required"
     if not isinstance(rule_ids, list) or not rule_ids:
-        return jsonify({"ok": False, "msg": "rule_ids must be a non-empty list"}), 400
+        return "rule_ids must be a non-empty list"
+    return None
 
+
+def _engine_rule_ids_subset(engine_id, rule_ids) -> list:
+    """`rule_ids` that `engine_id` actually defines, in request order."""
     valid_ids = {
         r.id for engine in rule_engines.all_engines()
         if engine.id == engine_id
         for r in engine.parse_rules()
     }
-    requested = [rid for rid in rule_ids if rid in valid_ids]
+    return [rid for rid in rule_ids if rid in valid_ids]
+
+
+@patterns_bp.route("/api/patterns/<path:slug>/bundle-rules/<action>", methods=["POST"])
+@require_editor
+def api_toggle_bundle_rules(slug, action):
+    payload = request.get_json(silent=True) or {}
+    engine_id = payload.get("engine_id")
+    rule_ids = payload.get("rule_ids") or []
+    error = _bundle_toggle_error(action, engine_id, rule_ids)
+    if error:
+        return jsonify({"ok": False, "msg": error}), 400
+
+    requested = _engine_rule_ids_subset(engine_id, rule_ids)
     if not requested:
         return jsonify({"ok": False, "msg": f"no rule_ids belong to engine '{engine_id}'"}), 400
 
