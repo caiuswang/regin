@@ -220,31 +220,9 @@ def _resolve_target_files(eng, rule, file_args: list[str]) -> list[str]:
 
 def _resolve_one_target(eng, rule, file_arg: str, file_path: str) -> list[str]:
     if os.path.isdir(file_path):
-        extensions = _rule_extensions(eng, rule)
-        if extensions:
-            matched_files: list[str] = []
-            for ext in extensions:
-                pattern = os.path.join(file_path, '**', f'*{ext}')
-                matched_files.extend(
-                    os.path.abspath(path)
-                    for path in glob.glob(pattern, recursive=True)
-                    if os.path.isfile(path)
-                )
-        else:
-            matched_files = [
-                os.path.abspath(path)
-                for path in glob.glob(os.path.join(file_path, '**', '*'), recursive=True)
-                if os.path.isfile(path)
-            ]
-        if not matched_files:
-            print(f"No matching files found under directory: {file_path}")
-            raise typer.Exit(1)
-        return matched_files
+        return _resolve_directory_target(eng, rule, file_path)
 
-    matched_files = [
-        os.path.abspath(path) for path in glob.glob(file_arg, recursive=True)
-        if os.path.isfile(path)
-    ]
+    matched_files = _glob_files(file_arg)
     if matched_files:
         return matched_files
     if os.path.isfile(file_path):
@@ -252,6 +230,24 @@ def _resolve_one_target(eng, rule, file_arg: str, file_path: str) -> list[str]:
 
     print(f"Target file not found: {file_path}")
     raise typer.Exit(1)
+
+
+def _glob_files(pattern: str) -> list[str]:
+    return [
+        os.path.abspath(path) for path in glob.glob(pattern, recursive=True)
+        if os.path.isfile(path)
+    ]
+
+
+def _resolve_directory_target(eng, rule, dir_path: str) -> list[str]:
+    extensions = _rule_extensions(eng, rule) or ('',)
+    matched_files: list[str] = []
+    for ext in extensions:
+        matched_files.extend(_glob_files(os.path.join(dir_path, '**', f'*{ext}')))
+    if not matched_files:
+        print(f"No matching files found under directory: {dir_path}")
+        raise typer.Exit(1)
+    return matched_files
 
 
 def _rule_extensions(eng, rule) -> tuple[str, ...]:
