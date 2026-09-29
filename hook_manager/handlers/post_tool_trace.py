@@ -627,25 +627,20 @@ def _set_int(attrs: dict, key: str, value: object) -> None:
 
 
 def _build_taskcreate_attrs(attrs: dict, tool_input: dict, tool_response: dict, payload: HookPayload) -> None:
-    subject = tool_input.get('subject')
-    if isinstance(subject, str) and subject:
-        attrs['subject'] = subject
-    description = tool_input.get('description')
-    if isinstance(description, str) and description:
-        head, dropped = _truncate_output(description, _BASH_STDOUT_MAX)
-        attrs['description'] = head
-        if dropped:
-            attrs['description_truncated_bytes'] = dropped
-    active_form = tool_input.get('activeForm')
-    if isinstance(active_form, str) and active_form:
-        attrs['active_form'] = active_form
+    _set_str(attrs, 'subject', tool_input.get('subject'))
+    _set_truncated_str(attrs, 'description', tool_input.get('description'), _BASH_STDOUT_MAX)
+    _set_str(attrs, 'active_form', tool_input.get('activeForm'))
+    task_id = _created_task_id(tool_response)
+    if task_id is not None:
+        attrs['task_id'] = str(task_id)
+
+
+def _created_task_id(tool_response: dict):
     # Claude Code returns the new task_id inside `tool_response.task.id`
     # (the dedicated TaskCreate hook fixture); the older flat shape
     # `tool_response.task_id` is unlikely but handled as a fallback.
     task = tool_response.get('task') if isinstance(tool_response.get('task'), dict) else None
-    task_id = (task.get('id') if task else None) or tool_response.get('task_id') or tool_response.get('taskId')
-    if task_id is not None:
-        attrs['task_id'] = str(task_id)
+    return (task.get('id') if task else None) or tool_response.get('task_id') or tool_response.get('taskId')
 
 
 _WF_RUN_RE = re.compile(r'workflows/(wf_[A-Za-z0-9][A-Za-z0-9_-]*)')
