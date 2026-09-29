@@ -4,34 +4,55 @@ from __future__ import annotations
 
 import json
 import os
-import re
-import shlex
 import shutil
 import subprocess
-import sys
 import time
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from lib.activity_log import get_activity_logger
 from lib.agent_bridge import child_env
 from lib.trace import trace_service
 from lib.settings import settings
-from lib.topics.graph_io import load_authoritative_graph
-from lib.topics.proposal_drafting import format_review_feedback_for_prompt
 from lib.topics import TopicGraphError, utc_now
+from lib.topics.proposal_artifacts import (
+    OUTPUT_FILE,
+    STATUS_FILE,
+    TEMP_OUTPUT_DIR,
+    TEMP_OUTPUT_FILE,
+    TOPIC_MAP_FILE,
+    _apply_regenerate_scope,
+    _combined_proposal_wiki,
+    _load_agent_payload,
+    _normalise_agent_payload,
+    _pick_topic,
+    _read_topic_signature,
+    _regenerate_scope_topic_ids,
+    _repo_and_id_from_out_dir,
+    _splice_scoped_topics,
+    _topic_wiki_section,
+    _validate_paths,
+    load_status,
+    write_status,
+)
+from lib.topics.proposal_prompt import (
+    _buckets_section,
+    _existing_topics_pointer,
+    _existing_topics_summary,
+    _finish_command,
+    _format_template_section,
+    _instructions,
+    _prior_proposal_for_prompt,
+    _prior_proposal_pointer,
+    _prior_reference_block,
+    _scoped_refresh_directive,
+    _sibling_refresh_section,
+    _template_slugs,
+    format_review_feedback_for_prompt,
+)
 
 
-log = get_activity_logger("topics")
-
-STATUS_FILE = "status.json"
-OUTPUT_FILE = "agent-output.json"
-TOPIC_MAP_FILE = "topic-map.json"
-PRIOR_PROPOSAL_FILE = "prior-proposal.json"
-TEMP_OUTPUT_DIR = ".tmp"
-TEMP_OUTPUT_FILE = "agent-output.json"
 FAILURE_SUMMARY_LIMIT = 500
 FAILURE_DETAIL_LIMIT = 4000
 FAILURE_STREAM_TAIL_LIMIT = 2000
@@ -63,31 +84,6 @@ def default_external_agent_id() -> str | None:
 
 def external_trace_id(proposal_id: str) -> str:
     return f"topic-proposal-{proposal_id}"
-
-
-def _finish_command(repo: Path, proposal_id: str) -> str:
-    """The exact shell command the drafting agent runs as its final step to
-    signal completion. Built with the server's interpreter + regin CLI path
-    and an explicit `--repo`, so it works regardless of the target repo or
-    whether `regin` is on the agent's PATH."""
-    cli = settings.project_root / "cli" / "regin.py"
-    parts = [
-        sys.executable, str(cli), "topics", "proposal-finish",
-        proposal_id, "--repo", str(repo),
-    ]
-    return " ".join(shlex.quote(part) for part in parts)
-
-
-def _repo_and_id_from_out_dir(out_dir: Path) -> tuple[Path, str]:
-    """Derive (repo_path, proposal_id) from an out_dir.
-
-    out_dir is always `<repo>/.regin/topics/proposals/<id>` — this
-    convention has been load-bearing since the proposal feature
-    shipped and is locked in by `lib.topics.core.topic_dir`.
-    """
-    proposal_id = out_dir.name
-    repo_path = out_dir.parents[3]  # proposals/ → topics/ → .regin/ → repo
-    return repo_path, proposal_id
 
 
 def notify_proposal_ready(
@@ -139,250 +135,6 @@ def _notify_proposal_ready(ctx: "_AgentRunContext") -> None:
     notify_proposal_ready(
         repo_path, ctx.proposal_id, ctx.agent,
         session_trace_id=status.get("agent_trace_id"))
-
-
-def write_status(out_dir: Path, status: dict[str, Any]) -> dict[str, Any]:
-    """Persist proposal run status to the ORM (the authoritative store).
-
-    Phase E2 made the ORM the source of truth; the disk `status.json` is no
-    longer written, so `load_status` reads it disk-first only for legacy
-    dirs and otherwise falls back to the ORM. The finish signal therefore
-    crosses the agent-subprocess → server boundary through the shared
-    SQLite DB (both resolve the same file), not through disk.
-    """
-    from lib.topics.proposal_orm import (
-        orm_create_proposal_run, orm_update_proposal_status,
-    )
-    status = {**status, "updated_at": utc_now()}
-    repo_path, proposal_id = _repo_and_id_from_out_dir(out_dir)
-
-    column_fields = {
-        "state", "trace_id", "started_at", "completed_at",
-        "error", "error_detail",
-    }
-    # `proposal_status` is the *review-state* axis (pending_review →
-    # ready_to_apply → applied), owned solely by the proposal-save / apply
-    # paths. It is orthogonal to the run *lifecycle* status this function
-    # writes. `load_status` (→ _run_to_status_dict) spreads the whole
-    # metadata bag — including proposal_status — into the status dict, so
-    # without this exclusion any write_status round-trips a stale value
-    # back over a fresh one: a regenerate's finish ingest sets the new
-    # revision to pending_review, then write_status re-stamps the prior
-    # `applied`, stranding the draft as un-appliable. Never carry it here.
-    review_state_fields = {"proposal_status"}
-    metadata_patch = {
-        k: v for k, v in status.items()
-        if k not in column_fields
-        and k not in review_state_fields
-        and k not in {"agent", "updated_at"}
-    }
-
-    orm_create_proposal_run(
-        repo_path, proposal_id,
-        provider="external-agent",
-        state=status.get("state") or "queued",
-        agent=status.get("agent"),
-        started_at=status.get("started_at"),
-        prompt_template_ids=status.get("prompt_template_ids") or [],
-        metadata=metadata_patch,
-    )
-    orm_update_proposal_status(
-        repo_path, proposal_id,
-        state=status.get("state"),
-        completed_at=status.get("completed_at"),
-        error=status.get("error"),
-        error_detail=status.get("error_detail"),
-        metadata_patch=metadata_patch,
-        clear_error="error" in status,
-        clear_error_detail="error_detail" in status,
-        clear_completed_at="completed_at" in status,
-    )
-    return status
-
-
-def load_status(out_dir: Path) -> dict[str, Any] | None:
-    """Disk-first read of proposal status during the dual-write window;
-    ORM fallback when the disk file is missing."""
-    path = out_dir / STATUS_FILE
-    if path.exists():
-        return json.loads(path.read_text())
-    from lib.topics.proposal_orm import orm_load_proposal_status
-    repo_path, proposal_id = _repo_and_id_from_out_dir(out_dir)
-    return orm_load_proposal_status(repo_path, proposal_id)
-
-
-def _rel_to_repo(repo: Path, path: Path) -> str:
-    """Repo-root-relative string for a path under `repo`, else the raw path."""
-    try:
-        return str(path.relative_to(repo))
-    except ValueError:
-        return str(path)
-
-
-def _topic_position_entry(repo: Path, wdir: Path, jdir: Path,
-                          tid: str, topic: dict[str, Any]) -> dict[str, Any]:
-    """One `topics[]` entry for the boundary map: bucket + one-line `covers` +
-    the on-disk `wiki_path` / `json_path` (only when the file exists)."""
-    covers = (topic.get("blurb") or topic.get("intent") or "").strip()
-    if len(covers) > 240:
-        covers = covers[:237] + "..."
-    entry: dict[str, Any] = {
-        "id": tid,
-        "label": topic.get("label"),
-        "parent_id": topic.get("parent_id"),
-        "covers": covers,
-    }
-    wiki_file = wdir / f"{tid}.md"
-    if wiki_file.is_file():
-        entry["wiki_path"] = _rel_to_repo(repo, wiki_file)
-    json_file = jdir / f"{tid}.json"
-    if json_file.is_file():
-        entry["json_path"] = _rel_to_repo(repo, json_file)
-    return entry
-
-
-def _existing_topics_summary(repo: Path) -> dict[str, Any]:
-    """Boundary map for the drafting agent — WHERE each approved topic lives, not
-    its full text. Per topic: id/label, the bucket (`parent_id`), a one-line
-    `covers`, and the on-disk `wiki_path` / `json_path` the agent Reads when it
-    drafts something adjacent. Plus `primary_owners`: a file → the ONE topic that
-    already claims it as a *primary* ref, so the agent tiers a file it doesn't
-    own as `reference` instead of minting a second primary — the exact
-    shared-primary-ref boundary the pre-review gate would otherwise bounce.
-    Positions instead of inlined section dumps keeps the prompt small and lets
-    the agent pull only the neighbours its topic actually touches. Best effort: a
-    load failure yields empty maps.
-    """
-    from lib.topics.core import topic_split_dir
-    from lib.topics.validation import _collect_primary_ref_owners
-    from lib.topics.wiki import wiki_dir
-
-    try:
-        graph = load_authoritative_graph(repo)
-    except Exception:
-        return {"topics": [], "primary_owners": {}}
-    wdir = wiki_dir(repo)
-    jdir = topic_split_dir(repo)
-    entries: list[dict[str, Any]] = []
-    owners: dict[str, list[str]] = {}
-    for tid, topic in sorted((graph.get("topics") or {}).items()):
-        if not isinstance(topic, dict):
-            continue
-        entries.append(_topic_position_entry(repo, wdir, jdir, tid, topic))
-        _collect_primary_ref_owners(tid, topic, owners)
-    primary_owners = {
-        path: tids[0] for path, tids in sorted(owners.items()) if len(tids) == 1
-    }
-    return {"topics": entries, "primary_owners": primary_owners}
-
-
-def _existing_topics_pointer(repo: Path, out_dir: Path) -> str:
-    """Spill the boundary map to `<out_dir>/topic-map.json` and return the
-    absolute path the agent Reads, or a placeholder when nothing readable
-    could be written.
-
-    Embedded, this map was 84% of the drafting prompt (43k of 51k chars on
-    regin's own graph) and grows with every approved topic — an unbounded
-    share of the agent's context spent on data it can fetch. Same contract as
-    ``wiki_read_pointer``: probe the file after writing, so a failed spill
-    degrades to a placeholder instead of a dangling path. Absolute because the
-    agent may run under a working directory other than the repo root.
-    """
-    summary = _existing_topics_summary(repo)
-    path = out_dir / TOPIC_MAP_FILE
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(summary, indent=2, sort_keys=True),
-                        encoding="utf-8")
-        if not path.is_file():
-            return "(topic map unavailable)"
-    except OSError:
-        log.error("topic_map_spill_failed", exc_info=True)
-        return "(topic map unavailable)"
-    return str(path.resolve())
-
-
-def _prior_proposal_pointer(out_dir: Path, proposal: dict[str, Any] | None) -> str:
-    """Spill the prior draft's structural JSON to `<out_dir>/prior-proposal.json`
-    and return the absolute path the agent Reads.
-
-    Same contract as `_existing_topics_pointer` and `wiki_read_pointer`: probe
-    after writing so a failed spill degrades to a placeholder rather than a
-    dangling path. Embedded, this was 14k of a measured 39.5k regenerate prompt
-    — one topic's `refs` alone were 5.8k — for data the agent rarely needs in
-    full and can always fetch.
-    """
-    path = out_dir / PRIOR_PROPOSAL_FILE
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(_prior_proposal_for_prompt(proposal), indent=2, sort_keys=True),
-            encoding="utf-8")
-        if not path.is_file():
-            return "(prior proposal unavailable)"
-    except OSError:
-        log.error("prior_proposal_spill_failed", exc_info=True)
-        return "(prior proposal unavailable)"
-    return str(path.resolve())
-
-
-def _buckets_section(repo: Path, prior_draft: dict[str, Any] | None) -> str:
-    """The `parent_id` picker, or "" on a scoped regenerate.
-
-    The picker exists so a *new* topic can choose its bucket. A scoped
-    regenerate re-derives named, already-approved pages whose `parent_id` is
-    fixed, so the list is 2.8k of unusable context. Scope is read from the same
-    `scope_topic_ids` key `_scoped_refresh_directive` uses — `_scope_for_regenerate`
-    stays the only place that decides what a regenerate covers.
-    """
-    if (prior_draft or {}).get("scope_topic_ids"):
-        return ""
-    return (
-        "Available buckets (pick one id for each topic's `parent_id`, or null "
-        "if none fits):\n```json\n"
-        + json.dumps(_bucket_summary(repo), indent=2, sort_keys=True)
-        + "\n```\n"
-    )
-
-
-def _bucket_summary(repo: Path) -> list[dict[str, Any]]:
-    """The top-level taxonomy buckets (id + label + blurb) a proposed topic
-    can be placed under via `parent_id`. The reserved `unclassified` bucket
-    is omitted — leaving `parent_id` null routes there, it's not a target."""
-    try:
-        graph = load_authoritative_graph(repo)
-    except Exception:
-        return []
-    return [
-        {"id": tid, "label": topic.get("label"),
-         "blurb": topic.get("blurb") or topic.get("intent", "")}
-        for tid, topic in sorted((graph.get("topics") or {}).items())
-        if topic.get("kind") == "bucket" and tid != "unclassified"
-    ]
-
-
-def _format_template_section(prompt_templates: list[dict[str, Any]] | None) -> str:
-    """Render injected prompt templates as a ## Custom Instructions block.
-
-    Sits between the user's topic_request and the Rules block. Empty
-    list (and None) collapse to no extra text, so the prompt is byte-
-    identical for runs without templates.
-    """
-    if not prompt_templates:
-        return ""
-    lines = ["", "", "## Custom Instructions"]
-    for template in prompt_templates:
-        label = template.get("label") or template.get("slug") or "Template"
-        body = (template.get("body") or "").strip()
-        if not body:
-            continue
-        lines.extend(["", f"### {label}", "", body])
-    return "\n".join(lines)
-
-
-def _template_slugs(prompt_templates: list[dict[str, Any]] | None) -> list[str]:
-    """Slug list for the injected prompt templates (skips entries without one)."""
-    return [str(t.get("slug")) for t in (prompt_templates or []) if t.get("slug")]
 
 
 def _resolve_agent_config(agent_id: str | None) -> tuple[str, Any]:
@@ -1065,171 +817,6 @@ def _emit_session_end(trace_id: str, *, reason: str) -> None:
     )
 
 
-def _prior_proposal_for_prompt(proposal: dict[str, Any] | None) -> dict[str, Any]:
-    """Drop agent self-`notes` and every wiki body from the prior draft before
-    it goes into a regenerate prompt.
-
-    `notes` is the previous pass's editorial about its own choices (e.g.
-    "these three topics replace the prior trace-span-repair draft"). It is
-    not draft content, and replaying it biases the next draft toward
-    repeating that reasoning. After a restore it is doubly wrong: the notes
-    describe a draft the user just discarded, while run-level `notes` are
-    never reverted to the restored revision's.
-
-    Wiki bodies (the run-level `wiki` and each topic's `wiki`) are stripped
-    because the prompt hands the agent a *pointer* to the on-disk prior
-    `wiki.md` instead — the agent Reads what it needs rather than having every
-    narrative embedded (and the same content embedded twice).
-    """
-    clean = {k: v for k, v in (proposal or {}).items()
-             if k not in ("notes", "wiki")}
-    metadata = clean.get("metadata")
-    if isinstance(metadata, dict) and "notes" in metadata:
-        clean["metadata"] = {k: v for k, v in metadata.items() if k != "notes"}
-    if isinstance(clean.get("topics"), list):
-        clean["topics"] = [_topic_without_wiki(t) for t in clean["topics"]]
-    return clean
-
-
-def _topic_without_wiki(topic: Any) -> Any:
-    if not isinstance(topic, dict):
-        return topic
-    return {k: v for k, v in topic.items() if k != "wiki"}
-
-
-def _sibling_refresh_section(repo: Path, out_dir: Path) -> str:
-    """The "Sibling topics being refreshed" prompt section, or "" when this
-    isn't a content-drift refresh batch with ≥1 other pending sibling.
-
-    `out_dir` is `<repo>/.regin/topics/proposals/<id>`, so its name is the
-    proposal id (see `_repo_and_id_from_out_dir`). For user/external proposals
-    the id isn't in the content-drift set, so the helper returns "" and no
-    section is emitted."""
-    from lib.topics.agent_spawn import _sibling_refresh_context
-    block = _sibling_refresh_context(repo, out_dir.name)
-    if not block:
-        return ""
-    return (
-        "\nSibling topics being refreshed in this same batch (keep your "
-        "cross-references — edges and wiki mentions — consistent with these; "
-        "do NOT treat their approved summary as final, they are being "
-        f"rewritten too):\n\n{block}\n"
-    )
-
-
-def _scoped_refresh_directive(prior_draft: dict[str, Any]) -> str:
-    """Regenerate-only block that narrows the redraft to the drifted topics.
-
-    Empty unless the run is a scoped content-drift regenerate. When present it
-    names exactly the topics whose refs drifted (with the drifted files) and
-    tells the agent to re-derive only those pages; every other topic is
-    preserved verbatim by the splice, so the agent may omit them from its
-    output entirely. Correctness does not depend on the agent obeying this —
-    the splice discards any non-scoped topic bodies regardless — it only saves
-    the agent from re-exploring untouched areas."""
-    topic_ids = prior_draft.get("scope_topic_ids") or []
-    if not topic_ids:
-        return ""
-    drifted_paths = prior_draft.get("scope_drifted_paths") or {}
-    lines = []
-    for topic_id in topic_ids:
-        paths = drifted_paths.get(topic_id) or []
-        listed = ", ".join(f"`{p}`" for p in paths) if paths else "(this topic's refs)"
-        lines.append(f"- **{topic_id}** — drifted files: {listed}")
-    listing = "\n".join(lines)
-    return f"""Scoped refresh — the code changed under only these topics:
-{listing}
-
-Re-derive the wiki page for ONLY the topics listed above, from their current
-refs. You may omit every other topic from your output: unchanged topics are
-preserved as-is and must NOT be rewritten. Focus your exploration on the
-drifted files.
-
-"""
-
-
-def _prior_reference_block(repo: Path, out_dir: Path,
-                           prior_draft: dict[str, Any] | None) -> str:
-    """The regenerate-only 'Prior draft reference' block, or '' on a fresh run.
-
-    The static guidance is the editable ``topic-proposal-regenerate`` surface
-    (``lib/prompts/surfaces/regenerate.py``); this builder assembles only the
-    runtime context it interpolates and passes the result as the
-    ``prior_reference`` variable of the drafting skeleton. A broken user edit
-    degrades to the built-in default inside ``render_surface``.
-
-    Neither half of the prior draft is embedded: the wiki is an absolute-path
-    *pointer* to ``proposals/<id>/wiki.md`` and the structural proposal JSON is
-    spilled to ``proposals/<id>/prior-proposal.json``, so the agent Reads what it
-    needs instead of carrying both in the prompt. Each pointer is probed against
-    the live file at prompt-build time, so a stale or vanished file degrades to a
-    placeholder rather than dangling."""
-    if not prior_draft:
-        return ""
-    from lib.prompts import render_surface
-    from lib.prompts.surfaces.regenerate import SURFACE_ID
-    from lib.topics.wiki import wiki_read_pointer
-
-    feedback_reference = ""
-    feedback_block = format_review_feedback_for_prompt(prior_draft.get("feedback_threads") or [])
-    if feedback_block:
-        feedback_reference = f"\n{feedback_block}\n\n"
-    return render_surface(SURFACE_ID, {
-        "review_feedback": feedback_reference,
-        "scope_directive": _scoped_refresh_directive(prior_draft),
-        "prior_proposal_pointer": _prior_proposal_pointer(
-            out_dir, prior_draft.get("proposal")),
-        "prior_wiki_pointer": wiki_read_pointer(
-            repo, out_dir / "wiki.md", absolute=True),
-    })
-
-
-def _instructions(
-    repo: Path,
-    topic_request: str | None,
-    out_dir: Path,
-    temp_output_path: Path,
-    *,
-    prior_draft: dict[str, Any] | None = None,
-    prompt_templates: list[dict[str, Any]] | None = None,
-) -> str:
-    """Build the drafting agent's task prompt.
-
-    The body is the editable ``topic-proposal-drafting`` surface
-    (``lib/prompts/surfaces/drafting.py``); this function only assembles the
-    runtime context it interpolates. A broken user edit degrades to the built-in
-    default inside ``render_surface`` — the prompt is never left unbuildable.
-    """
-    from lib.prompts import render_surface
-    from lib.prompts.surfaces.drafting import SURFACE_ID
-
-    default_request = (
-        "No specific topic request was provided. "
-        "Propose the most useful uncovered topics from the repository."
-    )
-    context = {
-        "topic_request": topic_request or default_request,
-        "prior_reference": _prior_reference_block(repo, out_dir, prior_draft),
-        "custom_instructions": _format_template_section(prompt_templates),
-        "temp_output_path": str(temp_output_path),
-        "output_file": str(out_dir / OUTPUT_FILE),
-        "finish_cmd": _finish_command(repo, out_dir.name),
-        "existing_topics_pointer": _existing_topics_pointer(repo, out_dir),
-        "buckets_section": _buckets_section(repo, prior_draft),
-        "sibling_section": _sibling_refresh_section(repo, out_dir),
-    }
-    return render_surface(SURFACE_ID, context)
-
-
-def _load_agent_payload(output_path: Path, stdout: str) -> dict[str, Any]:
-    if output_path.exists():
-        return json.loads(output_path.read_text())
-    match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", stdout, re.DOTALL)
-    if match:
-        return json.loads(match.group(1))
-    return json.loads(stdout)
-
-
 def _find_agent_session_trace_id(proposal_id: str, started_monotonic: float) -> str | None:
     """Best-effort link from the wrapper run to the real tool-using agent trace."""
     try:
@@ -1264,202 +851,6 @@ def _find_agent_session_trace_id(proposal_id: str, started_monotonic: float) -> 
         if "Regin Topic Proposal Agent Task" in title:
             return row["trace_id"]
     return None
-
-
-def _topic_wiki_section(topic: dict[str, Any]) -> str | None:
-    """One topic's contribution to the combined wiki, or None if it has no
-    page. Normalizes to a level-2 (`## `) section so the combined doc always
-    has section boundaries (a leading `# ` h1 is demoted to `## `, an h2 is
-    kept, anything else is headed with the topic label)."""
-    body = str(topic.get("wiki") or "").strip()
-    if not body:
-        return None
-    if body.startswith("## "):
-        return body
-    if body.startswith("# "):
-        return "#" + body  # demote h1 -> h2 so the combined doc keeps `##` boundaries
-    label = topic.get("label") or topic.get("id") or "Topic"
-    return f"## {label}\n\n{body}"
-
-
-def _combined_proposal_wiki(payload: dict[str, Any], topics: list[dict[str, Any]]) -> str:
-    """Derive the revision-level combined wiki from the per-topic pages.
-
-    Per-topic `wiki` is the source of truth; this stitches an ``overview``
-    intro plus one ``## label`` section per topic into a single document for
-    revision-level storage, legacy display, and the shared intro. Falls back
-    to a legacy top-level ``wiki`` string when no topic carries its own page.
-    """
-    sections = [s for s in (_topic_wiki_section(t) for t in topics) if s]
-    if not sections:
-        return str(payload.get("wiki") or "").strip()
-    overview = str(payload.get("overview") or "").strip()
-    parts = ([overview] if overview else []) + sections
-    return "\n\n".join(parts).strip()
-
-
-def _strip_review_markers(topics: list[Any]) -> None:
-    """Review markers are server-owned bookkeeping; an agent echoing them
-    from the prior-draft reference could smuggle a stale 'accepted' onto
-    redrafted content that then survives the splice/reset."""
-    from lib.topics.proposals._common import _REGENERATE_RESET_TOPIC_FIELDS
-    for topic in topics:
-        if isinstance(topic, dict):
-            for field in _REGENERATE_RESET_TOPIC_FIELDS:
-                topic.pop(field, None)
-
-
-def _normalise_agent_payload(repo: Path, payload: dict[str, Any]) -> tuple[dict[str, Any], str]:
-    from lib.topics.proposal_drafting import (
-        PROPOSAL_VERSION, ProposalValidationError, validate_proposal,
-    )
-
-    if payload.get("version") == PROPOSAL_VERSION and isinstance(payload.get("topics"), list):
-        proposal = payload
-    else:
-        proposal = {
-            "version": PROPOSAL_VERSION,
-            "repo": repo.resolve().name,
-            "scope": "all",
-            "generated_at": utc_now(),
-            "status": "draft",
-            "topics": payload.get("topics") or [],
-            "notes": payload.get("notes") or [],
-        }
-        # Carry the legacy top-level wiki through the wrap so the
-        # require_wiki check sees the same fallback _combined_proposal_wiki
-        # reads (pass-through payloads keep the key naturally).
-        if "wiki" in payload:
-            proposal["wiki"] = payload["wiki"]
-    _strip_review_markers(proposal.get("topics") or [])
-    wiki = _combined_proposal_wiki(payload, proposal.get("topics") or [])
-    errors = validate_proposal(proposal, require_wiki=True)
-    if errors:
-        raise ProposalValidationError(errors)
-    return proposal, wiki
-
-
-def _regenerate_scope_topic_ids(out_dir: Path) -> list[str]:
-    """The drifted topic ids a scoped content-drift regenerate must re-derive,
-    read from the run status (set by `start_external_regenerate_run`). Empty on
-    a fresh run or a full manual regenerate."""
-    status = load_status(out_dir) or {}
-    scope = status.get("regenerate_drift_scope") or {}
-    ids = scope.get("topic_ids") or []
-    return [tid for tid in ids if isinstance(tid, str) and tid]
-
-
-def _pick_topic(
-    topic: dict[str, Any], scope: set[str], drafted_by_id: dict[str, Any],
-) -> dict[str, Any]:
-    """The freshly drafted body for a scoped (drifted) topic, else the prior
-    topic verbatim — so untouched pages stay byte-identical."""
-    topic_id = topic.get("id")
-    if topic_id in scope and topic_id in drafted_by_id:
-        return drafted_by_id[topic_id]
-    return topic
-
-
-def _rebuild_combined_wiki(prior_wiki: str, merged_topics: list[dict[str, Any]]) -> str:
-    """Prior intro + one `## ` section per (merged) per-topic wiki."""
-    from lib.topics.wiki_sections import split_wiki_sections
-
-    intro, _ = split_wiki_sections(prior_wiki)
-    sections = [s for s in (_topic_wiki_section(t) for t in merged_topics) if s]
-    parts = ([intro] if intro else []) + sections
-    return "\n\n".join(parts).strip()
-
-
-def _splice_scoped_topics(
-    prior: dict[str, Any], drafted: dict[str, Any], prior_wiki: str,
-    scope_topic_ids: list[str],
-) -> tuple[dict[str, Any], str]:
-    """Merge a scoped redraft back onto the prior full topic list.
-
-    Only the scoped (drifted) topics take the freshly drafted body; every other
-    topic is copied verbatim from the prior revision, so non-drifted wiki pages
-    are byte-identical across the regenerate. The combined wiki is rebuilt from
-    the prior intro plus one `## ` section per (merged) topic — keeping the full
-    topic set means per-doc apply never loses a forward edge."""
-    scope = set(scope_topic_ids)
-    drafted_by_id = {
-        t.get("id"): t for t in drafted.get("topics") or [] if t.get("id")
-    }
-    merged_topics = [_pick_topic(t, scope, drafted_by_id) for t in prior.get("topics") or []]
-    merged = {**prior, "topics": merged_topics}
-    # Drop the prior revision's stamped fields so the appended `regenerated`
-    # revision is stamped fresh (`_append_new_revision` reuses a carried-over
-    # `generated_at`); the inert `revision`/`revisions` keys would otherwise
-    # ride along too.
-    for stale_key in ("generated_at", "revision", "revisions"):
-        merged.pop(stale_key, None)
-    base_wiki = prior_wiki or str(prior.get("wiki") or "")
-    merged_wiki = _rebuild_combined_wiki(base_wiki, merged_topics)
-    return merged, (merged_wiki or base_wiki)
-
-
-def _apply_regenerate_scope(
-    repo: Path, out_dir: Path, proposal: dict[str, Any], wiki: str,
-) -> tuple[dict[str, Any], str]:
-    """If this run is a scoped content-drift regenerate, splice the drifted
-    topics over the prior revision so untouched wikis stay byte-identical.
-
-    A no-op (returns the drafted proposal unchanged) when the run isn't scoped,
-    or when there's no prior revision to splice against (a fresh run). Called
-    from BOTH ingest paths — the runner exit and `proposal-finish` — since the
-    agent may self-ingest in its own process; the status-persisted scope is the
-    shared input across that boundary."""
-    scope_topic_ids = _regenerate_scope_topic_ids(out_dir)
-    if not scope_topic_ids:
-        return proposal, wiki
-    from lib.topics.proposals.core_io import load_proposal
-
-    try:
-        prior = load_proposal(repo, out_dir.name)
-    except Exception:  # noqa: BLE001 — best-effort; fall back to full redraft
-        return proposal, wiki
-    if not prior or not (prior.get("topics") or []):
-        return proposal, wiki
-    prior_wiki_path = out_dir / "wiki.md"
-    prior_wiki = prior_wiki_path.read_text() if prior_wiki_path.exists() else ""
-    return _splice_scoped_topics(prior, proposal, prior_wiki, scope_topic_ids)
-
-
-def _topic_claimed_paths(topic: dict[str, Any]) -> set[str]:
-    paths = set(path for path in topic.get("evidence_paths", []) if isinstance(path, str))
-    for ref in topic.get("refs", []):
-        if isinstance(ref, dict) and isinstance(ref.get("path"), str):
-            paths.add(ref["path"])
-    return paths
-
-
-def _validate_paths(repo: Path, proposal: dict[str, Any]) -> None:
-    # No evidence pack: every proposed path must exist in the working tree
-    # and stay inside the repo. Stricter than the old evidence-or-repo check.
-    repo_root = repo.resolve()
-    for topic in proposal.get("topics", []):
-        for path in _topic_claimed_paths(topic):
-            resolved = (repo / path).resolve()
-            if repo_root not in resolved.parents and resolved != repo_root:
-                raise ValueError(f"path escapes repository: {path}")
-            if not resolved.exists():
-                raise ValueError(f"path not found in repository: {path}")
-
-
-def _read_topic_signature(repo: Path) -> str | None:
-    # Structural fingerprint of the approved topic graph that ignores the
-    # `updated_at` field (rewritten on every save_graph) and any whitespace
-    # / key-order changes. Only flips when a topic, edge, or alias actually
-    # changed — so a concurrent no-op save no longer trips the integrity check.
-    # Reads through load_graph so the split dir is fingerprinted.
-    from lib.topics.core import load_graph
-    try:
-        graph = load_graph(repo)
-    except (TopicGraphError, OSError, json.JSONDecodeError):
-        return None
-    if isinstance(graph, dict):
-        graph = {k: v for k, v in graph.items() if k != "updated_at"}
-    return json.dumps(graph, sort_keys=True, separators=(",", ":"))
 
 
 def _looks_like_permission_prompt(text: str) -> bool:
