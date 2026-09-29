@@ -27,6 +27,7 @@ import TaskPrimaryAction from '../components/tasks/TaskPrimaryAction.vue'
 import TaskVerbMenu from '../components/tasks/TaskVerbMenu.vue'
 import TaskRunHistory from '../components/tasks/TaskRunHistory.vue'
 import { priorityMeta, taskRef } from '../utils/taskMeta.js'
+import { localStamp, utcTitle } from '../utils/time.js'
 import { taskStatusColor } from '../composables/useBadgeColor.js'
 import { useConfirm } from '../composables/useConfirm.js'
 import { useProjects } from '../composables/useProjects.js'
@@ -258,11 +259,11 @@ onMounted(() => { ensureProjects(); load() })
           </div>
           <div class="td-fact">
             <dt>Created</dt>
-            <dd>{{ task.created_at }}</dd>
+            <dd :title="utcTitle(task.created_at)">{{ localStamp(task.created_at) }}</dd>
           </div>
           <div class="td-fact">
             <dt>Updated</dt>
-            <dd>{{ task.updated_at }}</dd>
+            <dd :title="utcTitle(task.updated_at)">{{ localStamp(task.updated_at) }}</dd>
           </div>
           <div v-if="task.tags.length" class="td-fact">
             <dt>Tags</dt>

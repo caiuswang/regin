@@ -11,6 +11,7 @@ import Button from '../ui/Button.vue'
 import Card from '../Card.vue'
 import MarkdownContent from '../MarkdownContent.vue'
 import Textarea from '../ui/Textarea.vue'
+import { localStamp, utcTitle } from '../../utils/time.js'
 
 const props = defineProps({
   taskId: { type: Number, required: true },
@@ -100,7 +101,7 @@ onMounted(load)
         >
           <span class="tc-author">{{ comment.author_kind }}</span>
           <MarkdownContent class="tc-body" :markdown="comment.body || ''" />
-          <span class="tc-when">{{ comment.created_at }}</span>
+          <span class="tc-when" :title="utcTitle(comment.created_at)">{{ localStamp(comment.created_at) }}</span>
         </div>
 
         <Button

@@ -1,5 +1,7 @@
 // Shared readings for the Pipeline shell's Overview and Features tabs.
 
+import { localDay, parseUtc } from './time.js'
+
 //: The four live stages in track order, and the tone each one wears in a bar,
 //: a legend dot and a stage label. Abandoned is never drawn.
 export const STAGES = ['spec', 'building', 'shipped', 'escaped']
@@ -31,17 +33,9 @@ export function stageParts(bar) {
   return STAGES.map(key => ({ key, n: Number(bar?.[key] || 0), tone: STAGE_TONE[key] }))
 }
 
-function parse(iso) {
-  if (!iso) return null
-  const text = String(iso)
-  const hasZone = /[zZ]|[+-]\d\d:?\d\d$/.test(text)
-  const parsed = new Date(hasZone ? text : `${text.replace(' ', 'T')}Z`)
-  return Number.isNaN(parsed.valueOf()) ? null : parsed
-}
-
 /** "2h", "1d", "just now" — the Active column's compact age. */
 export function ago(iso, now = Date.now()) {
-  const at = parse(iso)
+  const at = parseUtc(iso)
   if (!at) return '—'
   const min = Math.floor((now - at.getTime()) / 60000)
   if (min < 1) return 'just now'
@@ -55,9 +49,7 @@ export function ago(iso, now = Date.now()) {
 
 /** "Sep 25" — a defect's opened date on a triage card. */
 export function monthDay(iso) {
-  const at = parse(iso)
-  if (!at) return '—'
-  return at.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
+  return localDay(iso)
 }
 
 /** "D-94" — the defect id as the redesign prints it. */

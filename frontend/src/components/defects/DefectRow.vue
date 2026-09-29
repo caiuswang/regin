@@ -11,6 +11,7 @@ import Icon from '../ui/Icon.vue'
 import DefectActions from './DefectActions.vue'
 import DefectImages from './DefectImages.vue'
 import { shortDate } from '../../utils/ledgerFormat'
+import { utcTitle } from '../../utils/time.js'
 import { reopenedLabel } from '../../utils/pipelineFormat'
 
 const props = defineProps({
@@ -62,7 +63,7 @@ const open = ref(!props.collapsible)
         <span v-else class="unblamed">unattributed</span>
       </template>
       <span class="spacer" />
-      <span class="when" :title="defect.opened_at">{{ shortDate(defect.opened_at) }}</span>
+      <span class="when" :title="utcTitle(defect.opened_at)">{{ shortDate(defect.opened_at) }}</span>
       <Button
         v-if="collapsible"
         variant="ghost"

@@ -10,6 +10,7 @@ import DefectMergePicker from '../defects/DefectMergePicker.vue'
 import DefectRefusal from '../defects/DefectRefusal.vue'
 import { VERBS, VERB_ORDER } from '../../composables/useDefectTriage'
 import { defectRef, monthDay, reopenedLabel } from '../../utils/pipelineFormat'
+import { utcTitle } from '../../utils/time.js'
 
 const props = defineProps({
   defect: { type: Object, required: true },
@@ -66,7 +67,7 @@ defineExpose({ focus: () => card.value?.focus() })
       >{{ defectRef(defect.id) }}</router-link>
       <span v-if="reopenedLabel(defect.round)" class="tc-round">{{ reopenedLabel(defect.round) }}</span>
       <span class="tc-spacer" />
-      <span class="tc-when" :title="defect.opened_at">{{ monthDay(defect.opened_at) }}</span>
+      <span class="tc-when" :title="utcTitle(defect.opened_at)">{{ monthDay(defect.opened_at) }}</span>
     </div>
     <p class="tc-symptom">{{ defect.symptom }}</p>
     <p v-if="defect.suspect_paths?.length" class="tc-paths" title="Where it was seen, not who caused it">

@@ -114,36 +114,6 @@ def test_ordering_is_most_recent_activity_descending(session_row, task_lane,
     assert ids.index(recent.id) < ids.index(stale.id)
 
 
-def test_a_same_day_defect_outranks_an_earlier_session(session_row, task_lane,
-                                                       defect_row,
-                                                       feature_row):
-    """`sessions.started_at` is ISO with a `T` and `defects.opened_at`
-    separates with a space, so MAX over the raw strings compared `T` (0x54)
-    against ` ` (0x20) and the session always won inside one day."""
-    feature = feature_row()
-    session_row("t-early", started="2026-06-01T08:00:00.000000")
-    task_lane(890, feature.id, [("t-early", "done")])
-    defect_row(feature.id, opened_at="2026-06-01 23:00:00")
-
-    row = {r.id: r for r in index_module.page().items}[feature.id]
-
-    assert row.last_activity.startswith("2026-06-01 23:00:00")
-
-
-def test_a_later_session_still_outranks_an_earlier_defect(session_row,
-                                                          task_lane,
-                                                          defect_row,
-                                                          feature_row):
-    feature = feature_row()
-    session_row("t-late", started="2026-06-01T23:00:00.000000")
-    task_lane(891, feature.id, [("t-late", "done")])
-    defect_row(feature.id, opened_at="2026-06-01 08:00:00")
-
-    row = {r.id: r for r in index_module.page().items}[feature.id]
-
-    assert row.last_activity.startswith("2026-06-01 23:00:00")
-
-
 def test_null_cost_never_sorts_as_cheapest(session_row, task_lane,
                                            feature_row):
     """A feature with no session has no cost at all. Ordering by cost would

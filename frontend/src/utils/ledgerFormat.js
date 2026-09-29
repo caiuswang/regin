@@ -3,6 +3,8 @@
 // `none declared` is not `$0.00`, a gap name keeps its hyphen, and a stage
 // nobody fetched wears no chip at all.
 
+import { localDay, parseUtc } from './time.js'
+
 // TaskLinkCard.vue's map, shared rather than forked. It is deliberately NOT
 // extended: `unknown` may never become a key here, because a missing stage
 // that wears a chip reads as a stage somebody declared.
@@ -68,14 +70,14 @@ export function gapTotal(gaps) {
 }
 
 export function shortDate(iso) {
-  return iso ? iso.slice(0, 10) : '—'
+  return localDay(iso)
 }
 
 // "as of 14 Sep, 03:12" — a stage is a dated local fact, never a live read.
 export function asOf(iso) {
   if (!iso) return null
-  const parsed = new Date(iso.includes('T') ? iso : `${iso.replace(' ', 'T')}Z`)
-  if (Number.isNaN(parsed.valueOf())) return iso
+  const parsed = parseUtc(iso)
+  if (!parsed) return iso
   return parsed.toLocaleString('en-GB', {
     day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
   })

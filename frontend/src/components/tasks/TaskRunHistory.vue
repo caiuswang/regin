@@ -9,6 +9,7 @@ import { onMounted } from 'vue'
 import Badge from '../Badge.vue'
 import Dialog from '../ui/Dialog.vue'
 import { useTaskRuns } from '../../composables/useTaskRuns.js'
+import { localStamp, utcTitle } from '../../utils/time.js'
 
 const props = defineProps({
   task: { type: Object, required: true },
@@ -59,8 +60,8 @@ onMounted(() => load(props.task.id))
           />
         </div>
         <div class="task-run-facts">
-          <span>{{ run.started_at || '—' }}</span>
-          <span v-if="run.ended_at">→ {{ run.ended_at }}</span>
+          <span :title="utcTitle(run.started_at)">{{ localStamp(run.started_at) }}</span>
+          <span v-if="run.ended_at" :title="utcTitle(run.ended_at)">→ {{ localStamp(run.ended_at) }}</span>
           <span v-if="run.verify_exit_code !== null && run.verify_exit_code !== undefined">
             verify exit {{ run.verify_exit_code }}
           </span>

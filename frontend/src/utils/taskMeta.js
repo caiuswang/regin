@@ -7,6 +7,8 @@
 // call site through here is what would make a project-prefixed key (ENG-42) a
 // one-function change rather than a rewrite.
 
+import { localDay, parseUtc } from './time.js'
+
 export function taskRef(task) {
   return task?.id == null ? '' : `#${task.id}`
 }
@@ -128,17 +130,9 @@ export function priorityChipLabel(value, { compact = false } = {}) {
   return picked.map(p => p.label).reverse().join(', ')
 }
 
-// Task and run timestamps are SQLite `CURRENT_TIMESTAMP`: naive UTC.
-function parseUtc(iso) {
-  if (!iso) return null
-  const d = new Date(iso.includes('T') ? iso : `${iso.replace(' ', 'T')}Z`)
-  return Number.isNaN(d.valueOf()) ? null : d
-}
-
 /** "Sep 25" — the day column of a task row. */
 export function taskDay(iso) {
-  const d = parseUtc(iso)
-  return d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''
+  return iso ? localDay(iso) : ''
 }
 
 /** "12m" / "3h" / "2d" since a run started, read once at render. */

@@ -148,6 +148,14 @@ ROW_SOURCE = "features"
 
 _LANE = attribution_module.LANE
 
+
+def _session_utc(column: str) -> str:
+    """A `sessions` stamp as naive UTC: a zoned one as written, a zone-less one
+    read as host local."""
+    return (f"CASE WHEN {column} LIKE '%Z' OR substr({column}, 20) GLOB '*[+-]*'"
+            f" THEN datetime({column}) ELSE datetime({column}, 'utc') END")
+
+
 # `is_primary` decides whether a shared session's money lands on this feature
 # or another, exactly as `sessions_for_feature` decides it: a declaration
 # marking the session primary elsewhere wins, and everything else is this
@@ -164,13 +172,13 @@ attributed AS (
           UNION SELECT feature_id, trace_id FROM lane) u
 )"""
 
-_SESSION_FACTS = """
+_SESSION_FACTS = f"""
 session_facts AS (
     SELECT a.feature_id,
            COUNT(DISTINCT a.trace_id) AS sessions,
            SUM(CASE WHEN a.is_primary = 1 THEN s.cost_usd END) AS cost_usd,
            SUM(CASE WHEN s.cost_usd IS NULL THEN 1 ELSE 0 END) AS no_usage,
-           MAX(s.started_at) AS last_session
+           MAX({_session_utc('s.last_seen')}) AS last_session
     FROM attributed a
     LEFT JOIN sessions s ON s.trace_id = a.trace_id
     GROUP BY a.feature_id
@@ -185,7 +193,7 @@ defect_facts AS (
            COUNT(*) AS total,
            SUM(CASE WHEN d.status = 'open' THEN 1 ELSE 0 END) AS open_count,
            SUM(CASE WHEN e.kind = 'shipped' THEN 1 ELSE 0 END) AS escapes,
-           MAX(d.opened_at) AS last_defect
+           MAX(datetime(d.updated_at)) AS last_defect
     FROM defects d
     LEFT JOIN feature_events e ON e.id = d.blamed_event_id
     WHERE d.feature_id IS NOT NULL GROUP BY d.feature_id
@@ -202,7 +210,8 @@ _TASK_FACTS = f"""
 task_facts AS (
     SELECT t.feature_id, COUNT(*) AS tasks,
            SUM(CASE WHEN t.status = '{task_model.TASK_STATUS_DONE}'
-               THEN 1 ELSE 0 END) AS tasks_done
+               THEN 1 ELSE 0 END) AS tasks_done,
+           MAX(datetime(t.updated_at)) AS last_task
     FROM agent_tasks t
     WHERE t.feature_id IS NOT NULL
       AND t.status <> '{task_model.TASK_STATUS_ARCHIVED}'
@@ -222,19 +231,22 @@ last_event AS (
                   WHERE x.feature_id = e.feature_id)
 )"""
 
-# The activity operands are written in two formats — `sessions.started_at` is
-# ISO with a `T`, `defects.opened_at` separates with a space — and `MAX` over
-# strings compares them byte for byte, where `T` (0x54) beats ` ` (0x20). A
-# defect opened at 23:00 therefore lost to a session started at 08:00 the same
-# day. Normalized rather than parsed: both are already UTC and lexically
-# ordered once the separator agrees, so no clock is read and no zone assumed.
+_EVENT_FACTS = """
+event_facts AS (
+    SELECT e.feature_id, MAX(datetime(e.at)) AS last_event
+    FROM feature_events e GROUP BY e.feature_id
+)"""
+
+# The activity operands are written on two clocks. `sessions.last_seen` is the
+# trace ingest's host-local `datetime.now()` (older rows carry `Z` or
+# `+00:00`); every pipeline column is naive UTC from `datetime('now')`. Each is
+# normalized to one UTC `YYYY-MM-DD HH:MM:SS` before the MAX — a string MAX
+# across the raw shapes compared two clocks as one, so a UTC+N host saw a
+# session from the last N hours as "in the future". The one assumption is that
+# the server's zone is the zone the hooks wrote in.
 #
-# `created_at` is the FALLBACK, not a third operand. A feature is a row with a
-# birthday now, so a freshly specced one sorts by when it was written instead
-# of falling into the `activity IS NULL` tail with no signal at all — but it
-# must not outrank real work, and as a `MAX` operand it would outrank every
-# session and defect a migrated feature has, because the row is younger than
-# its own history.
+# `created_at` is the FALLBACK, not an operand: every feature has a `specced`
+# event, so it only answers for a row whose events predate the ledger.
 _ROWS = f"""
 rows AS (
     SELECT f.id AS id,
@@ -256,14 +268,17 @@ rows AS (
            COALESCE(df.escapes, 0) AS escapes,
            {events_module.stage_sql('le.kind', 'le.escapes_now')} AS stage,
            COALESCE(le.escapes_now, 0) AS blamed_now,
-           COALESCE(
-               NULLIF(MAX(REPLACE(COALESCE(sf.last_session, ''), 'T', ' '),
-                          REPLACE(COALESCE(df.last_defect, ''), 'T', ' ')), ''),
-               f.created_at) AS activity
+           strftime('%Y-%m-%dT%H:%M:%SZ', COALESCE(
+               NULLIF(MAX(COALESCE(sf.last_session, ''),
+                          COALESCE(df.last_defect, ''),
+                          COALESCE(tf.last_task, ''),
+                          COALESCE(ef.last_event, '')), ''),
+               datetime(f.created_at))) AS activity
     FROM {ROW_SOURCE} f
     LEFT JOIN session_facts sf ON sf.feature_id = f.id
     LEFT JOIN defect_facts df ON df.feature_id = f.id
     LEFT JOIN task_facts tf ON tf.feature_id = f.id
+    LEFT JOIN event_facts ef ON ef.feature_id = f.id
     LEFT JOIN last_event le ON le.feature_id = f.id
 )"""
 
@@ -278,7 +293,7 @@ SELECT id, title, origin, external_ref, stage, rounds, sessions, tasks,
 FROM rows"""
 
 _CTES = (f"WITH {_LANE},{_ATTRIBUTED},{_SESSION_FACTS},{_DEFECT_FACTS},"
-         f"{_TASK_FACTS},{_LAST_EVENT},{_ROWS}")
+         f"{_TASK_FACTS},{_EVENT_FACTS},{_LAST_EVENT},{_ROWS}")
 
 #: Sort key → (the expression it orders by, the direction it means by default).
 #: Every key is offered with both directions; none of them is the total order

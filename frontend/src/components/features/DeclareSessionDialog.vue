@@ -18,7 +18,7 @@ import Button from '../ui/Button.vue'
 import Checkbox from '../ui/Checkbox.vue'
 import Dialog from '../ui/Dialog.vue'
 import Input from '../ui/Input.vue'
-import { money, shortDate } from '../../utils/ledgerFormat'
+import { money } from '../../utils/ledgerFormat'
 
 const props = defineProps({
   featureId: { type: Number, required: true },
@@ -117,7 +117,7 @@ async function declare() {
         @click="chosen = r.trace_id"
         @keydown.enter="chosen = r.trace_id"
       >
-        <span class="font-mono text-[11px] text-slate-400">{{ shortDate(r.started_at) }}</span>
+        <span class="font-mono text-[11px] text-slate-400">{{ (r.started_at || '').slice(0, 10) || '—' }}</span>
         <span class="font-mono text-[11px] text-slate-500">{{ r.trace_id.slice(0, 8) }}</span>
         <span class="min-w-0 flex-1 truncate text-sm text-slate-700">{{ r.title || '—' }}</span>
         <span
