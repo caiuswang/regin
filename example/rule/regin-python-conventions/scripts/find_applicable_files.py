@@ -63,6 +63,36 @@ def _rule_applies(rule: dict, file_path: str, file_content: str) -> bool:
     return bool(filename_globs or content_triggers)
 
 
+_SKIPPED_DIRS = ('target', 'build', 'node_modules')
+
+
+def _walk_files(repo_path: str):
+    for dirpath, dirnames, filenames in os.walk(repo_path):
+        # Skip hidden dirs and build output
+        dirnames[:] = [d for d in dirnames if not d.startswith('.') and d not in _SKIPPED_DIRS]
+        for fname in filenames:
+            yield dirpath, fname
+
+
+def _read_file(fpath: str):
+    try:
+        with open(fpath, 'r', errors='ignore') as fh:
+            return fh.read()
+    except (OSError, IOError):
+        return None
+
+
+def _candidate_files(repo_path: str, extensions: tuple):
+    """Yield (path, content) for readable files with a rule extension."""
+    for dirpath, fname in _walk_files(repo_path):
+        if not fname.endswith(extensions):
+            continue
+        fpath = os.path.join(dirpath, fname)
+        content = _read_file(fpath)
+        if content is not None:
+            yield fpath, content
+
+
 def main():
     if len(sys.argv) != 4:
         print(f"Usage: {sys.argv[0]} <rules-json> <repo-path> <rule-id>", file=sys.stderr)
@@ -75,34 +105,16 @@ def main():
     with open(rules_json_path) as f:
         data = json.load(f)
 
-    rule = None
-    for r in data.get('rules', []):
-        if r['id'] == rule_id:
-            rule = r
-            break
-
+    rule = next((r for r in data.get('rules', []) if r['id'] == rule_id), None)
     if not rule:
         print(f"Rule '{rule_id}' not found", file=sys.stderr)
         sys.exit(2)
 
-    extensions = _extensions_for_rule(rule)
     found = 0
-    for dirpath, _dirnames, filenames in os.walk(repo_path):
-        # Skip hidden dirs and build output
-        _dirnames[:] = [d for d in _dirnames if not d.startswith('.') and d not in ('target', 'build', 'node_modules')]
-        for fname in filenames:
-            if not any(fname.endswith(ext) for ext in extensions):
-                continue
-            fpath = os.path.join(dirpath, fname)
-            try:
-                with open(fpath, 'r', errors='ignore') as fh:
-                    content = fh.read()
-            except (OSError, IOError):
-                continue
-            if _rule_applies(rule, fpath, content):
-                # Print relative to repo_path
-                print(os.path.relpath(fpath, repo_path))
-                found += 1
+    for fpath, content in _candidate_files(repo_path, _extensions_for_rule(rule)):
+        if _rule_applies(rule, fpath, content):
+            print(os.path.relpath(fpath, repo_path))
+            found += 1
 
     sys.exit(0 if found > 0 else 1)
 
