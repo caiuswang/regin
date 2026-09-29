@@ -213,7 +213,7 @@ test('test_pipeline_mobile_layouts', async ({ page }) => {
     expect(box.height).toBeGreaterThanOrEqual(44)
   }
   await expect(page.getByTestId('task-search-open')).toBeVisible()
-  await expect(page.getByTestId('task-sort')).toBeVisible()
+  await expect(page.getByTestId('task-group-menu')).toBeVisible()
 
   // A chip's remove control is a tap target too.
   await page.goto(`/tasks?tag=${tag}&priority=urgent,high`)
@@ -420,7 +420,8 @@ test('test_task_primary_action_on_every_surface', async ({ page }) => {
   const head = page.getByTestId('task-detail-actions')
   await expect(head.getByTestId('task-action-retry')).toBeVisible()
   menu = await openMenu(page, head)
-  await expect(menu.getByRole('menuitem')).toHaveText(['Re-arm', 'Mark done', 'Archive', 'Delete'])
+  // Archive is the header's own button, so ⋯ does not offer it twice (#125 L4).
+  await expect(menu.getByRole('menuitem')).toHaveText(['Re-arm', 'Mark done', 'Delete'])
   await page.keyboard.press('Escape')
 
   // Disarm from the detail menu: armed → idea, and the primary becomes Arm.
@@ -740,4 +741,301 @@ with SessionLocal() as s:
   expect(geo.full).toBeGreaterThan(geo.height)
   expect(geo.height).toBeGreaterThanOrEqual(2 * geo.lh - 1)
   expect(geo.bottom).toBeLessThanOrEqual(geo.inner + 0.5)
+})
+
+// ── Feature #125 S4 — task surfaces: gating and friction ─────────────────
+
+function asViewer(page) {
+  return page.addInitScript(() => {
+    const raw = localStorage.getItem('regin_auth_user')
+    if (!raw) return
+    const user = JSON.parse(raw)
+    user.role = 'viewer'
+    localStorage.setItem('regin_auth_user', JSON.stringify(user))
+  })
+}
+
+function py(script, ...args) {
+  const out = execFileSync(PY, ['-c', script, ...args], { cwd: ROOT, encoding: 'utf8' })
+  return JSON.parse(out.trim().split('\n').pop())
+}
+
+const WRITE_CONTROLS = ['task-action-arm', 'task-action-run', 'task-action-retry',
+  'task-action-stop', 'task-menu', 'task-select', 'task-select-all', 'task-bulk']
+
+test('test_task_list_viewer_sees_no_write_controls', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const tag = mark()
+  const ids = seed(tag)
+  await asViewer(page)
+
+  // Flat, then grouped by status: the rows render, and not one write control.
+  for (const group of ['none', 'status']) {
+    await page.goto(`/tasks?group=${group}&tag=${tag}`)
+    if (group === 'status') {
+      await page.getByTestId('task-group-toggle-armed').waitFor()
+    }
+    await expect(page.locator(`#task-${ids.ready}`)).toBeVisible()
+    await expect(page.locator(`#task-${ids.running}`).getByTestId('task-action-watch')).toBeVisible()
+    for (const testid of WRITE_CONTROLS) {
+      await expect(page.getByTestId(testid), `${testid} under group=${group}`).toHaveCount(0)
+    }
+  }
+})
+
+test('test_primary_action_starting_state', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const tag = mark()
+  // A run the server opened whose session has not announced its trace id yet.
+  const id = py(`
+import json, sys
+sys.path.insert(0, ".")
+from lib.orm import SessionLocal
+from lib.orm.models.tasks import AgentTask, AgentTaskRun
+tag = sys.argv[1]
+with SessionLocal() as s:
+    t = AgentTask(title=f"{tag} starting", status="running", source="test", tags_json=json.dumps([tag]))
+    s.add(t); s.flush()
+    s.add(AgentTaskRun(task_id=t.id, attempt=1, status="running", trace_id=None,
+                       started_at="2026-09-29 10:00:00"))
+    s.commit()
+    print(json.dumps(t.id))
+`, tag)
+
+  // No surface offers a second launch while the first is still starting —
+  // including the flat list and detail page, whose liveness probe reads a
+  // trace-less run as gone.
+  for (const [path, scope] of [[`/tasks?group=none&tag=${tag}`, `#task-${id}`],
+    [`/tasks/${id}`, '[data-testid="task-detail-actions"]']]) {
+    await page.goto(path)
+    const s = page.locator(scope).first()
+    await expect(s.getByTestId('task-action-starting')).toBeVisible()
+    await expect(s.getByTestId('task-action-run')).toHaveCount(0)
+    await expect(s.getByTestId('task-action-stop')).toBeDisabled()
+  }
+
+  await page.goto(`/tasks?tag=${tag}`)
+  const row = page.getByTestId(`next-step-row-${id}`)
+  const starting = row.getByTestId('task-action-starting')
+  await expect(starting).toHaveText('Starting…')
+  expect(await starting.evaluate(el => el.tagName)).toBe('SPAN')
+  await expect(row.getByTestId('task-action-watch')).toHaveCount(0)
+  await expect(row.getByTestId('task-action-stop')).toBeDisabled()
+
+  // Once the run carries its trace id, Watch links to it and Stop is live.
+  py(`
+import json, sys
+sys.path.insert(0, ".")
+from sqlmodel import select
+from lib.orm import SessionLocal
+from lib.orm.models.tasks import AgentTaskRun
+with SessionLocal() as s:
+    run = s.exec(select(AgentTaskRun).where(AgentTaskRun.task_id == int(sys.argv[1]))).one()
+    run.trace_id = sys.argv[2] + "-trace"; s.add(run); s.commit()
+print(json.dumps(1))
+`, String(id), tag)
+  await page.reload()
+  await expect(row.getByTestId('task-action-watch')).toHaveAttribute('href', `/trace/sessions/${tag}-trace`)
+  await expect(row.getByTestId('task-action-starting')).toHaveCount(0)
+  await expect(row.getByTestId('task-action-stop')).toBeEnabled()
+})
+
+test('test_arm_disabled_while_busy', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const tag = mark()
+  const [id] = seedBoard(tag, [{ status: 'idea' }])
+  let release
+  const held = new Promise((r) => { release = r })
+  await page.route(`**/api/tasks/${id}`, async (route) => {
+    if (route.request().method() === 'PATCH') await held
+    return route.continue()
+  })
+  await page.goto(`/tasks?group=none&tag=${tag}`)
+  const row = page.locator(`#task-${id}`)
+  const arm = row.getByTestId('task-action-arm')
+  await expect(arm).toBeEnabled()
+  // While another verb on the row is in flight, Arm is disabled like Run/Stop.
+  await openMenu(page, row)
+  await page.getByTestId('task-verb-archive').click()
+  await expect(arm).toBeDisabled()
+  release()
+})
+
+test('test_blocked_by_link_opens_task', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const tag = mark()
+  const ids = seed(tag)
+  // The blocker carries another tag, so the filter hides it and a
+  // scroll-into-view would land nowhere.
+  const [offPage] = seedBoard(`${tag}off`, [{ status: 'idea' }])
+  await page.route(`**/api/tasks/${ids.ready}/run`, route => route.fulfill({
+    status: 409, json: { error: 'blocked by open dependencies', blocking: [offPage] } }))
+
+  await page.goto(`/tasks?group=none&tag=${tag}`)
+  await page.locator(`#task-${ids.ready}`).getByTestId('task-action-run').click()
+  await page.getByTestId(`task-blocker-${offPage}`).click()
+  await expect(page).toHaveURL(new RegExp(`/tasks/${offPage}$`))
+  await expect(page.getByTestId('task-detail-actions')).toBeVisible()
+})
+
+test('test_tasks_mobile_group_and_sort_menus', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  const tag = mark()
+  seed(tag)
+
+  // Next step ignores sort, so only Group is offered; the count still shows.
+  await page.goto(`/tasks?tag=${tag}`)
+  await expect(page.getByTestId('next-step-list')).toBeVisible()
+  await expect(page.getByTestId('list-count')).toHaveText('11 open · 2 done hidden')
+  await expect(page.getByTestId('task-sort')).toHaveCount(0)
+  await page.getByTestId('task-group-menu').click()
+  await page.getByTestId('task-group-none').click()
+  await expect(page).toHaveURL(/group=none/)
+
+  // Flat: a real Sort menu of sort keys, not of groupings.
+  const sort = page.getByTestId('task-sort')
+  await expect(sort).toBeVisible()
+  await expect(page.getByTestId('list-count')).toHaveText(/^\d+( of \d+)? tasks?$/)
+  await sort.click()
+  await expect(page.getByTestId('task-group-status')).toHaveCount(0)
+  await page.getByTestId('task-sort-updated').click()
+  await expect(page).toHaveURL(/sort=updated%3Adesc|sort=updated:desc/)
+  await sort.click()
+  await page.getByTestId('task-sort-dir').click()
+  await expect(page).toHaveURL(/sort=updated%3Aasc|sort=updated:asc/)
+})
+
+test('test_flat_row_date_follows_sort', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const tag = mark()
+  const id = py(`
+import json, sys
+sys.path.insert(0, ".")
+from lib.orm import SessionLocal
+from lib.orm.models.tasks import AgentTask
+tag = sys.argv[1]
+with SessionLocal() as s:
+    t = AgentTask(title=f"{tag} dated", status="idea", source="test", tags_json=json.dumps([tag]),
+                  created_at="2026-01-05 12:00:00", updated_at="2026-03-07 12:00:00")
+    s.add(t); s.commit(); s.refresh(t)
+    print(json.dumps(t.id))
+`, tag)
+  const day = page.locator(`#task-${id}`).getByTestId('task-day')
+
+  await page.goto(`/tasks?group=none&tag=${tag}&sort=created:desc`)
+  await expect(day).toHaveText('Jan 5')
+  const head = page.getByTestId('task-day-head')
+  await expect(head).toHaveText('Created')
+  // The label sits over the column it names.
+  const right = async el => { const b = await el.boundingBox(); return b.x + b.width }
+  expect(Math.abs(await right(head) - await right(day))).toBeLessThanOrEqual(2)
+  await page.goto(`/tasks?group=none&tag=${tag}&sort=updated:desc`)
+  await expect(day).toHaveText('Mar 7')
+  await expect(day).toHaveAttribute('title', /^Updated 2026-03-07/)
+  await expect(page.getByTestId('task-day-head')).toHaveText('Updated')
+})
+
+test('test_next_step_selection_trimmed_on_refresh', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const tag = mark()
+  const ids = seedEditing(tag)
+  const [a, b, c] = ids.ideas
+  const row = id => page.getByTestId(`next-step-row-${id}`)
+  const bar = page.getByTestId('task-bulk')
+
+  await page.goto(`/tasks?tag=${tag}`)
+  await row(a).getByTestId('task-select').click()
+  await row(b).getByTestId('task-select').click()
+  await expect(bar).toContainText('2 selected')
+
+  // Another hand archives b; the live refresh drops it from the selection.
+  await page.evaluate(async (tid) => {
+    const token = localStorage.getItem('regin_auth_token')
+    await fetch(`/api/tasks/${tid}`, { method: 'PATCH',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'archived' }) })
+  }, b)
+  await expect(row(b)).toHaveCount(0)
+  await expect(bar).toContainText('1 selected')
+
+  // Esc clears it.
+  await page.locator('body').click({ position: { x: 5, y: 5 } })
+  await page.keyboard.press('Escape')
+  await expect(bar).toHaveCount(0)
+
+  // Each group carries a select-all box over its shown rows.
+  const all = page.getByTestId('next-step-select-all-ideas')
+  await all.click()
+  await expect(bar).toContainText('2 selected')
+  await expect(row(a).getByTestId('task-select').locator('input')).toBeChecked()
+  await expect(row(c).getByTestId('task-select').locator('input')).toBeChecked()
+  await all.click()
+  await expect(bar).toHaveCount(0)
+})
+
+test('test_task_detail_archive_once', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const tag = mark()
+  const ids = seedEditing(tag)
+  const id = ids.ideas[0]
+  const head = page.getByTestId('task-detail-actions')
+
+  await page.goto(`/tasks/${id}`)
+  await expect(head.getByTestId('task-detail-archive')).toBeVisible()
+  await openMenu(page, head)
+  await expect(page.getByTestId('task-verb-archive')).toHaveCount(0)
+  await page.keyboard.press('Escape')
+
+  await head.getByTestId('task-detail-archive').click()
+  await expect(head.getByTestId('task-detail-restore')).toBeVisible()
+  if (await head.getByTestId('task-menu').count()) {
+    await openMenu(page, head)
+    await expect(page.getByTestId('task-verb-restore')).toHaveCount(0)
+    await page.keyboard.press('Escape')
+  }
+})
+
+test('test_board_failed_subgroup', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const tag = mark()
+  const [done, failed] = seedBoard(tag, [{ status: 'done' }, { status: 'failed' }])
+
+  await page.goto(`/tasks?view=board&tag=${tag}`)
+  const col = page.getByTestId('board-column-done')
+  const group = col.getByTestId('board-failed-group')
+  await expect(group).toContainText('Failed')
+  await expect(group.getByTestId('board-failed-n')).toHaveText('1')
+  await group.getByTestId('board-failed-show').click()
+  const failedCard = group.getByTestId(`board-card-${failed}`)
+  await expect(failedCard.getByTestId('board-card-failed')).toBeVisible()
+  // The sub-group heads the column: above every done card.
+  const doneCard = col.getByTestId(`board-card-${done}`)
+  await expect(doneCard).toBeVisible()
+  await expect(doneCard.getByTestId('board-card-failed')).toHaveCount(0)
+  expect((await failedCard.boundingBox()).y).toBeLessThan((await doneCard.boundingBox()).y)
+})
+
+test('test_flat_bulk_names_rejected', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const tag = mark()
+  const ids = seedEditing(tag)
+  const [a] = ids.ideas
+  const refusal = 'the task has a live run — stop it before archiving'
+  await page.route('**/api/tasks/bulk', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue()
+    const body = route.request().postDataJSON()
+    const rest = body.ids.filter(i => i !== ids.running)
+    const res = await route.fetch({ postData: JSON.stringify({ ...body, ids: rest }) })
+    const json = await res.json()
+    return route.fulfill({ json: { ...json, rejected: [...json.rejected, { id: ids.running, reason: refusal }] } })
+  })
+
+  await page.goto(`/tasks?group=none&tag=${tag}`)
+  await page.locator(`#task-${a}`).getByTestId('task-select').click()
+  await page.locator(`#task-${ids.running}`).getByTestId('task-select').click()
+  await page.getByTestId('task-bulk-archive').click()
+  const rejected = page.getByTestId('task-bulk-rejected')
+  await expect(rejected.getByTestId(`task-bulk-rejected-${ids.running}`))
+    .toHaveText(`#${ids.running} ${tag} running 3 — ${refusal}`)
+  await expect(rejected.getByTestId(`task-bulk-rejected-${a}`)).toHaveCount(0)
 })

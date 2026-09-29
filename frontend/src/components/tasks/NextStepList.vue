@@ -7,6 +7,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import api from '../../api'
 import BulkRejected from './BulkRejected.vue'
 import Button from '../ui/Button.vue'
+import Checkbox from '../ui/Checkbox.vue'
 import Icon from '../ui/Icon.vue'
 import NextStepRow from './NextStepRow.vue'
 import RunAllReport from './RunAllReport.vue'
@@ -17,6 +18,7 @@ import { useFlash } from '../../composables/useFlash.js'
 import { useProjects } from '../../composables/useProjects.js'
 import { useTaskMutations } from '../../composables/useTasks.js'
 import { useTaskSelection } from '../../composables/useTaskSelection.js'
+import { useTaskShortcuts } from '../../composables/useTaskShortcuts.js'
 import { useNextStep } from '../../composables/useTaskViews.js'
 import { useTaskVerbs } from '../../composables/useTaskVerbs.js'
 import { invalidatePipelineCounts } from '../../composables/usePipelineCounts.js'
@@ -46,8 +48,30 @@ const bulkRejected = ref([])
 const groups = computed(() => (feed.body.value?.groups || []).filter(g => g.n > 0))
 const empty = computed(() => feed.body.value && !groups.value.length)
 
+// The rows on screen: a collapsed group draws none of its own.
+function shownIds() {
+  return groups.value.filter(g => !collapsed.value[g.key])
+    .flatMap(g => g.rows.map(r => r.id))
+}
+
+function groupSelection(group) {
+  const n = group.rows.filter(r => selection.ids.value.has(r.id)).length
+  return { all: n > 0 && n === group.rows.length, some: n > 0 && n < group.rows.length }
+}
+
+function toggleGroup(group) {
+  const next = new Set(selection.ids.value)
+  const all = groupSelection(group).all
+  for (const row of group.rows) {
+    if (all) next.delete(row.id)
+    else next.add(row.id)
+  }
+  selection.ids.value = next
+}
+
 async function reload() {
   await feed.load()
+  selection.retain(shownIds())
   const body = feed.body.value
   emit('count', body && !feed.error.value
     ? `${body.open} open · ${body.done_hidden} done hidden` : '')
@@ -129,7 +153,10 @@ async function deleteSelected() {
 
 function toggle(key) {
   collapsed.value = { ...collapsed.value, [key]: !collapsed.value[key] }
+  selection.retain(shownIds())
 }
+
+useTaskShortcuts({ Escape: () => selection.clear() })
 
 async function sheetDone() {
   sheet.value = null
@@ -191,6 +218,15 @@ defineExpose({ reload })
       :data-testid="`next-step-group-${group.key}`"
     >
       <header class="nsl-head">
+        <Checkbox
+          v-if="canWrite && !collapsed[group.key] && group.rows.length"
+          class="nsl-selectall"
+          :model-value="groupSelection(group).all"
+          :indeterminate="groupSelection(group).some"
+          :aria-label="`Select every shown row in ${group.label}`"
+          :data-testid="`next-step-select-all-${group.key}`"
+          @update:model-value="toggleGroup(group)"
+        />
         <Button
           variant="ghost"
           size="sm"
@@ -263,6 +299,8 @@ defineExpose({ reload })
     gap: 0.625rem;
     padding: 0.625rem 0 0.25rem;
 }
+.nsl-selectall { flex-shrink: 0; }
+.nsl .nsl-selectall + .nsl-toggle { margin-left: -0.375rem; }
 .nsl .nsl-toggle {
     gap: 0.625rem;
     margin-left: -0.5rem;

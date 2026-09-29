@@ -103,7 +103,7 @@ function act(verb) {
   return verb === 'delete' ? deleteTask() : actOn(verb, task.value)
 }
 
-// Archive/Restore sits in the header as well as in ⋯, but only where the
+// Archive/Restore is the header's, and ⋯ omits it; drawn only where the
 // server's menu for this state offers it — a running task cannot be archived.
 const shelfVerb = computed(() => {
   const menu = task.value?.menu || []
@@ -201,7 +201,10 @@ onMounted(() => { ensureProjects(); load() })
           <Icon :name="shelfVerb === 'archive' ? 'archive' : 'refresh-cw'" :size="13" />
           <span>{{ shelfVerb === 'archive' ? 'Archive' : 'Restore' }}</span>
         </Button>
-        <TaskVerbMenu v-if="canWrite" :task="task" :busy="busyId === task.id" @verb="act" />
+        <TaskVerbMenu
+          v-if="canWrite" :task="task" :busy="busyId === task.id"
+          :omit="['archive', 'restore']" @verb="act"
+        />
       </div>
     </header>
 

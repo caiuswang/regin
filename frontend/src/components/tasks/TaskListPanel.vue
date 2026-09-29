@@ -6,8 +6,10 @@
 // timer. And every filter is a query parameter in `location.search`, so what
 // the counts say, what the list pages through, and what a link someone pastes
 // into chat will show are the same set.
-import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { computed, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import api from '../../api'
+import BulkRejected from './BulkRejected.vue'
 import Checkbox from '../ui/Checkbox.vue'
 import Icon from '../ui/Icon.vue'
 import ListStatus from '../ListStatus.vue'
@@ -36,7 +38,9 @@ import { useTaskVerbs } from '../../composables/useTaskVerbs.js'
 const FLAT = 'flat'
 
 const route = useRoute()
+const router = useRouter()
 const query = useTaskQuery()
+const canWrite = api.getStoredUser()?.role !== 'viewer'
 const { counts, error: countsError, load: loadCounts } = useTaskCounts(query.params)
 const { bulk, bulkRemove } = useTaskMutations()
 const { confirm } = useConfirm()
@@ -88,6 +92,17 @@ const status = computed(() => (grouped.value
 
 const sheet = ref({ kind: '', task: null })
 const groupRefs = ref([])
+const bulkRejected = ref([])
+// Every row this surface has rendered, by id, so a refusal can name what it
+// refused even after the reload that follows the write has moved it away.
+const titles = new Map()
+
+const dateField = computed(() => (query.state.value.sort.startsWith('updated')
+  ? 'updated_at' : 'created_at'))
+
+function remember(rows) {
+  for (const row of rows) titles.set(row.id, row.title)
+}
 
 async function reload() {
   lastKey = paramsKey.value
@@ -107,6 +122,7 @@ async function reload() {
     // list here, and adopting these would flip it back into groups.
     if (!groupMode.value && flat.extras.value?.counts) counts.value = flat.extras.value.counts
     selection.reportVisible(FLAT, flat.items.value)
+    remember(flat.items.value)
     await syncLiveness(flat.items.value)
   }
   groupRefs.value.forEach(g => g?.reload?.())
@@ -126,6 +142,7 @@ function gotoPage(index) {
 
 async function onGroupLoaded(key, rows) {
   selection.reportVisible(key, rows)
+  remember(rows)
   await syncLiveness(rows)
 }
 
@@ -150,14 +167,21 @@ async function deleteSelected() {
     `Delete ${ids.length} ${ids.length === 1 ? 'task' : 'tasks'} and their run `
     + 'history, images and links? This cannot be undone.', true)
   if (!ok) return
-  if (!await bulkRemove(ids)) return
+  const result = await bulkRemove(ids)
+  if (!result) return
+  nameRejected(result)
   selection.clear()
   await afterWrite()
+}
+
+function nameRejected(result) {
+  bulkRejected.value = (result.rejected || []).map(r => ({ ...r, title: titles.get(r.id) || '' }))
 }
 
 async function applyBulk(fields) {
   const result = await bulk([...selection.ids.value], fields)
   if (!result) return
+  nameRejected(result)
   selection.clear()
   await afterWrite()
 }
@@ -175,21 +199,14 @@ async function sheetDone() {
   await afterWrite()
 }
 
-// A blocking id links to its task, which the current filter may be hiding — so
-// the link clears the filters rather than scrolling to a row that is not
-// rendered.
-async function focusTask(id) {
-  // The scope is deliberately left alone: it is the shell's, shared with the
-  // other two tabs, and widening it from here would move a page nobody is
-  // looking at.
-  const s = query.state.value
-  if (query.active.value || s.feature_id || s.assignee) query.reset({ arrival: true })
-  await nextTick()
-  document.getElementById(`task-${id}`)?.scrollIntoView({ block: 'center' })
+// A blocking id opens its task, as it does on the detail page. Scrolling to it
+// in place could not work: the current filter or page may not hold it.
+function focusTask(id) {
+  router.push(`/tasks/${id}`)
 }
 
 useTaskShortcuts({
-  x: () => selection.toggleAllVisible(),
+  x: () => { if (canWrite) selection.toggleAllVisible() },
   Escape: () => selection.clear(),
 })
 
@@ -222,7 +239,7 @@ defineExpose({ reload: afterWrite })
   <div class="space-y-3">
 
     <TaskBulkBar
-      v-if="selection.count.value"
+      v-if="canWrite && selection.count.value"
       :count="selection.count.value"
       :projects="projects"
       @clear="selection.clear()"
@@ -234,7 +251,9 @@ defineExpose({ reload: afterWrite })
       @feature="id => applyBulk({ feature_id: id })"
     />
 
-    <div v-if="selection.visible.value.length" class="tl-selectall">
+    <BulkRejected v-if="bulkRejected.length" :rows="bulkRejected" @dismiss="bulkRejected = []" />
+
+    <div v-if="canWrite && selection.visible.value.length" class="tl-selectall">
       <Checkbox
         :model-value="selection.allVisibleSelected.value"
         :indeterminate="selection.someVisibleSelected.value"
@@ -275,6 +294,8 @@ defineExpose({ reload: afterWrite })
         :selection="selection.ids.value"
         :busy-id="busyId"
         :project-for="t => byId(t.project_id)"
+        :can-write="canWrite"
+        :date-field="dateField"
         @update:open="v => setOpen(query.state.value.group, group.key, v)"
         @loaded="onGroupLoaded"
         @hidden="selection.withdrawVisible"
@@ -287,6 +308,9 @@ defineExpose({ reload: afterWrite })
 
     <template v-else-if="status === 'rows'">
       <div class="tl-list" :class="{ 'is-busy': flat.loading.value }" :aria-busy="flat.loading.value" data-testid="task-list">
+        <div class="tl-head" :class="{ 'can-write': canWrite }" aria-hidden="true">
+          <span class="tl-head-day" data-testid="task-day-head">{{ dateField === 'updated_at' ? 'Updated' : 'Created' }}</span>
+        </div>
         <TaskRows
           :tasks="flat.items.value"
           :liveness="liveness"
@@ -294,11 +318,13 @@ defineExpose({ reload: afterWrite })
           :selection="selection.ids.value"
           :busy-id="busyId"
           :project-for="t => byId(t.project_id)"
+          :can-write="canWrite"
+          :date-field="dateField"
           @verb="act"
           @open="openSheet"
-            @focus="focusTask"
+          @focus="focusTask"
           @select="selection.toggle"
-          />
+        />
       </div>
     </template>
 
@@ -356,6 +382,24 @@ defineExpose({ reload: afterWrite })
     overflow: hidden;
 }
 .tl-list :deep(.task-row:last-child) { border-bottom: 0; }
+/* One label over the rows' date column. The right padding is the row's
+   padding, its action cluster's primary slot (8.5rem) and the row gap before
+   it — plus, for an editor, the ⋯ trigger and its gap. */
+.tl-head {
+    display: flex;
+    justify-content: flex-end;
+    padding: 0.3125rem calc(0.75rem + 8.5rem + 0.5rem) 0.3125rem 0.75rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    color: var(--color-fg-subtle);
+    background: var(--color-surface-2);
+    border-bottom: 1px solid var(--color-border-subtle);
+}
+.tl-head.can-write { padding-right: calc(0.75rem + 8.5rem + 0.5rem + 0.25rem + var(--tl-menu-w, 2.125rem)); }
+.tl-head-day { flex: 0 0 5.25rem; text-align: right; }
+@media (max-width: 40rem) {
+    .tl-head { display: none; }
+}
 .tl-selectall {
     padding-left: 0.75rem;
     font-size: 0.75rem;

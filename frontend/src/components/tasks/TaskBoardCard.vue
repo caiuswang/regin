@@ -10,6 +10,7 @@ import TaskFacts from './TaskFacts.vue'
 import TaskPrimaryAction from './TaskPrimaryAction.vue'
 import TaskPriorityIcon from './TaskPriorityIcon.vue'
 import TaskRefusal from './TaskRefusal.vue'
+import TaskStatusIcon from './TaskStatusIcon.vue'
 import TaskVerbMenu from './TaskVerbMenu.vue'
 import { liveFor } from '../../utils/taskMeta.js'
 
@@ -41,6 +42,10 @@ const hasControls = computed(() => !!props.task.action || !!props.task.waits_on
   >
     <span class="tbc-top">
       <TaskPriorityIcon :value="task.priority" :size="13" />
+      <TaskStatusIcon
+        v-if="task.status === 'failed'" status="failed" :size="13"
+        data-testid="board-card-failed"
+      />
       <span class="tbc-id">#{{ task.id }}</span>
       <span v-if="corner" class="tbc-corner">
         <span v-if="task.live" class="tbc-dot" aria-hidden="true" />{{ corner }}

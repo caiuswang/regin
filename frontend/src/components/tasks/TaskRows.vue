@@ -17,6 +17,8 @@ defineProps({
   selection: { type: Set, default: () => new Set() },
   busyId: { type: Number, default: null },
   projectFor: { type: Function, default: () => null },
+  canWrite: { type: Boolean, default: true },
+  dateField: { type: String, default: 'created_at' },
 })
 const emit = defineEmits(['verb', 'open', 'focus', 'select'])
 </script>
@@ -31,6 +33,8 @@ const emit = defineEmits(['verb', 'open', 'focus', 'select'])
     :project="projectFor(task)"
     :selected="selection.has(task.id)"
     :busy="busyId === task.id"
+    :can-write="canWrite"
+    :date-field="dateField"
     @verb="(v, t) => emit('verb', v, t)"
     @open="(kind, t) => emit('open', kind, t)"
     @focus="id => emit('focus', id)"

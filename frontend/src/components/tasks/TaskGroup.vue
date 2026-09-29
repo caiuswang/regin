@@ -20,6 +20,8 @@ const props = defineProps({
   selection: { type: Set, default: () => new Set() },
   busyId: { type: Number, default: null },
   projectFor: { type: Function, default: () => null },
+  canWrite: { type: Boolean, default: true },
+  dateField: { type: String, default: 'created_at' },
 })
 const emit = defineEmits(['verb', 'open', 'focus', 'select', 'loaded', 'hidden'])
 
@@ -100,6 +102,8 @@ defineExpose({ reload: () => { fetched.value = false; if (open.value) load() } }
           :selection="selection"
           :busy-id="busyId"
           :project-for="projectFor"
+          :can-write="canWrite"
+          :date-field="dateField"
           @verb="(v, t) => emit('verb', v, t)"
           @open="(kind, t) => emit('open', kind, t)"
           @focus="id => emit('focus', id)"

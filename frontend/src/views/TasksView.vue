@@ -66,10 +66,21 @@ const { openCreate } = usePipelineCreate()
 
 const groupOptions = GROUPS.map(g => ({
   value: g.value, label: g.value === 'none' ? g.label : `Group: ${g.label}` }))
+// Phones get the same two axes as the desktop toolbar, as menus: what the list
+// is grouped by, and — where the rows are ordered by it — what it is sorted by.
 const groupItems = computed(() => GROUPS.map(g => ({
   label: g.value === query.state.value.group ? `${g.label} (current)` : g.label,
-  testid: `task-sort-${g.value}`,
+  testid: `task-group-${g.value}`,
   onSelect: () => query.patch({ group: g.value }) })))
+const sortItems = computed(() => [
+  ...SORT_KEYS.map(k => ({
+    label: k.value === sortKey.value ? `${k.label} (current)` : k.label,
+    testid: `task-sort-${k.value}`,
+    onSelect: () => query.patch({ sort: `${k.value}:${sortDir.value}` }) })),
+  { label: sortDir.value === 'asc' ? 'Descending' : 'Ascending',
+    testid: 'task-sort-dir',
+    onSelect: () => query.patch({ sort: `${sortKey.value}:${sortDir.value === 'asc' ? 'desc' : 'asc'}` }) },
+])
 
 function setView(v) {
   count.value = ''
@@ -130,12 +141,18 @@ onBeforeUnmount(() => window.removeEventListener(TASK_CAPTURED_EVENT, afterWrite
         />
         <DropdownMenu v-if="mobile" :items="groupItems" align="start">
           <template #trigger>
+            <Button variant="ghost" class="tv-sort" data-testid="task-group-menu">Group</Button>
+          </template>
+        </DropdownMenu>
+        <DropdownMenu v-if="mobile && mode === 'flat'" :items="sortItems" align="start">
+          <template #trigger>
             <Button variant="ghost" class="tv-sort" data-testid="task-sort">Sort</Button>
           </template>
         </DropdownMenu>
       </template>
-      <template v-if="!mobile" #meta>
-        <template v-if="view === 'graph'">
+      <template #meta>
+        <span v-if="mobile" class="tv-count" data-testid="list-count">{{ count }}</span>
+        <template v-else-if="view === 'graph'">
           <span class="tv-legend"><span class="tv-swatch is-blocking" />blocking</span>
           <span class="tv-legend"><span class="tv-swatch" />depends on</span>
         </template>

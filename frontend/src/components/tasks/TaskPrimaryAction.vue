@@ -30,8 +30,11 @@ const waitsText = computed(() => (typeof props.task.waits_on === 'object'
   ? waitsLabel(props.task) : `waits on #${waitsOn.value}`))
 const stale = computed(() => props.task.action === 'watch'
   && props.liveness != null && !props.liveness.live)
-const watchTo = computed(() => (props.task.live?.trace_id
-  ? `/trace/sessions/${props.task.live.trace_id}` : `/tasks/${props.task.id}`))
+// A run the server has opened but whose session has not announced itself yet:
+// there is nothing to watch and nothing a Stop could reach until the next
+// `pipeline` event brings the trace id.
+const starting = computed(() => props.task.action === 'watch' && !props.task.live?.trace_id)
+const watchTo = computed(() => `/trace/sessions/${props.task.live?.trace_id}`)
 const ref_ = computed(() => `#${props.task.id}`)
 const RUN_LABEL = { run: 'Run', retry: 'Retry' }
 </script>
@@ -39,7 +42,14 @@ const RUN_LABEL = { run: 'Run', retry: 'Retry' }
 <template>
   <span class="tpa" :class="{ 'is-compact': compact }" :data-testid="`task-primary-${task.id}`">
     <template v-if="task.action === 'watch'">
+      <span
+        v-if="starting"
+        class="tpa-watch is-starting"
+        role="status"
+        data-testid="task-action-starting"
+      >Starting…</span>
       <router-link
+        v-else
         :to="watchTo"
         class="tpa-watch"
         :aria-label="`Watch ${ref_}`"
@@ -47,7 +57,7 @@ const RUN_LABEL = { run: 'Run', retry: 'Retry' }
         @click.stop
       >Watch</router-link>
       <Button
-        v-if="canWrite && stale"
+        v-if="canWrite && stale && !starting"
         variant="secondary"
         size="sm"
         :disabled="busy"
@@ -59,7 +69,7 @@ const RUN_LABEL = { run: 'Run', retry: 'Retry' }
         v-else-if="canWrite"
         variant="danger"
         size="sm"
-        :disabled="busy"
+        :disabled="busy || starting"
         :aria-label="`Stop ${ref_}`"
         data-testid="task-action-stop"
         @click.stop.prevent="emit('verb', 'stop')"
@@ -85,6 +95,7 @@ const RUN_LABEL = { run: 'Run', retry: 'Retry' }
       v-else-if="canWrite && task.action === 'arm'"
       variant="secondary"
       size="sm"
+      :disabled="busy"
       :aria-label="`Arm ${ref_}`"
       data-testid="task-action-arm"
       @click.stop.prevent="emit('verb', 'arm')"
@@ -117,6 +128,8 @@ const RUN_LABEL = { run: 'Run', retry: 'Retry' }
     border-radius: var(--radius-lg);
 }
 .tpa-watch:hover { text-decoration: none; filter: brightness(0.97); }
+.tpa-watch.is-starting { color: var(--color-fg-muted); background: var(--color-surface-2); }
+.tpa-watch.is-starting:hover { filter: none; }
 .tpa-watch:focus-visible,
 .tpa-waits:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 2px; }
 .tpa .tpa-run {

@@ -11,10 +11,13 @@ import { VERB_LABELS } from '../../composables/useTaskVerbs.js'
 const props = defineProps({
   task: { type: Object, required: true },
   busy: { type: Boolean, default: false },
+  // Verbs a host already draws as their own button, so one action is never
+  // offered twice on the same screen.
+  omit: { type: Array, default: () => [] },
 })
 const emit = defineEmits(['verb'])
 
-const items = computed(() => (props.task.menu || []).map(verb => ({
+const items = computed(() => (props.task.menu || []).filter(v => !props.omit.includes(v)).map(verb => ({
   label: VERB_LABELS[verb] || verb,
   danger: verb === 'delete',
   disabled: props.busy,
