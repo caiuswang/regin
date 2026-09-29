@@ -578,21 +578,20 @@ def _set_truncated_str(attrs: dict, key: str, value: object, limit: int) -> None
 
 def _build_ask_attrs(attrs: dict, tool_input: dict, tool_response: dict, payload: HookPayload) -> None:
     questions = tool_input.get('questions') or []
-    attrs['questions'] = [
-        {
-            'question': q.get('question'),
-            'header': q.get('header'),
-            'options': [_ask_option(o) for o in (q.get('options') or [])],
-            'multiSelect': q.get('multiSelect', False),
-        }
-        for q in questions
-    ]
-    answers = tool_response.get('answers') or tool_input.get('answers') or {}
-    if answers:
-        attrs['answers'] = answers
-    annotations = tool_response.get('annotations') or tool_input.get('annotations') or {}
-    if annotations:
-        attrs['annotations'] = annotations
+    attrs['questions'] = [_ask_question(q) for q in questions]
+    for key in ('answers', 'annotations'):
+        value = tool_response.get(key) or tool_input.get(key)
+        if value:
+            attrs[key] = value
+
+
+def _ask_question(q: dict) -> dict:
+    return {
+        'question': q.get('question'),
+        'header': q.get('header'),
+        'options': [_ask_option(o) for o in (q.get('options') or [])],
+        'multiSelect': q.get('multiSelect', False),
+    }
 
 
 def _build_toolsearch_attrs(attrs: dict, tool_input: dict, tool_response: dict, payload: HookPayload) -> None:
