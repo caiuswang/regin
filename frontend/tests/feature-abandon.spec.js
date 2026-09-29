@@ -44,6 +44,10 @@ async function confirmShip(page) {
 async function stubLedger(page, body = ledger()) {
   await page.route(/\/api\/features\/242$/, (route) =>
     route.fulfill({ json: body }))
+  // The ledger's Slices panel reads its own endpoint; left to the e2e server
+  // it answers "no feature 242" as a second role=alert.
+  await page.route(/\/api\/features\/242\/slices$/, (route) =>
+    route.fulfill({ json: { rows: [], sliceable: false, tail_missing: false } }))
 }
 
 test('test_abandon_is_reachable_from_the_ui', async ({ page }) => {

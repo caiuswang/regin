@@ -4,11 +4,15 @@
 // looked up on the page, not inside the row.
 export async function rowAction(row, verb) {
   const primary = row.getByTestId(`task-action-${verb}`)
+  const menu = row.getByTestId('task-menu')
+  // count() does not wait: before the row renders it reads 0 and would send
+  // a primary verb to the menu, where it is never offered.
+  await primary.or(menu).first().waitFor()
   if (await primary.count()) {
     await primary.click()
     return
   }
-  await row.getByTestId('task-menu').click()
+  await menu.click()
   await row.page().getByRole('menu').getByTestId(`task-verb-${verb}`).click()
 }
 

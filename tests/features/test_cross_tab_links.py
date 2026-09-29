@@ -183,7 +183,10 @@ def test_arriving_by_the_count_ignores_the_filters_that_would_shrink_it(tmp_db):
                                         tasks.index("const NARROWING = ") + 200]
     # … and touching a control ends its suspension, because a control writes
     # its axis into the URL and the URL is read back as the state.
-    assert "if (axis in STORED) store(axis, value)" in tasks
+    # Only `group` is exempt (a `?group=` anchor is not a pick); every
+    # narrowing axis is stored the moment its control writes it.
+    assert ("if (axis in STORED && (axis !== 'group' || 'group' in next)) "
+            "store(axis, value)") in tasks
 
     # An axis the same link names explicitly still wins, by the one rule the
     # whole surface rests on: what the URL states, the URL states.

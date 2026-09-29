@@ -7,7 +7,7 @@
  * The server half of the carry is pinned in tests/features/test_project_carry.py.
  */
 import { test, expect } from './auth-fixture.js'
-import { rowAction } from './helpers/rowAction.js'
+import { rowAction, verbsFor } from './helpers/rowAction.js'
 
 const REPOS = [
   { id: 7, name: 'regin', path: '/r/regin' },
@@ -57,6 +57,7 @@ function task(over = {}) {
     project_id: 9, feature_id: null, assignee: null, assignee_name: null,
     external_id: null, created_by: 1, created_at: '2026-09-14 10:00:00',
     updated_at: '2026-09-14 10:00:00', images: [], run_count: 0, armed: null,
+    ...verbsFor(over.status ?? 'idea'),
     ...over,
   }
 }
