@@ -115,20 +115,30 @@ def auto_tag_domain(layers: dict, repo_name: str) -> list:
     """
     tags = set()
     for layer_name in layers:
-        if layer_name in LAYER_AUTO_TAGS:
-            tags.update(LAYER_AUTO_TAGS[layer_name])
+        tags.update(LAYER_AUTO_TAGS.get(layer_name, ()))
     for info in layers.values():
         content = info.get('content', '') if isinstance(info, dict) else ''
-        for ann, ann_tags in ANNOTATION_TAGS.items():
-            if ann in content:
-                tags.update(ann_tags)
+        tags |= _tags_in_content(content)
     tags |= _tags_from_repo(repo_name)
-    layer_names = set(layers.keys())
+    tags |= _tags_from_layer_combinations(set(layers.keys()))
+    return sorted(tags)
+
+
+def _tags_in_content(content: str) -> set:
+    tags = set()
+    for ann, ann_tags in ANNOTATION_TAGS.items():
+        if ann in content:
+            tags.update(ann_tags)
+    return tags
+
+
+def _tags_from_layer_combinations(layer_names: set) -> set:
+    tags = set()
     for combo in _LAYER_COMBINATIONS:
         required = set(combo.get('any_of') or [])
         if layer_names & required:
             tags.update(combo.get('tags') or [])
-    return sorted(tags)
+    return tags
 
 
 def ensure_tags_exist(tag_names: list) -> None:
