@@ -97,35 +97,37 @@ def _set_frontmatter_description(content: str, new_description: str) -> str:
     fm_inner = parts[1]
     rest = "---" + parts[2]
 
-    desc_re = re.compile(
-        r"(^|\n)description:[^\n]*(?:\n[ \t]+[^\n]*)*\n",
-    )
-
     if not collapsed:
-        if desc_re.search(fm_inner):
-            new_fm = desc_re.sub(lambda m: m.group(1) or "", fm_inner, count=1)
+        if _FM_DESCRIPTION_RE.search(fm_inner):
+            new_fm = _FM_DESCRIPTION_RE.sub(lambda m: m.group(1) or "", fm_inner, count=1)
             return f"---{new_fm}{rest}"
         return content
 
     escaped = _yaml_double_quote_escape(collapsed)
     new_line = f'description: "{escaped}"\n'
+    return f"---{_frontmatter_with_description_line(fm_inner, new_line)}{rest}"
 
-    if desc_re.search(fm_inner):
-        new_fm = desc_re.sub(lambda m: (m.group(1) or "") + new_line, fm_inner, count=1)
-        return f"---{new_fm}{rest}"
 
-    title_re = re.compile(
-        r"(^|\n)title:[^\n]*(?:\n[ \t]+[^\n]*)*\n",
-    )
-    m = title_re.search(fm_inner)
+_FM_DESCRIPTION_RE = re.compile(
+    r"(^|\n)description:[^\n]*(?:\n[ \t]+[^\n]*)*\n",
+)
+_FM_TITLE_RE = re.compile(
+    r"(^|\n)title:[^\n]*(?:\n[ \t]+[^\n]*)*\n",
+)
+
+
+def _frontmatter_with_description_line(fm_inner: str, new_line: str) -> str:
+    """Replace the existing description block, else insert after `title:`,
+    else at the top of the frontmatter."""
+    if _FM_DESCRIPTION_RE.search(fm_inner):
+        return _FM_DESCRIPTION_RE.sub(
+            lambda m: (m.group(1) or "") + new_line, fm_inner, count=1)
+    m = _FM_TITLE_RE.search(fm_inner)
     if m:
-        new_fm = fm_inner[: m.end()] + new_line + fm_inner[m.end():]
-    else:
-        if fm_inner.startswith("\n"):
-            new_fm = "\n" + new_line + fm_inner.lstrip("\n")
-        else:
-            new_fm = new_line + fm_inner
-    return f"---{new_fm}{rest}"
+        return fm_inner[: m.end()] + new_line + fm_inner[m.end():]
+    if fm_inner.startswith("\n"):
+        return "\n" + new_line + fm_inner.lstrip("\n")
+    return new_line + fm_inner
 
 
 def _sync_doc_from_frontmatter(doc: PatternDoc, frontmatter: str) -> None:
