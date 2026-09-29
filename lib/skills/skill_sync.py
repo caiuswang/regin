@@ -409,54 +409,64 @@ def push(skill_id, force=False, target_dir=None):
     t = entry['type']
 
     if t == 'auto':
-        if target_dir is not None:
-            return f"skipped: {skill_id} is an auto skill and cannot be pushed to a project"
-        if skill_id == 'grit-rules':
-            from lib.rules import grit_rule_index
-            from lib.skills.skill_deployer import deploy_rules_index_skill
-            summary = grit_rule_index.regenerate(write_guides=True)
-            path = deploy_rules_index_skill(summary['rules_md'])
-            return f"pushed auto {skill_id} -> {path}"
-        if skill_id == 'python-complexity':
-            from lib.skills.skill_deployer import deploy_python_complexity_skill
-            path = deploy_python_complexity_skill()
-            return f"pushed auto {skill_id} -> {path}"
-        return f"skipped: unknown auto skill generator for {skill_id}"
+        return _push_auto(skill_id, target_dir)
 
     if not source_exists(skill_id):
         return f"skipped: {skill_id} has no source at {source_path(skill_id)}"
 
     # Drift check is only meaningful for the global deployment.
-    if target_dir is None:
-        current = state(skill_id)
-        if current == STATE_DRIFTED and not force:
-            from lib import experiments
-            pid = entry.get('procedure_id')
-            has_experiment = pid and experiments.get_active(pid)
-            reason = "an active concealment experiment" if has_experiment else "unmerged edits in the deployed copy"
-            return (
-                f"confirm-force: {skill_id} is drifted due to {reason}. "
-                f"Force push will overwrite the deployed version. Source is not affected."
-            )
+    if target_dir is None and not force and state(skill_id) == STATE_DRIFTED:
+        return _drift_refusal(skill_id, entry)
 
     if t == 'pattern':
-        from lib.skills.skill_deployer import deploy_pattern_as_skill
-        title = _read_title(source_skill_md(skill_id)) or skill_id
-        path = deploy_pattern_as_skill(source_path(skill_id), skill_id, title, target_dir=target_dir)
-        extra = ""
-        if target_dir is None:
-            # Global push: re-enable the pattern's linked rules in the index.
-            re_enabled = _set_linked_rules_disabled(skill_id, False)
-            if re_enabled:
-                extra = f" + re-enabled {len(re_enabled)} linked rule(s)"
-        else:
-            # Project push: also install the pattern's grit rules into the
-            # target repo's `.grit/` so the repo-local PostToolUse hook
-            # enforces them (the skill copy alone doesn't enable enforcement).
-            extra = _sync_pattern_grit_to_project(skill_id, target_dir)
-        return f"pushed pattern {skill_id} -> {path}{extra}"
+        return _push_pattern(skill_id, target_dir)
 
     raise ValueError(f"unknown skill type: {t}")
+
+
+def _push_auto(skill_id, target_dir):
+    if target_dir is not None:
+        return f"skipped: {skill_id} is an auto skill and cannot be pushed to a project"
+    if skill_id == 'grit-rules':
+        from lib.rules import grit_rule_index
+        from lib.skills.skill_deployer import deploy_rules_index_skill
+        summary = grit_rule_index.regenerate(write_guides=True)
+        path = deploy_rules_index_skill(summary['rules_md'])
+        return f"pushed auto {skill_id} -> {path}"
+    if skill_id == 'python-complexity':
+        from lib.skills.skill_deployer import deploy_python_complexity_skill
+        path = deploy_python_complexity_skill()
+        return f"pushed auto {skill_id} -> {path}"
+    return f"skipped: unknown auto skill generator for {skill_id}"
+
+
+def _drift_refusal(skill_id, entry):
+    from lib import experiments
+    pid = entry.get('procedure_id')
+    has_experiment = pid and experiments.get_active(pid)
+    reason = "an active concealment experiment" if has_experiment else "unmerged edits in the deployed copy"
+    return (
+        f"confirm-force: {skill_id} is drifted due to {reason}. "
+        f"Force push will overwrite the deployed version. Source is not affected."
+    )
+
+
+def _push_pattern(skill_id, target_dir):
+    from lib.skills.skill_deployer import deploy_pattern_as_skill
+    title = _read_title(source_skill_md(skill_id)) or skill_id
+    path = deploy_pattern_as_skill(source_path(skill_id), skill_id, title, target_dir=target_dir)
+    extra = ""
+    if target_dir is None:
+        # Global push: re-enable the pattern's linked rules in the index.
+        re_enabled = _set_linked_rules_disabled(skill_id, False)
+        if re_enabled:
+            extra = f" + re-enabled {len(re_enabled)} linked rule(s)"
+    else:
+        # Project push: also install the pattern's grit rules into the
+        # target repo's `.grit/` so the repo-local PostToolUse hook
+        # enforces them (the skill copy alone doesn't enable enforcement).
+        extra = _sync_pattern_grit_to_project(skill_id, target_dir)
+    return f"pushed pattern {skill_id} -> {path}{extra}"
 
 
 def _sync_pattern_grit_to_project(skill_id, target_dir) -> str:
