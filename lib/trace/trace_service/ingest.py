@@ -282,87 +282,99 @@ def _turn_usage_model(conn, tid: str) -> str | None:
 def _refresh_session_aggregates(conn, trace_ids) -> None:
     """Re-derive session-row aggregates from turn_usage so the
     header/list views stay authoritative."""
+    for tid in trace_ids:
+        _refresh_one_session_aggregates(conn, tid)
+
+
+def _main_turn_rows(conn, tid: str) -> list:
+    # "Main" turns exclude those whose API call rolled in a
+    # server-side sub-call. Anthropic charges the advisor's
+    # internal iterations to the parent turn's `usage`, so those
+    # turns overstate main-conversation context size. The
+    # corresponding span carries attributes.server_side=true.
+    # The turn_uuid column on session_spans is populated lazily
+    # by ingest_tool_attribution, so we COALESCE with the value
+    # the hook stamped into attributes.turn_uuid — guaranteed
+    # present from the first ingest of any server_side span.
+    # We pull the per-turn rows (not a bare MAX) to derive two
+    # numbers from them: the all-time main peak, and the live peak.
+    return conn.execute("""
+        SELECT tu.timestamp, tu.context_used_tokens
+          FROM turn_usage tu
+         WHERE tu.trace_id = ?
+           AND NOT EXISTS (
+               SELECT 1 FROM session_spans ss
+                WHERE ss.trace_id = tu.trace_id
+                  AND COALESCE(ss.turn_uuid,
+                               json_extract(ss.attributes, '$.turn_uuid'))
+                      = tu.turn_uuid
+                  AND json_extract(ss.attributes, '$.server_side') = 1
+           )
+    """, (tid,)).fetchall()
+
+
+def _session_model(conn, tid: str):
+    # Read sessions.model (may be None for a freshly-ingesting
+    # session) to compute the window; infer_window handles the
+    # None case gracefully.
+    sess = conn.execute(
+        "SELECT model FROM sessions WHERE trace_id = ?", (tid,)
+    ).fetchone()
+    model = (sess[0] if sess else None) or None
+    # A live session has no model yet: the only span-borne carriers
+    # (`session.start`, `turn`, `assistant_response`) arrive with
+    # transcript replay, while `turn_usage` — already open here — has
+    # carried the model from the first turn. Without this the window
+    # falls back to 200K mid-session and every ctx% reads inflated
+    # (a 1M-window model showed 5x its real usage) until the session
+    # ends. Persisted by the caller so read-time window inference agrees.
+    return model or _turn_usage_model(conn, tid)
+
+
+def _refresh_one_session_aggregates(conn, tid: str) -> None:
     from lib.tokens.model_windows import infer_window
 
-    for tid in trace_ids:
-        row = conn.execute("""
-            SELECT SUM(input_tokens),  SUM(output_tokens),
-                   SUM(cache_read_tokens), SUM(cache_creation_tokens),
-                   MAX(context_used_tokens),
-                   COUNT(*),
-                   SUM(cost_usd)
-            FROM turn_usage WHERE trace_id = ?
-        """, (tid,)).fetchone()
-        if not row or row[5] == 0:
-            continue
-        (in_tot, out_tot, cread, ccreate, peak, _cnt, cost_tot) = row
-        # "Main" turns exclude those whose API call rolled in a
-        # server-side sub-call. Anthropic charges the advisor's
-        # internal iterations to the parent turn's `usage`, so those
-        # turns overstate main-conversation context size. The
-        # corresponding span carries attributes.server_side=true.
-        # The turn_uuid column on session_spans is populated lazily
-        # by ingest_tool_attribution, so we COALESCE with the value
-        # the hook stamped into attributes.turn_uuid — guaranteed
-        # present from the first ingest of any server_side span.
-        # We pull the per-turn rows (not a bare MAX) to derive two
-        # numbers from them: the all-time main peak, and the live peak.
-        main_rows = conn.execute("""
-            SELECT tu.timestamp, tu.context_used_tokens
-              FROM turn_usage tu
-             WHERE tu.trace_id = ?
-               AND NOT EXISTS (
-                   SELECT 1 FROM session_spans ss
-                    WHERE ss.trace_id = tu.trace_id
-                      AND COALESCE(ss.turn_uuid,
-                                   json_extract(ss.attributes, '$.turn_uuid'))
-                          = tu.turn_uuid
-                      AND json_extract(ss.attributes, '$.server_side') = 1
-               )
-        """, (tid,)).fetchall()
-        main_ctx = [r[1] for r in main_rows if isinstance(r[1], int)]
-        peak_main = max(main_ctx) if main_ctx else None
-        # Live context peak: the high-water mark *since the most recent
-        # `/compact`*. A compaction (manual or auto) resets Claude
-        # Code's live context window, but the all-time peaks above stay
-        # pinned at the pre-compaction high and misrepresent how full
-        # the window is now. `live_context_tokens` drives the headline
-        # ctx% so it drops when the session compacts; the all-time peaks
-        # remain for window inference and the pre-compaction hint.
-        live = _live_context_peak(conn, tid, main_rows, peak_main)
-        # Read sessions.model (may be None for a freshly-ingesting
-        # session) to compute the window; infer_window handles the
-        # None case gracefully. Window inference still uses the
-        # all-inclusive peak — the 1M-variant promotion heuristic
-        # needs to see advisor-inflated turns to fire on sessions
-        # whose main flow never crosses 200K but ran on `[1m]`.
-        sess = conn.execute(
-            "SELECT model FROM sessions WHERE trace_id = ?", (tid,)
-        ).fetchone()
-        model = (sess[0] if sess else None) or None
-        # A live session has no model yet: the only span-borne carriers
-        # (`session.start`, `turn`, `assistant_response`) arrive with
-        # transcript replay, while `turn_usage` — already open here — has
-        # carried the model from the first turn. Without this the window
-        # falls back to 200K mid-session and every ctx% reads inflated
-        # (a 1M-window model showed 5x its real usage) until the session
-        # ends. Persisted below so read-time window inference agrees.
-        if not model:
-            model = _turn_usage_model(conn, tid)
-        window = infer_window(model, int(peak or 0))
-        conn.execute("""
-            UPDATE sessions SET
-                input_tokens = ?, output_tokens = ?,
-                cache_read_tokens = ?, cache_creation_tokens = ?,
-                peak_context_tokens = ?,
-                peak_main_context_tokens = ?,
-                live_context_tokens = ?,
-                context_window_tokens = ?,
-                cost_usd = ?,
-                model = COALESCE(model, ?)
-            WHERE trace_id = ?
-        """, (in_tot, out_tot, cread, ccreate, peak, peak_main, live, window,
-              cost_tot, model, tid))
+    row = conn.execute("""
+        SELECT SUM(input_tokens),  SUM(output_tokens),
+               SUM(cache_read_tokens), SUM(cache_creation_tokens),
+               MAX(context_used_tokens),
+               COUNT(*),
+               SUM(cost_usd)
+        FROM turn_usage WHERE trace_id = ?
+    """, (tid,)).fetchone()
+    if not row or row[5] == 0:
+        return
+    (in_tot, out_tot, cread, ccreate, peak, _cnt, cost_tot) = row
+    main_rows = _main_turn_rows(conn, tid)
+    main_ctx = [r[1] for r in main_rows if isinstance(r[1], int)]
+    peak_main = max(main_ctx) if main_ctx else None
+    # Live context peak: the high-water mark *since the most recent
+    # `/compact`*. A compaction (manual or auto) resets Claude
+    # Code's live context window, but the all-time peaks above stay
+    # pinned at the pre-compaction high and misrepresent how full
+    # the window is now. `live_context_tokens` drives the headline
+    # ctx% so it drops when the session compacts; the all-time peaks
+    # remain for window inference and the pre-compaction hint.
+    live = _live_context_peak(conn, tid, main_rows, peak_main)
+    model = _session_model(conn, tid)
+    # Window inference still uses the all-inclusive peak — the
+    # 1M-variant promotion heuristic needs to see advisor-inflated
+    # turns to fire on sessions whose main flow never crosses 200K
+    # but ran on `[1m]`.
+    window = infer_window(model, int(peak or 0))
+    conn.execute("""
+        UPDATE sessions SET
+            input_tokens = ?, output_tokens = ?,
+            cache_read_tokens = ?, cache_creation_tokens = ?,
+            peak_context_tokens = ?,
+            peak_main_context_tokens = ?,
+            live_context_tokens = ?,
+            context_window_tokens = ?,
+            cost_usd = ?,
+            model = COALESCE(model, ?)
+        WHERE trace_id = ?
+    """, (in_tot, out_tot, cread, ccreate, peak, peak_main, live, window,
+          cost_tot, model, tid))
 
 
 def ingest_turn_usage(rows: list[dict]) -> tuple[int, int]:
