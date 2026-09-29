@@ -237,10 +237,8 @@ test('the docked composer carries the same session context the feed does', async
   await expect(feedPanel).toContainText('sonnet-4.6')
   await expect(feedPanel).toContainText('ctx 41% used')
   await expect(feedPanel.getByTestId('trace-terminal-btn')).toBeVisible()
-  // At 1280x720 the expanded header plus an open feed composer leave the
-  // bounded feed zero rows tall, so the row the reader opens from is clipped
-  // under the dock. The parity under test is between the two mounts, not
-  // both open at once.
+  // The parity under test is between the two mounts, not both open at once —
+  // dismiss the feed's before opening the reader's.
   await feedPanel.getByRole('button', { name: 'Dismiss composer' }).click()
   await expect(feedPanel).toHaveCount(0)
 
@@ -249,6 +247,38 @@ test('the docked composer carries the same session context the feed does', async
   await expect(composer(page)).toContainText('sonnet-4.6')
   await expect(composer(page)).toContainText('ctx 41% used')
   await expect(composer(page).getByTestId('trace-terminal-btn')).toBeVisible()
+})
+
+// Defect #212: at 1280x720 (Playwright's default viewport) the expanded
+// header + stats + activity strip leave the bounded feed column ~180px, and
+// the feed's own open composer used to claim every pixel of it — the
+// transcript scroll region collapsed to 0px tall (invisible, unscrollable,
+// and unrecoverable: the usual escape is scrolling to collapse the header,
+// which a 0-height scroller can't do), while the composer sat over whatever
+// would have rendered beneath it.
+test('an open feed composer at 1280x720 never zeroes out the transcript', async ({ page }) => {
+  test.setTimeout(90_000)
+  await seed(page)
+  await page.getByTestId('followup-pill').click()
+
+  const scroller = page.locator('[data-testid="trace-conversation-feed"] [data-trace-scroller]')
+  await expect(scroller).toBeVisible()
+  const height = await scroller.evaluate((el) => el.clientHeight)
+  expect(height).toBeGreaterThan(0)
+
+  // Genuinely usable, not a 1px sliver: the seeded prompt row must be both
+  // visible and the thing that actually receives the click (not the dock
+  // sitting over it).
+  const promptRow = page.locator('[data-testid="trace-conversation-feed"] .conversation-scroll')
+    .getByText('Add token-bucket rate limiting.')
+  await expect(promptRow).toBeVisible()
+  await promptRow.click({ timeout: 5000 })
+
+  // The composer itself must stay reachable — scrollable to Send, not clipped
+  // off under the fixed-viewport shell.
+  const dock = page.locator('[data-testid="trace-conversation-feed"] .followup-dock')
+  await dock.evaluate((el) => { el.scrollTop = el.scrollHeight })
+  await expect(page.getByTestId('followup-send')).toBeVisible()
 })
 
 // The send lifecycle is the composer's, not the host's: a delivered send

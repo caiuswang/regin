@@ -1073,7 +1073,7 @@ function revealFolds(entry) {
 .conv-bounded .conversation-feed { display: flex; flex-direction: column; min-height: 0; }
 .conv-bounded .conversation-scroll {
   flex: 1;
-  min-height: 0;
+  min-height: 6rem;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
@@ -1087,4 +1087,20 @@ function revealFolds(entry) {
    rides above the composer without either measuring the other. */
 .conv-bounded .follow-pill-rail { position: relative; height: 0; }
 .conv-bounded .follow-pill { position: absolute; bottom: 0.75rem; }
+
+/* The dock's own `flex-shrink: 0` (its default context has no bounded
+   ancestor to shrink against) plus its content's automatic min-size meant a
+   plain flex sibling here could never give up height — so a short viewport
+   with the full header expanded handed the whole deficit to
+   `.conversation-scroll` above instead, collapsing the transcript to 0px
+   (defect #212). Letting it shrink, with `overflow-y: auto` (the standard
+   flex trick that drops an item's automatic min-size to 0 once its overflow
+   isn't `visible`), means that once the transcript has claimed its floor the
+   composer is what gives — scrolling its own chrome internally rather than
+   pushing the transcript out or overlapping whatever renders after it. */
+.conv-bounded .conversation-feed :deep(.followup-dock) {
+  flex-shrink: 1;
+  min-height: 3rem;
+  overflow-y: auto;
+}
 </style>
