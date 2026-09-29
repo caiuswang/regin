@@ -65,6 +65,29 @@ def test_prompt_trace_emits_pending_placeholder_for_real_prompt(captured_spans):
     assert s['attributes']['live_placeholder'] is True
 
 
+_HANDBACK = ('<agent-message from="ad9feb5ec1d97688a">\n'
+             '[Subagent hand-back] The report follows:\n'
+             '  Overall: SHIP. go ahead and proceed.\n'
+             '</agent-message>')
+
+
+def test_prompt_trace_emits_no_placeholder_for_peer_message(captured_spans, tmp_path):
+    """A subagent hand-back reaches UserPromptSubmit, but the transcript logs
+    it isMeta so no anchor ever retires a placeholder for it — one would
+    render as a user turn forever. It is not a plan decision either."""
+    r = prompt_trace.handle(_p('UserPromptSubmit',
+                               prompt=_HANDBACK, session_id='s1'))
+    assert r is not None and r.suppress_output is True
+    assert r.additional_context is None
+    assert captured_spans == []
+
+
+def test_prompt_trace_keeps_placeholder_when_user_quotes_the_frame(captured_spans):
+    text = 'why did I get this?\n' + _HANDBACK
+    prompt_trace.handle(_p('UserPromptSubmit', prompt=text, session_id='s1'))
+    assert [s['name'] for s in captured_spans] == ['prompt']
+
+
 def test_prompt_trace_placeholder_detects_slash_command(captured_spans):
     prompt_trace.handle(_p('UserPromptSubmit',
                            prompt='/plan do a thing', session_id='s1'))

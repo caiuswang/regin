@@ -22,6 +22,7 @@ import os
 import time
 
 from lib.providers import get_active_provider
+from lib.trace.peer_message import is_peer_message
 from lib.trace.task_notification import parse_task_notification
 
 from ..core import HookPayload, HookResponse
@@ -85,6 +86,12 @@ def handle(payload: HookPayload) -> HookResponse | None:
             _emit_task_notification_span(payload, text, task_fields)
         except Exception:
             pass
+        return HookResponse(suppress_output=True)
+
+    # A subagent hand-back or cross-session message never gets a transcript
+    # anchor (Claude Code logs it isMeta), so its placeholder would never
+    # retire and would render as a user turn forever.
+    if is_peer_message(text):
         return HookResponse(suppress_output=True)
 
     # Real prompt: emit a live PENDING placeholder so the trace shows the

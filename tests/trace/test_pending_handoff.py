@@ -60,6 +60,20 @@ def test_merge_keeps_in_flight_placeholder_with_no_anchor_yet():
     assert _survivors(rows) == {pid}
 
 
+def test_merge_drops_peer_message_placeholder_that_no_anchor_retires():
+    """A hook placeholder stored for a subagent hand-back has no anchor to
+    retire it; as the session's newest prompt it must still not survive as a
+    user turn."""
+    text = '<agent-message from="ad9feb5ec1d97688a">\n[Subagent hand-back] ok'
+    peer = prompt_placeholder_id('t1', text)
+    rows = [
+        _row('prompt-abcdef0123456', 'prompt', {'text': 'fix it'}, id=1),
+        _row(peer, 'prompt', {'text': text, 'live_placeholder': True},
+             status='PENDING', id=2),
+    ]
+    assert _survivors(rows) == {'prompt-abcdef0123456'}
+
+
 def test_merge_pending_tool_superseded_by_resolved_tool():
     tu = 'toolu_abc123456789'
     rows = [

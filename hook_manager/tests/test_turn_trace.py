@@ -1158,6 +1158,33 @@ def test_queued_command_emits_prompt_span(captured_spans, tmp_path, monkeypatch)
     assert s['attributes']['queued'] is True
 
 
+def test_queued_peer_message_emits_no_prompt_span(captured_spans, tmp_path, monkeypatch):
+    """A subagent hand-back delivered mid-turn is a prompt-mode
+    `queued_command` too, but its `origin.kind` is `peer`: the user never
+    typed it, so it must not become a user-turn anchor. A human-origin
+    queued prompt beside it still does."""
+    monkeypatch.setenv('REGIN_TURN_TRACE_STATE_DIR', str(tmp_path / '_state'))
+    transcript = tmp_path / 'session.jsonl'
+    _write_transcript(transcript, [
+        {'type': 'user', 'uuid': 'u1', 'message': {'content': 'go'}},
+        {'type': 'attachment', 'uuid': 'qpeer-abc123456xyz',
+         'parentUuid': 'u1', 'timestamp': '2026-04-27T12:00:05Z',
+         'attachment': {'type': 'queued_command',
+                        'prompt': '<agent-message from="a6f3">\nreport\n</agent-message>',
+                        'commandMode': 'prompt', 'isMeta': True,
+                        'origin': {'kind': 'peer', 'from': 'a6f3'}}},
+        {'type': 'attachment', 'uuid': 'qhuman-abc12345xyz',
+         'parentUuid': 'qpeer-abc123456xyz', 'timestamp': '2026-04-27T12:00:06Z',
+         'attachment': {'type': 'queued_command', 'prompt': 'typed by me',
+                        'commandMode': 'prompt', 'origin': {'kind': 'human'}}},
+    ])
+    turn_trace.handle(_p('UserPromptSubmit', session_id='qc-peer',
+                         transcript_path=str(transcript)))
+    texts = [s['attributes']['text'] for s in captured_spans
+             if s.get('name') == 'prompt']
+    assert texts == ['typed by me']
+
+
 def test_queued_command_anchor_retimed_to_first_response(captured_spans, tmp_path, monkeypatch):
     """The recovered queued-prompt anchor sorts at its FIRST RESPONSE (the
     first turn at/after the attachment ts), not its type-time — so it groups

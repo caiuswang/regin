@@ -3,6 +3,7 @@ and denied-call duplicates."""
 
 from __future__ import annotations
 
+from lib.trace.peer_message import is_peer_message
 from lib.trace.pending_spans import is_pending_span_id, pending_id_for_resolved
 from lib.trace.alias import ORIGIN_KEY as _ORIGIN_KEY
 from lib.trace.merge_anchors import _attrs, _is_expansion_anchor
@@ -125,6 +126,7 @@ def _drop_superseded_placeholders(spans: list[dict]) -> list[dict]:
         for s in spans if is_pending_span_id(s.get('span_id'))
     }
     drop, inherit = _classify_supersessions(spans, placeholders)
+    drop |= _peer_message_placeholders(placeholders)
     if not drop:
         return spans
     out: list[dict] = []
@@ -134,6 +136,16 @@ def _drop_superseded_placeholders(spans: list[dict]) -> list[dict]:
         ph = inherit.get(s.get('span_id'))
         out.append(_inherit_turn_linkage(s, ph) if ph is not None else s)
     return out
+
+
+def _peer_message_placeholders(placeholders: dict) -> set[tuple]:
+    """Prompt placeholders a hook wrote for a harness peer message. Nothing
+    ever supersedes them — the transcript logs the message isMeta, so no
+    anchor lands — and they would render as a user turn indefinitely."""
+    return {
+        key for key, s in placeholders.items()
+        if s.get('name') == 'prompt' and is_peer_message(_attrs(s).get('text'))
+    }
 
 
 def _gate_resolved_tool_name(span: dict) -> str | None:

@@ -11,6 +11,7 @@ from lib.tokens.token_estimator import (
     estimate_tool_use_tokens,
 )
 from lib.trace.transcript_models import TurnUsage, has_encrypted_thinking
+from lib.trace.peer_message import is_non_human_origin
 from lib.trace.prompt_images_resolve import extract_image_parts
 from lib.trace.transcript_parsers import (
     _delta_ms,
@@ -247,9 +248,13 @@ def queued_prompt_content(att_payload: dict) -> tuple[str | None, list[dict]]:
     content blocks (text + image) when the queued prompt carried pasted
     images — same dual shape as a user entry's `message.content`. A
     non-prompt `command_mode` (queued slash command) returns `(None, [])`:
-    it is not a model prompt and never anchors a turn."""
+    it is not a model prompt and never anchors a turn. Neither does a
+    prompt-mode entry the harness produced (a subagent hand-back arrives as
+    `origin.kind == 'peer'`): the user never typed it."""
     mode = att_payload.get('command_mode')
     if mode is not None and mode != 'prompt':
+        return None, []
+    if is_non_human_origin(att_payload.get('origin')):
         return None, []
     prompt = att_payload.get('prompt')
     return _user_prompt_text(prompt), extract_image_parts(prompt)
