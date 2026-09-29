@@ -257,12 +257,24 @@ def _announce_spans(normalised) -> None:
     on, so a fan-out failure costs the caller nothing.
     """
     from lib.notifications import hub
+
+    moved = _spans_by_canonical(normalised)
+    # Resolving each group costs a query, and this runs inside an ingest a hook
+    # is blocking on. With nobody watching there is no frame to build.
+    if not moved or not hub.subscriber_count():
+        return
+    groups = _canonical_trace_groups(moved)
+    if groups is None:
+        return
+    _broadcast_trace_frames(hub, moved, groups)
+
+
+def _spans_by_canonical(normalised) -> dict | None:
+    """Span ids per canonical trace, so a reader holding this batch's spans can
+    refresh exactly them instead of re-fetching every body under the tail.
+    None when the alias lookup fails."""
     from lib.trace.alias import canonical_trace_id
 
-    from lib.trace.trace_service import projection_cache
-
-    # span ids per canonical trace, so a reader holding this batch's spans can
-    # refresh exactly them instead of re-fetching every body under the tail.
     moved: dict[str, list] = {}
     for span, _attrs in normalised:
         trace_id = span.get('trace_id')
@@ -271,18 +283,14 @@ def _announce_spans(normalised) -> None:
         try:
             canonical = canonical_trace_id(trace_id) or trace_id
         except Exception:  # noqa: BLE001 - a wake-up must never fail an ingest
-            return
-        span_id = span.get('span_id')
-        if span_id:
-            moved.setdefault(canonical, []).append(span_id)
-        else:
-            moved.setdefault(canonical, [])
+            return None
+        ids = moved.setdefault(canonical, [])
+        if span.get('span_id'):
+            ids.append(span['span_id'])
+    return moved
 
-    # Resolving each group costs a query, and this runs inside an ingest a hook
-    # is blocking on. With nobody watching there is no frame to build.
-    if not moved or not hub.subscriber_count():
-        return
 
+def _canonical_trace_groups(moved) -> dict | None:
     from lib.orm.engine import get_connection
     from lib.trace.alias import trace_group
 
@@ -293,11 +301,15 @@ def _announce_spans(normalised) -> None:
             # reader compares the two, so a frame quoting one member's counter
             # would read as a permanent mismatch and cost the session its
             # cheap path for good.
-            groups = {c: trace_group(conn, c) for c in moved}
+            return {c: trace_group(conn, c) for c in moved}
         finally:
             conn.close()
     except Exception:  # noqa: BLE001 - a wake-up must never fail an ingest
-        return
+        return None
+
+
+def _broadcast_trace_frames(hub, moved, groups) -> None:
+    from lib.trace.trace_service import projection_cache
 
     for canonical, span_ids in moved.items():
         try:
