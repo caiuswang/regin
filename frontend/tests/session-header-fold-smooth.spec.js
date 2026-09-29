@@ -55,30 +55,39 @@ const pull = (page) => wheel(page, -60, 24)
 // Sample the sticky wrapper's height every animation frame while `action`
 // runs, then reduce to the count of DISTINCT intermediate heights — values
 // clear of both settled endpoints. An instant swap yields 0; a tween yields
-// a staircase.
+// a staircase. `tweenFrames` counts frames with a running height animation
+// anywhere in the header — the glide itself, as opposed to a one-off reflow
+// (the compact header re-wrapping once its late content lands).
 async function sampleFold(page, action, ms = 900) {
   const sampler = page.evaluate((windowMs) => new Promise((resolve) => {
     window.__foldSampling = true
     const el = document.querySelector('[data-testid="trace-sticky-header"]')
     const heights = []
+    let tweenFrames = 0
+    const tweensHeight = (a) => a.playState === 'running'
+      && (a.effect?.getKeyframes?.() || []).some((k) => 'height' in k)
     const t0 = performance.now()
     function tick() {
       heights.push(el.getBoundingClientRect().height)
+      if (el.getAnimations({ subtree: true }).some(tweensHeight)) tweenFrames++
       if (performance.now() - t0 < windowMs) requestAnimationFrame(tick)
-      else resolve(heights)
+      else resolve({ heights, tweenFrames })
     }
+    // The pre-action height, read now: the first frame can land after an
+    // instant swap has already happened, losing the endpoint it folds from.
+    heights.push(el.getBoundingClientRect().height)
     requestAnimationFrame(tick)
   }), ms)
   await page.waitForFunction(() => window.__foldSampling === true)
   await action()
-  const heights = await sampler
+  const { heights, tweenFrames } = await sampler
   await page.evaluate(() => { delete window.__foldSampling })
   const lo = Math.min(...heights)
   const hi = Math.max(...heights)
   const intermediates = new Set(
     heights.filter((h) => h > lo + 3 && h < hi - 3).map((h) => Math.round(h)),
   )
-  return { heights, lo, hi, intermediates: intermediates.size }
+  return { heights, lo, hi, intermediates: intermediates.size, tweenFrames }
 }
 
 test('expand at the top and manual toggles glide; the scroll-collapse swaps instantly', async ({ page }) => {
@@ -95,7 +104,7 @@ test('expand at the top and manual toggles glide; the scroll-collapse swaps inst
   const collapse = await sampleFold(page, () => wheel(page, 1500))
   await expect(digest).toBeVisible()
   expect(collapse.hi - collapse.lo, 'the fold must actually happen').toBeGreaterThan(40)
-  expect(collapse.intermediates, 'scroll-collapse must not glide').toBe(0)
+  expect(collapse.tweenFrames, 'scroll-collapse must not glide').toBe(0)
 
   // Expanding is a deliberate pull now, and it can only commit once the
   // scroller has settled at the top — so it always fires on a settled scroll
@@ -115,6 +124,8 @@ test('expand at the top and manual toggles glide; the scroll-collapse swaps inst
   const foldDown = await sampleFold(page, () => page.keyboard.press('h'))
   await expect(digest).toBeVisible()
   expect(foldDown.intermediates, 'manual collapse should glide').toBeGreaterThanOrEqual(3)
+  // The detector the no-glide assertions above rely on does see a real glide.
+  expect(foldDown.tweenFrames, 'a glide the tween detector missed').toBeGreaterThan(0)
 
   const foldUp = await sampleFold(page, () => page.keyboard.press('h'))
   await expect(vitals).toBeVisible()
@@ -161,6 +172,8 @@ test('prefers-reduced-motion folds in a single frame', async ({ page }) => {
   await expect(page.getByTestId('trace-vitals-strip')).toBeVisible({ timeout: 10_000 })
   const fold = await sampleFold(page, () => page.keyboard.press('h'), 600)
   await expect(page.getByTestId('trace-header-digest')).toBeVisible()
-  expect(fold.hi - fold.lo, 'the fold itself must still happen').toBeGreaterThan(40)
-  expect(fold.intermediates, 'reduced-motion must not tween').toBe(0)
+  // Relative, not a pixel count: the compact header's height is the design's
+  // to change, the fold's existence is what is pinned here.
+  expect(fold.lo, 'the fold itself must still happen').toBeLessThan(fold.hi * 0.8)
+  expect(fold.tweenFrames, 'reduced-motion must not tween').toBe(0)
 })

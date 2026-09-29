@@ -247,6 +247,14 @@ def test_kept_map_attrs_preserves_skill_experience_labels():
     assert "block" not in kept and "hits" not in kept and "unrelated" not in kept
 
 
+def test_kept_map_attrs_preserves_agent_root_marker():
+    from web.blueprints.trace.sessions import _kept_map_attrs
+    from lib.trace.projection import AGENT_ROOT_KEY
+    kept = _kept_map_attrs({AGENT_ROOT_KEY: True, "agent_id": "a1",
+                            "prompt": "x" * 500})
+    assert kept == {AGENT_ROOT_KEY: True, "agent_id": "a1"}
+
+
 def test_structural_map_keeps_skill_experience_attrs(flask_client, tmp_db):
     with SessionLocal() as session:
         session.add(SessionModel(

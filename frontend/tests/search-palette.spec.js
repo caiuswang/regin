@@ -213,7 +213,8 @@ test.describe('full-text search palette', () => {
   })
 
   test('a span the client never paginated in hydrates into the preview', async ({ page }) => {
-    // Withhold the shell span from the trace loads until the palette is up:
+    // Withhold the shell span from the trace loads until the palette is up —
+    // the map, the per-span /children and the live tail's batched /subtrees:
     // the client model then cannot hold it while the server-side search still
     // finds it, which is the shape of every hit outside the loaded window.
     // Flipped by the test rather than by a delay, so the ordering is exact.
@@ -228,8 +229,11 @@ test.describe('full-text search palette', () => {
     }
     await page.route('**/map**', withhold)
     await page.route('**/children**', withhold)
+    await page.route('**/subtrees**', withhold)
     const subtreeCalls = []
-    page.on('request', r => { if (r.url().includes('/children')) subtreeCalls.push(r.url()) })
+    page.on('request', (r) => {
+      if (/\/(children|subtrees)\b/.test(r.url())) subtreeCalls.push(r.url())
+    })
     await seed(page)
     await openPalette(page, 'Spans')
     await search(page, NEEDLE)
@@ -258,6 +262,7 @@ test.describe('full-text search palette', () => {
     }
     await page.route('**/map**', withhold)
     await page.route('**/children**', withhold)
+    await page.route('**/subtrees**', withhold)
     await seed(page)
 
     // Park the view somewhere a stray setViewMode would visibly move it off.

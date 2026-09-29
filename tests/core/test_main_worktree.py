@@ -15,6 +15,8 @@ resolving one, which is why the submodule case below is load-bearing.
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -30,11 +32,38 @@ def _worktree(tmp_path: Path, gitdir_text: str) -> Path:
     return wt
 
 
-def test_real_git_directory_resolves_to_itself():
+def _git(*args: str, cwd: Path) -> None:
+    subprocess.run(["git", "-c", "user.email=t@example.com", "-c", "user.name=t",
+                    *args], cwd=cwd, check=True, capture_output=True)
+
+
+@pytest.fixture
+def real_checkouts(tmp_path):
+    """A throwaway repo and a `git worktree add` of it — built here rather than
+    read off this repo, which may itself be a linked worktree."""
+    if shutil.which("git") is None:
+        pytest.skip("git is not installed")
+    main = (tmp_path / "main").resolve()
+    main.mkdir()
+    _git("init", "-q", cwd=main)
+    _git("commit", "-q", "--allow-empty", "-m", "root", cwd=main)
+    wt = (tmp_path / "wt").resolve()
+    _git("worktree", "add", "-q", "--detach", str(wt), cwd=main)
+    return main, wt
+
+
+def test_real_git_directory_resolves_to_itself(real_checkouts):
     """A main checkout has a `.git` DIRECTORY; nothing to redirect."""
-    root = Path(__file__).resolve().parents[2]
-    assert (root / ".git").is_dir()
-    assert _main_worktree(root) == root
+    main, _ = real_checkouts
+    assert (main / ".git").is_dir()
+    assert _main_worktree(main) == main
+
+
+def test_real_linked_worktree_resolves_to_its_main(real_checkouts):
+    """The `.git` file real `git worktree add` writes, not a hand-made one."""
+    main, wt = real_checkouts
+    assert (wt / ".git").is_file()
+    assert _main_worktree(wt).resolve() == main
 
 
 def test_linked_worktree_resolves_to_the_main_checkout(tmp_path):
@@ -95,11 +124,12 @@ def test_unreadable_marker_resolves_to_itself(tmp_path):
 
 # ── the paths that actually consume the anchor ───────────────────────────
 
-def test_main_checkout_is_a_no_op(monkeypatch):
-    """In a normal checkout the anchor changes nothing — the invariant that
-    makes this change safe to land."""
+def test_settings_anchor_is_the_main_worktree_of_the_project_root():
+    """Whichever checkout this suite runs from, the settings anchor is what
+    `_main_worktree` resolves for it — the project root itself in a main
+    checkout."""
     from lib.settings import settings
-    assert settings.main_worktree == settings.project_root
+    assert settings.main_worktree == _main_worktree(settings.project_root)
 
 
 def test_memory_db_follows_the_main_worktree(monkeypatch, tmp_path):

@@ -12,7 +12,9 @@ import { test, expect } from './auth-fixture.js'
 // Features has its own stage-tab toolbar (feature #110); Tasks keeps the chassis.
 const TABS = ['/tasks']
 // What `/` focuses on each Pipeline tab.
-const SEARCH = { '/tasks': 'list-search', '/features': 'list-search', '/overview': 'projects-search' }
+// The Overview has no search of its own; its `/` → picker case lives in
+// pipeline-redesign-shell.spec.js (test_pipeline_hotkeys).
+const SEARCH = { '/tasks': 'list-search', '/features': 'list-search' }
 
 // Tasks renders its own chip toolbar (search, chips, one Filter button —
 // feature #110); the other tabs still share the list chassis's.
@@ -201,10 +203,13 @@ test('projects narrow on the server', async ({ page }) => {
     }], { population: 4, applied: { sort: 'attention:desc', filters: { q: 'reg' } } }) })
   })
   await page.goto('/overview')
-  await page.getByTestId('projects-search').fill('reg')
+  await page.getByTestId('pipeline-project').click()
+  await page.getByTestId('project-picker-search').fill('reg')
   await expect.poll(() => asked.at(-1)).toBe('reg')
-  await expect(page.getByTestId('projects-row-1')).toBeVisible()
-  await expect(page.getByTestId('projects-foot')).toContainText('Showing 1 of 1')
+  await expect(page.getByTestId('project-picker-row-1')).toBeVisible()
+  // population 4 counts the "No project" bucket, which is not a project.
+  await expect(page.getByTestId('project-picker-search'))
+    .toHaveAttribute('placeholder', 'Find among 3 projects')
 })
 
 test('/ focuses search on every tab', async ({ page }) => {

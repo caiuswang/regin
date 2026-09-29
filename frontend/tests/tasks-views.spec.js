@@ -106,6 +106,16 @@ test('test_tasks_list_board_graph_views', async ({ page }) => {
   await ideas.getByTestId('next-step-more-ideas').click()
   await expect(ideas.locator('li')).toHaveCount(5)
 
+  // A live frame (any task write) re-reads the list without collapsing the
+  // group the reader opened. The renamed title appearing proves the re-read
+  // has rendered before the row count is checked.
+  const token = await page.evaluate(() => localStorage.getItem('regin_auth_token'))
+  expect((await page.request.patch(`/api/tasks/${ids.ideas[0]}`, {
+    headers: { Authorization: `Bearer ${token}` }, data: { title: `${tag} idea renamed` },
+  })).ok()).toBeTruthy()
+  await expect(page.getByTestId(`next-step-row-${ids.ideas[0]}`)).toContainText(`${tag} idea renamed`)
+  await expect(ideas.locator('li')).toHaveCount(5)
+
   // "Run all N" posts a run for every Ready task — intercepted, so no agent starts.
   const runs = []
   await page.route('**/api/tasks/*/run', (route) => {

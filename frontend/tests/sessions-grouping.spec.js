@@ -16,6 +16,9 @@ import { randomUUID } from 'node:crypto'
 
 const SERVER_NOW = '2026-07-10T13:00:00.000000'
 const SERVER_NOW_UTC = '2026-07-10T09:00:00.000Z'
+// An `active` row only reads as live when it was seen inside
+// STALE_FALLBACK_WINDOW_MS (10 min) of server_now; an hour-old one is stale.
+const LIVE_LAST_SEEN = '2026-07-10T12:58:00.000000'
 
 function row(overrides = {}) {
   const id = overrides.trace_id || randomUUID()
@@ -24,7 +27,7 @@ function row(overrides = {}) {
     title: `GROUP_FIXTURE_${id.slice(0, 8)}`,
     status: 'ended', ended_reason: null, is_test: 0,
     started_at: '2026-07-10T11:00:00.000000',
-    last_seen: '2026-07-10T12:00:00.000000',
+    last_seen: overrides.status === 'active' ? LIVE_LAST_SEEN : '2026-07-10T12:00:00.000000',
     span_count: 3, file_edits: 1, tool_calls: 2, skill_reads: 0,
     rule_checks: 0, plans: 0, prompts: 1,
     agent_type: 'claude', agent_kind: 'claude', origin: 'session',
@@ -195,7 +198,7 @@ test('Reset all restores every facet in exactly one request', async ({ page }) =
   // Dirty three facets so the reset genuinely changes more than one ref.
   const panel = page.locator('.filters-panel')
   await page.getByRole('button', { name: /Filters/ }).click()
-  await panel.locator('.facet', { hasText: 'Status' }).locator('.chip', { hasText: 'Active' }).click()
+  await panel.locator('.facet', { hasText: 'Status' }).locator('.chip', { hasText: 'Active', hasNotText: 'Not active' }).click()
   await expect(page.locator('.filters-trigger__count')).toBeVisible()
   await panel.locator('.facet', { hasText: 'Kind' }).locator('.chip', { hasText: 'Tests' }).click()
   await expect(page.locator('.filters-trigger__count')).toHaveText('3')  // status + kind + range(all)

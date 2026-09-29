@@ -69,8 +69,11 @@ export function useLiveScope(getSpans, getAgents) {
     ? withTrailingResult(withLeadingPrompt(
       // The agent's own trace serves its markers as well as its work, and a
       // marker belongs to MAIN's view of the agent, never the scope — an
-      // agent that captured nothing must still read as empty here.
-      agentTrace.spans.filter(s => !SCOPE_MARKERS.has(s.name)),
+      // agent that captured nothing must still read as empty here. The
+      // server's agent_root prompt is that same marker re-served, so it goes
+      // too; withLeadingPrompt restores the task row when real spans exist.
+      agentTrace.spans.filter(s => !SCOPE_MARKERS.has(s.name)
+        && !s.attributes?.agent_root),
       scopeId.value, scopedAgent.value,
     ), scopeId.value, scopedAgent.value)
     : mainSpans.value))

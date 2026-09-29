@@ -219,7 +219,7 @@ export function useSessionListQuery() {
 
   const FILTER_LABELS = {
     kind: { test: 'Tests only', all: 'Real + tests' },
-    status: { active: 'Active', inactive: 'Ended' },
+    status: { active: 'Active', inactive: 'Not active' },
   }
 
   // One entry per narrowing axis that is off its default — same six axes

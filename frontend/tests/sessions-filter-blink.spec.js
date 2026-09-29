@@ -81,7 +81,7 @@ test('changing a facet filter does not unmount the filter form (no blink)', asyn
   const reloadReq = page.waitForRequest((r) => r.url().includes('active=active'))
   await page.getByRole('button', { name: /Filters/ }).click()
   await page.locator('.filters-panel .facet', { hasText: 'Status' })
-    .locator('.chip', { hasText: 'Active' }).click()
+    .locator('.chip', { hasText: 'Active', hasNotText: 'Not active' }).click()
   await reloadReq                                        // held open by the gate
 
   // THE ASSERTION: during the in-flight reload the filter form is STILL
@@ -110,7 +110,7 @@ test('a facet filter yielding zero rows shows the empty message, not a stuck loa
 
   await page.getByRole('button', { name: /Filters/ }).click()
   await page.locator('.filters-panel .facet', { hasText: 'Status' })
-    .locator('.chip', { hasText: 'Ended' }).click()
+    .locator('.chip', { hasText: 'Not active' }).click()
 
   await expect(page.getByText('No session traces yet.')).toBeVisible()
   await expect(page.getByText('Loading sessions…')).toBeHidden()

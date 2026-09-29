@@ -15,7 +15,14 @@ import { rowAction } from './helpers/rowAction.js'
 
 test.describe.configure({ mode: 'serial' })
 
-const SFX = 'lin'
+// Per `--repeat-each` copy (set in beforeEach): the copies run side by side in
+// one DB, and this file archives its own rows part-way through.
+let SFX = 'lin'
+// Every seeded row carries it, so a test that looks for one of them reads a
+// list scoped to this file's rows: an unscoped page 1 is whatever other
+// workers wrote last.
+let FIXTURE_TAG = 'lin-fixture'
+let OWN_ROWS = `/tasks?group=none&tag=${FIXTURE_TAG}`
 
 // Seeded through the browser's own credential so the rows are indistinguishable
 // from ones a user captured — a fixture that writes straight to SQLite would
@@ -83,22 +90,25 @@ async function ensureTask(page, title, fields) {
     { title, body: `body of ${title}`, ...fields })).body.task
 }
 
-test.beforeEach(async ({ page }) => {
+test.beforeEach(async ({ page }, info) => {
+  SFX = `lin${info.repeatEachIndex || ''}`
+  FIXTURE_TAG = `${SFX}-fixture`
+  OWN_ROWS = `/tasks?group=none&tag=${FIXTURE_TAG}`
   await page.goto('/tasks')
-  if (seeded) return
+  if (seeded?.sfx === SFX) return
   const project = await ensureProject(page)
   const ids = {}
   for (const [name, extra] of [
-    ['alpha', { priority: 'urgent', project_id: project.id, tags: ['ui'] }],
-    ['beta', { priority: 'low', tags: ['ui-polish'] }],
-    ['gamma', { priority: 'medium', project_id: project.id }],
+    ['alpha', { priority: 'urgent', project_id: project.id, tags: ['ui', FIXTURE_TAG] }],
+    ['beta', { priority: 'low', tags: ['ui-polish', FIXTURE_TAG] }],
+    ['gamma', { priority: 'medium', project_id: project.id, tags: [FIXTURE_TAG] }],
   ]) {
     ids[name] = (await ensureTask(page, `${SFX}-${name}`, extra)).id
   }
   // Armed, so the backlog holds more than one status: a group-per-status view
   // and a "two statuses must look different" assertion both need at least two.
   await api(page, 'POST', `/tasks/${ids.gamma}/arm`, { cwd: '.' })
-  seeded = { project, ids }
+  seeded = { sfx: SFX, project, ids }
 })
 
 // The view is a lazy route chunk, so its keyboard listener does not exist the
@@ -112,7 +122,7 @@ async function listReady(page) {
 
 test('every row shows its id, and the id links to that task', async ({ page }) => {
   await forceFlat(page)
-  await page.goto('/tasks')
+  await page.goto(OWN_ROWS)
   await listReady(page)
   const row = page.locator('[data-testid="task-row"]', { hasText: `${SFX}-alpha` }).first()
   await expect(row).toBeVisible()
@@ -199,7 +209,7 @@ test('a tag filter matches whole tags, not prefixes', async ({ page }) => {
 
 test('a priority filter narrows the list and the reset clears it', async ({ page }) => {
   await forceFlat(page)
-  await page.goto('/tasks')
+  await page.goto(OWN_ROWS)
   await listReady(page)
   await page.getByTestId('task-filter-button').click()
   await page.getByTestId('task-filter-priority-urgent').click()
@@ -217,10 +227,10 @@ test('a priority filter narrows the list and the reset clears it', async ({ page
 test('group headers carry the server total, not the loaded count',
   async ({ page }) => {
     await forceGrouped(page, 'status')
-    await page.goto('/tasks')
+    await page.goto(`/tasks?group=status&tag=${FIXTURE_TAG}`)
     await listReady(page)
 
-    const counts = (await api(page, 'GET', '/tasks/counts')).body
+    const counts = (await api(page, 'GET', `/tasks/counts?tag=${FIXTURE_TAG}`)).body
     const header = page.getByTestId('task-group-count-idea')
     await expect(header).toHaveText(String(counts.by_status.idea))
 
@@ -233,9 +243,9 @@ test('group headers carry the server total, not the loaded count',
 
 test('a group with nothing in it is not rendered at all', async ({ page }) => {
   await forceGrouped(page, 'status')
-  await page.goto('/tasks')
+  await page.goto(`/tasks?group=status&tag=${FIXTURE_TAG}`)
   await listReady(page)
-  const counts = (await api(page, 'GET', '/tasks/counts')).body
+  const counts = (await api(page, 'GET', `/tasks/counts?tag=${FIXTURE_TAG}`)).body
   for (const [status, n] of Object.entries(counts.by_status)) {
     // Archived has its own rule below — its count is honest, but the group is
     // only shown to someone who asked for the archive.
@@ -308,7 +318,7 @@ test('grouping never contradicts an active filter on the same axis',
 test('grouping by project puts the unfiled tasks in their own group',
   async ({ page }) => {
     await forceGrouped(page, 'project')
-    await page.goto('/tasks')
+    await page.goto(`/tasks?group=project&tag=${FIXTURE_TAG}`)
     await listReady(page)
     await expect(page.getByTestId(`task-group-${seeded.project.id}`)).toBeVisible()
     await expect(page.getByTestId('task-group-none')).toBeVisible()
@@ -321,7 +331,7 @@ test('grouping by project puts the unfiled tasks in their own group',
 
 test('a bulk archive moves every selected row it is allowed to', async ({ page }) => {
   await forceFlat(page)
-  await page.goto('/tasks')
+  await page.goto(OWN_ROWS)
   await listReady(page)
 
   for (const name of ['alpha', 'beta']) {
@@ -340,7 +350,7 @@ test('a bulk archive moves every selected row it is allowed to', async ({ page }
 
 test('archived rows are reachable by asking for them', async ({ page }) => {
   await forceFlat(page)
-  await page.goto('/tasks')
+  await page.goto(OWN_ROWS)
   await listReady(page)
   await page.getByTestId('task-filter-button').click()
   await page.getByTestId('task-archived-toggle').click()
@@ -368,7 +378,7 @@ test('the project picker offers the registered repos and nothing else',
 
 test('a row filed under a repo names that repo', async ({ page }) => {
   await forceFlat(page)
-  await page.goto('/tasks')
+  await page.goto(OWN_ROWS)
   await listReady(page)
   // `gamma`, not `alpha`: this file is serial and the bulk test above archives
   // alpha, which the default view then rightly hides.
@@ -380,10 +390,10 @@ test('a row filed under a repo names that repo', async ({ page }) => {
 test('the edit sheet files a single task, and unfiles it again',
   async ({ page }) => {
     await forceFlat(page)
-    await page.goto('/tasks')
+    await page.goto(OWN_ROWS)
     // Its own row: this file is serial, and an earlier test archives the
     // seeded ones out of the default view.
-    await api(page, 'POST', '/tasks', { title: `${SFX}-filing` })
+    await api(page, 'POST', '/tasks', { title: `${SFX}-filing`, tags: [FIXTURE_TAG] })
     await page.reload()
     await listReady(page)
 
@@ -421,7 +431,7 @@ test('the edit sheet files a single task, and unfiles it again',
 
 test('the edit sheet sets priority on a single task', async ({ page }) => {
   await forceFlat(page)
-  await page.goto('/tasks')
+  await page.goto(OWN_ROWS)
   await listReady(page)
 
   const row = page.locator('[data-testid="task-row"]',
