@@ -158,17 +158,20 @@ def _summarize_tool_input(tool_input: dict) -> dict:
 
 
 def _requested_permission(tool_name: str | None, tool_input: dict, raw: dict) -> str:
-    justification = raw.get("justification")
-    if isinstance(justification, str) and justification:
+    justification = _nonempty_str(raw.get("justification"))
+    if justification:
         return justification[:500]
-    if tool_name == "Bash":
-        command = tool_input.get("command")
-        if isinstance(command, str) and command:
-            return f"Run shell command: {command[:500]}"
-    path = tool_input.get("file_path") or tool_input.get("path")
-    if isinstance(path, str) and path:
+    command = _nonempty_str(tool_input.get("command")) if tool_name == "Bash" else None
+    if command:
+        return f"Run shell command: {command[:500]}"
+    path = _nonempty_str(tool_input.get("file_path") or tool_input.get("path"))
+    if path:
         return f"Use {tool_name or 'tool'} on {path[:500]}"
     return f"Use tool: {tool_name or 'unknown'}"
+
+
+def _nonempty_str(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
 
 
 def _options_from_suggestions(suggestions: list[dict]) -> list[PermissionOption]:

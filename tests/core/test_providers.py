@@ -275,3 +275,19 @@ def test_codex_skill_content_path_detection():
     assert p.skill_id_from_read_path("/home/u/.codex/skills/demo/content.md", home="/home/u") == "demo"
     assert p.skill_id_from_read_path("/home/u/.codex/plans/x.md", home="/home/u") is None
     assert str(p.hook_settings_path()).endswith("/.codex/hooks.json")
+
+
+def test_codex_requested_permission_fallback_order():
+    from lib.providers.codex import _requested_permission
+
+    cases = [
+        (("Bash", {"command": "ls"}, {"justification": "x" * 600}), "x" * 500),
+        (("Bash", {"command": "ls -la"}, {}), "Run shell command: ls -la"),
+        (("Bash", {"command": ""}, {"justification": ""}), "Use tool: Bash"),
+        (("Edit", {"file_path": "/a.py"}, {}), "Use Edit on /a.py"),
+        ((None, {"path": "/b"}, {}), "Use tool on /b"),
+        ((None, {}, {}), "Use tool: unknown"),
+        (("Read", {"file_path": 5}, {"justification": 3}), "Use tool: Read"),
+    ]
+    got = [_requested_permission(*args) for args, _ in cases]
+    assert got == [want for _, want in cases]
