@@ -200,50 +200,61 @@ def _attached_rule_bundles_for_pattern(procedure_id: str | None) -> list[dict]:
         engine_kind = getattr(engine, "kind", "")
         if engine_kind == "grit":
             continue
-        parsed = list(engine.parse_rules())
-        guide_matches = [r for r in parsed if r.metadata.get("guide") == procedure_id]
-        bundle_is_pattern = engine.id == procedure_id
-        attached = bundle_is_pattern or bool(guide_matches)
-        if not attached:
+        rules_iter = _attached_engine_rules(engine, procedure_id)
+        if rules_iter is None:
             continue
-        # If the engine itself maps to this pattern (bundle-IS-pattern),
-        # expose every rule it owns. Otherwise the attachment is "some rules
-        # carry guide=procedure_id" — emit only those, so unrelated rules from
-        # a shared engine don't bleed in.
-        rules_iter = parsed if bundle_is_pattern else guide_matches
         off = engine_rule_disable.disabled_ids(engine.id)
-        rules = [
-            {
-                "id": rule.id,
-                "summary": rule.summary,
-                "severity": rule.severity,
-                "engine": rule.engine,
-                "source_file": rule.source_file,
-                "checker": rule.metadata.get("checker"),
-                "category": rule.metadata.get("category"),
-                "check_kind": rule.metadata.get("check_kind"),
-                "wcag_ref": rule.metadata.get("wcag_ref"),
-                "triggers": list(rule.triggers),
-                "disabled": rule.id in off,
-            }
-            for rule in rules_iter
-        ]
-        manifest = getattr(engine, "manifest", None)
-        raw_description = getattr(manifest, "description", None) or ""
-        description = (
-            raw_description.strip()
-            or "Portable rule bundle attached to this pattern skill."
-        )
         bundles.append({
             "engine_id": engine.id,
             "engine_kind": engine_kind,
             "title": f"{engine.id} rule bundle",
-            "description": description,
+            "description": _bundle_description(engine),
             "invocation_hint": (
                 f"regin rules run --engine {engine.id} --rule <rule-id> "
                 "--repo <repo-root> --file <relative-path>"
             ),
-            "rules": rules,
+            "rules": [_bundle_rule_dict(rule, off) for rule in rules_iter],
         })
     return bundles
+
+
+def _attached_engine_rules(engine, procedure_id: str) -> list | None:
+    """The engine's rules attached to `procedure_id`, or None when the engine
+    is not attached at all.
+
+    If the engine itself maps to this pattern (bundle-IS-pattern), expose
+    every rule it owns. Otherwise the attachment is "some rules carry
+    guide=procedure_id" — emit only those, so unrelated rules from a shared
+    engine don't bleed in.
+    """
+    parsed = list(engine.parse_rules())
+    if engine.id == procedure_id:
+        return parsed
+    guide_matches = [r for r in parsed if r.metadata.get("guide") == procedure_id]
+    return guide_matches or None
+
+
+def _bundle_rule_dict(rule, off) -> dict:
+    return {
+        "id": rule.id,
+        "summary": rule.summary,
+        "severity": rule.severity,
+        "engine": rule.engine,
+        "source_file": rule.source_file,
+        "checker": rule.metadata.get("checker"),
+        "category": rule.metadata.get("category"),
+        "check_kind": rule.metadata.get("check_kind"),
+        "wcag_ref": rule.metadata.get("wcag_ref"),
+        "triggers": list(rule.triggers),
+        "disabled": rule.id in off,
+    }
+
+
+def _bundle_description(engine) -> str:
+    manifest = getattr(engine, "manifest", None)
+    raw_description = getattr(manifest, "description", None) or ""
+    return (
+        raw_description.strip()
+        or "Portable rule bundle attached to this pattern skill."
+    )
 
