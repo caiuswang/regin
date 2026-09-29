@@ -51,34 +51,56 @@ def api_ingest_errors():
     on ALL rows read from the tail, not just the filtered subset, so
     operators can compare filtered signal against total volume.
     """
-    limit_raw = request.args.get('limit', '50')
-    try:
-        limit = max(1, min(1000, int(limit_raw)))
-    except (TypeError, ValueError):
-        limit = 50
-    endpoint_filter = request.args.get('endpoint')
-    gave_up_filter = request.args.get('gave_up')  # 'true' | 'false' | None
-
+    limit = _ingest_errors_limit(request.args.get('limit', '50'))
     path = _hp._INGEST_ERROR_LOG
-    rows = []
-    if os.path.exists(path):
-        try:
-            with open(path, 'r') as f:
-                # Small logs read fully; cap read by tailing last
-                # 4000 lines to keep this cheap even on large files.
-                lines = f.readlines()[-4000:]
-        except OSError:
-            lines = []
-        for ln in lines:
-            ln = ln.strip()
-            if not ln:
-                continue
-            try:
-                rows.append(json.loads(ln))
-            except (ValueError, TypeError):
-                continue
+    rows = _read_ingest_error_rows(path)
     rows.reverse()  # most-recent first
+    filtered = _filter_ingest_error_rows(
+        rows, request.args.get('endpoint'),
+        request.args.get('gave_up'))  # 'true' | 'false' | None
 
+    return jsonify({
+        'path': path,
+        'total_read': len(rows),
+        'returned': min(len(filtered), limit),
+        'rows': filtered[:limit],
+        **_ingest_error_aggregates(rows),
+    })
+
+
+def _ingest_errors_limit(limit_raw) -> int:
+    try:
+        return max(1, min(1000, int(limit_raw)))
+    except (TypeError, ValueError):
+        return 50
+
+
+def _read_ingest_error_lines(path) -> list:
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, 'r') as f:
+            # Small logs read fully; cap read by tailing last
+            # 4000 lines to keep this cheap even on large files.
+            return f.readlines()[-4000:]
+    except OSError:
+        return []
+
+
+def _read_ingest_error_rows(path) -> list:
+    rows = []
+    for ln in _read_ingest_error_lines(path):
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            rows.append(json.loads(ln))
+        except (ValueError, TypeError):
+            continue
+    return rows
+
+
+def _ingest_error_aggregates(rows) -> dict:
     by_endpoint: dict[str, int] = {}
     by_error_type: dict[str, int] = {}
     by_gave_up = {'true': 0, 'false': 0}
@@ -89,20 +111,18 @@ def api_ingest_errors():
         by_error_type[et] = by_error_type.get(et, 0) + 1
         key = 'true' if r.get('gave_up') else 'false'
         by_gave_up[key] += 1
+    return {
+        'by_endpoint': by_endpoint,
+        'by_error_type': by_error_type,
+        'by_gave_up': by_gave_up,
+    }
 
+
+def _filter_ingest_error_rows(rows, endpoint_filter, gave_up_filter) -> list:
     filtered = rows
     if endpoint_filter:
         filtered = [r for r in filtered if r.get('endpoint') == endpoint_filter]
     if gave_up_filter in ('true', 'false'):
         want = gave_up_filter == 'true'
         filtered = [r for r in filtered if bool(r.get('gave_up')) is want]
-
-    return jsonify({
-        'path': path,
-        'total_read': len(rows),
-        'returned': min(len(filtered), limit),
-        'rows': filtered[:limit],
-        'by_endpoint': by_endpoint,
-        'by_error_type': by_error_type,
-        'by_gave_up': by_gave_up,
-    })
+    return filtered
