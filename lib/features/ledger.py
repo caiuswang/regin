@@ -225,8 +225,7 @@ def _gap_line(gaps: dict) -> str:
     return f"    gaps: {named}" if named else ""
 
 
-def render(report: Ledger) -> list[str]:
-    """The human report, stage line first."""
+def _render_header(report: Ledger) -> list[str]:
     lines = [f"#{report.id}  {report.title}"]
     ref = f"  {report.external_ref}" if report.external_ref else ""
     lines.append(f"{report.stage}  rounds={report.rounds}  "
@@ -235,36 +234,35 @@ def render(report: Ledger) -> list[str]:
     lines.append(f"  {events_module.blurb(report.stage)}")
     if report.sync_error:
         lines.append(f"  sync: {report.sync_error}")
+    return lines
 
-    lines.append("")
-    suffix = (f" ({report.cost.recalled} recalled)"
-              if report.cost.recalled else "")
-    if report.cost.usd is None:
-        lines.append(f"cost (upper bound)  {_money(None)}")
+
+def _render_cost(cost) -> list[str]:
+    if cost.usd is None:
+        lines = [f"cost (upper bound)  {_money(None)}"]
     else:
-        lines.append(f"cost (upper bound)  {_money(report.cost.usd)} across "
-                     f"{_plural(report.cost.sessions, 'session')}{suffix}")
-    if report.cost.shared:
-        lines.append(f"    {_plural(report.cost.shared, 'shared session')}, "
+        suffix = f" ({cost.recalled} recalled)" if cost.recalled else ""
+        lines = [f"cost (upper bound)  {_money(cost.usd)} across "
+                 f"{_plural(cost.sessions, 'session')}{suffix}"]
+    if cost.shared:
+        lines.append(f"    {_plural(cost.shared, 'shared session')}, "
                      "cost charged elsewhere")
-    lines.extend(filter(None, [_gap_line(report.cost.gaps)]))
+    lines.extend(filter(None, [_gap_line(cost.gaps)]))
+    return lines
 
-    lines.append(f"work time  {_duration(report.work_time.active_work_ms)}")
-    lines.extend(filter(None, [_gap_line(report.work_time.gaps)]))
-    human = report.human_prompts
-    lines.append(
-        f"human prompts  {human.prompts} across "
-        f"{_plural(human.sessions, 'human session')}")
+
+def _render_human_prompts(human) -> list[str]:
+    lines = [f"human prompts  {human.prompts} across "
+             f"{_plural(human.sessions, 'human session')}"]
     if human.run_sessions:
         lines.append(f"    {_plural(human.run_sessions, 'session')} excluded, "
                      "produced by a task run")
     lines.extend(filter(None, [_gap_line(human.gaps)]))
-    lines.append("tokens  " + " · ".join(
-        f"{name.replace('_', '-')} {value:,}"
-        for name, value in report.tokens.items()))
+    return lines
 
-    lines.append("")
-    lines.append("sessions")
+
+def _render_sessions(report: Ledger) -> list[str]:
+    lines = ["sessions"]
     for row in report.rows:
         lines.append(
             f"  {row.date:<10}  {row.short_trace}  {row.title[:44]:<44}  "
@@ -274,20 +272,41 @@ def render(report: Ledger) -> list[str]:
         lines.append("  none declared")
     lines.extend(filter(None,
                         [_gap_line({"traceless_runs": report.traceless_runs})]))
+    return lines
 
-    lines.append("")
-    lines.append(f"defects  {report.open_defects} open / "
-                 f"{report.total_defects} total      "
-                 f"escapes {report.escapes.escapes}")
-    checks = report.checks
-    lines.append(f"checks  {checks.written} written of "
-                 f"{_plural(len(checks.rows), 'closed defect')}")
+
+def _render_checks(checks) -> list[str]:
+    lines = [f"checks  {checks.written} written of "
+             f"{_plural(len(checks.rows), 'closed defect')}"]
     lines.extend(filter(None, [_gap_line(checks.to_dict()["gaps"])]))
     for row in checks.rows:
         if row.reading != checks_module.WRITTEN:
             named = (row.missing_check or "")[:CHECK_PREFIX]
             lines.append(f"    #{row.defect_id}  {row.reading}"
                          f"{f'  ({named})' if named else ''}")
+    return lines
+
+
+def render(report: Ledger) -> list[str]:
+    """The human report, stage line first."""
+    lines = _render_header(report)
+    lines.append("")
+    lines.extend(_render_cost(report.cost))
+    lines.append(f"work time  {_duration(report.work_time.active_work_ms)}")
+    lines.extend(filter(None, [_gap_line(report.work_time.gaps)]))
+    lines.extend(_render_human_prompts(report.human_prompts))
+    lines.append("tokens  " + " · ".join(
+        f"{name.replace('_', '-')} {value:,}"
+        for name, value in report.tokens.items()))
+
+    lines.append("")
+    lines.extend(_render_sessions(report))
+
+    lines.append("")
+    lines.append(f"defects  {report.open_defects} open / "
+                 f"{report.total_defects} total      "
+                 f"escapes {report.escapes.escapes}")
+    lines.extend(_render_checks(report.checks))
 
     cov = report.coverage
     lines.append("")
