@@ -189,6 +189,19 @@ def _validate_edges(
             errors.append(f"topic {topic_id} edge has invalid type {edge.get('type')!r}")
 
 
+def _ref_label_errors(topic_id: str, ref: dict[str, Any]) -> list[str]:
+    path, role, tier = ref.get("path"), ref.get("role"), ref.get("tier")
+    errors = []
+    # role and tier are optional; topics own them (assigned by the proposal
+    # LLM or by hand), so scan never invents one — but a set-but-unknown
+    # value is still an error.
+    if role is not None and role not in REF_ROLES:
+        errors.append(f"topic {topic_id} ref {path!r} has invalid role {role!r}")
+    if tier is not None and tier not in REF_TIERS:
+        errors.append(f"topic {topic_id} ref {path!r} has invalid tier {tier!r}")
+    return errors
+
+
 def _validate_refs(
     repo_path: str | Path,
     topic_id: str,
@@ -203,15 +216,7 @@ def _validate_refs(
             errors.append(f"topic {topic_id} refs must be objects")
             continue
         path = ref.get("path")
-        role = ref.get("role")
-        tier = ref.get("tier")
-        # role and tier are optional; topics own them (assigned by the proposal
-        # LLM or by hand), so scan never invents one — but a set-but-unknown
-        # value is still an error.
-        if role is not None and role not in REF_ROLES:
-            errors.append(f"topic {topic_id} ref {path!r} has invalid role {role!r}")
-        if tier is not None and tier not in REF_TIERS:
-            errors.append(f"topic {topic_id} ref {path!r} has invalid tier {tier!r}")
+        errors.extend(_ref_label_errors(topic_id, ref))
         if not isinstance(path, str) or not path:
             errors.append(f"topic {topic_id} has ref with missing path")
             continue
