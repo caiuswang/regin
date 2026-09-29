@@ -259,7 +259,11 @@ def _collect_grit_rules(slug: str) -> tuple[dict[str, bytes], dict, list[str]]:
     rules = grit_rule_index.rules_for_guide(slug)
     if not rules:
         return {}, {}, []
+    rule_ids = sorted(r['id'] for r in rules)
+    return _read_rule_sources(rules), _trimmed_rules_json(rules), rule_ids
 
+
+def _read_rule_sources(rules: list[dict]) -> dict[str, bytes]:
     grit_files: dict[str, bytes] = {}
     for rule in rules:
         src_rel = rule.get('source_file')
@@ -278,7 +282,10 @@ def _collect_grit_rules(slug: str) -> tuple[dict[str, bytes], dict, list[str]]:
             continue
         with open(abs_path, 'rb') as f:
             grit_files[rel_under_grit] = f.read()
+    return grit_files
 
+
+def _trimmed_rules_json(rules: list[dict]) -> dict:
     by_layer: dict[str, list[str]] = {}
     by_trigger: dict[str, list[str]] = {}
     by_guide: dict[str, list[str]] = {}
@@ -287,15 +294,13 @@ def _collect_grit_rules(slug: str) -> tuple[dict[str, bytes], dict, list[str]]:
         by_guide.setdefault(r['guide'], []).append(r['id'])
         for trig in r.get('triggers', []):
             by_trigger.setdefault(trig, []).append(r['id'])
-    rules_json = {
+    return {
         'version': 1,
         'rules': rules,
         'by_layer': {k: sorted(v) for k, v in sorted(by_layer.items())},
         'by_trigger': {k: sorted(v) for k, v in sorted(by_trigger.items())},
         'by_guide': {k: sorted(v) for k, v in sorted(by_guide.items())},
     }
-    rule_ids = sorted(r['id'] for r in rules)
-    return grit_files, rules_json, rule_ids
 
 
 def _compute_checksum(skill_md: str, content_md: str,
