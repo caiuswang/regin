@@ -887,21 +887,25 @@ def _mcp_result_text(tool_response: object) -> str:
     concatenated text blocks, then a string `result`, then pretty JSON."""
     if isinstance(tool_response, str):
         return tool_response
-    blocks = None
+    blocks = _mcp_content_blocks(tool_response)
+    if blocks is None and isinstance(tool_response, dict) \
+            and isinstance(tool_response.get('result'), str):
+        return tool_response['result']
+    texts = _block_texts(blocks or [])
+    return '\n'.join(texts) if texts else _json_text(tool_response)
+
+
+def _block_texts(blocks: list) -> list[str]:
+    return [b['text'] for b in blocks
+            if isinstance(b, dict) and isinstance(b.get('text'), str)]
+
+
+def _mcp_content_blocks(tool_response: object) -> list | None:
     if isinstance(tool_response, list):
-        blocks = tool_response
-    elif isinstance(tool_response, dict):
-        content = tool_response.get('content')
-        if isinstance(content, list):
-            blocks = content
-        elif isinstance(tool_response.get('result'), str):
-            return tool_response['result']
-    if blocks is not None:
-        texts = [b['text'] for b in blocks
-                 if isinstance(b, dict) and isinstance(b.get('text'), str)]
-        if texts:
-            return '\n'.join(texts)
-    return _json_text(tool_response)
+        return tool_response
+    if isinstance(tool_response, dict) and isinstance(tool_response.get('content'), list):
+        return tool_response['content']
+    return None
 
 
 def _build_mcp_attrs(attrs: dict, tool: str, tool_input: dict, tool_response: object) -> None:

@@ -82,6 +82,7 @@ def test_builder_truncates_over_cap_text(name, tool_input, tool_response, key):
     ({'result': 'r'}, 'r'),
     ({'result': 5}, '{\n  "result": 5\n}'),
     ({'content': []}, '{\n  "content": []\n}'),
+    ([{'text': ''}], ''),
     ({'content': [{'text': 1}], 'result': 'r'}, '{\n  "content": [\n    {\n      "text": 1\n    }\n  ],\n  "result": "r"\n}'),
     (42, '42'),
     (None, 'null'),
