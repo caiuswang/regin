@@ -995,7 +995,6 @@ def _cli_against(flask_client, monkeypatch):
     The route is exercised elsewhere; what this covers is the half no HTTP test
     can reach, which is the half the agent actually executes.
     """
-    import urllib.request
     from urllib.error import HTTPError
 
     class _Response:
@@ -1020,7 +1019,8 @@ def _cli_against(flask_client, monkeypatch):
                             None, io.BytesIO(resp.data))
         return _Response(resp.data)
 
-    monkeypatch.setattr(urllib.request, "urlopen", _fake)
+    from cli.commands import tasks as tasks_cli
+    monkeypatch.setattr(tasks_cli, "_open_loopback", _fake)
 
 
 def test_the_cli_the_prompt_names_settles_the_run_and_fires(flask_client,

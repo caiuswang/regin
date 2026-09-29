@@ -54,6 +54,8 @@ from lib.settings import settings
 from lib.tasks import (arm, capture, deps, feature_slices, graph_lanes,
                        images, next_step, query, ratelimit, runs, store)
 from lib.tasks import rows as task_rows
+from lib.tasks import tmux_runs
+from lib.agent_bridge import delivery
 from lib.tasks import integrations
 from lib.utils.pagination import (
     clamp_page, clamp_size, list_page, paginate_query_stmt,
@@ -570,7 +572,7 @@ def _deliver(task_id: int, control):
     attempt = runs.latest_attempt(task_id)
     if attempt is None or not attempt["trace_id"]:
         return jsonify({"error": f"task {task_id} has no run to control"}), 409
-    delivered, detail = control(attempt["trace_id"])
+    delivered, detail = control(attempt)
     return jsonify({"delivered": delivered, "detail": detail,
                     "trace_id": attempt["trace_id"], "run_id": attempt["id"]})
 
@@ -581,18 +583,35 @@ def api_stop_task_run(task_id: int):
     """End the run: `registry.stop_run` interrupts the turn in flight as well
     as closing the queue. Asynchronous by design — the row advances when
     teardown actually completes, not when it is asked for."""
-    from lib.agent_sdk import registry
-
-    return _deliver(task_id, registry.stop_run)
+    return _deliver(task_id, _stop)
 
 
 @tasks_bp.route('/api/tasks/<int:task_id>/interrupt', methods=['POST'])
 @require_editor
 def api_interrupt_task_run(task_id: int):
     """Cancel the turn in flight, leaving the session open for the next one."""
+    return _deliver(task_id, _interrupt)
+
+
+def _stop(attempt: dict) -> tuple[bool, str]:
+    """A tmux run has no completion callback to settle it, so its Stop kills
+    the session and settles in the same act; an SDK one is torn down by its
+    registry and settles on its own completion."""
+    if tmux_runs.is_tmux(attempt["params"]):
+        killed = runs.stop_tmux(attempt)
+        return killed, ("tmux session killed" if killed
+                        else "no tmux session left to kill")
     from lib.agent_sdk import registry
 
-    return _deliver(task_id, registry.interrupt_run)
+    return registry.stop_run(attempt["trace_id"])
+
+
+def _interrupt(attempt: dict) -> tuple[bool, str]:
+    if tmux_runs.is_tmux(attempt["params"]):
+        return delivery.deliver_key(attempt["trace_id"], "Escape")
+    from lib.agent_sdk import registry
+
+    return registry.interrupt_run(attempt["trace_id"])
 
 
 _FINISH_STATUSES = {"done": runs.RUN_STATUS_DONE,

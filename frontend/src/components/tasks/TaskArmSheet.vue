@@ -24,6 +24,13 @@ const props = defineProps({
 })
 const emit = defineEmits(['close', 'armed'])
 
+// Per slice, never remembered (D1 of #120): only a slice that restarts the
+// server needs a run that outlives it.
+const LAUNCH_OPTIONS = [
+  { value: '', label: 'SDK (default) — ends if the server restarts' },
+  { value: 'tmux', label: 'tmux — survives a server restart' },
+]
+
 const {
   options, loading, error, saving, armError, skillOptions,
   cwdOptions, modeOptions, modelOptions, effortOptions,
@@ -244,6 +251,19 @@ async function submit() {
         placeholder="e.g. .venv/bin/python -m pytest -q"
         aria-label="Verify command (gate — exit 0 marks the task done)"
       />
+
+      <label class="live-launch-lbl" for="task-arm-launch">launch</label>
+      <Select
+        id="task-arm-launch"
+        v-model="draft.launch"
+        block
+        :options="LAUNCH_OPTIONS"
+        data-testid="task-arm-launch"
+        aria-label="Launch mode"
+      />
+      <p v-if="draft.launch === 'tmux' && options?.detached_detail" class="task-arm-note" data-testid="task-arm-launch-off">
+        a tmux run will be refused here: {{ options.detached_detail }}.
+      </p>
 
       <label class="live-launch-check">
         <Checkbox v-model="draft.one_shot" data-testid="task-arm-oneshot" />

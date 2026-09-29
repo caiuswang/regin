@@ -230,6 +230,7 @@ def api_launch_options():
         "gating_active": bool(cfg.gate_plan or cfg.gated_tools),
         "terminal_available": not terminal_reason,
         "terminal_detail": terminal_reason,
+        "detached_detail": terminal_launch.detached_unavailable_reason(),
     })
 
 

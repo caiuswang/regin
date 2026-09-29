@@ -236,7 +236,7 @@ def test_a_tracker_that_cannot_be_reached_still_releases_the_dependents(
                         lambda *a, **k: (_ for _ in ()).throw(
                             RuntimeError("tracker unreachable")))
     monkeypatch.setattr(runs, "fire_ready_dependents",
-                        lambda tid: fired.append(tid) or [])
+                        lambda tid, **_: fired.append(tid) or [])
 
     _report(run_id, status="done")
 

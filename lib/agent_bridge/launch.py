@@ -49,6 +49,22 @@ def unavailable_reason(role: str | None) -> str:
         return "terminal disabled"
     if role != "admin":
         return "admin role required"
+    return _binaries_missing()
+
+
+def detached_unavailable_reason() -> str:
+    """Why a detached run cannot start here, or "".
+
+    Narrower than `unavailable_reason`: `terminal_enabled` gates the browser
+    shell onto a pane, and the role is the caller's — a task run fired by a
+    dependency has no caller, and was authorised when it was armed.
+    """
+    if not settings.agent_bridge.enabled:
+        return "bridge disabled"
+    return _binaries_missing()
+
+
+def _binaries_missing() -> str:
     missing = [b for b in ("tmux", "claude") if shutil.which(b) is None]
     if missing:
         return f"{' and '.join(missing)} not found on the server's PATH"
@@ -112,20 +128,45 @@ def launch_terminal(*, role: str | None, cwd: str | None, model: str = "",
     reason = unavailable_reason(role)
     if reason:
         raise TerminalLaunchRefused(reason)
+    trace_id = _resumed_id(resume) if resume else str(uuid.uuid4())
+    launched = spawn_detached(
+        _session_name(trace_id), trace_id, cwd=cwd,
+        argv=_argv(trace_id, model=model, effort=effort,
+                   permission_mode=permission_mode, prompt=prompt,
+                   resume=bool(resume)))
+    log.write("bridge_terminal_launched", trace_id=trace_id,
+              pane_id=launched.pane_id, resumed=bool(resume),
+              tmux_socket=settings.agent_bridge.attach_socket)
+    return launched
+
+
+def claude_argv(trace_id: str, *, model: str = "", effort: str = "",
+                permission_mode: str = "", prompt: str = "") -> list[str]:
+    """A fresh `claude --session-id <trace_id>` command line."""
+    return _argv(trace_id, model=model, effort=effort,
+                 permission_mode=permission_mode, prompt=prompt, resume=False)
+
+
+def spawn_detached(name: str, trace_id: str, *, cwd: str | None,
+                   argv: list[str],
+                   env: dict[str, str] | None = None) -> TerminalLaunch:
+    """Run `argv` in a new detached tmux session `name` on the attach socket
+    and claim its pane for `trace_id`.
+
+    The session belongs to regin's tmux server, not to this process, so it
+    outlives whoever spawned it — the server, or a CLI that exits next.
+    """
     workdir = cwd or str(settings.project_root)
     # tmux falls back to $HOME for a missing `-c` directory and still succeeds,
     # which would run claude somewhere nobody chose.
     if not os.path.isdir(workdir):
         raise TerminalLaunchRefused(f"no such directory: {workdir}")
-    trace_id = _resumed_id(resume) if resume else str(uuid.uuid4())
-    name = _session_name(trace_id)
+    extra_env = [part for key, value in (env or {}).items()
+                 for part in ("-e", f"{key}={value}")]
     r = attach._tmux(
         "new-session", "-d", "-s", name, "-c", workdir,
         "-x", str(attach._PANE_COLS), "-y", str(attach._PANE_ROWS),
-        *_pane_env(),
-        *_argv(trace_id, model=model, effort=effort,
-               permission_mode=permission_mode, prompt=prompt,
-               resume=bool(resume)))
+        *_pane_env(), *extra_env, *argv)
     if r.returncode != 0:
         raise TerminalLaunchRefused(f"tmux refused: {r.stderr.strip()}")
     identity = attach._pane_identity(name)
@@ -137,6 +178,4 @@ def launch_terminal(*, role: str | None, cwd: str | None, model: str = "",
         attach.release_session(name, trace_id)
         raise TerminalLaunchRefused(f"pane is running {command!r}, not the CLI")
     attach._record(trace_id, pane_id, server_pid, pane_pid, cwd=workdir)
-    log.write("bridge_terminal_launched", trace_id=trace_id, pane_id=pane_id,
-              cwd=workdir, resumed=bool(resume), tmux_socket=settings.agent_bridge.attach_socket)
     return TerminalLaunch(trace_id, pane_id)
