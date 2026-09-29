@@ -159,6 +159,16 @@ def test_removing_an_image_never_reissues_its_index(flask_client):
                             headers=VIEWER).status_code == 404
 
 
+def test_removing_the_top_image_never_reissues_its_index(flask_client):
+    feature_id = _feature(flask_client)
+    _attach(flask_client, feature_id, PNG)
+    _attach(flask_client, feature_id, GIF)
+
+    flask_client.delete(f"/api/features/{feature_id}/images/2", headers=EDITOR)
+    replacement = _attach(flask_client, feature_id, PNG)
+
+    assert replacement.get_json()["image"]["idx"] == 3
+
 def test_removing_nothing_is_a_404(flask_client):
     feature_id = _feature(flask_client)
 

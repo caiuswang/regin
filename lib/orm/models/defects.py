@@ -57,6 +57,12 @@ class Defect(Base, table=True):
     )
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    #: Highest image `idx` ever issued to this row. Survives a detach, so a
+    #: freed index is never handed to different bytes.
+    image_high_water: int = Field(
+        default=0,
+        sa_column=Column("image_high_water", Integer, nullable=False,
+                         server_default=text("0")))
     feature_id: Optional[int] = Field(
         default=None,
         sa_column=Column("feature_id", Integer,

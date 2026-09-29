@@ -12,11 +12,11 @@ from typing import Optional
 
 from lib.activity_log import get_activity_logger
 from lib.attached_images import ImageSet, summarize
-from lib.orm.models.tasks import AgentTaskImage
+from lib.orm.models.tasks import AgentTask, AgentTaskImage
 
 log = get_activity_logger("tasks")
 
-_images = ImageSet(AgentTaskImage, "task_id", "task", log)
+_images = ImageSet(AgentTaskImage, AgentTask, "task_id", "task", log)
 
 __all__ = ["attach", "get_bytes", "list_for", "payload_for", "remove",
            "summaries_for", "summarize"]

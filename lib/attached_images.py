@@ -29,7 +29,7 @@ import base64
 import hashlib
 from typing import Optional
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from lib.agent_bridge.attachments import sniff_media_type
@@ -50,8 +50,9 @@ def summarize(row) -> dict:
 class ImageSet:
     """The image table of one owning entity, named by `noun`."""
 
-    def __init__(self, model, owner_field: str, noun: str, log):
+    def __init__(self, model, owner_model, owner_field: str, noun: str, log):
         self.model = model
+        self.owner_model = owner_model
         self.owner_field = owner_field
         self.noun = noun
         self.log = log
@@ -105,11 +106,18 @@ class ImageSet:
                        byte_size=row["byte_size"], media_type=media_type)
         return row
 
-    def _next_idx(self, session, owner_id: int) -> int:
+    def _high_water(self, session, owner_id: int) -> int:
+        """The highest `idx` ever issued to this owner, freed or not."""
+        marked = session.execute(
+            select(self.owner_model.image_high_water)
+            .where(self.owner_model.id == owner_id)).scalar() or 0
         used = session.execute(
-            select(self.model.idx).where(self._owner == owner_id)
-        ).scalars().all()
-        return (max(used) + 1) if used else 1
+            select(func.max(self.model.idx)).where(self._owner == owner_id)
+        ).scalar() or 0
+        return max(marked, used)
+
+    def _next_idx(self, session, owner_id: int) -> int:
+        return self._high_water(session, owner_id) + 1
 
     def _free_idx(self, session, owner_id: int,
                   want_idx: Optional[int]) -> int:
@@ -119,7 +127,9 @@ class ImageSet:
             select(self.model.id).where(self._owner == owner_id,
                                         self.model.idx == want_idx)
         ).scalars().first()
-        return self._next_idx(session, owner_id) if taken else want_idx
+        spent = want_idx <= self._high_water(session, owner_id) and not taken
+        return (self._next_idx(session, owner_id)
+                if taken or spent else want_idx)
 
     def _insert_with_next_idx(self, owner_id: int, media_type: str,
                               data: bytes,
@@ -143,6 +153,11 @@ class ImageSet:
                     media_type=media_type, bytes_=data, byte_size=len(data),
                     sha256=digest)
                 session.add(row)
+                session.execute(
+                    update(self.owner_model)
+                    .where(self.owner_model.id == owner_id)
+                    .values(image_high_water=func.max(
+                        self.owner_model.image_high_water, idx)))
                 try:
                     session.commit()
                 except IntegrityError:
@@ -191,16 +206,10 @@ class ImageSet:
     def remove(self, owner_id: int, idx: int) -> bool:
         """Drop one image. False when there was nothing at that index.
 
-        A freed `idx` BELOW the high-water mark is not reused: `_next_idx`
-        counts from `max(idx) + 1` over the surviving rows, so a gap punched in
-        the middle stays a gap and a reference that named it keeps reading as
-        detached.
-
-        The high-water index itself IS reissued, because nothing on the row
-        remembers it. Detach the last image, attach another, and an
-        `![](image:N)` already sitting in some prose resolves to a different
-        picture with nothing to say so. Closing that needs a per-owner counter
-        the three owning tables do not carry.
+        A freed `idx` is never reissued, whether it sat in the middle or at
+        the top: the owner row's `image_high_water` outlives the image, so an
+        `![](image:N)` already sitting in some prose keeps reading as detached
+        instead of resolving to a different picture.
         """
         with SessionLocal() as session:
             result = session.execute(

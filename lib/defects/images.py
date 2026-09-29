@@ -15,11 +15,11 @@ from typing import Optional
 
 from lib.activity_log import get_activity_logger
 from lib.attached_images import ImageSet, summarize
-from lib.orm.models.defects import DefectImage
+from lib.orm.models.defects import Defect, DefectImage
 
 log = get_activity_logger("defects")
 
-_images = ImageSet(DefectImage, "defect_id", "defect", log)
+_images = ImageSet(DefectImage, Defect, "defect_id", "defect", log)
 
 __all__ = ["attach", "get_bytes", "list_for", "remove", "summaries_for",
            "summarize"]

@@ -24,7 +24,7 @@ from lib import db_migrate
 
 _TABLES = ("defects", "defect_images", "session_features", "features",
            "feature_events")
-_REVISION = "0034"
+_REVISION = "0036"
 #: Everything else the walk from 0017 creates or alters, dropped so the replay
 #: does not collide with what `schema.sql` already built.
 _REPLAYED = ("api_keys", "agent_tasks", "agent_task_runs", "agent_task_deps",

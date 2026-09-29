@@ -946,6 +946,7 @@ CREATE TABLE IF NOT EXISTS features (
     -- Last because `0029` appends it: a fresh install and a migrated one must
     -- agree column-for-column, order included.
     project_id   INTEGER,
+    image_high_water INTEGER NOT NULL DEFAULT 0,
     CONSTRAINT uq_features_origin_ref UNIQUE (origin, external_ref)
 );
 CREATE INDEX IF NOT EXISTS idx_features_project ON features(project_id);
@@ -977,8 +978,9 @@ CREATE INDEX IF NOT EXISTS idx_feature_events_feature
 -- up: a feature's mockup is read THROUGH a task's `feature_id` at launch
 -- rather than copied onto the slices when the spec is transcribed, so
 -- replacing it corrects the next attempt of every slice already cut.
--- `idx` is a per-feature order and a freed one is never reissued, which is
--- what lets the byte-serving GET be cached hard.
+-- `idx` is a per-feature order and a freed one is never reissued (the owner
+-- row's `image_high_water` remembers it), which is what lets the
+-- byte-serving GET be cached hard.
 CREATE TABLE IF NOT EXISTS feature_images (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     feature_id INTEGER NOT NULL,
@@ -1037,6 +1039,7 @@ CREATE TABLE IF NOT EXISTS agent_tasks (
     -- What the step is (spec | build | fix | task), orthogonal to status.
     -- Declared at create, never inferred from the title.
     kind          TEXT NOT NULL DEFAULT 'task',
+    image_high_water INTEGER NOT NULL DEFAULT 0,
     CONSTRAINT uq_agent_tasks_source_external UNIQUE (source, external_id)
 );
 
@@ -1172,6 +1175,7 @@ CREATE TABLE IF NOT EXISTS defects (
     -- marker: it has second resolution, so two writes inside one second are
     -- indistinguishable and "did anything happen" would answer no.
     activity_seq       INTEGER NOT NULL DEFAULT 0,
+    image_high_water INTEGER NOT NULL DEFAULT 0,
     CONSTRAINT uq_defects_feature_symptom UNIQUE (feature_id, symptom_key)
 );
 

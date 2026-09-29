@@ -177,10 +177,9 @@ def test_a_freed_index_below_the_high_water_mark_is_not_reissued(
         flask_client, feature_row):
     """The half of the `idx` discipline that actually holds.
 
-    `_next_idx` counts from `max(idx) + 1` over the surviving rows, so a gap
-    punched in the middle stays a gap and the reference that named it keeps
-    reading as detached. The high-water case does NOT hold — see the test
-    below.
+    The allocator counts from the owner's high-water mark, so a gap punched
+    in the middle stays a gap and the reference that named it keeps reading
+    as detached. The top index holds too — see the test below.
     """
     defect_id = _open(flask_client, feature_row().id)
     for _ in range(3):
@@ -196,16 +195,10 @@ def test_a_freed_index_below_the_high_water_mark_is_not_reissued(
                                headers=EDITOR).status_code == 404
 
 
-def test_removing_the_highest_image_does_reissue_its_index(flask_client,
-                                                           feature_row):
-    """Pinned as the shape it is, not as the shape it should be.
-
-    Nothing on the row remembers a freed high-water index, so detaching the
-    last image and attaching another hands the new bytes the index the old
-    ones had — and an `![](image:2)` already in some prose then resolves to a
-    different picture with nothing to say so. Shared by all three `ImageSet`
-    owners; closing it needs a per-owner counter the tables do not carry.
-    """
+def test_removing_the_highest_image_does_not_reissue_its_index(flask_client,
+                                                               feature_row):
+    """The owner row's `image_high_water` outlives the detached image, so an
+    `![](image:2)` already in some prose never resolves to different bytes."""
     defect_id = _open(flask_client, feature_row().id)
     _attach(flask_client, defect_id, PNG)
     _attach(flask_client, defect_id, PNG)
@@ -213,8 +206,20 @@ def test_removing_the_highest_image_does_reissue_its_index(flask_client,
     flask_client.delete(f"/api/defects/{defect_id}/images/2", headers=EDITOR)
     again = _attach(flask_client, defect_id, GIF)
 
-    assert again.get_json()["image"]["idx"] == 2
+    assert again.get_json()["image"]["idx"] == 3
 
+
+def test_a_proposal_for_a_freed_top_index_is_refused(flask_client,
+                                                     feature_row):
+    """The composer proposing the N a detached image had must not win it back
+    for different bytes."""
+    defect_id = _open(flask_client, feature_row().id)
+    _attach(flask_client, defect_id, PNG)
+    flask_client.delete(f"/api/defects/{defect_id}/images/1", headers=EDITOR)
+
+    resp = _attach(flask_client, defect_id, GIF, idx=1)
+
+    assert resp.get_json()["image"]["idx"] == 2
 
 def test_deleting_the_defect_takes_its_evidence_with_it(flask_client,
                                                         feature_row):

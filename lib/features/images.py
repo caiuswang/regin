@@ -16,11 +16,11 @@ from typing import Optional
 
 from lib.activity_log import get_activity_logger
 from lib.attached_images import ImageSet, summarize
-from lib.orm.models.features import FeatureImage
+from lib.orm.models.features import Feature, FeatureImage
 
 log = get_activity_logger("features")
 
-_images = ImageSet(FeatureImage, "feature_id", "feature", log)
+_images = ImageSet(FeatureImage, Feature, "feature_id", "feature", log)
 
 __all__ = ["attach", "get_bytes", "list_for", "payload_for", "remove",
            "summaries_for", "summarize"]
