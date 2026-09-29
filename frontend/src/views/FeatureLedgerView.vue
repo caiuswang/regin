@@ -25,7 +25,10 @@ import { useConfirm } from '../composables/useConfirm'
 import { rememberedQuery } from '../composables/usePipelineTabState'
 import { useDetailBack } from '../composables/useDetailBack'
 import { usePipelineLive } from '../composables/usePipelineEvents'
-import { LEDGER_ANCHORS, reveal } from '../utils/featureLinks'
+import {
+  DEFECTS_ANCHOR, IMAGES_ANCHOR, LEDGER_ANCHORS, SESSIONS_ANCHOR, SLICES_ANCHOR,
+  SPEC_ANCHOR, TASKS_ANCHOR, reveal,
+} from '../utils/featureLinks'
 import { reopenMessage, shipMessage } from '../utils/featureConfirm'
 import Button from '../components/ui/Button.vue'
 import Icon from '../components/ui/Icon.vue'
@@ -33,10 +36,11 @@ import DeclareSessionDialog from '../components/features/DeclareSessionDialog.vu
 import FeatureDefects from '../components/features/FeatureDefects.vue'
 import FeatureEvidence from '../components/features/FeatureEvidence.vue'
 import FeatureFigures from '../components/features/FeatureFigures.vue'
-import FeatureProject from '../components/features/FeatureProject.vue'
+import FeatureProjectPicker from '../components/features/FeatureProjectPicker.vue'
 import FeatureImages from '../components/features/FeatureImages.vue'
 import FeatureSlices from '../components/features/FeatureSlices.vue'
 import FeatureSpec from '../components/features/FeatureSpec.vue'
+import FeatureSectionNav from '../components/features/FeatureSectionNav.vue'
 import FeatureStageLine from '../components/features/FeatureStageLine.vue'
 import FeatureTasks from '../components/features/FeatureTasks.vue'
 
@@ -54,6 +58,7 @@ const loadError = ref('')
 const refreshing = ref(false)
 const refreshFailed = ref('')
 const tasksCard = ref(null)
+const taskCount = ref(null)
 const declaring = ref(false)
 const writeFailed = ref('')
 const undeclareFailed = ref('')
@@ -98,7 +103,7 @@ async function load({ quiet = false } = {}) {
     if (want === featureId.value) loading.value = false
   }
 }
-watch(featureId, () => load(), { immediate: true })
+watch(featureId, () => { taskCount.value = null; load() }, { immediate: true })
 usePipelineLive(() => load({ quiet: true }))
 
 // An arrival at `/features/12#feature-sessions` — the index's sessions count —
@@ -120,6 +125,24 @@ watch(ledger, revealHash)
 watch(() => route.hash, (hash) => {
   revealedHash = ''
   if (hash) revealHash()
+})
+
+// Every count is the one its section draws, off the payload that section
+// draws from: the Tasks card's own list, the Images card's own items.
+const sections = computed(() => {
+  const l = ledger.value
+  if (!l) return []
+  const t = taskCount.value
+  return [
+    { key: 'spec', anchor: SPEC_ANCHOR, label: 'Spec',
+      count: (l.body || '').trim() ? null : 'empty' },
+    { key: 'slices', anchor: SLICES_ANCHOR, label: 'Slices', count: String(l.slice_tasks ?? 0) },
+    { key: 'images', anchor: IMAGES_ANCHOR, label: 'Images', count: String(imageItems.value.length) },
+    { key: 'tasks', anchor: TASKS_ANCHOR, label: 'Tasks', count: t ? `${t.done}/${t.total}` : null },
+    { key: 'defects', anchor: DEFECTS_ANCHOR, label: 'Defects',
+      count: `${l.defects.open}/${l.defects.total}` },
+    { key: 'sessions', anchor: SESSIONS_ANCHOR, label: 'Sessions', count: String(l.sessions.rows.length) },
+  ]
 })
 
 async function refreshStage() {
@@ -247,7 +270,7 @@ function onDeclared() {
 </script>
 
 <template>
-  <div class="space-y-4 p-4">
+  <div class="ledger space-y-4 p-4">
     <router-link v-slot="{ href }" :to="back.to.value" custom>
       <a :href="href" class="back focus-visible:outline-2 focus-visible:outline-blue-500" data-testid="detail-back" @click="back.go">
         <Icon name="chevron-left" :size="14" />{{ back.label.value }}
@@ -284,7 +307,19 @@ function onDeclared() {
         @abandon="abandon"
         @reopen="reopen"
         @renamed="ledger = $event"
-      />
+      >
+        <template #project>
+          <FeatureProjectPicker
+            :feature-id="ledger.id"
+            :project-id="ledger.project_id"
+            :project-name="ledger.project_name"
+            :can-write="canWrite"
+            @saved="ledger = $event"
+          />
+        </template>
+      </FeatureStageLine>
+
+      <FeatureSectionNav :entries="sections" end-id="feature-end" />
 
       <!-- Beside the control that failed, never a toast: a refused ship has to
            be readable next to the stage it did not change. -->
@@ -293,14 +328,6 @@ function onDeclared() {
         class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700"
         role="alert"
       >{{ writeFailed }}</p>
-
-      <FeatureProject
-        :feature-id="ledger.id"
-        :project-id="ledger.project_id"
-        :project-name="ledger.project_name"
-        :can-write="canWrite"
-        @saved="ledger = $event"
-      />
 
       <FeatureFigures :ledger="ledger" />
 
@@ -339,6 +366,7 @@ function onDeclared() {
         :feature-id="ledger.id" :can-write="canWrite"
         :has-slices="ledger.slice_tasks > 0"
         :project-id="ledger.project_id"
+        @counted="taskCount = $event"
       />
 
       <FeatureDefects :feature="ledger" :can-write="canWrite"
@@ -379,6 +407,7 @@ function onDeclared() {
           @undeclare="undeclare"
         />
       </section>
+      <div id="feature-end" aria-hidden="true"></div>
     </template>
 
     <DeclareSessionDialog
@@ -392,6 +421,11 @@ function onDeclared() {
 </template>
 
 <style scoped>
+/* A jump lands the section under the sticky index, not behind it. */
+.ledger :deep(:is(#feature-spec, #slices, #feature-images, #feature-tasks,
+                  #feature-defects, #feature-sessions)) {
+    scroll-margin-top: 3.25rem;
+}
 .back {
     display: inline-flex; align-items: center; gap: 0.25rem;
     font-size: 0.875rem; font-weight: 600; color: var(--color-fg-subtle);

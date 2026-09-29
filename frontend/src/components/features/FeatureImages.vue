@@ -18,6 +18,7 @@
 import Card from '../Card.vue'
 import TaskImageStrip from '../tasks/TaskImageStrip.vue'
 import { imageFilesFrom } from '../../utils/imageFiles'
+import { IMAGES_ANCHOR } from '../../utils/featureLinks'
 
 const props = defineProps({
   items: { type: Array, default: () => [] },
@@ -45,6 +46,7 @@ function onDrop(e) {
        drop target, and a plain div carrying a listener reads to the
        convention checker as a clickable surface with no affordance. -->
   <Card
+    :id="IMAGES_ANCHOR"
     class="fi-zone"
     data-testid="feature-images"
     @paste="onPaste"
