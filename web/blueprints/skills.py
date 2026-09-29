@@ -56,21 +56,7 @@ def require_known_skill(view):
 
 @skills_bp.route('/api/skills')
 def api_skills():
-    rows = []
-    for sid, stype, src, dep, state in skill_sync.list_states():
-        entry = skill_registry.get(sid)
-        if stype == 'pattern':
-            href = f'/patterns/{entry["procedure_id"]}'
-        else:
-            href = f'/skills/{sid}'
-        rows.append({
-            'id': sid,
-            'type': stype,
-            'state': state,
-            'source': src,
-            'deployed': dep,
-            'href': href,
-        })
+    rows = [_skill_row(*state) for state in skill_sync.list_states()]
     by_type = {'auto': [], 'pattern': []}
     for r in rows:
         by_type[r['type']].append(r)
@@ -84,27 +70,45 @@ def api_skills():
         'enabled_providers': enabled_provider_skill_paths(),
     }
     if request.args.get('include_deployments') in ('1', 'true'):
-        all_deps = pattern_deployments.list_deployments()
-        by_skill = {}
-        by_project = {}
-        for d in all_deps:
-            by_skill.setdefault(d['pattern_slug'], []).append(d)
-            if d.get('scope') == 'project':
-                pid = d.get('project_id')
-                if pid not in by_project:
-                    by_project[pid] = {
-                        'project_id': d['project_id'],
-                        'project_name': d.get('project_name'),
-                        'project_path': d.get('project_path'),
-                        'items': [],
-                    }
-                by_project[pid]['items'].append(d)
-        payload['deployments'] = all_deps
-        payload['deployments_by_skill'] = by_skill
-        payload['deployments_by_project'] = sorted(
-            by_project.values(), key=lambda x: (x['project_name'] or '')
-        )
+        payload.update(_deployments_payload(pattern_deployments.list_deployments()))
     return jsonify(payload)
+
+
+def _skill_row(sid, stype, src, dep, state) -> dict:
+    entry = skill_registry.get(sid)
+    if stype == 'pattern':
+        href = f'/patterns/{entry["procedure_id"]}'
+    else:
+        href = f'/skills/{sid}'
+    return {
+        'id': sid,
+        'type': stype,
+        'state': state,
+        'source': src,
+        'deployed': dep,
+        'href': href,
+    }
+
+
+def _deployments_payload(all_deps: list) -> dict:
+    by_skill = {}
+    by_project = {}
+    for d in all_deps:
+        by_skill.setdefault(d['pattern_slug'], []).append(d)
+        if d.get('scope') == 'project':
+            by_project.setdefault(d.get('project_id'), {
+                'project_id': d['project_id'],
+                'project_name': d.get('project_name'),
+                'project_path': d.get('project_path'),
+                'items': [],
+            })['items'].append(d)
+    return {
+        'deployments': all_deps,
+        'deployments_by_skill': by_skill,
+        'deployments_by_project': sorted(
+            by_project.values(), key=lambda x: (x['project_name'] or '')
+        ),
+    }
 
 
 @skills_bp.route('/api/skills/<skill_id>')
