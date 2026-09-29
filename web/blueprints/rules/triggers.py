@@ -380,19 +380,28 @@ class _TriggersRulesParams:
 
 def _parse_triggers_rules_params(request_obj, default_range: str) -> _TriggersRulesParams:
     """Pull + normalise the query-string knobs the rules dashboard accepts."""
+    args = request_obj.args
     return _TriggersRulesParams(
-        range_str=(request_obj.args.get('range') or default_range).lower(),
-        search=(request_obj.args.get('search') or '').strip().lower(),
-        sev_filter={s for s in (request_obj.args.get('severity') or '').split(',') if s},
-        eng_filter={s for s in (request_obj.args.get('engine') or '').split(',') if s},
-        status_filter=(request_obj.args.get('status') or 'all').lower(),
+        range_str=_lower_arg(args, 'range', default_range),
+        search=_lower_arg(args, 'search', '').strip(),
+        sev_filter=_csv_set_arg(args, 'severity'),
+        eng_filter=_csv_set_arg(args, 'engine'),
+        status_filter=_lower_arg(args, 'status', 'all'),
         # "marks=1" → only rules with at least one suppressed event in the
         # active window. Separate from the status classification because
         # "noisy" (high trigger rate) and "user-flagged as noise" are
         # different signals — same word, different semantics.
-        marks_only=request_obj.args.get('marks') == '1',
-        sort_by=(request_obj.args.get('sort') or 'rate').lower(),
+        marks_only=args.get('marks') == '1',
+        sort_by=_lower_arg(args, 'sort', 'rate'),
     )
+
+
+def _lower_arg(args, name: str, default: str) -> str:
+    return (args.get(name) or default).lower()
+
+
+def _csv_set_arg(args, name: str) -> set:
+    return {s for s in (args.get(name) or '').split(',') if s}
 
 
 def _query_trigger_aggregates(session, window_start: str, bucket_pattern: str) -> dict:
