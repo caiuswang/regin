@@ -33,14 +33,14 @@
     "web/blueprints/memory.py",
     "frontend/src/views/MemoryView.vue",
     "frontend/src/components/memory/**",
-    "cli/commands/memory.py"
+    "cli/commands/memory/**"
   ],
   "intent": "Point an agent at the human-facing controls for curating the store \u2014 the curation that is the entire point of memory being mutable. Covers the `/api/memory/*` blueprint (`web/blueprints/memory.py`: list, get, related, graph, bulk, recall probe, run-reflect, wiki-recalls, topics, taxonomy, approve/retire/restore, PATCH update, DELETE forget, the exemplar add/remove/list routes, topic-feedback decision, route-preview, link-orphans agentic classify, and tree export/import), the six-tab `MemoryView.vue` dashboard and its `frontend/src/components/memory/*` panels (Memories list/detail, Topics + feedback, Tree taxonomy, Wikis, Recall probe, and the Doctor census/reflect console), and the `regin memory` CLI mirror (`cli/commands/memory.py`) \u2014 the three entry points for reviewing distill proposals, fixing veracity, running reflect, filing the unfiled, browsing the taxonomy, and probing what a query would surface.",
   "label": "Memory curation surfaces (Memory view, /api/memory/* blueprint, regin memory CLI)",
   "parent_id": "agent-memory",
   "refs": [
     {
-      "path": "cli/commands/memory.py",
+      "path": "cli/commands/memory/__init__.py",
       "role": "entrypoint"
     },
     {

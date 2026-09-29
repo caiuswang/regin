@@ -85,7 +85,7 @@
       "tier": "reference"
     },
     {
-      "path": "cli/commands/memory.py",
+      "path": "cli/commands/memory/__init__.py",
       "tier": "reference"
     },
     {
