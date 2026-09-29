@@ -97,6 +97,23 @@ def test_between_turns_it_reports_not_busy_rather_than_no_verdict():
     assert state.elapsed_sec is None
 
 
+def test_a_background_subagent_between_turns_reports_busy():
+    """The parent sits at the prompt while the agent it delegated to works;
+    the picker dot must agree with `run_phase`, which says `working`."""
+    from tests.agent_sdk.test_background_stream import (
+        TaskNotification, TaskStarted)
+    run = _runner()
+    run._tasks.observe(TaskStarted("t1"))
+
+    state = run.live_state()
+    assert state.busy is True
+    assert state.verb == 'Waiting on subagent'
+    assert state.elapsed_sec is None
+
+    run._tasks.observe(TaskNotification("t1", status="completed"))
+    assert run.live_state().busy is False
+
+
 def test_a_sink_is_not_the_agent_working():
     """A placeholder for an abandoned turn's late result is nobody's work —
     counting it would pin the card at "running" until the next prompt."""

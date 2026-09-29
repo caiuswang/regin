@@ -260,6 +260,12 @@ def _retry_state(data: dict) -> RetryState:
     )
 
 
+def _live_verb(turn_open: bool, delegated: bool) -> str | None:
+    if turn_open:
+        return 'Working'
+    return 'Waiting on subagent' if delegated else None
+
+
 def _retry_fields(retry: "RetryState | None") -> dict:
     """A retry as the `ScreenState` fields a terminal banner would fill.
 
@@ -1036,6 +1042,16 @@ class AgentRunner:
         return any(not turn.sink for turn in self._open)
 
     @property
+    def delegated_work_in_flight(self) -> bool:
+        """True while a background agent or workflow this run delegated is
+        still running — after the parent's own turn has closed.
+
+        The parent is then sitting at the prompt, but the session is not idle:
+        the delegated task is working and will wake the parent when it lands.
+        """
+        return self._tasks.in_flight
+
+    @property
     def retrying(self) -> "RetryState | None":
         """The failed API call this run is waiting to retry, if it is.
 
@@ -1075,9 +1091,10 @@ class AgentRunner:
         # that ends between the two lookups yields a busy screen carrying a
         # retry banner for a turn that is no longer running.
         retry = self._retries.state if turn else None
+        delegated = self._tasks.in_flight
         return ScreenState(
-            busy=turn is not None,
-            verb='Working' if turn else None,
+            busy=turn is not None or delegated,
+            verb=_live_verb(turn is not None, delegated),
             elapsed_sec=(max(0, int(time.monotonic() - turn.started))
                          if turn else None),
             tool=tools[-1] if tools else None,

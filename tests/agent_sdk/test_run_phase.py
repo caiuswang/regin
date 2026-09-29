@@ -17,16 +17,18 @@ import asyncio
 
 import pytest
 
-from lib.agent_sdk import registry
+from lib.agent_sdk import registry, runner as runner_mod
 
 
 class _Runner:
     """Just the surface `run_phase` reads."""
 
-    def __init__(self, *, turn=False, stopping=False, retrying=None):
+    def __init__(self, *, turn=False, stopping=False, retrying=None,
+                 delegated=False):
         self.turn_in_flight = turn
         self.stop_requested = stopping
         self.retrying = retrying
+        self.delegated_work_in_flight = delegated
 
 
 _TRACE = "sdk-phase-1"
@@ -78,6 +80,83 @@ def test_a_turn_in_flight_is_working():
     registry.register_run(_TRACE, _Runner(turn=True))
 
     assert registry.run_phase(_TRACE) == 'working'
+
+
+def test_a_background_subagent_still_running_after_the_turn_is_working():
+    """The parent's turn closed and it sits at the prompt, but the agent it
+    delegated to is still at work — the session is not idle."""
+    registry.register_run(_TRACE, _Runner(delegated=True))
+
+    assert registry.run_phase(_TRACE) == 'working'
+
+
+class _LedgerRunner:
+    """A stub whose delegated-work answer comes from the runner's real
+    property over a real `_TaskLedger`, fed the SDK's lifecycle frames."""
+
+    turn_in_flight = False
+    stop_requested = False
+    retrying = None
+
+    def __init__(self):
+        self._tasks = runner_mod._TaskLedger()
+
+    delegated_work_in_flight = runner_mod.AgentRunner.delegated_work_in_flight
+
+
+def test_the_ledger_drives_working_then_idle_as_the_subagent_lands():
+    from tests.agent_sdk.test_background_stream import (
+        TaskNotification, TaskStarted)
+
+    run = _LedgerRunner()
+    registry.register_run(_TRACE, run)
+    assert registry.run_phase(_TRACE) == 'idle'
+
+    run._tasks.observe(TaskStarted("t1"))
+    assert registry.run_phase(_TRACE) == 'working'
+
+    run._tasks.observe(TaskNotification("t1", status="completed"))
+    assert registry.run_phase(_TRACE) == 'idle'
+
+
+def test_a_background_shell_does_not_hold_the_session_working():
+    """Only delegated agent work is tracked: a `tail -f` may never report a
+    terminal status and would pin the session at `working` forever."""
+    from tests.agent_sdk.test_background_stream import TaskStarted
+
+    run = _LedgerRunner()
+    registry.register_run(_TRACE, run)
+    run._tasks.observe(TaskStarted("sh1", task_type="local_bash"))
+
+    assert registry.run_phase(_TRACE) == 'idle'
+
+
+def test_a_park_outranks_delegated_work():
+    registry.register_run(_TRACE, _Runner(delegated=True))
+    _park('question')
+
+    assert registry.run_phase(_TRACE) == 'waiting-input'
+
+
+def test_a_stop_outranks_delegated_work():
+    registry.register_run(_TRACE, _Runner(delegated=True, stopping=True))
+
+    assert registry.run_phase(_TRACE) == 'stopping'
+
+
+def test_delegated_work_keeps_a_running_subagent_in_the_rollup():
+    """The reported defect end to end: with the runner saying `idle`, the
+    ghost-drop rule stripped the running subagent's vote and the header read
+    idle. The runner now says `working`, so the subagent's vote stands."""
+    from web.blueprints.trace import sessions
+
+    registry.register_run(_TRACE, _Runner(delegated=True))
+    roster = [{'agent_id': 'a1', 'status': 'running'}]
+    phase, agent_phase = sessions._session_phase(
+        {}, roster, False, registry.run_phase(_TRACE))
+
+    assert phase == 'working'
+    assert agent_phase['a1'] == 'working'
 
 
 def test_a_stop_already_asked_for_outranks_the_turn_it_is_ending():

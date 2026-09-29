@@ -1968,11 +1968,12 @@ def _session_phase(by_aid: dict, roster, ended: bool,
             r['status'], _waiting_kind(by_aid.get(aid) or {}))
     if agent_phase['main'] == 'ended':
         return 'ended', agent_phase
-    # A runner reporting `idle` has no turn in flight, and subagents execute
-    # INSIDE a turn — so a roster still claiming one is RUNNING is a ghost (a
-    # lost `subagent.stop`), and the ordinary rollup would let it outrank the
-    # runner's honest `idle`. Drop those votes when the runner says nothing is
-    # executing.
+    # A runner reporting `idle` has no turn in flight AND no delegated
+    # background agent still running (`run_phase` reports those as
+    # `working`) — so a roster still claiming a subagent is RUNNING is a ghost
+    # (a lost `subagent.stop`), and the ordinary rollup would let it outrank
+    # the runner's honest `idle`. Drop those votes when the runner says
+    # nothing is executing.
     #
     # Only the `working` votes. A `waiting-` subagent is a PARK, which outlives
     # the turn that opened it and is exactly what the switcher exists to
@@ -2546,6 +2547,10 @@ _MAP_KEEP_ATTR_KEYS = (
     # An SDK run that continued an earlier session names it on session.start;
     # dropped here, the trace would open with no sign it inherited a history.
     'resumed_from',
+    # Marks a child trace's `subagent.start` re-served as its opening
+    # `prompt`: the /live scope must tell it from a captured prompt, or an
+    # agent that captured nothing reads as a turn with no text.
+    'agent_root',
 )
 
 

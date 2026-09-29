@@ -678,6 +678,10 @@ def run_phase(trace_id: str) -> str | None:
     ending, and a retry outranks the `working` it would otherwise be reported
     as — the turn IS in flight, but nothing is moving and the reason is the
     network, which is the one thing silence alone can never say.
+
+    `idle` needs both no turn open AND no delegated background agent still
+    running: a background subagent outlives the turn that launched it, and
+    the session is busy until it reports back.
     """
     trace_id = owning_run(trace_id)
     with _lock:
@@ -690,11 +694,18 @@ def run_phase(trace_id: str) -> str | None:
         return 'waiting-input'
     if kinds:
         return 'waiting-permission'
+    return _runner_phase(runner)
+
+
+def _runner_phase(runner) -> str:
+    """`run_phase` for a live runner with nothing parked on it."""
     if runner.stop_requested:
         return 'stopping'
     if runner.retrying is not None:
         return 'retrying'
-    return 'working' if runner.turn_in_flight else 'idle'
+    if runner.turn_in_flight or runner.delegated_work_in_flight:
+        return 'working'
+    return 'idle'
 
 
 class RunLiveState(NamedTuple):
