@@ -724,12 +724,19 @@ test('test_pipeline_mobile_overview_features_triage', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto('/overview')
 
-  // 2a: stacked loop, ready-only run next (≤3), one decision card.
+  // 2a: stacked loop; Running now + Run next show the same rows as desktop (defect #215); one decision card.
   await expect(page.getByTestId('overview-loop')).toHaveClass(/ol--compact/)
-  const rows = page.getByTestId('run-next').locator('li')
-  await expect(rows).toHaveCount(2)
-  await expect(page.getByTestId('run-next-row-409')).toHaveCount(0)
-  await expect(page.getByTestId('running-now')).toHaveCount(0)
+  const runningNow = page.getByTestId('running-now')
+  await expect(runningNow.locator('li')).toHaveCount(2)
+  await expect(page.getByTestId('running-now-count')).toHaveText('2')
+  for (const id of ['running-now-watch-414', 'running-now-stop-414']) {
+    expect((await page.getByTestId(id).boundingBox()).height).toBeGreaterThanOrEqual(44)
+  }
+  await expect(page.getByTestId('run-next').locator('.rn-rows > li')).toHaveCount(3)
+  await expect(page.getByTestId('run-next-wait-409')).toHaveText(/waits on #408 \(running\)/)
+  for (const row of await page.getByTestId('run-next').locator('li').all()) {
+    expect(await row.evaluate(el => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0)
+  }
   await expect(page.getByTestId('needs-decision')).toContainText('3 defects need a decision')
   await expect(page.getByTestId('needs-decision')).toContainText('Newest: D-94')
   for (const tab of await page.getByTestId('pipeline-tabs').locator('a').all()) {

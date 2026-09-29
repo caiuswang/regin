@@ -2,8 +2,8 @@
 // "Run next" (1a / 2a): armed tasks, dependency-clear first. A row shows the
 // one action it needs — Run, or a link to the task it waits on, dimmed. A
 // refused Run stays beside its row, its blocking tasks linked.
-// On desktop the card opens with "Running now" while any agent is working;
-// the mobile 2a design does not draw it.
+// The card opens with "Running now" while any agent is working. Mobile shows
+// the same blocks and rows as desktop; `compact` only changes row density.
 import { computed } from 'vue'
 import api from '../../api'
 import Button from '../ui/Button.vue'
@@ -22,11 +22,6 @@ const props = defineProps({
 const emit = defineEmits(['ran'])
 
 const canWrite = computed(() => api.getStoredUser()?.role !== 'viewer')
-// Mobile shows ready rows only: they lead the server's order, so a prefix.
-const rows = computed(() => (props.compact
-  ? props.runNext.rows.filter(r => r.action.kind === 'run').slice(0, 3)
-  : props.runNext.rows))
-
 const { refusals, busyId, act } = useTaskVerbs(async () => emit('ran'))
 
 // "Run next" is the Ready group of the next-step list; with nothing armed, the
@@ -42,25 +37,22 @@ const subOf = row => runNextSub({ ...row, feature_id: null })
 
 <template>
   <section class="pl-panel rn" data-testid="run-next" aria-labelledby="rn-title">
-    <RunningNow v-if="!compact && running?.total" :running="running" @stopped="emit('ran')" />
-    <header class="pl-panel__head" :class="{ 'rn-head--after': !compact && running?.total }">
+    <RunningNow v-if="running?.total" :running="running" :compact="compact" @stopped="emit('ran')" />
+    <header class="pl-panel__head" :class="{ 'rn-head--after': running?.total }">
       <h2 id="rn-title" class="pl-panel__title">Run next</h2>
       <span class="pl-panel__sub" data-testid="run-next-count">{{ runNext.total }}</span>
       <router-link :to="groupTo('ready')" class="pl-panel__link focus-visible:outline-2 focus-visible:outline-blue-500"
                    data-testid="run-next-all"
       >All in Tasks →</router-link>
     </header>
-    <p v-if="!rows.length" class="pl-panel__empty" data-testid="run-next-empty">
-      <template v-if="compact && runNext.total">Nothing is dependency-clear yet.</template>
-      <template v-else>
-        Nothing armed —
-        <router-link :to="groupTo('ideas')" class="rn-link" data-testid="run-next-ideas">arm an idea</router-link>
-        to see it here.
-      </template>
+    <p v-if="!runNext.rows.length" class="pl-panel__empty" data-testid="run-next-empty">
+      Nothing armed —
+      <router-link :to="groupTo('ideas')" class="rn-link" data-testid="run-next-ideas">arm an idea</router-link>
+      to see it here.
     </p>
     <ul v-else class="rn-rows">
       <li
-        v-for="row in rows"
+        v-for="row in runNext.rows"
         :key="row.id"
         class="rn-row"
         :class="{ 'is-waiting': row.action.kind === 'wait' }"

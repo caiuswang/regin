@@ -10,6 +10,7 @@ import { useTaskVerbs } from '../../composables/useTaskVerbs.js'
 
 defineProps({
   running: { type: Object, required: true },
+  compact: { type: Boolean, default: false },
 })
 const emit = defineEmits(['stopped'])
 
@@ -22,7 +23,7 @@ function watchTo(row) {
 </script>
 
 <template>
-  <div class="rnw" data-testid="running-now">
+  <div class="rnw" :class="{ 'rnw--compact': compact }" data-testid="running-now">
     <header class="pl-panel__head">
       <h2 id="rnw-title" class="pl-panel__title">Running now</h2>
       <span class="pl-panel__sub" data-testid="running-now-count">{{ running.total }}</span>
@@ -83,6 +84,7 @@ function watchTo(row) {
     font-size: 0.75rem; font-weight: 600; color: var(--color-primary); text-decoration: none;
     background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg);
 }
+.rnw--compact .rnw-row .rnw-watch, .rnw--compact .rnw-row .rnw-stop { min-height: 44px; }
 .rnw-watch:hover { filter: brightness(0.97); }
 .rnw-watch:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 2px; }
 </style>
