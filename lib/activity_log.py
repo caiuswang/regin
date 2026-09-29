@@ -311,13 +311,36 @@ def log_path() -> Path | None:
     return _LOG_DIR / _LOG_FILENAME
 
 
+def _parse_log_record(raw: str) -> dict | None:
+    import json
+
+    raw = raw.strip()
+    if not raw:
+        return None
+    try:
+        return json.loads(raw).get("record", {})
+    except (json.JSONDecodeError, AttributeError):
+        return None
+
+
+def _bucket_record(buckets: dict[str, list[int | float | None]], rec: dict) -> None:
+    feat = (rec.get("extra") or {}).get("feature") or "other"
+    level = (rec.get("level") or {}).get("name", "")
+    ts = (rec.get("time") or {}).get("timestamp")
+    slot = buckets.setdefault(feat, [0, 0, None])
+    slot[0] = int(slot[0]) + 1
+    if level == "ERROR":
+        slot[1] = int(slot[1]) + 1
+    prev = slot[2]
+    if ts is not None and (prev is None or ts > prev):
+        slot[2] = ts
+
+
 def iter_features() -> list[FeatureFileInfo]:
     """Single pass over `regin.log` bucketing records by `extra.feature`.
 
     Returns one row per observed feature with the event count, error
     count, and the most-recent timestamp seen."""
-    import json
-
     if _LOG_DIR is None:
         return []
     path = _LOG_DIR / _LOG_FILENAME
@@ -326,24 +349,9 @@ def iter_features() -> list[FeatureFileInfo]:
     buckets: dict[str, list[int | float | None]] = {}
     with path.open("r") as f:
         for raw in f:
-            raw = raw.strip()
-            if not raw:
-                continue
-            try:
-                rec = json.loads(raw).get("record", {})
-            except (json.JSONDecodeError, AttributeError):
-                continue
-            feat = (rec.get("extra") or {}).get("feature") or "other"
-            level = (rec.get("level") or {}).get("name", "")
-            ts = (rec.get("time") or {}).get("timestamp")
-            slot = buckets.setdefault(feat, [0, 0, None])
-            slot[0] = int(slot[0]) + 1
-            if level == "ERROR":
-                slot[1] = int(slot[1]) + 1
-            if ts is not None:
-                prev = slot[2]
-                if prev is None or ts > prev:
-                    slot[2] = ts
+            rec = _parse_log_record(raw)
+            if rec is not None:
+                _bucket_record(buckets, rec)
     return [
         FeatureFileInfo(
             feature=feat,
