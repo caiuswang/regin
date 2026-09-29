@@ -63,15 +63,43 @@ export function useNextStep(params, size = 50) {
   const error = ref('')
   const loading = ref(false)
   const latest = useLatest()
+  // Pages of each group the reader has opened with "more", so a reload — a
+  // live frame from anyone's task write — re-reads the group at that window
+  // instead of collapsing it to its preview. Cleared when the filter changes.
+  const wanted = new Map()
+  let shown = null
+
+  const readPage = async (key, page) => (await api.get(`/tasks?${groupedQuery(params.value,
+    { group: 'next_step', only: key, page, size })}`)).groups[0]
+
+  async function readWanted() {
+    const keys = [...wanted.keys()]
+    const read = await Promise.all(keys.map(key => Promise.all(
+      Array.from({ length: wanted.get(key) }, (_, page) => readPage(key, page)))))
+    return new Map(keys.map((key, i) => [key, read[i]]))
+  }
+
+  function widen(data, pagesByKey) {
+    for (const group of data.groups || []) {
+      const pages = pagesByKey.get(group.key)
+      if (!pages?.length) continue
+      group.rows = pages.flatMap(p => p.rows)
+      group.more = Math.max(0, group.n - group.rows.length)
+    }
+    return data
+  }
 
   async function load() {
     const mine = latest.next()
     loading.value = true
+    const query = groupedQuery(params.value, { group: 'next_step', size })
+    if (query !== shown) { wanted.clear(); shown = query }
     try {
-      const data = await api.get(
-        `/tasks?${groupedQuery(params.value, { group: 'next_step', size })}`)
+      const data = await api.get(`/tasks?${query}`)
       if (latest.stale(mine)) return
-      body.value = data
+      const pagesByKey = await readWanted()
+      if (latest.stale(mine)) return
+      body.value = widen(data, pagesByKey)
       error.value = ''
     } catch (e) {
       if (!latest.stale(mine)) error.value = e?.message || String(e)
@@ -86,9 +114,8 @@ export function useNextStep(params, size = 50) {
     const group = body.value?.groups.find(g => g.key === key)
     if (!group) return Promise.resolve()
     const { page, keep } = nextWindow(group.rows, size)
-    return pager(key,
-      async () => (await api.get(`/tasks?${groupedQuery(params.value,
-        { group: 'next_step', only: key, page, size })}`)).groups[0],
+    wanted.set(key, page + 1)
+    return pager(key, () => readPage(key, page),
       (fresh) => {
         group.rows = [...keep, ...fresh.rows]
         group.more = Math.max(0, fresh.n - group.rows.length)
@@ -117,15 +144,39 @@ export function useTaskBoard(params, size = 20) {
   const error = ref('')
   const loading = ref(false)
   const latest = useLatest()
+  // As in useNextStep: the columns (and the failed shelf) the reader opened,
+  // re-read at that window by a reload instead of collapsed.
+  const wanted = new Map()
+  let shown = null
+
+  const readPage = async (status, page) => (await api.get(`/tasks/board?${groupedQuery(params.value,
+    { column: status, page, size })}`)).columns[0]
+
+  async function readWanted() {
+    const keys = [...wanted.keys()]
+    const read = await Promise.all(keys.map(key => Promise.all(
+      Array.from({ length: wanted.get(key) }, (_, page) => readPage(key, page)))))
+    return new Map(keys.map((key, i) => [key, {
+      cards: read[i].flatMap(p => p.cards), more: read[i].at(-1)?.more ?? 0,
+    }]))
+  }
 
   async function load() {
     const mine = latest.next()
     loading.value = true
+    const query = groupedQuery(params.value, { size })
+    if (query !== shown) { wanted.clear(); shown = query }
     try {
-      const data = await api.get(`/tasks/board?${groupedQuery(params.value, { size })}`)
+      const data = await api.get(`/tasks/board?${query}`)
       if (latest.stale(mine)) return
+      const opened = await readWanted()
+      if (latest.stale(mine)) return
+      for (const column of data.columns || []) {
+        const read = opened.get(column.status)
+        if (read) Object.assign(column, read)
+      }
       body.value = data
-      failed.value = null
+      failed.value = opened.get('failed') || null
       error.value = ''
     } catch (e) {
       if (!latest.stale(mine)) error.value = e?.message || String(e)
@@ -134,11 +185,10 @@ export function useTaskBoard(params, size = 20) {
     }
   }
 
-  async function page(status, have) {
+  function page(status, have) {
     const { page: next } = nextWindow(have, size)
-    const data = await api.get(`/tasks/board?${groupedQuery(params.value,
-      { column: status, page: next, size })}`)
-    return data.columns[0]
+    wanted.set(status, next + 1)
+    return () => readPage(status, next)
   }
 
   const pager = usePager(latest)
@@ -147,7 +197,7 @@ export function useTaskBoard(params, size = 20) {
     const column = body.value?.columns.find(c => c.status === status)
     if (!column) return Promise.resolve()
     const have = column.cards
-    return pager(status, () => page(status, have), (fresh) => {
+    return pager(status, page(status, have), (fresh) => {
       column.cards = [...have, ...fresh.cards]
       column.more = fresh.more
     })
@@ -155,7 +205,7 @@ export function useTaskBoard(params, size = 20) {
 
   function showFailed() {
     const have = failed.value?.cards || []
-    return pager('failed', () => page('failed', have), (fresh) => {
+    return pager('failed', page('failed', have), (fresh) => {
       failed.value = { cards: [...have, ...fresh.cards], more: fresh.more }
     })
   }

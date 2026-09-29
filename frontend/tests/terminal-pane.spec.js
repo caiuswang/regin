@@ -139,16 +139,24 @@ test('the client gets its own grouped session, not the target', async ({ page })
 test('the browser geometry propagates to the tmux client', async ({ page }) => {
   // Height, not width: below `lg` the trace chrome drops its rails and the
   // pane gets WIDER, so a narrower viewport is not a narrower terminal.
+  // Follow THIS page's client by its session name: the previous test's client
+  // shares the socket until its reap lands, and list order is not ours.
+  const clients = () => groupedClients().map(line => line.split(' '))
+  const before = new Set(clients().map(([name]) => name))
   await page.setViewportSize({ width: 1280, height: 1000 })
   await openTerminalTab(page)
-  await expect.poll(() => groupedClients().length, { timeout: 10_000 }).toBe(1)
-  const tall = groupedClients()[0].split(' ')[1]
+  let mine
+  await expect.poll(() => {
+    mine = clients().find(([name]) => !before.has(name))?.[0]
+    return mine
+  }, { timeout: 10_000 }).toBeTruthy()
+  const sizeOfMine = () => clients().find(([name]) => name === mine)?.[1]
+  const tall = sizeOfMine()
 
   await page.setViewportSize({ width: 1280, height: 500 })
-  await expect.poll(() => groupedClients()[0]?.split(' ')[1], { timeout: 10_000 })
-    .not.toBe(tall)
+  await expect.poll(sizeOfMine, { timeout: 10_000 }).not.toBe(tall)
   const rowsOf = (size) => Number(size.split('x')[1])
-  expect(rowsOf(groupedClients()[0].split(' ')[1])).toBeLessThan(rowsOf(tall))
+  expect(rowsOf(sizeOfMine())).toBeLessThan(rowsOf(tall))
 })
 
 test('the pane terminal leaves no orphaned tmux client behind', async ({ page }) => {

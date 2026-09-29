@@ -237,6 +237,12 @@ test('the docked composer carries the same session context the feed does', async
   await expect(feedPanel).toContainText('sonnet-4.6')
   await expect(feedPanel).toContainText('ctx 41% used')
   await expect(feedPanel.getByTestId('trace-terminal-btn')).toBeVisible()
+  // At 1280x720 the expanded header plus an open feed composer leave the
+  // bounded feed zero rows tall, so the row the reader opens from is clipped
+  // under the dock. The parity under test is between the two mounts, not
+  // both open at once.
+  await feedPanel.getByRole('button', { name: 'Dismiss composer' }).click()
+  await expect(feedPanel).toHaveCount(0)
 
   await openReader(page)
   await replyBtn(page).click()

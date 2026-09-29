@@ -19,6 +19,38 @@ test('hook installers list every provider with its settings path', async ({ page
 })
 
 test('an installed hook exposes Refresh and its exact commands', async ({ page }) => {
+  // Served, not read off this machine's provider config: in a linked worktree
+  // every routed event belongs to another checkout, and the card reads
+  // "Other checkout" instead of "Installed".
+  const cmd = '/repo/.venv/bin/python -P -m hook_manager PostToolUse --agent-type claude'
+  const clean = {
+    installed: true, stale: false, target: 'claude',
+    routed_events: ['PostToolUse'],
+    commands: { PostToolUse: [cmd] },
+    expected_commands: { PostToolUse: cmd },
+    timeouts: {}, expected_timeout: null, timeout_drift_events: [],
+    stale_events: [], missing_events: [], unexpected_events: [], malformed_events: [],
+    foreign_events: [], foreign_commands: {}, foreign_roots: [],
+  }
+  await page.route('**/api/hooks', async route => {
+    await route.fulfill({
+      json: {
+        providers: [{
+          id: 'claude',
+          name: 'Claude Code',
+          active: true,
+          hooks_supported: true,
+          hook_settings_path: '/tmp/claude-settings.json',
+          hook_manager: clean,
+          debug: {
+            ...clean, installed: false, routed_events: [], commands: {}, expected_commands: {},
+          },
+        }],
+        hook_manager: { installed: true, stale: false, target: 'claude' },
+        debug: { installed: false, stale: false, target: 'claude' },
+      },
+    })
+  })
   await page.goto(ROUTE)
   // `.card` nests (the provider Card wraps each HookCard), so the innermost —
   // last in document order — is the hook card itself.

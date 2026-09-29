@@ -21,6 +21,8 @@ const COLLAPSED_KEY = 'regin_trace_rail_collapsed'
 // Between the rail's own `lg` (1024px) visibility floor and the 1120px fold
 // threshold: the only band where the rail is both rendered AND auto-folded.
 const FOLDED_WIDTH = 1080
+// useConversationRail.js RAIL_MINI_WIDTH — the mini rail's rendered width.
+const RAIL_MINI_WIDTH = 44
 const VIEW_MODES = ['Conversation', 'Timeline', 'Log', 'Terminal', 'Messages']
 
 async function openTrace(page, traceId = BASELINE_TRACE) {
@@ -106,15 +108,15 @@ test.describe('Trace chrome — auto-fold never rewrites the rail preference', (
 
     const rail = page.locator('[data-testid="conversation-toc"]')
     const widthOf = async () => (await rail.boundingBox()).width
-    expect(await widthOf()).toBeGreaterThan(62)
+    expect(await widthOf()).toBeGreaterThan(RAIL_MINI_WIDTH)
 
     await page.setViewportSize({ width: FOLDED_WIDTH, height: 900 })
-    await expect.poll(widthOf).toBe(62)
+    await expect.poll(widthOf).toBe(RAIL_MINI_WIDTH)
     expect(await storedCollapse(page)).toBe('0')
 
     // Widening restores the user's own (expanded) choice.
     await page.setViewportSize({ width: 1440, height: 900 })
-    await expect.poll(widthOf).toBeGreaterThan(62)
+    await expect.poll(widthOf).toBeGreaterThan(RAIL_MINI_WIDTH)
     expect(await storedCollapse(page)).toBe('0')
   })
 
@@ -137,7 +139,7 @@ test.describe('Trace chrome — auto-fold never rewrites the rail preference', (
     await page.setViewportSize({ width: 1440, height: 900 })
     await expect.poll(
       async () => (await page.locator('[data-testid="conversation-toc"]').boundingBox()).width,
-    ).toBeGreaterThan(62)
+    ).toBeGreaterThan(RAIL_MINI_WIDTH)
   })
 
   // No `withStoredCollapse` here: addInitScript re-runs on every navigation,
@@ -151,12 +153,12 @@ test.describe('Trace chrome — auto-fold never rewrites the rail preference', (
       (await page.locator('[data-testid="conversation-toc"]').boundingBox()).width
 
     await page.locator('body').press('t')
-    await expect.poll(railWidth).toBe(62)
+    await expect.poll(railWidth).toBe(RAIL_MINI_WIDTH)
     expect(await storedCollapse(page)).toBe('1')
 
     await page.reload()
     await waitForViewModes(page)
-    await expect.poll(railWidth).toBe(62)
+    await expect.poll(railWidth).toBe(RAIL_MINI_WIDTH)
   })
 
   test('`t` is inert while typing', async ({ page }) => {

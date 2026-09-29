@@ -349,9 +349,12 @@ function renderableDescendants(entry, keepRewound = false) {
   // A subagent's work is served by its own trace and stands here as its
   // card alone: a row tagged with a roster agent's id is the child's, never
   // the parent's, whichever read window delivered it. A scoped feed's OWN
-  // agent is not foreign to it (see `foreignAgentIds`).
+  // agent is not foreign to it (see `foreignAgentIds`). `workflow.agent_result`
+  // is the agent card's own closing row, copied off the marker so it keeps
+  // the agent's id — the card's, not the child's.
   const base = foreignAgents.value.size
     ? launchless.filter(({ span }) => span.name.startsWith('subagent.')
+      || span.name === 'workflow.agent_result'
       || !foreignAgents.value.has(span.attributes?.agent_id))
     : launchless
   const visible = []

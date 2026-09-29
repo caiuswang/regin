@@ -6,8 +6,35 @@
  *
  * Both cases end on Cancel: confirming would really end a live session.
  */
+import { randomUUID } from 'node:crypto'
 import { test, expect } from './auth-fixture.js'
 import { API_BASE as API } from './helpers/api-base.js'
+import { TEST_USER } from '../e2e-env.js'
+
+// The unreachable case owns its row: a fresh trace with no bridge pane is
+// non-ended and unreachable by construction, where a host session picked off
+// the shared list is whatever the rest of the run left behind.
+const ownTraceId = randomUUID()
+
+// Server timestamps are naive local time; a recent one keeps the row inside
+// the list's default window and off the stale path.
+const localNow = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60_000)
+  .toISOString().slice(0, 19)
+
+test.beforeAll(async ({ request }) => {
+  const { token } = await (await request.post(
+    `${API}/api/auth/login`, { data: TEST_USER })).json()
+  const seeded = await request.post(`${API}/api/session-spans`, {
+    headers: { Authorization: `Bearer ${token}` },
+    data: [{
+      trace_id: ownTraceId, span_id: `prompt-${ownTraceId.slice(0, 8)}`,
+      parent_id: null, name: 'prompt',
+      start_time: localNow(), duration_ms: 0,
+      attributes: { text: 'a session nothing can reach', is_test: true },
+    }],
+  })
+  expect(seeded.ok()).toBeTruthy()
+})
 
 
 // `page.request` is a separate context from the app's fetch — it does not
@@ -20,10 +47,10 @@ async function apiHeaders(page) {
   return { Authorization: `Bearer ${token}` }
 }
 
-// Which traces are live changes run to run, so both cases are resolved from
+// Which traces are live changes run to run, so the live case is resolved from
 // the API rather than hardcoded. Only a non-ended row renders Close at all
-// (SessionListRow `v-if="s.status !== 'ended'"`), so both cases need one:
-// `wantLive` true picks one regin can still reach, false one it cannot.
+// (SessionListRow `v-if="s.status !== 'ended'"`): `wantLive` true picks one
+// regin can still reach, false one it cannot.
 async function findRow(page, wantLive) {
   const headers = await apiHeaders(page)
   const res = await page.request.get(`${API}/api/sessions?limit=60`, { headers })
@@ -74,17 +101,26 @@ test('close on a live session names the tier and the shutdown', async ({ page })
 })
 
 test('an unreachable session falls back, and cancel stops everything', async ({ page }) => {
-  const unreachable = await findRow(page, false)
-  test.skip(!unreachable, 'every open session is reachable on this host right now')
-
+  // Every facet wide open, so the trace-id filter below is the only narrowing.
+  await page.addInitScript(() => {
+    localStorage.setItem('regin_sessions_range', 'all')
+    localStorage.setItem('regin_sessions_kind', 'all')
+    localStorage.setItem('regin_sessions_active', 'all')
+    localStorage.setItem('regin_sessions_tag', '')
+    localStorage.setItem('regin_sessions_repo', 'all')
+  })
   const shutdowns = []
   page.on('request', r => {
     if (r.url().includes('/shutdown')) shutdowns.push(r.url())
   })
 
   await page.goto('/trace/sessions')
-  await page.waitForSelector('.srow', { timeout: 15000 })
-  const dialog = await clickRowClose(page, unreachable.trace_id)
+  await page.getByRole('button', { name: /Filters/ }).click()
+  await page.locator('#filters-trace-id').fill(ownTraceId)
+  await page.locator('#filters-trace-id').press('Enter')
+  await page.keyboard.press('Escape')
+  await expect(page.locator('.srow')).toHaveCount(1)
+  const dialog = await clickRowClose(page, ownTraceId)
 
   await expect(dialog).toBeVisible()
   await expect(dialog).not.toContainText('still LIVE')
