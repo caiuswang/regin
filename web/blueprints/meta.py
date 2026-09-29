@@ -89,51 +89,58 @@ def api_doctor():
     return jsonify(run_checks())
 
 
-@meta_bp.route("/api/dashboard")
-def api_dashboard():
-    with SessionLocal() as session:
-        # Repo × tracked branch + pattern_count per repo — single query.
-        repo_stmt = (
-            select(
-                Repo, Branch,
-                func.count(func.distinct(PatternDoc.id)).label("pattern_count"),
-            )
-            .outerjoin(Branch, (Branch.repo_id == Repo.id) & (Branch.is_tracked == 1))
-            .outerjoin(PatternDeployment,
-                       (PatternDeployment.project_id == Repo.id)
-                       & (PatternDeployment.scope == "project"))
-            .outerjoin(PatternDoc, PatternDoc.slug == PatternDeployment.pattern_slug)
-            .where(Repo.is_active == 1)
-            .group_by(Repo.id)
-            .order_by(Repo.name)
+def _dashboard_repos(session) -> list:
+    """Repo × tracked branch + pattern_count per repo — single query."""
+    repo_stmt = (
+        select(
+            Repo, Branch,
+            func.count(func.distinct(PatternDoc.id)).label("pattern_count"),
         )
-        repos = []
-        for r, b, count in session.exec(repo_stmt).all():
-            d = _repo_to_dict(r)
-            d["branch_name"] = b.name if b else None
-            d["pattern_count"] = count
-            repos.append(d)
+        .outerjoin(Branch, (Branch.repo_id == Repo.id) & (Branch.is_tracked == 1))
+        .outerjoin(PatternDeployment,
+                   (PatternDeployment.project_id == Repo.id)
+                   & (PatternDeployment.scope == "project"))
+        .outerjoin(PatternDoc, PatternDoc.slug == PatternDeployment.pattern_slug)
+        .where(Repo.is_active == 1)
+        .group_by(Repo.id)
+        .order_by(Repo.name)
+    )
+    repos = []
+    for r, b, count in session.exec(repo_stmt).all():
+        d = _repo_to_dict(r)
+        d["branch_name"] = b.name if b else None
+        d["pattern_count"] = count
+        repos.append(d)
+    return repos
 
-        # Stats bundle.
-        total_repos = session.exec(
+
+def _dashboard_totals(session) -> dict:
+    return {
+        "total_repos": session.exec(
             select(func.count(Repo.id)).where(Repo.is_active == 1)
-        ).one()
-        total_patterns = session.exec(select(func.count(PatternDoc.id))).one()
-        total_tags = session.exec(select(func.count(Tag.id))).one()
-        trigger_row = session.exec(
+        ).one(),
+        "total_patterns": session.exec(select(func.count(PatternDoc.id))).one(),
+        "total_tags": session.exec(select(func.count(Tag.id))).one(),
+        "trigger_row": session.exec(
             select(
                 func.count(RuleTrigger.id).label("total"),
                 func.coalesce(func.sum(RuleTrigger.triggered), 0).label("fired"),
             )
-        ).one()
+        ).one(),
+    }
 
+
+def _skill_state_counts() -> dict:
     skill_counts = {"total": 0, "in_sync": 0, "drifted": 0,
                      "source_only": 0, "project_only": 0, "deployed_only": 0}
     for _sid, _stype, _src, _dep, sstate in _ss.list_states():
         skill_counts["total"] += 1
         if sstate in skill_counts:
             skill_counts[sstate] += 1
+    return skill_counts
 
+
+def _rule_severities() -> list:
     grit_rules = load_rules_index().get("rules", [])
     seen_ids = {r.get("id") for r in grit_rules}
     severities = [r.get("severity") for r in grit_rules]
@@ -145,18 +152,33 @@ def api_dashboard():
                 continue
             seen_ids.add(rule.id)
             severities.append(rule.severity)
+    return severities
+
+
+def _rules_stats(severities: list, trigger_row) -> dict:
+    return {
+        "total": len(severities),
+        "error": sum(1 for s in severities if s == "error"),
+        "warn": sum(1 for s in severities if s == "warn"),
+        "triggers": trigger_row[0],
+        "fired": trigger_row[1],
+    }
+
+
+@meta_bp.route("/api/dashboard")
+def api_dashboard():
+    with SessionLocal() as session:
+        repos = _dashboard_repos(session)
+        totals = _dashboard_totals(session)
+
+    skill_counts = _skill_state_counts()
+    severities = _rule_severities()
     stats = {
-        "total_repos": total_repos,
-        "total_patterns": total_patterns,
-        "total_tags": total_tags,
+        "total_repos": totals["total_repos"],
+        "total_patterns": totals["total_patterns"],
+        "total_tags": totals["total_tags"],
         "skills": skill_counts,
-        "rules": {
-            "total": len(severities),
-            "error": sum(1 for s in severities if s == "error"),
-            "warn": sum(1 for s in severities if s == "warn"),
-            "triggers": trigger_row[0],
-            "fired": trigger_row[1],
-        },
+        "rules": _rules_stats(severities, totals["trigger_row"]),
     }
     return jsonify({"repos": repos, "stats": stats})
 
