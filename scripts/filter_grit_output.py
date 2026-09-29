@@ -54,27 +54,10 @@ def _rule_applies(rule: dict, file_path: str, file_content: str) -> bool:
     return bool(filename_globs or content_triggers)
 
 
-def main():
-    if len(sys.argv) != 4:
-        print(f"Usage: {sys.argv[0]} <rules-json> <rule-id> <repo-path>", file=sys.stderr)
-        sys.exit(2)
-
-    rules_json_path, rule_id, repo_path = sys.argv[1], sys.argv[2], sys.argv[3]
-
-    with open(rules_json_path) as f:
-        data = json.load(f)
-
-    rule = next((r for r in data.get('rules', []) if r['id'] == rule_id), None)
-    if not rule:
-        # No rule found — pass through unfiltered
-        sys.stdout.write(sys.stdin.read())
-        return
-
-    raw = sys.stdin.read()
-    lines = raw.split('\n')
-
-    # Split into violation blocks. Each block starts with "Log in <path>:"
-    blocks = []          # list of (file_relpath, block_lines)
+def _split_blocks(lines: list) -> tuple:
+    """Split grit output into violation blocks, each starting with
+    "Log in <path>:". Returns ([(file_relpath, block_lines)], summary_line)."""
+    blocks = []
     current_file = None
     current_lines = []
     summary_line = None
@@ -97,40 +80,59 @@ def main():
 
     if current_file is not None:
         blocks.append((current_file, current_lines))
+    return blocks, summary_line
 
-    # Cache file contents for trigger checking
-    _content_cache = {}
 
-    def read_content(rel_path):
-        if rel_path not in _content_cache:
-            abs_path = os.path.join(repo_path, rel_path)
-            try:
-                with open(abs_path, 'r', errors='ignore') as fh:
-                    _content_cache[rel_path] = fh.read()
-            except (OSError, IOError):
-                _content_cache[rel_path] = ''
-        return _content_cache[rel_path]
+def _read_file(abs_path: str) -> str:
+    try:
+        with open(abs_path, 'r', errors='ignore') as fh:
+            return fh.read()
+    except (OSError, IOError):
+        return ''
 
-    # Filter blocks
+
+def _kept_blocks(rule: dict, blocks: list, repo_path: str) -> list:
+    content_cache = {}
     kept = []
     for file_path, block_lines in blocks:
         abs_path = os.path.join(repo_path, file_path)
-        content = read_content(file_path)
-        if _rule_applies(rule, abs_path, content):
+        if file_path not in content_cache:
+            content_cache[file_path] = _read_file(abs_path)
+        if _rule_applies(rule, abs_path, content_cache[file_path]):
             kept.append(block_lines)
+    return kept
 
-    # Output kept blocks
-    for block_lines in kept:
-        print('\n'.join(block_lines))
 
-    # Rewrite summary
-    match_count = len(kept)
+def _print_summary(summary_line, match_count: int) -> None:
     if summary_line is not None:
         m = re.match(r'^Processed (\d+) files?', summary_line)
         file_count = m.group(1) if m else '?'
         print(f"Processed {file_count} files and found {match_count} matches")
     elif match_count == 0:
         print("Processed 0 files and found 0 matches")
+
+
+def main():
+    if len(sys.argv) != 4:
+        print(f"Usage: {sys.argv[0]} <rules-json> <rule-id> <repo-path>", file=sys.stderr)
+        sys.exit(2)
+
+    rules_json_path, rule_id, repo_path = sys.argv[1], sys.argv[2], sys.argv[3]
+
+    with open(rules_json_path) as f:
+        data = json.load(f)
+
+    rule = next((r for r in data.get('rules', []) if r['id'] == rule_id), None)
+    if not rule:
+        # No rule found — pass through unfiltered
+        sys.stdout.write(sys.stdin.read())
+        return
+
+    blocks, summary_line = _split_blocks(sys.stdin.read().split('\n'))
+    kept = _kept_blocks(rule, blocks, repo_path)
+    for block_lines in kept:
+        print('\n'.join(block_lines))
+    _print_summary(summary_line, len(kept))
 
 
 if __name__ == '__main__':
