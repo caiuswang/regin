@@ -3726,6 +3726,29 @@ def _delete_session_rows(session, trace_id):
     return counts
 
 
+def _batch_trace_ids_error(trace_ids) -> str | None:
+    if not isinstance(trace_ids, list) or not all(isinstance(t, str) and t for t in trace_ids):
+        return 'trace_ids must be a non-empty list of strings'
+    if not trace_ids:
+        return 'trace_ids must not be empty'
+    return None
+
+
+def _delete_session_batch(trace_ids) -> dict:
+    totals = {key: 0 for key, _, _ in _SESSION_DELETE_TARGETS}
+    with SessionLocal() as session:
+        # A regin-launched run is two trace ids shown as one row, so
+        # deleting the row the user sees has to take both halves. Removing
+        # only the canonical one left the other holding the session's
+        # spans, and it surfaced as a NEW row where the deleted one had
+        # been — the same session, apparently undeletable.
+        for trace_id in _expand_alias_groups(trace_ids):
+            for key, count in _delete_session_rows(session, trace_id).items():
+                totals[key] += count
+        session.commit()
+    return totals
+
+
 @trace_bp.route('/api/sessions/batch-delete', methods=['POST'])
 def api_session_batch_delete():
     """Delete multiple sessions in a single transaction.
@@ -3739,26 +3762,12 @@ def api_session_batch_delete():
     """
     body = request.get_json(silent=True) or {}
     trace_ids = body.get('trace_ids') or []
-    if not isinstance(trace_ids, list) or not all(isinstance(t, str) and t for t in trace_ids):
-        return jsonify({
-            'ok': False,
-            'error': 'trace_ids must be a non-empty list of strings',
-        }), 400
-    if not trace_ids:
-        return jsonify({'ok': False, 'error': 'trace_ids must not be empty'}), 400
+    error = _batch_trace_ids_error(trace_ids)
+    if error:
+        return jsonify({'ok': False, 'error': error}), 400
 
-    totals = {key: 0 for key, _, _ in _SESSION_DELETE_TARGETS}
     try:
-        with SessionLocal() as session:
-            # A regin-launched run is two trace ids shown as one row, so
-            # deleting the row the user sees has to take both halves. Removing
-            # only the canonical one left the other holding the session's
-            # spans, and it surfaced as a NEW row where the deleted one had
-            # been — the same session, apparently undeletable.
-            for trace_id in _expand_alias_groups(trace_ids):
-                for key, count in _delete_session_rows(session, trace_id).items():
-                    totals[key] += count
-            session.commit()
+        totals = _delete_session_batch(trace_ids)
     except Exception as exc:
         return jsonify({
             'ok': False,
