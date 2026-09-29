@@ -96,13 +96,16 @@ def _parse_frontmatter(text: str) -> tuple[dict, str]:
             continue
         if ':' in line:
             key, _, val = line.partition(':')
-            val = val.strip()
-            if (val.startswith('"') and val.endswith('"')) or \
-               (val.startswith("'") and val.endswith("'")):
-                val = val[1:-1]
-            fm[key.strip()] = val
             current = key.strip()
+            fm[current] = _unquote(val.strip())
     return fm, body
+
+
+def _unquote(val: str) -> str:
+    if (val.startswith('"') and val.endswith('"')) or \
+       (val.startswith("'") and val.endswith("'")):
+        return val[1:-1]
+    return val
 
 
 def _validate_slug(slug: str) -> None:
