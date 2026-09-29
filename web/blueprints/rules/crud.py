@@ -56,14 +56,10 @@ def api_delete_rule(rule_id):
 @require_editor
 def api_update_rule(rule_id):
     """Update a rule's metadata and/or GritQL source."""
-    idx = grit_rule_index.load_rules_index()
-    rule = next((r for r in idx.get('rules', []) if r['id'] == rule_id), None)
-    if not rule:
+    if not _indexed_rule(rule_id):
         return jsonify({'error': 'Rule not found'}), 404
 
-    data = request.get_json(silent=True) or {}
-    allowed = ('summary', 'severity', 'triggers', 'layer', 'guide', 'source')
-    updates = {k: v for k, v in data.items() if k in allowed and v is not None}
+    updates = _rule_updates(request.get_json(silent=True) or {})
     if not updates:
         return jsonify({'ok': False, 'msg': 'No fields to update'})
 
@@ -74,11 +70,27 @@ def api_update_rule(rule_id):
     grit_rule_index.regenerate(write_guides=False)
     _pkg.deploy_rules_index_skill(grit_rule_index.RULES_MD_PATH)
 
-    user = get_current_user()
+    _audit_rule_edit(get_current_user(), rule_id)
+
+    return jsonify({'ok': True, 'msg': f'Updated rule "{rule_id}"'})
+
+
+_UPDATABLE_RULE_FIELDS = ('summary', 'severity', 'triggers', 'layer', 'guide', 'source')
+
+
+def _indexed_rule(rule_id):
+    idx = grit_rule_index.load_rules_index()
+    return next((r for r in idx.get('rules', []) if r['id'] == rule_id), None)
+
+
+def _rule_updates(data: dict) -> dict:
+    return {k: v for k, v in data.items()
+            if k in _UPDATABLE_RULE_FIELDS and v is not None}
+
+
+def _audit_rule_edit(user, rule_id) -> None:
     audit.log_action(
         user['id'] if user else None,
         user['username'] if user else 'anonymous',
         'edit_rule', f'rules/{rule_id}',
     )
-
-    return jsonify({'ok': True, 'msg': f'Updated rule "{rule_id}"'})

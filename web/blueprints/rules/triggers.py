@@ -159,6 +159,53 @@ def api_triggers():
 from lib.auth import require_role
 
 
+def _reset_cutoff_iso(older_than_days) -> tuple[str | None, str | None]:
+    """`(cutoff_iso, error)` for the reset retention window; `None` or 0
+    days means no age cutoff."""
+    from datetime import datetime, timedelta, timezone
+    if older_than_days is None:
+        return None, None
+    try:
+        n = int(older_than_days)
+    except (TypeError, ValueError):
+        return None, 'older_than_days must be an integer'
+    if n < 0:
+        return None, 'older_than_days must be non-negative'
+    if n == 0:
+        return None, None
+    cutoff = datetime.now(timezone.utc) - timedelta(days=n)
+    return cutoff.strftime('%Y-%m-%d %H:%M:%S'), None
+
+
+def _delete_triggers_scoped(rule_filter, session_filter, cutoff_iso) -> int:
+    """Delete the matching rule_triggers rows; returns how many matched."""
+    from sqlalchemy import delete, func as sa_func
+    from sqlmodel import select as sm_select
+
+    clauses = []
+    if rule_filter:
+        clauses.append(RuleTrigger.rule_id == rule_filter)
+    if session_filter:
+        clauses.append(RuleTrigger.session_id == session_filter)
+    if cutoff_iso:
+        clauses.append(RuleTrigger.checked_at < cutoff_iso)
+    with _pkg.SessionLocal() as session:
+        before = session.exec(
+            sm_select(sa_func.count(RuleTrigger.id)).where(*clauses)).one()
+        session.execute(delete(RuleTrigger).where(*clauses))
+        session.commit()
+    return before
+
+
+def _reset_scope_label(rule_filter, session_filter, cutoff_iso,
+                       older_than_days) -> str:
+    scope_bits: list[str] = []
+    if rule_filter:    scope_bits.append(f"rule={rule_filter}")
+    if session_filter: scope_bits.append(f"session={session_filter}")
+    if cutoff_iso:     scope_bits.append(f"older_than_days={older_than_days}")
+    return ', '.join(scope_bits) or 'all'
+
+
 @rules_bp.route('/api/triggers/reset', methods=['POST'])
 @require_role('admin')
 def api_reset_triggers():
@@ -176,61 +223,62 @@ def api_reset_triggers():
     for rule X older than 30 days. Suppressed rows are NOT exempt —
     the suppression metadata gets cleaned by ON DELETE cascade.
     """
-    from datetime import datetime, timedelta, timezone
-    from sqlalchemy import delete, func as sa_func
-    from sqlmodel import select as sm_select
-    from lib.orm.models import RuleTrigger
-
     data = request.get_json(silent=True) or {}
     rule_filter = data.get('rule')
     session_filter = data.get('session')
     older_than_days = data.get('older_than_days')
-    cutoff_iso: str | None = None
-    if older_than_days is not None:
-        try:
-            n = int(older_than_days)
-        except (TypeError, ValueError):
-            return jsonify({
-                'ok': False, 'error': 'older_than_days must be an integer',
-            }), 400
-        if n < 0:
-            return jsonify({
-                'ok': False, 'error': 'older_than_days must be non-negative',
-            }), 400
-        if n > 0:
-            cutoff = datetime.now(timezone.utc) - timedelta(days=n)
-            cutoff_iso = cutoff.strftime('%Y-%m-%d %H:%M:%S')
+    cutoff_iso, error = _reset_cutoff_iso(older_than_days)
+    if error:
+        return jsonify({'ok': False, 'error': error}), 400
 
-    with _pkg.SessionLocal() as session:
-        count_stmt = sm_select(sa_func.count(RuleTrigger.id))
-        del_stmt = delete(RuleTrigger)
-        if rule_filter:
-            count_stmt = count_stmt.where(RuleTrigger.rule_id == rule_filter)
-            del_stmt = del_stmt.where(RuleTrigger.rule_id == rule_filter)
-        if session_filter:
-            count_stmt = count_stmt.where(RuleTrigger.session_id == session_filter)
-            del_stmt = del_stmt.where(RuleTrigger.session_id == session_filter)
-        if cutoff_iso:
-            count_stmt = count_stmt.where(RuleTrigger.checked_at < cutoff_iso)
-            del_stmt = del_stmt.where(RuleTrigger.checked_at < cutoff_iso)
-        before = session.exec(count_stmt).one()
-        session.execute(del_stmt)
-        session.commit()
+    before = _delete_triggers_scoped(rule_filter, session_filter, cutoff_iso)
 
     from lib import audit
     from lib.auth import get_current_user
     user = get_current_user() or {}
-    scope_bits: list[str] = []
-    if rule_filter:    scope_bits.append(f"rule={rule_filter}")
-    if session_filter: scope_bits.append(f"session={session_filter}")
-    if cutoff_iso:     scope_bits.append(f"older_than_days={older_than_days}")
-    scope = ', '.join(scope_bits) or 'all'
+    scope = _reset_scope_label(rule_filter, session_filter, cutoff_iso,
+                               older_than_days)
     audit.log_action(
         user.get('id'), user.get('username') or 'unknown',
         action='reset_triggers', target=scope,
         detail={'rows_deleted': int(before), 'cutoff_iso': cutoff_iso},
     )
     return jsonify({'ok': True, 'msg': f'cleared {before} row(s)'})
+
+
+def _rule_trigger_event_error(ev) -> str | None:
+    # Validators live in web.helpers since Phase 8 of the web refactor.
+    # Import from there directly rather than via web.app's re-export —
+    # matches the pattern every other ingest endpoint follows.
+    from web.helpers import _is_non_blank_str
+    if not isinstance(ev, dict):
+        return 'event must be an object'
+    if not _is_non_blank_str(ev.get('rule_id')):
+        return 'missing or blank rule_id'
+    if not _is_non_blank_str(ev.get('file_path')):
+        return 'missing or blank file_path'
+    return None
+
+
+def _insert_rule_triggers(data, exp_by_guide) -> None:
+    with _pkg.SessionLocal() as session:
+        for ev in data:
+            match_count = int(ev.get('match_count') or 0)
+            session.add(RuleTrigger(
+                rule_id=ev.get('rule_id'),
+                file_path=ev.get('file_path'),
+                repo=ev.get('repo'),
+                match_count=match_count,
+                triggered=1 if match_count > 0 else 0,
+                severity=ev.get('severity'),
+                guide=ev.get('guide'),
+                summary=ev.get('summary'),
+                source=ev.get('source'),
+                session_id=ev.get('session_id'),
+                span_id=ev.get('span_id'),
+                experiment_id=exp_by_guide.get(ev.get('guide')),
+            ))
+        session.commit()
 
 
 @rules_bp.route('/api/rule-triggers', methods=['POST'])
@@ -247,10 +295,7 @@ def api_ingest_rule_trigger():
     Oversized batches (>`_ingest_max_batch_size()`) return 413 —
     a runaway hook that fires on every keystroke won't fill memory.
     """
-    # Validators live in web.helpers since Phase 8 of the web refactor.
-    # Import from there directly rather than via web.app's re-export —
-    # matches the pattern every other ingest endpoint follows.
-    from web.helpers import _is_non_blank_str, _ingest_max_batch_size
+    from web.helpers import _ingest_max_batch_size
 
     data = request.get_json(silent=True)
     if data is None:
@@ -265,17 +310,9 @@ def api_ingest_rule_trigger():
             'error': f'batch too large: {len(data)} events (max: {max_batch})',
         }), 413
 
-    errors = []
-    for i, ev in enumerate(data):
-        if not isinstance(ev, dict):
-            errors.append({'index': i, 'reason': 'event must be an object'})
-            continue
-        if not _is_non_blank_str(ev.get('rule_id')):
-            errors.append({'index': i, 'reason': 'missing or blank rule_id'})
-            continue
-        if not _is_non_blank_str(ev.get('file_path')):
-            errors.append({'index': i, 'reason': 'missing or blank file_path'})
-            continue
+    errors = [{'index': i, 'reason': reason}
+              for i, reason in enumerate(map(_rule_trigger_event_error, data))
+              if reason]
     if errors:
         return jsonify({'ok': False, 'ingested': 0, 'errors': errors}), 400
 
@@ -286,24 +323,7 @@ def api_ingest_rule_trigger():
     exp_by_guide = _active_experiment_ids(data)
 
     try:
-        with _pkg.SessionLocal() as session:
-            for ev in data:
-                match_count = int(ev.get('match_count') or 0)
-                session.add(RuleTrigger(
-                    rule_id=ev.get('rule_id'),
-                    file_path=ev.get('file_path'),
-                    repo=ev.get('repo'),
-                    match_count=match_count,
-                    triggered=1 if match_count > 0 else 0,
-                    severity=ev.get('severity'),
-                    guide=ev.get('guide'),
-                    summary=ev.get('summary'),
-                    source=ev.get('source'),
-                    session_id=ev.get('session_id'),
-                    span_id=ev.get('span_id'),
-                    experiment_id=exp_by_guide.get(ev.get('guide')),
-                ))
-            session.commit()
+        _insert_rule_triggers(data, exp_by_guide)
     except Exception as exc:
         return jsonify({
             'ok': False,
@@ -360,19 +380,28 @@ class _TriggersRulesParams:
 
 def _parse_triggers_rules_params(request_obj, default_range: str) -> _TriggersRulesParams:
     """Pull + normalise the query-string knobs the rules dashboard accepts."""
+    args = request_obj.args
     return _TriggersRulesParams(
-        range_str=(request_obj.args.get('range') or default_range).lower(),
-        search=(request_obj.args.get('search') or '').strip().lower(),
-        sev_filter={s for s in (request_obj.args.get('severity') or '').split(',') if s},
-        eng_filter={s for s in (request_obj.args.get('engine') or '').split(',') if s},
-        status_filter=(request_obj.args.get('status') or 'all').lower(),
+        range_str=_lower_arg(args, 'range', default_range),
+        search=_lower_arg(args, 'search', '').strip(),
+        sev_filter=_csv_set_arg(args, 'severity'),
+        eng_filter=_csv_set_arg(args, 'engine'),
+        status_filter=_lower_arg(args, 'status', 'all'),
         # "marks=1" → only rules with at least one suppressed event in the
         # active window. Separate from the status classification because
         # "noisy" (high trigger rate) and "user-flagged as noise" are
         # different signals — same word, different semantics.
-        marks_only=request_obj.args.get('marks') == '1',
-        sort_by=(request_obj.args.get('sort') or 'rate').lower(),
+        marks_only=args.get('marks') == '1',
+        sort_by=_lower_arg(args, 'sort', 'rate'),
     )
+
+
+def _lower_arg(args, name: str, default: str) -> str:
+    return (args.get(name) or default).lower()
+
+
+def _csv_set_arg(args, name: str) -> set:
+    return {s for s in (args.get(name) or '').split(',') if s}
 
 
 def _query_trigger_aggregates(session, window_start: str, bucket_pattern: str) -> dict:
@@ -525,18 +554,18 @@ def _build_rule_row(rid: str, aggregates: dict, engine_rule, thresholds,
     }
 
 
+def _in_filter(value, allowed: set) -> bool:
+    return not allowed or (value or '') in allowed
+
+
 def _passes_triggers_rules_filters(row: dict, params: _TriggersRulesParams) -> bool:
-    if params.search and params.search not in row['rule_id'].lower():
-        return False
-    if params.sev_filter and (row['severity'] or '') not in params.sev_filter:
-        return False
-    if params.eng_filter and (row['source'] or '') not in params.eng_filter:
-        return False
-    if params.status_filter != 'all' and row['status'] != params.status_filter:
-        return False
-    if params.marks_only and not row['suppressed_count']:
-        return False
-    return True
+    return (
+        (not params.search or params.search in row['rule_id'].lower())
+        and _in_filter(row['severity'], params.sev_filter)
+        and _in_filter(row['source'], params.eng_filter)
+        and params.status_filter in ('all', row['status'])
+        and (not params.marks_only or bool(row['suppressed_count']))
+    )
 
 
 _SORT_KEYS = {
@@ -552,6 +581,15 @@ def _sort_triggers_rules(rows: list[dict], sort_by: str) -> list[dict]:
         return sorted(rows, key=_SORT_KEYS['last_seen'], reverse=True)
     key_fn = _SORT_KEYS.get(sort_by) or _SORT_KEYS['rate']
     return sorted(rows, key=key_fn)
+
+
+def _triggers_rules_kpis(engine_rules: dict, rules_out: list[dict]) -> dict:
+    return {
+        'configured': len(engine_rules),
+        'active': sum(1 for r in rules_out if r['status'] == 'active' and r['fires'] > 0),
+        'noisy':   sum(1 for r in rules_out if r['status'] == 'noisy'),
+        'dead':    sum(1 for r in rules_out if r['status'] == 'dead'),
+    }
 
 
 @rules_bp.route('/api/triggers/rules')
@@ -590,12 +628,7 @@ def api_triggers_rules():
 
     # KPIs reflect the unfiltered population so the strip is a stable
     # orientation, not a filter echo.
-    kpis = {
-        'configured': len(engine_rules),
-        'active': sum(1 for r in rules_out if r['status'] == 'active' and r['fires'] > 0),
-        'noisy':   sum(1 for r in rules_out if r['status'] == 'noisy'),
-        'dead':    sum(1 for r in rules_out if r['status'] == 'dead'),
-    }
+    kpis = _triggers_rules_kpis(engine_rules, rules_out)
 
     # Apply filters after enrichment (status/severity/source need the row).
     rules_out = [r for r in rules_out if _passes_triggers_rules_filters(r, params)]
@@ -815,6 +848,18 @@ def api_rule_trigger_thresholds():
     return jsonify(_settings.rule_trigger_thresholds.model_dump())
 
 
+def _threshold_int(body: dict, key: str, default: int, is_valid,
+                   bound_msg: str, errors: list) -> int | None:
+    try:
+        value = int(body.get(key, default))
+    except (TypeError, ValueError):
+        errors.append(f'{key} must be an integer')
+        return None
+    if not is_valid(value):
+        errors.append(bound_msg)
+    return value
+
+
 @rules_bp.route('/api/settings/rule-triggers/thresholds', methods=['PUT'])
 @require_role('admin')
 def api_update_rule_trigger_thresholds():
@@ -831,27 +876,12 @@ def api_update_rule_trigger_thresholds():
 
     # Validate before persisting — bad input shouldn't pollute the file.
     errors = []
-    try:
-        rate = int(body.get('noisy_min_rate_pct', 30))
-        if not 0 <= rate <= 100:
-            errors.append('noisy_min_rate_pct must be 0–100')
-    except (TypeError, ValueError):
-        errors.append('noisy_min_rate_pct must be an integer')
-        rate = None
-    try:
-        fires = int(body.get('noisy_min_fires', 5))
-        if fires < 0:
-            errors.append('noisy_min_fires must be non-negative')
-    except (TypeError, ValueError):
-        errors.append('noisy_min_fires must be an integer')
-        fires = None
-    try:
-        checks = int(body.get('dead_min_checks', 3))
-        if checks < 1:
-            errors.append('dead_min_checks must be at least 1')
-    except (TypeError, ValueError):
-        errors.append('dead_min_checks must be an integer')
-        checks = None
+    rate = _threshold_int(body, 'noisy_min_rate_pct', 30, lambda v: 0 <= v <= 100,
+                          'noisy_min_rate_pct must be 0–100', errors)
+    fires = _threshold_int(body, 'noisy_min_fires', 5, lambda v: v >= 0,
+                           'noisy_min_fires must be non-negative', errors)
+    checks = _threshold_int(body, 'dead_min_checks', 3, lambda v: v >= 1,
+                            'dead_min_checks must be at least 1', errors)
     rng = body.get('default_range', '7d')
     if rng not in _buckets.VALID_RANGES:
         errors.append(
@@ -928,6 +958,47 @@ def api_triggers_by_span(span_id: str):
 
 # ── Per-event suppression (PR-4) ───────────────────────────
 
+def _suppress_reason(body: dict) -> str | None:
+    reason = body.get('reason')
+    if reason is None:
+        return None
+    return str(reason).strip() or None
+
+
+def _refresh_suppression_reason(session, existing, reason) -> bool:
+    """Already suppressed. Update the reason if the caller passed a new one —
+    otherwise the second click silently drops the user's text. Leaves
+    who/when intact to preserve the original authorship."""
+    if reason is None or reason == existing.reason:
+        return False
+    existing.reason = reason
+    session.add(existing)
+    session.commit()
+    session.refresh(existing)
+    return True
+
+
+def _insert_suppression(session, trigger_id: int, user: dict, reason):
+    from sqlalchemy import update as sa_update
+    from lib.orm.models import RuleTriggerSuppression
+
+    row = RuleTriggerSuppression(
+        rule_trigger_id=trigger_id,
+        suppressed_by_id=user.get('id') or 0,
+        suppressed_by_username=user.get('username') or 'unknown',
+        reason=reason,
+    )
+    session.add(row)
+    session.execute(
+        sa_update(RuleTrigger)
+        .where(RuleTrigger.id == trigger_id)
+        .values(suppressed=1)
+    )
+    session.commit()
+    session.refresh(row)
+    return row
+
+
 @rules_bp.route('/api/triggers/<int:trigger_id>/suppress', methods=['POST'])
 @require_editor
 def api_suppress_trigger(trigger_id: int):
@@ -939,17 +1010,13 @@ def api_suppress_trigger(trigger_id: int):
     transaction so the hot-path aggregate filter stays consistent
     with the metadata row.
     """
-    from sqlalchemy import update as sa_update
     from sqlmodel import select as sm_select
     from lib.orm.models import RuleTrigger, RuleTriggerSuppression
     from lib import audit
     from lib.auth import get_current_user
 
     user = get_current_user() or {}
-    body = request.get_json(silent=True) or {}
-    reason = body.get('reason')
-    if reason is not None:
-        reason = str(reason).strip() or None
+    reason = _suppress_reason(request.get_json(silent=True) or {})
 
     with _pkg.SessionLocal() as session:
         rt = session.get(RuleTrigger, trigger_id)
@@ -961,36 +1028,12 @@ def api_suppress_trigger(trigger_id: int):
             .where(RuleTriggerSuppression.rule_trigger_id == trigger_id)
         ).first()
         if existing is not None:
-            # Already suppressed. Update the reason if the caller passed
-            # a new one — otherwise the second click silently drops the
-            # user's text. Leaves who/when intact to preserve the
-            # original authorship.
-            updated = False
-            if reason is not None and reason != existing.reason:
-                existing.reason = reason
-                session.add(existing)
-                session.commit()
-                session.refresh(existing)
-                updated = True
+            updated = _refresh_suppression_reason(session, existing, reason)
             return jsonify({
                 'ok': True, 'idempotent': True, 'reason_updated': updated,
                 'suppression': _suppression_to_dict(existing),
             })
-
-        row = RuleTriggerSuppression(
-            rule_trigger_id=trigger_id,
-            suppressed_by_id=user.get('id') or 0,
-            suppressed_by_username=user.get('username') or 'unknown',
-            reason=reason,
-        )
-        session.add(row)
-        session.execute(
-            sa_update(RuleTrigger)
-            .where(RuleTrigger.id == trigger_id)
-            .values(suppressed=1)
-        )
-        session.commit()
-        session.refresh(row)
+        row = _insert_suppression(session, trigger_id, user, reason)
 
     audit.log_action(
         user.get('id'), user.get('username') or 'unknown',

@@ -49,38 +49,57 @@ def _validate_span(span, max_attr_bytes: int) -> tuple[dict | None, str | None]:
     dispatcher — validation rules live here, transaction management in
     the caller.
     """
-    if not isinstance(span, dict):
-        return None, 'span must be an object'
-    for required in ('trace_id', 'span_id', 'name'):
-        if not _is_non_blank_str(span.get(required)):
-            return None, f'missing or blank {required}'
-    # start_time is mandatory and must parse — downstream
-    # (_widen_envelopes, ORDER BY) assumes ISO 8601.
-    if not _is_iso_timestamp(span.get('start_time')):
-        return None, 'start_time must be a valid ISO 8601 timestamp'
-    # end_time is optional, but if present must also parse.
-    end_time = span.get('end_time')
-    if end_time not in (None, '') and not _is_iso_timestamp(end_time):
-        return None, 'end_time must be a valid ISO 8601 timestamp'
+    error = _span_shape_error(span)
+    if error:
+        return None, error
     attrs = span.get('attributes') or {}
     if not isinstance(attrs, dict):
         return None, 'attributes must be an object'
-    if 'is_test' in attrs:
-        if _normalize_is_test(attrs['is_test']):
-            attrs['is_test'] = True
-        else:
-            attrs.pop('is_test', None)
+    _normalize_attrs_is_test(attrs)
+    error = _attrs_size_error(attrs, max_attr_bytes)
+    if error:
+        return None, error
+    return attrs, None
+
+
+def _span_shape_error(span) -> str | None:
+    if not isinstance(span, dict):
+        return 'span must be an object'
+    for required in ('trace_id', 'span_id', 'name'):
+        if not _is_non_blank_str(span.get(required)):
+            return f'missing or blank {required}'
+    # start_time is mandatory and must parse — downstream
+    # (_widen_envelopes, ORDER BY) assumes ISO 8601.
+    if not _is_iso_timestamp(span.get('start_time')):
+        return 'start_time must be a valid ISO 8601 timestamp'
+    # end_time is optional, but if present must also parse.
+    end_time = span.get('end_time')
+    if end_time not in (None, '') and not _is_iso_timestamp(end_time):
+        return 'end_time must be a valid ISO 8601 timestamp'
+    return None
+
+
+def _normalize_attrs_is_test(attrs) -> None:
+    if 'is_test' not in attrs:
+        return
+    if _normalize_is_test(attrs['is_test']):
+        attrs['is_test'] = True
+    else:
+        attrs.pop('is_test', None)
+
+
+def _attrs_size_error(attrs, max_attr_bytes: int) -> str | None:
     # Size-cap the serialized attributes. This prevents one bad
     # hook from writing a multi-megabyte TEXT blob that slows
     # every subsequent json_extract() on that row.
     try:
         attr_size = len(json.dumps(attrs).encode('utf-8'))
     except (TypeError, ValueError) as exc:
-        return None, f'attributes not JSON-serializable: {exc}'
+        return f'attributes not JSON-serializable: {exc}'
     if attr_size > max_attr_bytes:
-        return None, (f'attributes too large: {attr_size} bytes '
-                      f'(max: {max_attr_bytes})')
-    return attrs, None
+        return (f'attributes too large: {attr_size} bytes '
+                f'(max: {max_attr_bytes})')
+    return None
 
 
 def _bind_staged_attachments(normalised) -> None:
@@ -238,12 +257,24 @@ def _announce_spans(normalised) -> None:
     on, so a fan-out failure costs the caller nothing.
     """
     from lib.notifications import hub
+
+    moved = _spans_by_canonical(normalised)
+    # Resolving each group costs a query, and this runs inside an ingest a hook
+    # is blocking on. With nobody watching there is no frame to build.
+    if not moved or not hub.subscriber_count():
+        return
+    groups = _canonical_trace_groups(moved)
+    if groups is None:
+        return
+    _broadcast_trace_frames(hub, moved, groups)
+
+
+def _spans_by_canonical(normalised) -> dict | None:
+    """Span ids per canonical trace, so a reader holding this batch's spans can
+    refresh exactly them instead of re-fetching every body under the tail.
+    None when the alias lookup fails."""
     from lib.trace.alias import canonical_trace_id
 
-    from lib.trace.trace_service import projection_cache
-
-    # span ids per canonical trace, so a reader holding this batch's spans can
-    # refresh exactly them instead of re-fetching every body under the tail.
     moved: dict[str, list] = {}
     for span, _attrs in normalised:
         trace_id = span.get('trace_id')
@@ -252,18 +283,14 @@ def _announce_spans(normalised) -> None:
         try:
             canonical = canonical_trace_id(trace_id) or trace_id
         except Exception:  # noqa: BLE001 - a wake-up must never fail an ingest
-            return
-        span_id = span.get('span_id')
-        if span_id:
-            moved.setdefault(canonical, []).append(span_id)
-        else:
-            moved.setdefault(canonical, [])
+            return None
+        ids = moved.setdefault(canonical, [])
+        if span.get('span_id'):
+            ids.append(span['span_id'])
+    return moved
 
-    # Resolving each group costs a query, and this runs inside an ingest a hook
-    # is blocking on. With nobody watching there is no frame to build.
-    if not moved or not hub.subscriber_count():
-        return
 
+def _canonical_trace_groups(moved) -> dict | None:
     from lib.orm.engine import get_connection
     from lib.trace.alias import trace_group
 
@@ -274,11 +301,15 @@ def _announce_spans(normalised) -> None:
             # reader compares the two, so a frame quoting one member's counter
             # would read as a permanent mismatch and cost the session its
             # cheap path for good.
-            groups = {c: trace_group(conn, c) for c in moved}
+            return {c: trace_group(conn, c) for c in moved}
         finally:
             conn.close()
     except Exception:  # noqa: BLE001 - a wake-up must never fail an ingest
-        return
+        return None
+
+
+def _broadcast_trace_frames(hub, moved, groups) -> None:
+    from lib.trace.trace_service import projection_cache
 
     for canonical, span_ids in moved.items():
         try:

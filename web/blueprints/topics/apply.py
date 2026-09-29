@@ -182,12 +182,7 @@ def api_repo_topic_audit_fix(name):
     skipped_codes = sorted(requested_codes - AUTO_FIXABLE_CODES)
     actionable_codes = requested_codes & AUTO_FIXABLE_CODES
     if not actionable_codes:
-        return jsonify({
-            "ok": True,
-            "snapshot_ids": [],
-            "fixed_counts": {},
-            "skipped_codes": skipped_codes,
-        })
+        return _audit_fix_response([], {}, skipped_codes)
 
     try:
         graph = load_authoritative_graph(repo_path)
@@ -195,53 +190,66 @@ def api_repo_topic_audit_fix(name):
         return _error(exc, 404)
     issues = audit_graph(graph, repo_path=repo_path)
     fixes = compose_fix(graph, issues, codes_to_fix=actionable_codes)
+    fixed_counts: dict[str, int] = {c: 0 for c in actionable_codes}
     if not fixes:
-        return jsonify({
-            "ok": True,
-            "snapshot_ids": [],
-            "fixed_counts": {c: 0 for c in actionable_codes},
-            "skipped_codes": skipped_codes,
-        })
+        return _audit_fix_response([], fixed_counts, skipped_codes)
 
     repo = resolve_or_create_repo(repo_path)
-    snapshot_ids: list[int] = []
-    fixed_counts: dict[str, int] = {c: 0 for c in actionable_codes}
-    # Apply per-topic; each apply_diff sees the running prospective
-    # graph from the previous fix so later issues are computed against
-    # the corrected state.
-    running_graph = json.loads(json.dumps(graph))
-    for topic_id, cleaned, before in fixes:
-        prospective = json.loads(json.dumps(running_graph))
-        prospective.setdefault("topics", {})[topic_id] = cleaned
-        delta = compute_topic_delta(
-            topic_id_after=topic_id, kind="replace",
-            before=before, after=cleaned,
-        )
-        diff = GraphDiff(
-            topic_deltas=(delta,),
-            graph_warnings=(),
-            introduced_errors=(),
-            valid_strategies_by_topic={topic_id: ("replace",)},
-            strategy="replace",
-            target_topic_id=None,
-            proposed_topic_id=topic_id,
-            prospective_graph=prospective,
-        )
-        try:
-            result = apply_diff(repo.id, diff, reason="bulk_fix")
-        except (ValueError, TopicGraphError) as exc:
-            return _error(exc)
-        snapshot_ids.append(result.snapshot_id)
-        fixed_counts["graph.dead_ref"] = fixed_counts.get("graph.dead_ref", 0) + len(delta.ref_removes)
-        fixed_counts["graph.orphan_edge_target"] = fixed_counts.get("graph.orphan_edge_target", 0) + len(delta.edge_removes)
-        running_graph = prospective
+    snapshot_ids, exc = _apply_audit_fixes(repo.id, graph, fixes, fixed_counts)
+    if exc is not None:
+        return _error(exc)
+    return _audit_fix_response(snapshot_ids, fixed_counts, skipped_codes)
 
+
+def _audit_fix_response(snapshot_ids, fixed_counts, skipped_codes):
     return jsonify({
         "ok": True,
         "snapshot_ids": snapshot_ids,
         "fixed_counts": fixed_counts,
         "skipped_codes": skipped_codes,
     })
+
+
+def _replace_topic_diff(running_graph, topic_id, cleaned, before):
+    """`(diff, delta, prospective)` replacing one topic in `running_graph`."""
+    prospective = json.loads(json.dumps(running_graph))
+    prospective.setdefault("topics", {})[topic_id] = cleaned
+    delta = compute_topic_delta(
+        topic_id_after=topic_id, kind="replace",
+        before=before, after=cleaned,
+    )
+    diff = GraphDiff(
+        topic_deltas=(delta,),
+        graph_warnings=(),
+        introduced_errors=(),
+        valid_strategies_by_topic={topic_id: ("replace",)},
+        strategy="replace",
+        target_topic_id=None,
+        proposed_topic_id=topic_id,
+        prospective_graph=prospective,
+    )
+    return diff, delta, prospective
+
+
+def _apply_audit_fixes(repo_id, graph, fixes, fixed_counts):
+    """`(snapshot_ids, None)`, or `(partial_ids, exc)` when an apply fails."""
+    snapshot_ids: list[int] = []
+    # Apply per-topic; each apply_diff sees the running prospective
+    # graph from the previous fix so later issues are computed against
+    # the corrected state.
+    running_graph = json.loads(json.dumps(graph))
+    for topic_id, cleaned, before in fixes:
+        diff, delta, prospective = _replace_topic_diff(
+            running_graph, topic_id, cleaned, before)
+        try:
+            result = apply_diff(repo_id, diff, reason="bulk_fix")
+        except (ValueError, TopicGraphError) as exc:
+            return snapshot_ids, exc
+        snapshot_ids.append(result.snapshot_id)
+        fixed_counts["graph.dead_ref"] = fixed_counts.get("graph.dead_ref", 0) + len(delta.ref_removes)
+        fixed_counts["graph.orphan_edge_target"] = fixed_counts.get("graph.orphan_edge_target", 0) + len(delta.edge_removes)
+        running_graph = prospective
+    return snapshot_ids, None
 
 
 # ── /snapshots ──────────────────────────────────────────────────────

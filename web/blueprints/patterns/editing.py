@@ -304,30 +304,19 @@ def _cleanup_pattern_grit_rules(slug: str) -> None:
 def api_delete_pattern(slug):
     """Delete a pattern end-to-end — every deployed skill directory,
     deployment rows, source directory, and pattern_docs row."""
-    removed_paths: list[str] = []
     with SessionLocal() as session:
         doc = _get_pattern_or_404(session, slug)
 
         skill_id = skill_registry.skill_id_for_procedure(slug)
 
-        deployments = pattern_deployments.list_deployments(pattern_slug=slug)
-        for d in deployments:
-            path = d.get("deployed_path")
-            if path and os.path.isdir(path):
-                shutil.rmtree(path)
-                removed_paths.append(path)
+        removed_paths = _remove_deployed_dirs(
+            pattern_deployments.list_deployments(pattern_slug=slug))
 
         # Drop all deployment rows for this slug.
-        for dep in session.exec(
-            select(PatternDeployment).where(PatternDeployment.pattern_slug == slug)
-        ).all():
-            session.delete(dep)
+        _delete_all(session, select(PatternDeployment)
+                    .where(PatternDeployment.pattern_slug == slug))
 
-        if skill_id:
-            try:
-                skill_sync.undeploy(skill_id)
-            except Exception:
-                pass
+        _undeploy_skill_quietly(skill_id)
 
         pattern_dir = os.path.join(str(settings.patterns_dir), slug)
         if os.path.isdir(pattern_dir):
@@ -336,19 +325,14 @@ def api_delete_pattern(slug):
         # Drop doc_tags links explicitly before the pattern_docs row
         # (doc_tags has ON DELETE CASCADE in schema.sql, but ORM deletes
         # don't cascade without cascade= config — delete explicitly).
-        for link in session.exec(
-            select(DocTag).where(DocTag.doc_id == doc.id)
-        ).all():
-            session.delete(link)
+        _delete_all(session, select(DocTag).where(DocTag.doc_id == doc.id))
 
         # pattern_embeddings has no FK/cascade to pattern_docs (unlike the FTS
         # mirror, which a trigger cleans). Without this delete, the vector row
         # outlives the pattern and a future doc reusing the rowid inherits a
         # stale embedding — silently corrupting dense routing.
-        for emb in session.exec(
-            select(PatternEmbedding).where(PatternEmbedding.pattern_id == doc.id)
-        ).all():
-            session.delete(emb)
+        _delete_all(session, select(PatternEmbedding)
+                    .where(PatternEmbedding.pattern_id == doc.id))
 
         session.delete(doc)
         session.commit()
@@ -364,10 +348,37 @@ def api_delete_pattern(slug):
 
     return jsonify({
         "ok": True,
-        "msg": f'Deleted pattern "{slug}"'
-               + (f" + {len(removed_paths)} deployed skill(s)" if removed_paths else ""),
+        "msg": f'Deleted pattern "{slug}"' + _removed_suffix(removed_paths),
         "removed_deployments": removed_paths,
     })
+
+
+def _remove_deployed_dirs(deployments) -> list[str]:
+    removed_paths: list[str] = []
+    for d in deployments:
+        path = d.get("deployed_path")
+        if path and os.path.isdir(path):
+            shutil.rmtree(path)
+            removed_paths.append(path)
+    return removed_paths
+
+
+def _delete_all(session, stmt) -> None:
+    for row in session.exec(stmt).all():
+        session.delete(row)
+
+
+def _undeploy_skill_quietly(skill_id) -> None:
+    if not skill_id:
+        return
+    try:
+        skill_sync.undeploy(skill_id)
+    except Exception:
+        pass
+
+
+def _removed_suffix(removed_paths) -> str:
+    return f" + {len(removed_paths)} deployed skill(s)" if removed_paths else ""
 
 
 def _import_folder_upload(uploads, paths_raw, *, force, target_slug):
@@ -544,16 +555,15 @@ def api_import_dir():
     raw = (body.get("path") or "").strip()
     if not raw:
         return jsonify({"ok": False, "msg": "missing 'path'"}), 400
-    on_conflict = (body.get("on_conflict") or "skip").strip().lower()
-    dry_run = bool(body.get("dry_run", False))
+    on_conflict, dry_run = _import_dir_options(body)
 
     only, sel_err = _parse_selected(body)
     if sel_err is not None:
         return sel_err
 
-    expanded = os.path.abspath(os.path.expanduser(raw))
-    if not os.path.isdir(expanded):
-        return jsonify({"ok": False, "msg": f"not a directory: {expanded}"}), 400
+    expanded, dir_err = _existing_dir(raw)
+    if dir_err is not None:
+        return dir_err
 
     try:
         results = pattern_importer.batch_import_skill_directory(
@@ -562,23 +572,9 @@ def api_import_dir():
     except pattern_importer.ImportError_ as e:
         return jsonify({"ok": False, "msg": str(e)}), 400
 
-    counts: dict[str, int] = {}
-    for r in results:
-        counts[r.status] = counts.get(r.status, 0) + 1
-
-    if not dry_run and (counts.get("imported") or counts.get("overwritten")
-                         or counts.get("renamed")):
-        user = get_current_user()
-        audit.log_action(
-            user["id"] if user else None,
-            user["username"] if user else "anonymous",
-            "import_dir", f"path:{expanded}",
-            {
-                "on_conflict": on_conflict,
-                "counts": counts,
-                "selected": len(only) if only is not None else "all",
-            },
-        )
+    counts = _status_counts(results)
+    if not dry_run and _import_changed_anything(counts):
+        _audit_import_dir(expanded, on_conflict, counts, only)
 
     return jsonify({
         "ok": True,
@@ -586,21 +582,64 @@ def api_import_dir():
         "on_conflict": on_conflict,
         "dry_run": dry_run,
         "counts": counts,
-        "results": [
-            {
-                "name": r.name,
-                "status": r.status,
-                "slug": r.slug,
-                "title": r.title,
-                "file_count": r.file_count,
-                "error": r.error,
-                "grit_rules": r.grit_rules,
-                "grit_languages": r.grit_languages,
-                "enabled_languages": r.enabled_languages,
-            }
-            for r in results
-        ],
+        "results": [_import_entry_dict(r) for r in results],
     })
+
+
+def _import_dir_options(body: dict) -> tuple[str, bool]:
+    return (
+        (body.get("on_conflict") or "skip").strip().lower(),
+        bool(body.get("dry_run", False)),
+    )
+
+
+def _existing_dir(raw: str):
+    """`(expanded_path, None)`, or `(expanded_path, 400 response)` when it
+    is not a directory."""
+    expanded = os.path.abspath(os.path.expanduser(raw))
+    if not os.path.isdir(expanded):
+        return expanded, (jsonify({"ok": False, "msg": f"not a directory: {expanded}"}), 400)
+    return expanded, None
+
+
+def _status_counts(results) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for r in results:
+        counts[r.status] = counts.get(r.status, 0) + 1
+    return counts
+
+
+def _import_changed_anything(counts: dict[str, int]) -> bool:
+    return bool(counts.get("imported") or counts.get("overwritten")
+                or counts.get("renamed"))
+
+
+def _audit_import_dir(expanded, on_conflict, counts, only) -> None:
+    user = get_current_user()
+    audit.log_action(
+        user["id"] if user else None,
+        user["username"] if user else "anonymous",
+        "import_dir", f"path:{expanded}",
+        {
+            "on_conflict": on_conflict,
+            "counts": counts,
+            "selected": len(only) if only is not None else "all",
+        },
+    )
+
+
+def _import_entry_dict(r) -> dict:
+    return {
+        "name": r.name,
+        "status": r.status,
+        "slug": r.slug,
+        "title": r.title,
+        "file_count": r.file_count,
+        "error": r.error,
+        "grit_rules": r.grit_rules,
+        "grit_languages": r.grit_languages,
+        "enabled_languages": r.enabled_languages,
+    }
 
 
 @patterns_bp.route("/api/skillhub-status")

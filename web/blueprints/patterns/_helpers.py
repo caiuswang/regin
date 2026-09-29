@@ -97,35 +97,37 @@ def _set_frontmatter_description(content: str, new_description: str) -> str:
     fm_inner = parts[1]
     rest = "---" + parts[2]
 
-    desc_re = re.compile(
-        r"(^|\n)description:[^\n]*(?:\n[ \t]+[^\n]*)*\n",
-    )
-
     if not collapsed:
-        if desc_re.search(fm_inner):
-            new_fm = desc_re.sub(lambda m: m.group(1) or "", fm_inner, count=1)
+        if _FM_DESCRIPTION_RE.search(fm_inner):
+            new_fm = _FM_DESCRIPTION_RE.sub(lambda m: m.group(1) or "", fm_inner, count=1)
             return f"---{new_fm}{rest}"
         return content
 
     escaped = _yaml_double_quote_escape(collapsed)
     new_line = f'description: "{escaped}"\n'
+    return f"---{_frontmatter_with_description_line(fm_inner, new_line)}{rest}"
 
-    if desc_re.search(fm_inner):
-        new_fm = desc_re.sub(lambda m: (m.group(1) or "") + new_line, fm_inner, count=1)
-        return f"---{new_fm}{rest}"
 
-    title_re = re.compile(
-        r"(^|\n)title:[^\n]*(?:\n[ \t]+[^\n]*)*\n",
-    )
-    m = title_re.search(fm_inner)
+_FM_DESCRIPTION_RE = re.compile(
+    r"(^|\n)description:[^\n]*(?:\n[ \t]+[^\n]*)*\n",
+)
+_FM_TITLE_RE = re.compile(
+    r"(^|\n)title:[^\n]*(?:\n[ \t]+[^\n]*)*\n",
+)
+
+
+def _frontmatter_with_description_line(fm_inner: str, new_line: str) -> str:
+    """Replace the existing description block, else insert after `title:`,
+    else at the top of the frontmatter."""
+    if _FM_DESCRIPTION_RE.search(fm_inner):
+        return _FM_DESCRIPTION_RE.sub(
+            lambda m: (m.group(1) or "") + new_line, fm_inner, count=1)
+    m = _FM_TITLE_RE.search(fm_inner)
     if m:
-        new_fm = fm_inner[: m.end()] + new_line + fm_inner[m.end():]
-    else:
-        if fm_inner.startswith("\n"):
-            new_fm = "\n" + new_line + fm_inner.lstrip("\n")
-        else:
-            new_fm = new_line + fm_inner
-    return f"---{new_fm}{rest}"
+        return fm_inner[: m.end()] + new_line + fm_inner[m.end():]
+    if fm_inner.startswith("\n"):
+        return "\n" + new_line + fm_inner.lstrip("\n")
+    return new_line + fm_inner
 
 
 def _sync_doc_from_frontmatter(doc: PatternDoc, frontmatter: str) -> None:
@@ -198,50 +200,61 @@ def _attached_rule_bundles_for_pattern(procedure_id: str | None) -> list[dict]:
         engine_kind = getattr(engine, "kind", "")
         if engine_kind == "grit":
             continue
-        parsed = list(engine.parse_rules())
-        guide_matches = [r for r in parsed if r.metadata.get("guide") == procedure_id]
-        bundle_is_pattern = engine.id == procedure_id
-        attached = bundle_is_pattern or bool(guide_matches)
-        if not attached:
+        rules_iter = _attached_engine_rules(engine, procedure_id)
+        if rules_iter is None:
             continue
-        # If the engine itself maps to this pattern (bundle-IS-pattern),
-        # expose every rule it owns. Otherwise the attachment is "some rules
-        # carry guide=procedure_id" — emit only those, so unrelated rules from
-        # a shared engine don't bleed in.
-        rules_iter = parsed if bundle_is_pattern else guide_matches
         off = engine_rule_disable.disabled_ids(engine.id)
-        rules = [
-            {
-                "id": rule.id,
-                "summary": rule.summary,
-                "severity": rule.severity,
-                "engine": rule.engine,
-                "source_file": rule.source_file,
-                "checker": rule.metadata.get("checker"),
-                "category": rule.metadata.get("category"),
-                "check_kind": rule.metadata.get("check_kind"),
-                "wcag_ref": rule.metadata.get("wcag_ref"),
-                "triggers": list(rule.triggers),
-                "disabled": rule.id in off,
-            }
-            for rule in rules_iter
-        ]
-        manifest = getattr(engine, "manifest", None)
-        raw_description = getattr(manifest, "description", None) or ""
-        description = (
-            raw_description.strip()
-            or "Portable rule bundle attached to this pattern skill."
-        )
         bundles.append({
             "engine_id": engine.id,
             "engine_kind": engine_kind,
             "title": f"{engine.id} rule bundle",
-            "description": description,
+            "description": _bundle_description(engine),
             "invocation_hint": (
                 f"regin rules run --engine {engine.id} --rule <rule-id> "
                 "--repo <repo-root> --file <relative-path>"
             ),
-            "rules": rules,
+            "rules": [_bundle_rule_dict(rule, off) for rule in rules_iter],
         })
     return bundles
+
+
+def _attached_engine_rules(engine, procedure_id: str) -> list | None:
+    """The engine's rules attached to `procedure_id`, or None when the engine
+    is not attached at all.
+
+    If the engine itself maps to this pattern (bundle-IS-pattern), expose
+    every rule it owns. Otherwise the attachment is "some rules carry
+    guide=procedure_id" — emit only those, so unrelated rules from a shared
+    engine don't bleed in.
+    """
+    parsed = list(engine.parse_rules())
+    if engine.id == procedure_id:
+        return parsed
+    guide_matches = [r for r in parsed if r.metadata.get("guide") == procedure_id]
+    return guide_matches or None
+
+
+def _bundle_rule_dict(rule, off) -> dict:
+    return {
+        "id": rule.id,
+        "summary": rule.summary,
+        "severity": rule.severity,
+        "engine": rule.engine,
+        "source_file": rule.source_file,
+        "checker": rule.metadata.get("checker"),
+        "category": rule.metadata.get("category"),
+        "check_kind": rule.metadata.get("check_kind"),
+        "wcag_ref": rule.metadata.get("wcag_ref"),
+        "triggers": list(rule.triggers),
+        "disabled": rule.id in off,
+    }
+
+
+def _bundle_description(engine) -> str:
+    manifest = getattr(engine, "manifest", None)
+    raw_description = getattr(manifest, "description", None) or ""
+    return (
+        raw_description.strip()
+        or "Portable rule bundle attached to this pattern skill."
+    )
 

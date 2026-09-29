@@ -38,14 +38,28 @@ def api_rules():
     rules = [_decorate_rule(r, engines_by_id) for r in data.get('rules', [])]
 
     repo_filter = (request.args.get('repo') or '').strip()
-    if repo_filter:
-        rules = [
-            r for r in rules
-            if pattern_scope.pattern_allowed_for_repo(r.get('guide'), repo_filter)
-        ]
-
+    rules = _rules_for_repo(rules, repo_filter)
     group_by = request.args.get('by', 'guide')
 
+    return jsonify({
+        'grouped': _group_rules(rules, group_by),
+        'group_by': group_by,
+        'repo_filter': repo_filter or None,
+        'total': len(rules),
+        'engines': _engine_descriptors(engines, rules),
+    })
+
+
+def _rules_for_repo(rules: list, repo_filter: str) -> list:
+    if not repo_filter:
+        return rules
+    return [
+        r for r in rules
+        if pattern_scope.pattern_allowed_for_repo(r.get('guide'), repo_filter)
+    ]
+
+
+def _group_rules(rules: list, group_by: str) -> list:
     groups: dict = {}
     for r in rules:
         key = r['guide'] if group_by == 'guide' else r['layer']
@@ -56,17 +70,14 @@ def api_rules():
     # `guide=None` or `layer=None` even after the helper defaults; mixed
     # None/str keys would otherwise raise TypeError on `<` comparison).
     grouped = sorted(groups.items(), key=lambda kv: (kv[0] is None, kv[0] or ''))
+    return [[k, v] for k, v in grouped]
 
-    return jsonify({
-        'grouped': [[k, v] for k, v in grouped],
-        'group_by': group_by,
-        'repo_filter': repo_filter or None,
-        'total': len(rules),
-        'engines': [
-            _engine_descriptor(engine, rule_count=sum(1 for r in rules if r['engine'] == engine.id))
-            for engine in engines
-        ],
-    })
+
+def _engine_descriptors(engines: list, rules: list) -> list:
+    return [
+        _engine_descriptor(engine, rule_count=sum(1 for r in rules if r['engine'] == engine.id))
+        for engine in engines
+    ]
 
 
 _LANG_BY_EXT = {
@@ -96,54 +107,63 @@ def api_pattern_scripts():
     out = []
     total = 0
     for name in sorted(os.listdir(str(settings.patterns_dir))):
-        if name.startswith('.') or name.startswith('_'):
-            continue
-        pattern_dir = os.path.join(str(settings.patterns_dir), name)
-        script_dir = os.path.join(pattern_dir, 'scripts')
-        skill_md = os.path.join(pattern_dir, 'SKILL.md')
-        if not os.path.isdir(script_dir):
-            continue
-        has_rules = bool(grit_rule_index.rules_for_guide(name))
-
-        title = name
-        if os.path.isfile(skill_md):
-            try:
-                with open(skill_md, 'r', encoding='utf-8') as f:
-                    head = f.read(4096)
-                m = _re.search(r'^title:\s*"?([^"\n]+?)"?\s*$', head, _re.M)
-                if m:
-                    title = m.group(1).strip()
-            except OSError:
-                pass
-
-        files = []
-        for root, _, fnames in os.walk(script_dir):
-            for fn in sorted(fnames):
-                abs_path = os.path.join(root, fn)
-                try:
-                    size = os.path.getsize(abs_path)
-                except OSError:
-                    continue
-                rel = os.path.relpath(abs_path, script_dir)
-                ext = os.path.splitext(fn)[1].lower()
-                files.append({
-                    'name': rel,
-                    'size': size,
-                    'language': _LANG_BY_EXT.get(ext, 'text'),
-                })
-                total += 1
-
-        if not files:
-            continue  # empty scripts/ dir → nothing to show
-
-        out.append({
-            'slug': name,
-            'title': title,
-            'own_scripts': files,
-            'has_grit_rules': has_rules,
-        })
+        entry = _pattern_scripts_entry(name)
+        if entry is not None:
+            out.append(entry)
+            total += len(entry['own_scripts'])
 
     return jsonify({'patterns': out, 'total_scripts': total})
+
+
+def _pattern_scripts_entry(name: str) -> dict | None:
+    """One pattern's Scripts-tab row, or None when it has nothing to show."""
+    if name.startswith('.') or name.startswith('_'):
+        return None
+    pattern_dir = os.path.join(str(settings.patterns_dir), name)
+    script_dir = os.path.join(pattern_dir, 'scripts')
+    if not os.path.isdir(script_dir):
+        return None
+    has_rules = bool(grit_rule_index.rules_for_guide(name))
+    title = _pattern_title(os.path.join(pattern_dir, 'SKILL.md'), name)
+    files = _script_files(script_dir)
+    if not files:
+        return None  # empty scripts/ dir → nothing to show
+    return {
+        'slug': name,
+        'title': title,
+        'own_scripts': files,
+        'has_grit_rules': has_rules,
+    }
+
+
+def _pattern_title(skill_md: str, default: str) -> str:
+    if not os.path.isfile(skill_md):
+        return default
+    try:
+        with open(skill_md, 'r', encoding='utf-8') as f:
+            head = f.read(4096)
+    except OSError:
+        return default
+    m = _re.search(r'^title:\s*"?([^"\n]+?)"?\s*$', head, _re.M)
+    return m.group(1).strip() if m else default
+
+
+def _script_files(script_dir: str) -> list:
+    files = []
+    for root, _, fnames in os.walk(script_dir):
+        for fn in sorted(fnames):
+            abs_path = os.path.join(root, fn)
+            try:
+                size = os.path.getsize(abs_path)
+            except OSError:
+                continue
+            ext = os.path.splitext(fn)[1].lower()
+            files.append({
+                'name': os.path.relpath(abs_path, script_dir),
+                'size': size,
+                'language': _LANG_BY_EXT.get(ext, 'text'),
+            })
+    return files
 
 
 def _pattern_block_end(src, idx):

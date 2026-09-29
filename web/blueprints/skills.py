@@ -56,21 +56,7 @@ def require_known_skill(view):
 
 @skills_bp.route('/api/skills')
 def api_skills():
-    rows = []
-    for sid, stype, src, dep, state in skill_sync.list_states():
-        entry = skill_registry.get(sid)
-        if stype == 'pattern':
-            href = f'/patterns/{entry["procedure_id"]}'
-        else:
-            href = f'/skills/{sid}'
-        rows.append({
-            'id': sid,
-            'type': stype,
-            'state': state,
-            'source': src,
-            'deployed': dep,
-            'href': href,
-        })
+    rows = [_skill_row(*state) for state in skill_sync.list_states()]
     by_type = {'auto': [], 'pattern': []}
     for r in rows:
         by_type[r['type']].append(r)
@@ -84,27 +70,45 @@ def api_skills():
         'enabled_providers': enabled_provider_skill_paths(),
     }
     if request.args.get('include_deployments') in ('1', 'true'):
-        all_deps = pattern_deployments.list_deployments()
-        by_skill = {}
-        by_project = {}
-        for d in all_deps:
-            by_skill.setdefault(d['pattern_slug'], []).append(d)
-            if d.get('scope') == 'project':
-                pid = d.get('project_id')
-                if pid not in by_project:
-                    by_project[pid] = {
-                        'project_id': d['project_id'],
-                        'project_name': d.get('project_name'),
-                        'project_path': d.get('project_path'),
-                        'items': [],
-                    }
-                by_project[pid]['items'].append(d)
-        payload['deployments'] = all_deps
-        payload['deployments_by_skill'] = by_skill
-        payload['deployments_by_project'] = sorted(
-            by_project.values(), key=lambda x: (x['project_name'] or '')
-        )
+        payload.update(_deployments_payload(pattern_deployments.list_deployments()))
     return jsonify(payload)
+
+
+def _skill_row(sid, stype, src, dep, state) -> dict:
+    entry = skill_registry.get(sid)
+    if stype == 'pattern':
+        href = f'/patterns/{entry["procedure_id"]}'
+    else:
+        href = f'/skills/{sid}'
+    return {
+        'id': sid,
+        'type': stype,
+        'state': state,
+        'source': src,
+        'deployed': dep,
+        'href': href,
+    }
+
+
+def _deployments_payload(all_deps: list) -> dict:
+    by_skill = {}
+    by_project = {}
+    for d in all_deps:
+        by_skill.setdefault(d['pattern_slug'], []).append(d)
+        if d.get('scope') == 'project':
+            by_project.setdefault(d.get('project_id'), {
+                'project_id': d['project_id'],
+                'project_name': d.get('project_name'),
+                'project_path': d.get('project_path'),
+                'items': [],
+            })['items'].append(d)
+    return {
+        'deployments': all_deps,
+        'deployments_by_skill': by_skill,
+        'deployments_by_project': sorted(
+            by_project.values(), key=lambda x: (x['project_name'] or '')
+        ),
+    }
 
 
 @skills_bp.route('/api/skills/<skill_id>')
@@ -366,19 +370,8 @@ def api_skills_remove_project_deployment(skill_id, project_id):
     if repo is None:
         return jsonify({'ok': False, 'msg': f'project {project_id} not found'}), 404
 
-    fs_removed_any = False
-    row_removed_any = False
-    provider_ids = []
-    for provider in providers:
-        pid = provider.provider_id
-        provider_ids.append(pid)
-        target_dir = os.path.join(repo.path, *provider.project_skills_subpath())
-        fs_removed = undeploy_skill(skill_id, target_dir=target_dir)
-        row_removed = pattern_deployments.remove_deployment(
-            skill_id, 'project', project_id, provider=pid,
-        )
-        fs_removed_any = fs_removed_any or fs_removed
-        row_removed_any = row_removed_any or row_removed
+    fs_removed_any, row_removed_any, provider_ids = _undeploy_from_project(
+        skill_id, repo, providers)
 
     # Also strip the pattern's grit rules from the repo's `.grit/` (mirror of
     # the sync done on project push). Best-effort — never block the undeploy.
@@ -388,22 +381,46 @@ def api_skills_remove_project_deployment(skill_id, project_id):
     except Exception:
         pass
 
-    user = get_current_user()
+    _audit_project_undeploy(get_current_user(), skill_id, repo, {
+        'filesystem_removed': fs_removed_any, 'row_removed': row_removed_any,
+        'providers': provider_ids})
+    return jsonify({
+        'ok': True,
+        'msg': f'removed {skill_id} from {repo.name}'
+               f' (files: {_yes_no(fs_removed_any)}, row: {_yes_no(row_removed_any)})',
+    })
+
+
+def _yes_no(flag) -> str:
+    return "yes" if flag else "no"
+
+
+def _undeploy_from_project(skill_id, repo, providers) -> tuple[bool, bool, list]:
+    fs_removed_any = False
+    row_removed_any = False
+    provider_ids = []
+    for provider in providers:
+        pid = provider.provider_id
+        provider_ids.append(pid)
+        target_dir = os.path.join(repo.path, *provider.project_skills_subpath())
+        fs_removed = undeploy_skill(skill_id, target_dir=target_dir)
+        row_removed = pattern_deployments.remove_deployment(
+            skill_id, 'project', repo.id, provider=pid,
+        )
+        fs_removed_any = fs_removed_any or fs_removed
+        row_removed_any = row_removed_any or row_removed
+    return fs_removed_any, row_removed_any, provider_ids
+
+
+def _audit_project_undeploy(user, skill_id, repo, outcome: dict) -> None:
     audit.log_action(
         user['id'] if user else None,
         user['username'] if user else 'anon',
         'undeploy_pattern',
         f'pattern:{skill_id}',
         {'scope': 'project', 'project_id': repo.id,
-         'project_name': repo.name,
-         'filesystem_removed': fs_removed_any, 'row_removed': row_removed_any,
-         'providers': provider_ids},
+         'project_name': repo.name, **outcome},
     )
-    return jsonify({
-        'ok': True,
-        'msg': f'removed {skill_id} from {repo.name}'
-               f' (files: {"yes" if fs_removed_any else "no"}, row: {"yes" if row_removed_any else "no"})',
-    })
 
 
 # GET /api/repos lives in web/blueprints/repos.py. The skills push-to-project

@@ -544,6 +544,350 @@ def _tag_counts(session, apply_filters):
     return counts
 
 
+def _session_context_fields(d):
+    """Derive context_pct using the session's richer `model` id (which
+    carries the [1m] variant suffix when applicable) rather than the
+    per-turn-span `context_window_tokens` — the handler computes that from
+    the transcript's bare `message.model` and therefore can't see the 1M
+    promotion. `context_pct` is the main-conversation peak
+    (terminal-matching, used as headline); `context_pct_all` is the
+    all-inclusive peak (rolled-in advisor / server-side sub-call tokens) — UI
+    shows it as a secondary chip only when the two diverge. The headline
+    divides the *live* peak (main-flow high-water mark since the last
+    `/compact`) so the % drops when the session compacts; the all-time peaks
+    still drive window inference and the pre-compaction hint."""
+    from lib.tokens.model_windows import infer_window as _infer_window
+    peak_full = d.get('peak_context_tokens')
+    if not isinstance(peak_full, int):
+        d['context_pct'] = None
+        d['context_pct_all'] = None
+        return
+    win = _infer_window(d.get('model'), peak_full)
+    d['context_window_tokens'] = win  # override stored hint
+    main_for_pct = next(
+        (v for v in (d.get('live_context_tokens'),
+                     d.get('peak_main_context_tokens'), peak_full)
+         if isinstance(v, int)),
+        peak_full)
+    d['context_pct_all'] = round(peak_full * 100.0 / win, 1) if win > 0 else None
+    d['context_pct'] = round(main_for_pct * 100.0 / win, 1) if win > 0 else None
+
+
+def _session_activity_fields(d):
+    """Pre-compute active_pct and idle_ms so the frontend doesn't need to
+    parse timestamps and do arithmetic per rendered row.
+
+    Normalized to naive local (`parse_naive_ts`), never raw awareness: a row
+    can mix a tz-aware `started_at` with a naive `last_seen` (writers
+    disagree — spec-posted spans stamp `…Z`, hooks stamp local), and one such
+    row's subtraction 500s the whole listing."""
+    from lib.trace.pending_spans import parse_naive_ts as _parse_iso
+    active_ms = d.get('active_work_ms')
+    t0 = _parse_iso(d.get('started_at'))
+    t1 = _parse_iso(d.get('last_seen'))
+    if active_ms is None or not (t0 and t1):
+        d['active_pct'] = None
+        d['idle_ms'] = None
+        return
+    total_ms = int((t1 - t0).total_seconds() * 1000)
+    if total_ms > 0:
+        d['active_pct'] = round(active_ms * 100.0 / total_ms)
+        d['idle_ms'] = max(0, total_ms - active_ms)
+    else:
+        d['active_pct'] = None
+        d['idle_ms'] = 0
+
+
+def _session_row_to_dict(row) -> dict:
+    d = dict(row._mapping)
+    # The runner's own verdict, for a run regin LAUNCHED — None for every
+    # session it merely traces, which is what makes its presence the
+    # signal the client switches on. Cheap enough to do per row: it is a
+    # dict lookup under a lock (`agent_sdk.run_phase`), no query and no
+    # spans, so it does not put this list on the roster's phasing cost.
+    #
+    # It is here because recency cannot answer the question a launched run
+    # can: an agent parked at the prompt emits no spans, so after the stale
+    # window the list called it `inactive` while the switcher — which does
+    # ask the runner — called it alive. Same session, two verdicts.
+    d['runner_phase'] = _owned_run_phase(d.get('trace_id'))
+    _session_context_fields(d)
+    _session_activity_fields(d)
+
+    # Canonical agent kind: 'claude' | 'codex' | 'kimi' | 'generic' | None.
+    # Delegated to the provider registry so the vendor→kind mapping lives
+    # in one place (lib/providers/registry.canonical_agent_kind) rather
+    # than a substring chain copied into this blueprint. agent_type is
+    # vendor-only here — "workflow" moved to the orthogonal `origin` axis
+    # below. Keep raw agent_type for display (tooltip uses it verbatim).
+    d['agent_kind'] = canonical_agent_kind(d.get('agent_type'))
+
+    # `origin` is what KIND of row this is: 'session' (a real interactive
+    # agent session, the default), 'workflow' (a captured dynamic-
+    # workflow run), or 'llm-stage' (a regin-spawned LLM stage). NULL
+    # legacy rows read as 'session'.
+    d['origin'] = d.get('origin') or 'session'
+    # Builtin category tag (user / topic-proposal / system), derived from
+    # the single `origin` axis. The full `tags` list (this + any stored
+    # custom tags) is attached in bulk by `_attach_session_tags`.
+    d['category'] = builtin_tag_for_origin(d['origin'])
+    d['is_workflow'] = (d['origin'] == 'workflow')
+    # Generalised run-ness: True for every origin the workflow=hide
+    # toggle filters, so the frontend never re-derives the origin list.
+    d['is_run'] = d['origin'] in _RUN_ORIGINS
+    return d
+
+
+def _plans_subquery():
+    """`plans` is computed live from the plan_sessions table rather than a
+    stored counter: it counts the distinct plan files this session
+    authored/edited, so it stays correct as new plans land without an
+    ingest-time counter (the old `plan_enters` span counter is dead —
+    `plan.enter` spans are no longer emitted). Tiny table; the correlated
+    subquery is cheap."""
+    from sqlalchemy import func as _func
+    from sqlmodel import select as _select
+    return (
+        _select(_func.count(_func.distinct(PlanSession.plan_filename)))
+        .where(PlanSession.session_id == SessionModel.trace_id)
+        .correlate(SessionModel)
+        .scalar_subquery()
+        .label('plans')
+    )
+
+
+def _session_list_columns():
+    return (
+        SessionModel.trace_id, SessionModel.title, SessionModel.title_source,
+        SessionModel.status, SessionModel.ended_at, SessionModel.ended_reason,
+        SessionModel.started_at, SessionModel.last_seen,
+        SessionModel.span_count, SessionModel.skill_reads,
+        SessionModel.file_edits, SessionModel.rule_checks,
+        _plans_subquery(), SessionModel.prompts,
+        SessionModel.tool_calls, SessionModel.is_test, SessionModel.test_name,
+        SessionModel.agent_type,
+        SessionModel.origin,
+        SessionModel.model,
+        SessionModel.cwd,
+        SessionModel.input_tokens, SessionModel.output_tokens,
+        SessionModel.cache_read_tokens, SessionModel.cache_creation_tokens,
+        SessionModel.peak_context_tokens, SessionModel.peak_main_context_tokens,
+        SessionModel.live_context_tokens,
+        SessionModel.context_window_tokens,
+        SessionModel.active_work_ms,
+        SessionModel.cost_usd,
+    )
+
+
+def _choice(name, default, allowed):
+    value = (request.args.get(name) or default).strip().lower()
+    return value if value in allowed else default
+
+
+def _session_list_kind():
+    kind = (request.args.get('kind') or '').strip().lower()
+    if kind in ('real', 'test', 'all'):
+        return kind
+    # Fall back to legacy `include_tests`: present → 'all', absent → 'real'.
+    include_tests = request.args.get('include_tests', 'false').lower() in ('1', 'true', 'yes')
+    return 'all' if include_tests else 'real'
+
+
+def _search_clause(search, scope):
+    from sqlalchemy import func as _func, or_ as _or
+    from sqlmodel import select as _select
+    # COLLATE NOCASE via .ilike on SQLite; for MySQL the default
+    # collation already matches case-insensitively on varchar columns.
+    title_clause = SessionModel.title.ilike(f"%{search}%")
+    # Substring match on the `text` attribute of `prompt` spans.
+    # json_extract isolates the field so a hit on (say) a tool
+    # input that happens to contain the term doesn't pollute the
+    # result set. SQLite 3.38+ ships json1 by default.
+    prompt_clause = SessionModel.trace_id.in_(
+        _select(SessionSpan.trace_id)
+        .where(SessionSpan.name == 'prompt')
+        .where(
+            _func.json_extract(SessionSpan.attributes, '$.text')
+            .ilike(f"%{search}%")
+        )
+    )
+    return {'title': title_clause, 'prompt': prompt_clause}.get(
+        scope, _or(title_clause, prompt_clause))
+
+
+_KIND_IS_TEST = {'real': 0, 'test': 1}
+
+
+class _SessionListQuery:
+    """The `/api/sessions` filter set, parsed once from the request so the
+    page query and every count query run an identical WHERE."""
+
+    def __init__(self):
+        self.kind = _session_list_kind()
+        self.active_filter = _choice('active', 'all', ('all', 'active', 'inactive'))
+        self.trace_id_q = (request.args.get('trace_id') or '').strip()
+        self.search = (request.args.get('q') or '').strip()
+        self.scope = _choice('scope', 'title', ('title', 'prompt', 'both'))
+        self.since = (request.args.get('since') or '').strip()
+        self.until = (request.args.get('until') or '').strip()
+        self.repo = request.args.get('repo')
+        self.workflow = _tri_state(request.args.get('workflow'))
+        self.empty = _tri_state(request.args.get('empty'))
+        if self.trace_id_q and self.empty == 'hide':
+            self.empty = 'show'
+        self.tag_slugs = _parse_tag_filter()
+        self.hidden_alias_ids = ()
+
+    @property
+    def date_filtered(self):
+        return bool(self.since or self.until)
+
+    def _apply_trace_id(self, s):
+        if self.trace_id_q:
+            return s.where(SessionModel.trace_id.ilike(f"{self.trace_id_q}%"))
+        if self.hidden_alias_ids:
+            # A regin-launched run is traced twice — once by the runner, once
+            # by the child `claude`'s own hooks — and the reader serves both
+            # ids as one merged session. Listing both would show the same run
+            # twice. The alias is hidden, never the canonical row, and only
+            # when the caller is browsing: an explicit `trace_id` prefix is a
+            # deep link and must still resolve the run's own id, which is what
+            # `/live` links carry.
+            return s.where(SessionModel.trace_id.notin_(self.hidden_alias_ids))
+        return s
+
+    def _apply_dates(self, s):
+        if self.since:
+            s = s.where(SessionModel.last_seen >= self.since)
+        if self.until:
+            s = s.where(SessionModel.last_seen < self.until)
+        return s
+
+    def apply_filters(self, s, skip_date=False, skip_repo=False):
+        """Apply the shared WHERE set (kind/is_test, trace_id, active,
+        title/prompt search, since/until, repo) to a statement and return it.
+
+        Shared so the page query and the workflow_hidden_count query run an
+        identical filter set — the count must reflect exactly the rows the
+        page would have shown but for the `workflow` origin filter. The
+        workflow/origin clause is applied by the caller, NOT here.
+        `skip_date=True` omits the since/until bounds so callers can count
+        rows outside the current date window; `skip_repo=True` omits the repo
+        narrowing so a facet can still show its sibling repos' counts.
+        """
+        if self.kind in _KIND_IS_TEST:
+            s = s.where(SessionModel.is_test == _KIND_IS_TEST[self.kind])
+        s = self._apply_trace_id(s)
+        if self.active_filter != 'all':
+            s = s.where(_session_active_clause(self.active_filter == 'active'))
+        if self.search:
+            s = s.where(_search_clause(self.search, self.scope))
+        if not skip_date:
+            s = self._apply_dates(s)
+        if skip_repo:
+            return s
+        return _filter_sessions_by_repo(s, self.repo)
+
+    def apply_origin(self, s):
+        """The `workflow` (origin) axis, applied AFTER the shared filters.
+
+        NULL legacy rows count as 'session' (not a run), so `hide` keeps them
+        and `only` drops them. 'llm-stage' rows (regin-spawned LLM stages,
+        e.g. reflect's judges) ride the same toggle as workflow captures —
+        both are non-interactive runs.
+        """
+        from sqlalchemy import or_ as _or
+        if self.workflow == 'only':
+            return s.where(SessionModel.origin.in_(_RUN_ORIGINS))
+        if self.workflow == 'hide':
+            return s.where(_or(SessionModel.origin.is_(None),
+                               SessionModel.origin.not_in(_RUN_ORIGINS)))
+        return s
+
+    def narrow(self, s, skip_repo=False):
+        """The request's COMPLETE filter set: shared WHERE + origin + work + tag."""
+        return _apply_tag_filter(
+            _apply_empty(self.apply_origin(self.apply_filters(s, skip_repo=skip_repo)),
+                         self.empty),
+            self.tag_slugs)
+
+
+def _count_stmt():
+    from sqlalchemy import func as _func
+    from sqlmodel import select as _select
+    return _select(_func.count()).select_from(SessionModel)
+
+
+def _hidden_workflow_count(session, q):
+    """When hiding runs, count how many the SAME other filters would have
+    matched so the frontend can offer a pivot hint. Also narrowed by the work
+    axis: a run row that is ALSO an empty launch stays hidden when runs are
+    toggled on, so counting it here would promise one more row than the
+    toggle reveals."""
+    if q.workflow != 'hide':
+        return None
+    return session.exec(_apply_empty(
+        q.apply_filters(_count_stmt())
+        .where(SessionModel.origin.in_(_RUN_ORIGINS)), q.empty)
+    ).one()
+
+
+def _empty_hidden_count(session, q):
+    """Rows the SAME other filters (including the origin axis) would have
+    matched but for the work axis — the chip's "N empty launches hidden"."""
+    if q.empty != 'hide':
+        return None
+    return session.exec(_apply_tag_filter(
+        _apply_empty(q.apply_origin(q.apply_filters(_count_stmt())), 'only'),
+        q.tag_slugs)).one()
+
+
+def _workflow_date_hidden_count(session, q):
+    """When showing only runs and a date filter is active, count how many
+    workflow rows the date filter excluded, for a "widen date range" hint."""
+    if not (q.workflow == 'only' and q.date_filtered):
+        return None
+    wf_all = session.exec(
+        q.apply_filters(_count_stmt(), skip_date=True)
+        .where(SessionModel.origin.in_(_RUN_ORIGINS))
+    ).one()
+    wf_dated = session.exec(
+        q.apply_filters(_count_stmt())
+        .where(SessionModel.origin.in_(_RUN_ORIGINS))
+    ).one()
+    return max(0, wf_all - wf_dated)
+
+
+def _session_list_envelope_extras(session, q):
+    extras = {
+        'workflow_hidden_count': _hidden_workflow_count(session, q),
+        'empty_hidden_count': _empty_hidden_count(session, q),
+        'workflow_date_hidden_count': _workflow_date_hidden_count(session, q),
+        # Per-tag counts for the facet, over the shared filters but NOT the
+        # tag selection itself (so a selected facet still shows sibling counts).
+        'tag_counts': _tag_counts(session, q.apply_filters),
+    }
+    # Envelope facets: total/active over the SAME population the page
+    # paginates, and repo counts over everything but the repo selection
+    # (same sibling-counts rule as tag_counts).
+    facets = _list_facet_counts(session, q.narrow)
+    facets['repo_counts'] = _repo_counts(
+        session, lambda s: q.narrow(s, skip_repo=True))
+    return extras, facets
+
+
+def _stamp_server_now(envelope):
+    # One server-clock instant in BOTH stored-timestamp formats (naive
+    # host-local and UTC-Z), so the frontend can age each row server−server
+    # against the anchor matching that row's format. Client−server arithmetic
+    # leaks the host↔viewer timezone offset: a viewer behind the host reads
+    # every recent naive stamp as future ("just now").
+    now = datetime.now(timezone.utc)
+    envelope['server_now'] = (
+        now.astimezone().replace(tzinfo=None).isoformat(timespec='microseconds'))
+    envelope['server_now_utc'] = now.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+
+
 @trace_bp.route('/api/sessions')
 def api_sessions():
     """Keyset-paginated session list, newest first.
@@ -600,319 +944,30 @@ def api_sessions():
       cursor, size       — keyset pagination (see lib.utils.pagination)
     """
     from sqlmodel import select as _select
-    from sqlalchemy import func as _func, or_ as _or
-    include_tests = request.args.get('include_tests', 'false').lower() in ('1', 'true', 'yes')
-    kind = (request.args.get('kind') or '').strip().lower()
-    if kind not in ('real', 'test', 'all'):
-        # Fall back to legacy `include_tests`: present → 'all', absent → 'real'.
-        kind = 'all' if include_tests else 'real'
-    active_filter = (request.args.get('active') or 'all').strip().lower()
-    if active_filter not in ('all', 'active', 'inactive'):
-        active_filter = 'all'
-    trace_id_q = (request.args.get('trace_id') or '').strip()
-    search = (request.args.get('q') or '').strip()
-    scope = (request.args.get('scope') or 'title').strip().lower()
-    if scope not in ('title', 'prompt', 'both'):
-        scope = 'title'
-    since = (request.args.get('since') or '').strip()
-    until = (request.args.get('until') or '').strip()
-    date_filtered = bool(since or until)
-    workflow = _tri_state(request.args.get('workflow'))
-    empty = _tri_state(request.args.get('empty'))
-    if trace_id_q and empty == 'hide':
-        empty = 'show'
-    tag_slugs = _parse_tag_filter()
+    q = _SessionListQuery()
     cursor_token = request.args.get('cursor')
     size = clamp_size(request.args.get('size'), default=50)
 
-    from lib.tokens.model_windows import infer_window as _infer_window
-
-    def _row_to_dict(row) -> dict:
-        # Normalized to naive local (`parse_naive_ts`), never raw awareness:
-        # a row can mix a tz-aware `started_at` with a naive `last_seen`
-        # (writers disagree — spec-posted spans stamp `…Z`, hooks stamp
-        # local), and one such row's subtraction 500s the whole listing.
-        from lib.trace.pending_spans import parse_naive_ts as _parse_iso
-
-        d = dict(row._mapping)
-        # The runner's own verdict, for a run regin LAUNCHED — None for every
-        # session it merely traces, which is what makes its presence the
-        # signal the client switches on. Cheap enough to do per row: it is a
-        # dict lookup under a lock (`agent_sdk.run_phase`), no query and no
-        # spans, so it does not put this list on the roster's phasing cost.
-        #
-        # It is here because recency cannot answer the question a launched run
-        # can: an agent parked at the prompt emits no spans, so after the stale
-        # window the list called it `inactive` while the switcher — which does
-        # ask the runner — called it alive. Same session, two verdicts.
-        d['runner_phase'] = _owned_run_phase(d.get('trace_id'))
-        # Derive context_pct using the session's richer `model` id (which
-        # carries the [1m] variant suffix when applicable) rather than
-        # the per-turn-span `context_window_tokens` — the handler
-        # computes that from the transcript's bare `message.model` and
-        # therefore can't see the 1M promotion. `context_pct` is the
-        # main-conversation peak (terminal-matching, used as headline);
-        # `context_pct_all` is the all-inclusive peak (rolled-in
-        # advisor / server-side sub-call tokens) — UI shows it as a
-        # secondary chip only when the two diverge. The headline divides
-        # the *live* peak (main-flow high-water mark since the last
-        # `/compact`) so the % drops when the session compacts; the
-        # all-time peaks still drive window inference and the
-        # pre-compaction hint.
-        peak_full = d.get('peak_context_tokens')
-        peak_main = d.get('peak_main_context_tokens')
-        live = d.get('live_context_tokens')
-        model = d.get('model')
-        if isinstance(peak_full, int):
-            win = _infer_window(model, peak_full)
-            d['context_window_tokens'] = win  # override stored hint
-            d['context_pct_all'] = round(peak_full * 100.0 / win, 1) if win > 0 else None
-            main_for_pct = next(
-                (v for v in (live, peak_main, peak_full) if isinstance(v, int)),
-                peak_full)
-            d['context_pct'] = round(main_for_pct * 100.0 / win, 1) if win > 0 else None
-        else:
-            d['context_pct'] = None
-            d['context_pct_all'] = None
-
-        # Pre-compute active_pct and idle_ms so the frontend doesn't need
-        # to parse timestamps and do arithmetic per rendered row.
-        active_ms = d.get('active_work_ms')
-        t0 = _parse_iso(d.get('started_at'))
-        t1 = _parse_iso(d.get('last_seen'))
-        if active_ms is not None and t0 and t1:
-            total_ms = int((t1 - t0).total_seconds() * 1000)
-            if total_ms > 0:
-                d['active_pct'] = round(active_ms * 100.0 / total_ms)
-                d['idle_ms'] = max(0, total_ms - active_ms)
-            else:
-                d['active_pct'] = None
-                d['idle_ms'] = 0
-        else:
-            d['active_pct'] = None
-            d['idle_ms'] = None
-
-        # Canonical agent kind: 'claude' | 'codex' | 'kimi' | 'generic' | None.
-        # Delegated to the provider registry so the vendor→kind mapping lives
-        # in one place (lib/providers/registry.canonical_agent_kind) rather
-        # than a substring chain copied into this blueprint. agent_type is
-        # vendor-only here — "workflow" moved to the orthogonal `origin` axis
-        # below. Keep raw agent_type for display (tooltip uses it verbatim).
-        d['agent_kind'] = canonical_agent_kind(d.get('agent_type'))
-
-        # `origin` is what KIND of row this is: 'session' (a real interactive
-        # agent session, the default), 'workflow' (a captured dynamic-
-        # workflow run), or 'llm-stage' (a regin-spawned LLM stage). NULL
-        # legacy rows read as 'session'.
-        d['origin'] = d.get('origin') or 'session'
-        # Builtin category tag (user / topic-proposal / system), derived from
-        # the single `origin` axis. The full `tags` list (this + any stored
-        # custom tags) is attached in bulk by `_attach_session_tags`.
-        d['category'] = builtin_tag_for_origin(d['origin'])
-        d['is_workflow'] = (d['origin'] == 'workflow')
-        # Generalised run-ness: True for every origin the workflow=hide
-        # toggle filters, so the frontend never re-derives the origin list.
-        d['is_run'] = d['origin'] in _RUN_ORIGINS
-
-        return d
-
-    from lib.orm.models.trace import PlanSession as _PlanSession
-    # `plans` is computed live from the plan_sessions table rather than a
-    # stored counter: it counts the distinct plan files this session
-    # authored/edited, so it stays correct as new plans land without an
-    # ingest-time counter (the old `plan_enters` span counter is dead —
-    # `plan.enter` spans are no longer emitted). Tiny table; the
-    # correlated subquery is cheap.
-    plans_subq = (
-        _select(_func.count(_func.distinct(_PlanSession.plan_filename)))
-        .where(_PlanSession.session_id == SessionModel.trace_id)
-        .correlate(SessionModel)
-        .scalar_subquery()
-        .label('plans')
-    )
-
-    def _apply_origin(s):
-        """The `workflow` (origin) axis, applied AFTER the shared filters.
-
-        NULL legacy rows count as 'session' (not a run), so `hide` keeps them
-        and `only` drops them. 'llm-stage' rows (regin-spawned LLM stages,
-        e.g. reflect's judges) ride the same toggle as workflow captures —
-        both are non-interactive runs.
-        """
-        if workflow == 'only':
-            return s.where(SessionModel.origin.in_(_RUN_ORIGINS))
-        if workflow == 'hide':
-            return s.where(_or(SessionModel.origin.is_(None),
-                               SessionModel.origin.not_in(_RUN_ORIGINS)))
-        return s
-
-    def _apply_filters(s, skip_date=False, skip_repo=False):
-        """Apply the shared WHERE set (kind/is_test, trace_id, active,
-        title/prompt search, since/until, repo) to a statement and return it.
-
-        Extracted so the page query and the workflow_hidden_count query run
-        an identical filter set — the count must reflect exactly the rows the
-        page would have shown but for the `workflow` origin filter. The
-        workflow/origin clause is applied by the caller, NOT here.
-        `skip_date=True` omits the since/until bounds so callers can count
-        rows outside the current date window; `skip_repo=True` omits the repo
-        narrowing so a facet can still show its sibling repos' counts.
-        """
-        if kind == 'real':
-            s = s.where(SessionModel.is_test == 0)
-        elif kind == 'test':
-            s = s.where(SessionModel.is_test == 1)
-        if trace_id_q:
-            s = s.where(SessionModel.trace_id.ilike(f"{trace_id_q}%"))
-        elif hidden_alias_ids:
-            # A regin-launched run is traced twice — once by the runner, once
-            # by the child `claude`'s own hooks — and the reader serves both
-            # ids as one merged session. Listing both would show the same run
-            # twice. The alias is hidden, never the canonical row, and only
-            # when the caller is browsing: an explicit `trace_id` prefix is a
-            # deep link and must still resolve the run's own id, which is what
-            # `/live` links carry.
-            s = s.where(SessionModel.trace_id.notin_(hidden_alias_ids))
-        if active_filter != 'all':
-            s = s.where(_session_active_clause(active_filter == 'active'))
-        if search:
-            # COLLATE NOCASE via .ilike on SQLite; for MySQL the default
-            # collation already matches case-insensitively on varchar columns.
-            title_clause = SessionModel.title.ilike(f"%{search}%")
-            # Substring match on the `text` attribute of `prompt` spans.
-            # json_extract isolates the field so a hit on (say) a tool
-            # input that happens to contain the term doesn't pollute the
-            # result set. SQLite 3.38+ ships json1 by default.
-            from lib.orm.models.trace import SessionSpan
-            prompt_clause = SessionModel.trace_id.in_(
-                _select(SessionSpan.trace_id)
-                .where(SessionSpan.name == 'prompt')
-                .where(
-                    _func.json_extract(SessionSpan.attributes, '$.text')
-                    .ilike(f"%{search}%")
-                )
-            )
-            search_clause = {'title': title_clause, 'prompt': prompt_clause}.get(
-                scope, _or(title_clause, prompt_clause))
-            s = s.where(search_clause)
-        if not skip_date:
-            if since:
-                s = s.where(SessionModel.last_seen >= since)
-            if until:
-                s = s.where(SessionModel.last_seen < until)
-        if skip_repo:
-            return s
-        return _filter_sessions_by_repo(s, request.args.get('repo'))
-
-    def _narrow(s, skip_repo=False):
-        """The request's COMPLETE filter set: shared WHERE + origin + work + tag."""
-        return _apply_tag_filter(
-            _apply_empty(_apply_origin(_apply_filters(s, skip_repo=skip_repo)), empty),
-            tag_slugs)
-
     with SessionLocal() as session:
-        hidden_alias_ids = aliased_run_ids(session)
-        stmt = _apply_filters(_select(
-            SessionModel.trace_id, SessionModel.title, SessionModel.title_source,
-            SessionModel.status, SessionModel.ended_at, SessionModel.ended_reason,
-            SessionModel.started_at, SessionModel.last_seen,
-            SessionModel.span_count, SessionModel.skill_reads,
-            SessionModel.file_edits, SessionModel.rule_checks,
-            plans_subq, SessionModel.prompts,
-            SessionModel.tool_calls, SessionModel.is_test, SessionModel.test_name,
-            SessionModel.agent_type,
-            SessionModel.origin,
-            SessionModel.model,
-            SessionModel.cwd,
-            SessionModel.input_tokens, SessionModel.output_tokens,
-            SessionModel.cache_read_tokens, SessionModel.cache_creation_tokens,
-            SessionModel.peak_context_tokens, SessionModel.peak_main_context_tokens,
-            SessionModel.live_context_tokens,
-            SessionModel.context_window_tokens,
-            SessionModel.active_work_ms,
-            SessionModel.cost_usd,
-        ))
-        stmt = _narrow(stmt)
-
-        # Per-tag counts for the facet, over the shared filters but NOT the
-        # tag selection itself (so a selected facet still shows sibling counts).
-        tag_counts = _tag_counts(session, _apply_filters)
-
-        # Envelope facets: total/active over the SAME population the page
-        # paginates, and repo counts over everything but the repo selection
-        # (same sibling-counts rule as tag_counts).
-        facets = _list_facet_counts(session, _narrow)
-        facets['repo_counts'] = _repo_counts(
-            session, lambda s: _narrow(s, skip_repo=True))
-
-        # When hiding runs, count how many the SAME other filters would have
-        # matched so the frontend can offer a pivot hint. Same _apply_filters,
-        # restricted to the run origins.
-        if workflow == 'hide':
-            # Also narrowed by the work axis: a run row that is ALSO an empty
-            # launch stays hidden when runs are toggled on, so counting it here
-            # would promise one more row than the toggle reveals.
-            hidden_workflow_count = session.exec(_apply_empty(
-                _apply_filters(_select(_func.count()).select_from(SessionModel))
-                .where(SessionModel.origin.in_(_RUN_ORIGINS)), empty)
-            ).one()
-        else:
-            hidden_workflow_count = None
-
-        # Rows the SAME other filters (including the origin axis) would have
-        # matched but for the work axis — the chip's "N empty launches hidden".
-        if empty == 'hide':
-            empty_hidden_count = session.exec(_apply_tag_filter(
-                _apply_empty(
-                    _apply_origin(_apply_filters(
-                        _select(_func.count()).select_from(SessionModel))),
-                    'only'),
-                tag_slugs)).one()
-        else:
-            empty_hidden_count = None
-
-        # When showing only runs and a date filter is active, count how many
-        # workflow rows the date filter excluded, for a "widen date range" hint.
-        if workflow == 'only' and date_filtered:
-            wf_all = session.exec(
-                _apply_filters(_select(_func.count()).select_from(SessionModel), skip_date=True)
-                .where(SessionModel.origin.in_(_RUN_ORIGINS))
-            ).one()
-            wf_dated = session.exec(
-                _apply_filters(_select(_func.count()).select_from(SessionModel))
-                .where(SessionModel.origin.in_(_RUN_ORIGINS))
-            ).one()
-            workflow_date_hidden_count = max(0, wf_all - wf_dated)
-        else:
-            workflow_date_hidden_count = None
-
+        q.hidden_alias_ids = aliased_run_ids(session)
+        stmt = q.narrow(q.apply_filters(_select(*_session_list_columns())))
+        extras, facets = _session_list_envelope_extras(session, q)
         page = keyset_page_stmt(
             session, stmt,
             order_cols=[(SessionModel.last_seen, 'DESC'),
                         (SessionModel.trace_id, 'DESC')],
             cursor_token=cursor_token, size=size,
-            row_to_dict=_row_to_dict,
+            row_to_dict=_session_row_to_dict,
         )
         _attach_session_repos(session, page.items)
         _attach_session_tags(session, page.items)
     envelope = page.to_envelope()
     envelope['sessions'] = envelope['items']  # legacy field
-    envelope['search'] = search
-    envelope['workflow_hidden_count'] = hidden_workflow_count
-    envelope['empty_hidden_count'] = empty_hidden_count
-    envelope['workflow_date_hidden_count'] = workflow_date_hidden_count
-    envelope['tag_counts'] = tag_counts
+    envelope['search'] = q.search
+    envelope.update(extras)
     envelope['builtin_tags'] = builtin_meta()
     envelope.update(facets)
-    # One server-clock instant in BOTH stored-timestamp formats (naive
-    # host-local and UTC-Z), so the frontend can age each row server−server
-    # against the anchor matching that row's format. Client−server arithmetic
-    # leaks the host↔viewer timezone offset: a viewer behind the host reads
-    # every recent naive stamp as future ("just now").
-    now = datetime.now(timezone.utc)
-    envelope['server_now'] = (
-        now.astimezone().replace(tzinfo=None).isoformat(timespec='microseconds'))
-    envelope['server_now_utc'] = now.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+    _stamp_server_now(envelope)
     return jsonify(envelope)
 
 
@@ -1654,6 +1709,23 @@ def _entry_marker_facts(latest, stop) -> dict:
     }
 
 
+def _roster_is_waiting(ask_seen, last_seen) -> bool:
+    """Blocked on a human: the newest PENDING ask/permission IS the agent's
+    newest span (a later resolved span means the ask was answered)."""
+    ask_ts = _roster_ts(ask_seen)
+    seen_ts = _roster_ts(last_seen)
+    return bool(ask_ts and seen_ts and ask_ts >= seen_ts)
+
+
+def _roster_first_start_ts(seg_entry):
+    starts = (seg_entry or {}).get('starts') or []
+    return _roster_ts(starts[0]['start_time']) if starts else None
+
+
+def _roster_declared_done(latest) -> bool:
+    return bool(latest and latest['attrs'].get('state') == 'done')
+
+
 def _roster_entry_base(aid, seg_entry, activity, waiting) -> dict:
     """Segment + activity facts for one agent, before status/description."""
     latest, stop = _roster_latest_segment(
@@ -1663,13 +1735,8 @@ def _roster_entry_base(aid, seg_entry, activity, waiting) -> dict:
     # `started_at` anchors the LIVE elapsed, so it stays on the current run.
     # How long the agent took overall is a different question, and a resumed
     # one answers it from its first run — see `_roster_output_entry`.
-    starts = (seg_entry or {}).get('starts') or []
     started_at = latest['start_time'] if latest else act.get('first_ts')
     last_seen = act.get('last_ts') or facts['marker_seen']
-    # Blocked on a human: the newest PENDING ask/permission IS the agent's
-    # newest span (a later resolved span means the ask was answered).
-    ask_ts = _roster_ts(waiting.get(aid))
-    seen_ts = _roster_ts(last_seen)
     return {
         'agent_id': aid,
         'agent_type': _entry_agent_type(latest, stop, act),
@@ -1677,16 +1744,16 @@ def _roster_entry_base(aid, seg_entry, activity, waiting) -> dict:
         'start_ts': _roster_ts(started_at),
         'stop': stop,
         'start_span_id': facts['start_span_id'],
-        'first_start_ts': _roster_ts(starts[0]['start_time']) if starts else None,
+        'first_start_ts': _roster_first_start_ts(seg_entry),
         'last_seen': last_seen,
         'span_count': int(act.get('internal_count') or 0),
         'description': facts['description'],
         'prompt_preview': facts['prompt_preview'],
-        'waiting': bool(ask_ts and seen_ts and ask_ts >= seen_ts),
+        'waiting': _roster_is_waiting(waiting.get(aid), last_seen),
         'last_span': act.get('last_span'),
         # Workflow-run ingest records completion as `state: done` on the start
         # marker itself — those agents never get a subagent.stop span.
-        'declared_done': bool(latest and latest['attrs'].get('state') == 'done'),
+        'declared_done': _roster_declared_done(latest),
     }
 
 
@@ -1952,22 +2019,29 @@ def _session_phase(by_aid: dict, roster, ended: bool,
     session always rolls up to 'ended': once the session itself ended nothing
     can be genuinely waiting, so a ghost unstopped subagent (rolled up as
     inactive-stale) must not mask the 'ended' verdict."""
-    now = datetime.now()
-    span_phase = _main_phase(by_aid.get(None), now, ended)
-    # The screen only arbitrates between working/idle/inactive-stale. It never
-    # overrides 'ended' (a settled session's pane can still show the last frame
-    # of a finished turn) nor either 'waiting-' verdict, which come from a
-    # structured hook payload and beat reading a menu off the terminal.
-    screen_phase = (_screen_phase(screen, span_phase)
-                    if span_phase in _SCREEN_ARBITRABLE else None)
-    main = main_override or screen_phase or span_phase
-    agent_phase = {'main': main}
+    agent_phase = {'main': _main_agent_phase(by_aid, ended, main_override, screen)}
     for r in roster:
         aid = r['agent_id']
         agent_phase[aid] = _phase_from_roster(
             r['status'], _waiting_kind(by_aid.get(aid) or {}))
     if agent_phase['main'] == 'ended':
         return 'ended', agent_phase
+    votes = _rollup_votes(agent_phase, main_override)
+    return _phase_rollup(votes) or agent_phase['main'], agent_phase
+
+
+def _main_agent_phase(by_aid, ended, main_override, screen):
+    span_phase = _main_phase(by_aid.get(None), datetime.now(), ended)
+    # The screen only arbitrates between working/idle/inactive-stale. It never
+    # overrides 'ended' (a settled session's pane can still show the last frame
+    # of a finished turn) nor either 'waiting-' verdict, which come from a
+    # structured hook payload and beat reading a menu off the terminal.
+    screen_phase = (_screen_phase(screen, span_phase)
+                    if span_phase in _SCREEN_ARBITRABLE else None)
+    return main_override or screen_phase or span_phase
+
+
+def _rollup_votes(agent_phase, main_override):
     # A runner reporting `idle` has no turn in flight AND no delegated
     # background agent still running (`run_phase` reports those as
     # `working`) — so a roster still claiming a subagent is RUNNING is a ghost
@@ -1981,11 +2055,10 @@ def _session_phase(by_aid: dict, roster, ended: bool,
     # health. And the roster stays the only source for each subagent's own
     # entry in `agent_phase` either way; this narrows what votes, not what is
     # reported per agent.
-    votes = agent_phase.values()
-    if main_override == 'idle':
-        votes = [p for aid, p in agent_phase.items()
-                 if aid == 'main' or p != 'working']
-    return _phase_rollup(votes) or agent_phase['main'], agent_phase
+    if main_override != 'idle':
+        return agent_phase.values()
+    return [p for aid, p in agent_phase.items()
+            if aid == 'main' or p != 'working']
 
 
 def _pct(value, window) -> float | None:
@@ -2313,11 +2386,11 @@ def api_session_subtrees(trace_id):
     Span bodies are deduplicated across the requested roots, which matters
     because a subagent's spans can hang under more than one of them.
     """
-    ids = [i for i in (request.args.get('ids') or '').split(',') if i]
+    ids = _csv_arg('ids')
     if not ids:
         return jsonify({'error': 'ids is required'}), 400
     known = _parse_known_watermarks(request.args.get('known'))
-    dirty = {i for i in (request.args.get('dirty') or '').split(',') if i}
+    dirty = set(_csv_arg('dirty'))
     seen = _parse_seen_digests(request.args.get('seen'))
     widened, tree = trace_service.fetch_session_projection(
         trace_id, drop_delegated=True)
@@ -2333,8 +2406,16 @@ def api_session_subtrees(trace_id):
         # clearing them. Silence could not carry both answers.
         'unchanged': unchanged,
         'digests': digests,
-        'spans': [by_id[i] for i in wanted if i in by_id],
+        'spans': _known_spans(by_id, wanted),
     })
+
+
+def _csv_arg(name) -> list:
+    return [i for i in (request.args.get(name) or '').split(',') if i]
+
+
+def _known_spans(by_id, wanted) -> list:
+    return [by_id[i] for i in wanted if i in by_id]
 
 
 def _parse_seen_digests(raw) -> dict:
@@ -3645,6 +3726,29 @@ def _delete_session_rows(session, trace_id):
     return counts
 
 
+def _batch_trace_ids_error(trace_ids) -> str | None:
+    if not isinstance(trace_ids, list) or not all(isinstance(t, str) and t for t in trace_ids):
+        return 'trace_ids must be a non-empty list of strings'
+    if not trace_ids:
+        return 'trace_ids must not be empty'
+    return None
+
+
+def _delete_session_batch(trace_ids) -> dict:
+    totals = {key: 0 for key, _, _ in _SESSION_DELETE_TARGETS}
+    with SessionLocal() as session:
+        # A regin-launched run is two trace ids shown as one row, so
+        # deleting the row the user sees has to take both halves. Removing
+        # only the canonical one left the other holding the session's
+        # spans, and it surfaced as a NEW row where the deleted one had
+        # been — the same session, apparently undeletable.
+        for trace_id in _expand_alias_groups(trace_ids):
+            for key, count in _delete_session_rows(session, trace_id).items():
+                totals[key] += count
+        session.commit()
+    return totals
+
+
 @trace_bp.route('/api/sessions/batch-delete', methods=['POST'])
 def api_session_batch_delete():
     """Delete multiple sessions in a single transaction.
@@ -3658,26 +3762,12 @@ def api_session_batch_delete():
     """
     body = request.get_json(silent=True) or {}
     trace_ids = body.get('trace_ids') or []
-    if not isinstance(trace_ids, list) or not all(isinstance(t, str) and t for t in trace_ids):
-        return jsonify({
-            'ok': False,
-            'error': 'trace_ids must be a non-empty list of strings',
-        }), 400
-    if not trace_ids:
-        return jsonify({'ok': False, 'error': 'trace_ids must not be empty'}), 400
+    error = _batch_trace_ids_error(trace_ids)
+    if error:
+        return jsonify({'ok': False, 'error': error}), 400
 
-    totals = {key: 0 for key, _, _ in _SESSION_DELETE_TARGETS}
     try:
-        with SessionLocal() as session:
-            # A regin-launched run is two trace ids shown as one row, so
-            # deleting the row the user sees has to take both halves. Removing
-            # only the canonical one left the other holding the session's
-            # spans, and it surfaced as a NEW row where the deleted one had
-            # been — the same session, apparently undeletable.
-            for trace_id in _expand_alias_groups(trace_ids):
-                for key, count in _delete_session_rows(session, trace_id).items():
-                    totals[key] += count
-            session.commit()
+        totals = _delete_session_batch(trace_ids)
     except Exception as exc:
         return jsonify({
             'ok': False,
