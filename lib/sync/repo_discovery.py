@@ -244,6 +244,24 @@ def _is_orphan_path(path: str) -> bool:
     return not rel.startswith("..") and rel != "."
 
 
+def _orphan_row(repo: Repo) -> dict:
+    reason = "missing_path" if not os.path.isdir(repo.path) else "under_tmpdir"
+    return {"id": repo.id, "name": repo.name, "path": repo.path, "reason": reason}
+
+
+def _delete_repos(session, ids: list[int]) -> None:
+    """Delete `Repo` rows plus the dependents the schema does not cascade:
+    branches and session_repos (dropping the latter keeps session→repo
+    links from being orphaned)."""
+    for branch in session.exec(
+        select(Branch).where(Branch.repo_id.in_(ids))
+    ).all():
+        session.delete(branch)
+    session.exec(delete(SessionRepo).where(SessionRepo.repo_id.in_(ids)))
+    for repo in session.exec(select(Repo).where(Repo.id.in_(ids))).all():
+        session.delete(repo)
+
+
 def prune_orphan_repos(*, dry_run: bool = False) -> list[dict]:
     """Drop `Repo` rows whose path is missing or under `$TMPDIR`.
 
@@ -257,30 +275,14 @@ def prune_orphan_repos(*, dry_run: bool = False) -> list[dict]:
     {id, name, path, reason}.
     """
     registered = set(_load_repo_paths())
-    candidates: list[dict] = []
     with SessionLocal() as session:
-        for repo in session.exec(select(Repo)).all():
-            if _normalize(repo.path) in registered:
-                continue
-            if not _is_orphan_path(repo.path):
-                continue
-            reason = "missing_path" if not os.path.isdir(repo.path) else "under_tmpdir"
-            candidates.append({
-                "id": repo.id, "name": repo.name,
-                "path": repo.path, "reason": reason,
-            })
-
+        candidates = [
+            _orphan_row(repo) for repo in session.exec(select(Repo)).all()
+            if _normalize(repo.path) not in registered and _is_orphan_path(repo.path)
+        ]
         if dry_run or not candidates:
             return candidates
-
-        ids = [c["id"] for c in candidates]
-        for branch in session.exec(
-            select(Branch).where(Branch.repo_id.in_(ids))
-        ).all():
-            session.delete(branch)
-        session.exec(delete(SessionRepo).where(SessionRepo.repo_id.in_(ids)))
-        for repo in session.exec(select(Repo).where(Repo.id.in_(ids))).all():
-            session.delete(repo)
+        _delete_repos(session, [c["id"] for c in candidates])
         session.commit()
     _sync_log().write(
         "orphan_repos_pruned",
