@@ -216,17 +216,7 @@ def cmd_init(
         print("Use --force to reinitialize.")
         return
 
-    removed_deployments = 0
-    cleared_jwt_secret = False
-    cleared_hook_config = False
-    removed_hook_routes = 0
-    if force:
-        (
-            removed_deployments,
-            cleared_jwt_secret,
-            cleared_hook_config,
-            removed_hook_routes,
-        ) = _force_reset_state()
+    reset_state = _force_reset_state() if force else None
 
     _init_db()
 
@@ -245,21 +235,30 @@ def cmd_init(
     # directories are created lazily by `sync` when a guide is written.
     os.makedirs(os.path.join(str(settings.patterns_dir), '_index'), exist_ok=True)
 
-    if force:
-        print("Cleared existing local state before initialization.")
-        if removed_deployments:
-            print(f"Removed {removed_deployments} deployed skill director"
-                  f"{'y' if removed_deployments == 1 else 'ies'}.")
-        if cleared_jwt_secret:
-            print("Removed JWT signing secret; existing login tokens are now invalid.")
-        if cleared_hook_config:
-            print("Removed hook-manager toggle state.")
-        if removed_hook_routes:
-            print(f"Removed {removed_hook_routes} hook_manager routing entr"
-                  f"{'y' if removed_hook_routes == 1 else 'ies'} from Claude settings.")
+    if reset_state is not None:
+        _print_reset_report(*reset_state)
 
     print(f"Initialized database at {_engine.DB_PATH}")
     print(f"Pattern directory ready at {settings.patterns_dir}")
+
+
+def _print_reset_report(
+    removed_deployments: int,
+    cleared_jwt_secret: bool,
+    cleared_hook_config: bool,
+    removed_hook_routes: int,
+) -> None:
+    print("Cleared existing local state before initialization.")
+    if removed_deployments:
+        print(f"Removed {removed_deployments} deployed skill director"
+              f"{'y' if removed_deployments == 1 else 'ies'}.")
+    if cleared_jwt_secret:
+        print("Removed JWT signing secret; existing login tokens are now invalid.")
+    if cleared_hook_config:
+        print("Removed hook-manager toggle state.")
+    if removed_hook_routes:
+        print(f"Removed {removed_hook_routes} hook_manager routing entr"
+              f"{'y' if removed_hook_routes == 1 else 'ies'} from Claude settings.")
 
 
 # ── rebuild ───────────────────────────────────────────────────
