@@ -280,6 +280,39 @@ def test_the_defect_screenshots_ride_the_fix_task(flask_client, feature_row):
     task_id = store.get(row.id).fix_task_id
     assert [i["idx"] for i in task_images.list_for(task_id)] == [2]
     assert task_images.get_bytes(task_id, 2)[0] == png
+    assert _fix_task(row.id).body.count("image:2") == 1
+
+
+def test_screenshots_the_symptom_never_names_are_named_in_the_body(
+        flask_client, feature_row):
+    """Screenshots are attached beside a symptom, not pasted into it, so the
+    body has to name them or the run gets pictures its prompt never mentions."""
+    from lib.defects import images as defect_images  # noqa: PLC0415
+    from lib.tasks import images as task_images  # noqa: PLC0415
+
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+    feature = feature_row()
+    row = store.record("the badge overlaps", feature_id=feature.id,
+                       session_id="t-3")
+    defect_images.attach(row.id, png)
+    defect_images.attach(row.id, png)
+
+    _create(flask_client, row.id)
+
+    body = _fix_task(row.id).body
+    task_id = store.get(row.id).fix_task_id
+    assert [i["idx"] for i in task_images.list_for(task_id)] == [1, 2]
+    assert "the badge overlaps\n![](image:1)\n![](image:2)\n" \
+           "reported in session t-3" in body
+
+
+def test_a_defect_without_screenshots_names_none(flask_client, feature_row):
+    feature = feature_row()
+    row = store.record("it broke", feature_id=feature.id, session_id="t-4")
+
+    _create(flask_client, row.id)
+
+    assert _fix_task(row.id).body.endswith("it broke\nreported in session t-4")
 
 
 def test_the_surface_is_listed_for_editing():

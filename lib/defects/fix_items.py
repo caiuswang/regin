@@ -14,12 +14,15 @@ one-column write with no second row to author.
 from __future__ import annotations
 
 import json
+import re
 
 from lib.activity_log import get_activity_logger
 from lib.defects import store
 from lib.orm.models.tasks import TASK_KIND_FIX
 
 log = get_activity_logger("defects")
+
+_IMAGE_REF_RE = re.compile(r"!\[[^\]]*\]\(image:(\d+)\)")
 
 
 def create_for(defect_id: int):
@@ -98,11 +101,29 @@ def task_body(row) -> str:
         "feature_named": f"#{row.feature_id}"
                          + (f" ({feature.title})" if feature else ""),
         "round": row.round,
+        "images": _image_refs(row),
         "details": _details(row, paths),
         "reported_session": row.reported_by_trace or "",
         "suspect_paths": paths,
         "missing_check": row.missing_check or "",
     }).rstrip()
+
+
+def _image_refs(row) -> str:
+    """A reference for every screenshot the symptom does not already name.
+
+    Screenshots are attached to a defect beside its symptom, not pasted into
+    it, so without these lines the copied images ride the run as content
+    blocks the body never mentions — nothing tells the agent they exist or
+    that they are the bug. `_copy_images` keeps each `idx`, so the reference
+    written here resolves on the task too.
+    """
+    from lib.defects import images as defect_images  # noqa: PLC0415
+
+    named = {int(n) for n in _IMAGE_REF_RE.findall(row.symptom or "")}
+    return "".join(f"![](image:{image['idx']})\n"
+                   for image in defect_images.list_for(row.id)
+                   if image["idx"] not in named)
 
 
 def _details(row, paths: str) -> str:
