@@ -104,16 +104,19 @@ def _parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
             continue
         if ':' in line:
             key, _, val = line.partition(':')
-            val = val.strip()
-            if val.startswith('"') and val.endswith('"'):
-                val = val[1:-1]
-            if val.startswith('[') and val.endswith(']'):
-                inner = val[1:-1].strip()
-                fm[key.strip()] = [p.strip() for p in inner.split(',')] if inner else []
-            else:
-                fm[key.strip()] = val
             current = key.strip()
+            fm[current] = _parse_fm_value(val)
     return fm, body
+
+
+def _parse_fm_value(val: str) -> str | list[str]:
+    val = val.strip()
+    if val.startswith('"') and val.endswith('"'):
+        val = val[1:-1]
+    if not (val.startswith('[') and val.endswith(']')):
+        return val
+    inner = val[1:-1].strip()
+    return [p.strip() for p in inner.split(',')] if inner else []
 
 
 def _read_pattern(slug: str) -> tuple[dict, str]:
