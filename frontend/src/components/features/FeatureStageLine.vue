@@ -25,13 +25,14 @@
 // figure that is always current would be a qualifier with no referent. The
 // Refresh control goes with it — `canRefresh` is `canWrite && !live`, which
 // hides the control without the endpoint behind it changing at all.
-import { computed } from 'vue'
+import { computed, nextTick } from 'vue'
 import Badge from '../Badge.vue'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
 import FeatureNextStep from './FeatureNextStep.vue'
 import FeatureTitle from './FeatureTitle.vue'
 import { STAGE_COLOR, asOf } from '../../utils/ledgerFormat'
+import { DEFECTS_ANCHOR, reveal } from '../../utils/featureLinks'
 
 const props = defineProps({
   featureId: { type: Number, required: true },
@@ -68,6 +69,12 @@ const color = computed(() => STAGE_COLOR[props.stage?.stage] || 'gray')
 // Only a successful fetch writes it, so a feature nobody has synced has no
 // "as of T" — and a native one never will.
 const synced = computed(() => asOf(props.syncedAt))
+
+// The ledger's hash watcher reveals on a CHANGE; a second click on the same
+// link changes nothing, so the link reveals for itself.
+function revealDefects() {
+  nextTick(() => reveal(DEFECTS_ANCHOR))
+}
 </script>
 
 <template>
@@ -88,7 +95,7 @@ const synced = computed(() => asOf(props.syncedAt))
            reads it wants to open it. -->
       <a
         v-if="externalRef"
-        class="stage-ref"
+        class="stage-ref focus-visible:outline-2 focus-visible:outline-blue-500"
         :href="externalUrl || undefined"
         target="_blank"
         rel="noopener"
@@ -101,11 +108,22 @@ const synced = computed(() => asOf(props.syncedAt))
 
       <span class="stage-counts">
         <span><b>{{ stage.rounds }}</b> rounds</span>
-        <span><b>{{ stage.open_defects }}</b> open</span>
-        <span :class="stage.escapes ? 'text-amber-700' : ''">
-          <b>{{ stage.escapes }}</b> escaped
-        </span>
+        <!-- Replace, not push: an in-page jump is not a place Back returns to. -->
+        <router-link
+          v-if="stage.open_defects" replace :to="{ hash: `#${DEFECTS_ANCHOR}` }"
+          class="stage-count-link focus-visible:outline-2 focus-visible:outline-blue-500"
+          data-testid="stage-open-link" @click="revealDefects"
+        ><b>{{ stage.open_defects }}</b> open</router-link>
+        <span v-else><b>0</b> open</span>
+        <router-link
+          v-if="stage.escapes" replace :to="{ hash: `#${DEFECTS_ANCHOR}` }"
+          class="stage-count-link text-amber-700 focus-visible:outline-2 focus-visible:outline-blue-500"
+          data-testid="stage-escaped-link" @click="revealDefects"
+        ><b>{{ stage.escapes }}</b> escaped</router-link>
+        <span v-else><b>0</b> escaped</span>
       </span>
+
+      <slot name="project" />
 
       <!-- A feature whose stage is derived here states that it is live, and
            says nothing about when it was last read — the question does not
@@ -217,6 +235,12 @@ const synced = computed(() => asOf(props.syncedAt))
 .stage-counts b {
     color: var(--color-fg); font-variant-numeric: tabular-nums;
 }
+.stage-count-link {
+    color: inherit; text-decoration: none;
+    border-bottom: 1px dotted var(--color-border-strong);
+}
+.stage-count-link:hover { color: var(--color-fg); }
+.stage-count-link:focus-visible { outline: 2px solid var(--color-blue-500); }
 .stage-freshness {
     display: inline-flex; align-items: center; gap: 0.35rem;
     font-size: 11px; color: var(--color-fg-subtle);

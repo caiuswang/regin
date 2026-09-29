@@ -36,6 +36,7 @@ const props = defineProps({
   // them would be a second way to build one feature.
   hasSlices: { type: Boolean, default: false },
 })
+const emit = defineEmits(['counted'])
 const { items: projects, ensure: ensureProjects } = useProjects()
 const router = useRouter()
 
@@ -107,15 +108,19 @@ async function startNew() {
 }
 
 async function load() {
+  const want = props.featureId
   loading.value = true
   loadError.value = ''
   try {
-    const body = await api.get(`/tasks?feature_id=${props.featureId}&${LIST_QUERY}`)
+    const body = await api.get(`/tasks?feature_id=${want}&${LIST_QUERY}`)
+    if (want !== props.featureId) return
     items.value = body.items || []
+    const done = items.value.filter(t => t.status === 'done').length
+    emit('counted', { done, total: items.value.length })
   } catch (e) {
-    loadError.value = e?.message || String(e)
+    if (want === props.featureId) loadError.value = e?.message || String(e)
   } finally {
-    loading.value = false
+    if (want === props.featureId) loading.value = false
   }
 }
 watch(() => props.featureId, load, { immediate: true })

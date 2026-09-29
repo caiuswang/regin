@@ -58,6 +58,7 @@ export function revealSessions() {
 export const SPEC_ANCHOR = 'feature-spec'
 export const SLICES_ANCHOR = 'slices'
 export const TASKS_ANCHOR = 'feature-tasks'
+export const IMAGES_ANCHOR = 'feature-images'
 
 //: The Slices panel, where a feature's idea slices are armed.
 export function slicesLink(featureId) {
@@ -67,4 +68,5 @@ export function slicesLink(featureId) {
 //: The anchors a ledger arrival may carry, and so may reveal.
 export const LEDGER_ANCHORS = [
   SESSIONS_ANCHOR, DEFECTS_ANCHOR, SPEC_ANCHOR, SLICES_ANCHOR, TASKS_ANCHOR,
+  IMAGES_ANCHOR,
 ]
