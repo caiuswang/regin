@@ -22,6 +22,7 @@ import TaskRefusal from './TaskRefusal.vue'
 import TaskStatusIcon from './TaskStatusIcon.vue'
 import TaskVerbMenu from './TaskVerbMenu.vue'
 import { shortDate } from '../../utils/ledgerFormat'
+import { utcTitle } from '../../utils/time.js'
 import { taskRef } from '../../utils/taskMeta.js'
 
 const props = defineProps({
@@ -34,6 +35,10 @@ const props = defineProps({
   busy: { type: Boolean, default: false },
   selected: { type: Boolean, default: false },
   selectable: { type: Boolean, default: true },
+  canWrite: { type: Boolean, default: true },
+  // The stamp the list is sorted on: a list sorted by last update whose date
+  // column reads the capture day cannot be scanned down.
+  dateField: { type: String, default: 'created_at' },
 })
 const emit = defineEmits(['verb', 'open', 'focus', 'select'])
 
@@ -45,7 +50,11 @@ const ref_ = computed(() => taskRef(props.task))
 // Date only: the row has one line, and a task captured six weeks ago is not
 // better understood by knowing it was 14:07. Through the shared formatter,
 // because the same column on Features and Defects has to read the same (R5).
-const day = computed(() => shortDate(props.task.created_at))
+const day = computed(() => shortDate(props.task[props.dateField]))
+const dayTitle = computed(() => {
+  const stamp = utcTitle(props.task[props.dateField])
+  return stamp && `${props.dateField === 'updated_at' ? 'Updated' : 'Created'} ${stamp}`
+})
 // How many attempts the row has, from the count the page carries. Never
 // inferred from the title or the status.
 const runCount = computed(() => props.task.run_count || 0)
@@ -67,7 +76,7 @@ const runCount = computed(() => props.task.run_count || 0)
     <span class="task-expand-gap" aria-hidden="true" />
 
     <Checkbox
-      v-if="selectable"
+      v-if="selectable && canWrite"
       class="task-select"
       :model-value="selected"
       :aria-label="`Select ${ref_}`"
@@ -138,7 +147,7 @@ const runCount = computed(() => props.task.run_count || 0)
 
     <!-- Its own column, not the tail of the badge row: a date that starts
          wherever the tags happened to end cannot be scanned down. -->
-    <span class="task-day">{{ day }}</span>
+    <span class="task-day" :title="dayTitle" data-testid="task-day">{{ day }}</span>
 
     <div class="task-actions">
       <span class="task-primary">
@@ -146,10 +155,11 @@ const runCount = computed(() => props.task.run_count || 0)
           :task="task"
           :busy="busy"
           :liveness="liveness"
+          :can-write="canWrite"
           @verb="v => emit('verb', v, task)"
         />
       </span>
-      <TaskVerbMenu :task="task" :busy="busy" @verb="v => emit('verb', v, task)" />
+      <TaskVerbMenu v-if="canWrite" :task="task" :busy="busy" @verb="v => emit('verb', v, task)" />
     </div>
   </div>
 

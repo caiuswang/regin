@@ -649,7 +649,7 @@ def api_finish_task_run(run_id: int):
 
 
 @tasks_bp.route('/api/tasks/<int:task_id>/runs', methods=['GET'])
-@require_editor
+@require_auth
 def api_task_runs(task_id: int):
     """Attempt history, newest first, joined to `agent_runs` for status and
     pid — `live` is the merged answer, never `status` alone."""

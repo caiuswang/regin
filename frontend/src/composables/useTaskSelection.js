@@ -72,9 +72,17 @@ export function useTaskSelection() {
     ids.value = new Set()
   }
 
+  /** Drop every selected id not in `keep` — a row a refresh moved off screen
+   *  must not be acted on by a bar that no longer shows it. */
+  function retain(keep) {
+    const allowed = new Set(keep)
+    const next = new Set([...ids.value].filter(id => allowed.has(id)))
+    if (next.size !== ids.value.size) ids.value = next
+  }
+
   return {
     ids, count, visible, allVisibleSelected, someVisibleSelected,
     toggle, toggleAllVisible, reportVisible, withdrawVisible, resetVisible,
-    clear,
+    clear, retain,
   }
 }

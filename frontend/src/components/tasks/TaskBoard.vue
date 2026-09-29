@@ -1,9 +1,10 @@
 <script setup>
 // The Tasks tab as a board: Ideas, Armed, Running, Done — each column
 // counted and paged by the server (`/api/tasks/board`). Failed is not a
-// column: it is a count under Done that opens on "show". A column the server
-// counts at 0 folds to a 48px rail so the columns holding cards get the row;
-// Done stays open while failed tasks hide behind its footer, or they would be
+// column: it is a sub-group heading Done, its cards behind "show", so a
+// failure is read before the successes it would otherwise pass for. A column
+// the server counts at 0 folds to a 48px rail so the columns holding cards get
+// the row; Done stays open while it holds failed tasks, or they would be
 // unreachable.
 import { computed, ref, watch } from 'vue'
 import api from '../../api'
@@ -118,6 +119,32 @@ defineExpose({ reload })
               <span class="tb-n" data-testid="board-column-n">{{ col.n }}</span>
               <span class="tb-hint">{{ COLUMNS[col.status].hint(col) }}</span>
             </header>
+            <div
+              v-if="col.status === 'done' && failedCount"
+              class="tb-failed"
+              data-testid="board-failed-group"
+            >
+              <div class="tb-subhead">
+                <TaskStatusIcon status="failed" :size="12" />
+                <span>Failed</span>
+                <span class="tb-n" data-testid="board-failed-n">{{ failedCount }}</span>
+              </div>
+              <div v-if="board.failed.value?.cards?.length" class="tb-cards">
+                <TaskBoardCard
+                  v-for="task in board.failed.value.cards" :key="task.id" :task="task"
+                  :busy="busyId === task.id" :refusal="refusals[task.id] || null"
+                  :can-write="canWrite" @verb="act"
+                />
+              </div>
+              <Button
+                v-if="!board.failed.value || board.failed.value.more > 0"
+                variant="ghost"
+                size="sm"
+                class="tb-foot"
+                data-testid="board-failed-show"
+                @click="board.showFailed()"
+              >{{ board.failed.value ? `${board.failed.value.more} more failed` : `Show ${failedCount} failed` }}</Button>
+            </div>
             <div v-if="col.cards.length" class="tb-cards">
               <TaskBoardCard
                 v-for="task in col.cards" :key="task.id" :task="task"
@@ -133,23 +160,6 @@ defineExpose({ reload })
               :data-testid="`board-more-${col.status}`"
               @click="board.more(col.status)"
             >{{ col.more }} more {{ COLUMNS[col.status].noun }}</Button>
-            <template v-if="col.status === 'done' && failedCount">
-              <div v-if="board.failed.value?.cards?.length" class="tb-cards">
-                <TaskBoardCard
-                  v-for="task in board.failed.value.cards" :key="task.id" :task="task"
-                  :busy="busyId === task.id" :refusal="refusals[task.id] || null"
-                  :can-write="canWrite" @verb="act"
-                />
-              </div>
-              <Button
-                v-if="!board.failed.value || board.failed.value.more > 0"
-                variant="ghost"
-                size="sm"
-                class="tb-foot"
-                data-testid="board-failed-show"
-                @click="board.showFailed()"
-              >+ {{ board.failed.value ? board.failed.value.more : failedCount }} failed · show</Button>
-            </template>
           </section>
         </template>
       </div>
@@ -235,6 +245,21 @@ defineExpose({ reload })
     padding: 0 0.25rem;
 }
 .tb-label { font-size: 0.875rem; font-weight: 600; }
+.tb-failed {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--color-border-subtle);
+}
+.tb-subhead {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--color-danger);
+}
 .tb-n {
     font-size: 0.8125rem;
     color: var(--color-fg-muted);

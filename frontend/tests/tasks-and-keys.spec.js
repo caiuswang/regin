@@ -199,7 +199,12 @@ function fakeTask(id, over = {}) {
     external_id: null, tags: [], links: [], created_by: 1,
     created_at: NOW, updated_at: NOW, params: {}, verify_cmd: null,
     autorun: false, project_id: null, priority: 'none',
-    ...verbsFor(over.status || 'idea'), ...over,
+    ...verbsFor(over.status || 'idea'),
+    // The server gives a running row its open attempt; one without a trace id
+    // reads as still starting.
+    ...(over.status === 'running'
+      ? { live: { run_id: id, trace_id: `sdk-mock-${id}`, attempt: 1, started_at: NOW } } : {}),
+    ...over,
   }
 }
 

@@ -11,6 +11,12 @@ function isTyping(event) {
     || el.isContentEditable
 }
 
+// A key pressed inside an open menu or dialog is that overlay's: reka closes
+// on a window-level Escape only when nobody has called preventDefault on it.
+function inOverlay(event) {
+  return !!event.target?.closest?.('[role="menu"], [role="dialog"], [role="alertdialog"], [role="listbox"]')
+}
+
 /**
  * useTaskShortcuts — the single-key chords the list answers to.
  *
@@ -21,7 +27,7 @@ function isTyping(event) {
 export function useTaskShortcuts(handlers) {
   function onKeydown(event) {
     if (event.metaKey || event.ctrlKey || event.altKey) return
-    if (isTyping(event)) return
+    if (isTyping(event) || inOverlay(event)) return
     const handler = handlers[event.key]
     if (!handler) return
     event.preventDefault()

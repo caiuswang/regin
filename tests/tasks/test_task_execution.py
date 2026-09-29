@@ -451,6 +451,22 @@ def test_the_run_history_is_newest_first_and_empty_is_not_an_error(
     assert [run["attempt"] for run in payload["runs"]] == [2, 1]
 
 
+def test_task_runs_readable_by_viewer(flask_client, launcher):
+    """Attempt history is a read like every other task read (#125 D6)."""
+    from lib.auth import create_token
+    viewer = {"Authorization": f"Bearer {create_token(3, 'vw', 'viewer')}"}
+    task_id = _armed(flask_client)
+    flask_client.post(f"/api/tasks/{task_id}/run")
+    launcher.handles[0].finish()
+    _arm(flask_client, task_id)
+    flask_client.post(f"/api/tasks/{task_id}/run")
+
+    resp = flask_client.get(f"/api/tasks/{task_id}/runs", headers=viewer)
+
+    assert resp.status_code == 200
+    assert [run["attempt"] for run in resp.get_json()["runs"]] == [2, 1]
+
+
 # ── 9. the DAG ───────────────────────────────────────────────
 
 def test_a_self_edge_is_refused_by_pair(flask_client):
