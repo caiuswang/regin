@@ -560,6 +560,22 @@ def _build_pattern_attrs(attrs: dict, tool_input: dict, tool_response: dict, pay
         attrs['pattern'] = pat
 
 
+def _set_str(attrs: dict, key: str, value: object) -> None:
+    if isinstance(value, str) and value:
+        attrs[key] = value
+
+
+def _set_truncated_str(attrs: dict, key: str, value: object, limit: int) -> None:
+    """Store a non-empty string under `key`, capped at `limit`, recording the
+    dropped byte count under `<key>_truncated_bytes` when it was cut."""
+    if not (isinstance(value, str) and value):
+        return
+    head, dropped = _truncate_output(value, limit)
+    attrs[key] = head
+    if dropped:
+        attrs[f'{key}_truncated_bytes'] = dropped
+
+
 def _build_ask_attrs(attrs: dict, tool_input: dict, tool_response: dict, payload: HookPayload) -> None:
     questions = tool_input.get('questions') or []
     attrs['questions'] = [
@@ -735,27 +751,21 @@ def _build_taskoutput_attrs(attrs: dict, tool_input: dict, tool_response: dict, 
     task_id = tool_input.get('task_id') or tool_input.get('taskId')
     if task_id is not None:
         attrs['task_id'] = str(task_id)
-    retrieval = tool_response.get('retrieval_status')
-    if isinstance(retrieval, str) and retrieval:
-        attrs['retrieval_status'] = retrieval
+    _set_str(attrs, 'retrieval_status', tool_response.get('retrieval_status'))
     task = tool_response.get('task') if isinstance(tool_response.get('task'), dict) else None
-    if not task:
-        return
+    if task:
+        _attach_wrapped_task(attrs, task)
+
+
+def _attach_wrapped_task(attrs: dict, task: dict) -> None:
     if 'task_id' not in attrs and task.get('task_id') is not None:
         attrs['task_id'] = str(task['task_id'])
     for field in ('task_type', 'status', 'description'):
-        v = task.get(field)
-        if isinstance(v, str) and v:
-            attrs[field] = v
+        _set_str(attrs, field, task.get(field))
     exit_code = task.get('exit_code')
     if isinstance(exit_code, int):
         attrs['exit_code'] = exit_code
-    output = task.get('output')
-    if isinstance(output, str) and output:
-        stored, dropped = _truncate_output(output, _BASH_STDOUT_MAX)
-        attrs['output'] = stored
-        if dropped:
-            attrs['output_truncated_bytes'] = dropped
+    _set_truncated_str(attrs, 'output', task.get('output'), _BASH_STDOUT_MAX)
 
 
 def _build_schedulewakeup_attrs(attrs: dict, tool_input: dict, tool_response: dict, payload: HookPayload) -> None:
