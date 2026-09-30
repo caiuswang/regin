@@ -18,9 +18,11 @@ export const API_BASE = `http://127.0.0.1:${API_PORT}`
 export const APP_BASE = `http://127.0.0.1:${VITE_PORT}`
 export const PROMO_USER = 'promo-admin'
 
-export const VIEWPORT = { width: 1536, height: 864 }
-export const DSF = 1.25
-export const FRAME = { width: 1920, height: 1080 }
+// A 1280x720 layout drawn at 3x: the UI reads at 1.5x its desktop size in
+// a 1080p frame, and the film is mastered at 4K from native device pixels.
+export const VIEWPORT = { width: 1280, height: 720 }
+export const DSF = 3
+export const FRAME = { width: 3840, height: 2160 }
 
 export const scratchPaths = (outDir) => {
   const scratch = join(outDir, 'scratch')

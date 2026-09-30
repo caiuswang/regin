@@ -8,14 +8,14 @@ import { parseArgs } from 'node:util'
 import {
   API_BASE, DEFAULT_OUT, DEFAULT_STORYBOARD, liveStores, py, snapshotCounts, tmuxSessions,
 } from './lib/env.mjs'
-import { mux } from './lib/mux.mjs'
+import { CAPTIONS, mux } from './lib/mux.mjs'
 import { Stack } from './lib/provision.mjs'
 import { record } from './lib/recorder.mjs'
 import { synthesize } from './lib/tts.mjs'
 import { sceneFns } from './scenes.mjs'
 
 export const OUTPUT_NAME = 'regin-promo-zh'
-const STALE = [`${OUTPUT_NAME}.mp4`, `${OUTPUT_NAME}.srt`, 'manifest.json', 'frames', 'raw.webm', 'hero', 'text', 'voice']
+const STALE = [`${OUTPUT_NAME}.mp4`, `${OUTPUT_NAME}.srt`, CAPTIONS, 'manifest.json', 'frames', 'raw.webm', 'hero', 'text', 'voice']
 
 class PinError extends Error {}
 

@@ -39,10 +39,16 @@ function loudnessJson(file) {
   return JSON.parse(r.stderr.slice(r.stderr.lastIndexOf('{'), r.stderr.lastIndexOf('}') + 1))
 }
 
+// The subtitles are drawn into every frame, so the mp4 carries no subtitle
+// track: a player shows a soft track on top of the burned-in one, and the
+// viewer reads every line twice. For the same reason the SRT must not share
+// the mp4's name — players auto-load a sidecar that does.
+export const CAPTIONS = 'captions.srt'
+
 export function mux({ manifest, storyboard, outDir, name }) {
   const lines = placedLines(manifest, storyboard)
   const total = manifest.scenes.at(-1).end_s
-  const srt = join(outDir, `${name}.srt`), mp4 = join(outDir, `${name}.mp4`)
+  const srt = join(outDir, CAPTIONS), mp4 = join(outDir, `${name}.mp4`)
   const voice = join(outDir, 'voice.wav')
   writeSrt(lines, srt)
   mixVoice(lines, outDir, total, voice)
@@ -54,12 +60,13 @@ export function mux({ manifest, storyboard, outDir, name }) {
     `measured_I=${m.input_i}:measured_TP=${m.input_tp}:measured_LRA=${m.input_lra}:` +
     `measured_thresh=${m.input_thresh}:offset=${m.target_offset}:linear=true,aresample=48000`
   execFileSync('ffmpeg', ['-v', 'error', '-y',
-    '-f', 'concat', '-safe', '0', '-i', join(outDir, 'frames', 'frames.ffconcat'), '-i', voice, '-i', srt,
+    '-f', 'concat', '-safe', '0', '-i', join(outDir, 'frames', 'frames.ffconcat'), '-i', voice,
     '-filter_complex', `[0:v]fps=30,scale=${FRAME.width}:${FRAME.height}:flags=lanczos,format=yuv420p[v];[1:a]${norm}[a]`,
-    '-map', '[v]', '-map', '[a]', '-map', '2:s',
+    '-map', '[v]', '-map', '[a]', '-sn',
     '-t', total.toFixed(3),
-    '-c:v', 'libx264', '-preset', 'medium', '-crf', '16', '-r', '30', '-fps_mode', 'cfr',
-    '-c:a', 'aac', '-b:a', '192k', '-c:s', 'mov_text', '-metadata:s:s:0', 'language=chi',
+    '-c:v', 'libx264', '-preset', 'medium', '-crf', '16', '-profile:v', 'high', '-level', '5.1',
+    '-r', '30', '-fps_mode', 'cfr',
+    '-c:a', 'aac', '-b:a', '192k',
     '-movflags', '+faststart', mp4])
   rmSync(voice)
   return { mp4, srt }

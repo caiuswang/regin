@@ -7,8 +7,8 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 
-import { DEFAULT_OUT, FRAME, PROMO_DIR, PROMO_USER, PY, ROOT, liveStores, py } from './lib/env.mjs'
-import { placedLines } from './lib/mux.mjs'
+import { DEFAULT_OUT, FRAME, PROMO_DIR, PROMO_USER, PY, ROOT, VIEWPORT, liveStores, py } from './lib/env.mjs'
+import { CAPTIONS, placedLines } from './lib/mux.mjs'
 
 const NAME = 'regin-promo-zh'
 const { values, positionals } = parseArgs({ options: { out: { type: 'string' } }, allowPositionals: true })
@@ -22,6 +22,16 @@ const runtime = () => manifest().scenes.at(-1).end_s
 
 class Fail extends Error {}
 const must = (cond, msg) => { if (!cond) throw new Fail(msg) }
+
+// Past these, two consecutive frames of the film differ by a cut or a flash
+// rather than by a dissolve, a glide or a scroll. A white frame between two
+// dark pages scores ~90 and moves the mean luma by ~200.
+const MAX_SCENE_SCORE = 10
+const MAX_LUMA_STEP = 8
+// A line's subtitle band, sampled through the line, may change by at most
+// this mean per-pixel difference (0–255): what the page behind its 86%
+// opaque background moves it by. A band that vanished scores 20+.
+const MAX_BAND_DRIFT = 8
 
 function ffmpegStderr(args) {
   const r = spawnSync('ffmpeg', ['-hide_banner', '-nostats', ...args], { encoding: 'utf8', maxBuffer: 64 << 20 })
@@ -45,20 +55,108 @@ const parseSrt = (text) => text.trim().split(/\r?\n\r?\n/).map((block) => {
   return { start: a, end: b, text: body.join('\n') }
 })
 
+// Reads every frame of the film, grey at half the layout's CSS size, cropped
+// to the rows the subtitle band occupies, and for each line compares its
+// band's box in every frame the line holds the band — through any dissolve
+// that outran its audio — with the first one. Returns each
+// line's worst mean per-pixel difference. Every frame, not a sample: a band
+// that blinks out does so for a frame or two.
+function bandDrift(lines) {
+  const FPS = 30, W = VIEWPORT.width / 2
+  const top = Math.floor(Math.min(...lines.map((l) => l.band.y)) / 2) - 2
+  const bottom = Math.ceil(Math.max(...lines.map((l) => l.band.y + l.band.h)) / 2) + 2
+  const rows = bottom - top, size = W * rows
+  const r = spawnSync('ffmpeg', ['-v', 'error', '-i', MP4, '-an', '-vf',
+    `scale=${W}:${VIEWPORT.height / 2},crop=${W}:${rows}:0:${top},format=gray`, '-f', 'rawvideo', '-'],
+  { maxBuffer: 1024 ** 3 })
+  if (r.status !== 0) throw new Error(`ffmpeg sampling failed: ${r.stderr}`)
+  const frames = Math.floor(r.stdout.length / size)
+  return lines.map((l) => {
+    // Inset from the band's edges: the pointer may graze its top, and the
+    // corners are anti-aliased against whatever the page shows behind them.
+    const b = l.band, x0 = Math.round((b.x + 12) / 2), x1 = Math.round((b.x + b.w - 12) / 2)
+    const y0 = Math.round((b.y + 10) / 2) - top, y1 = Math.round((b.y + b.h - 4) / 2) - top
+    const k0 = Math.ceil((l.start_s + 0.25) * FPS), k1 = Math.min(frames - 1, Math.floor((l.shown_until - 0.05) * FPS))
+    let worst = 0, at = l.start_s
+    for (let k = k0 + 1; k <= k1; k += 1) {
+      let sum = 0
+      for (let y = y0; y < y1; y += 1) {
+        const ra = k0 * size + y * W, rb = k * size + y * W
+        for (let x = x0; x < x1; x += 1) sum += Math.abs(r.stdout[ra + x] - r.stdout[rb + x])
+      }
+      const d = sum / Math.max(1, (x1 - x0) * (y1 - y0))
+      if (d > worst) { worst = d; at = k / FPS }
+    }
+    return { id: l.id, worst, at }
+  })
+}
+
 const checks = {
   check_runtime_and_streams() {
     const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', MP4],
       { encoding: 'utf8' }))
     const by = (t) => probe.streams.filter((s) => s.codec_type === t)
-    const [v] = by('video'), [a] = by('audio'), [s] = by('subtitle')
+    const [v] = by('video'), [a] = by('audio')
     must(by('video').length === 1 && v.codec_name === 'h264', `video streams: ${by('video').map((x) => x.codec_name)}`)
     must(v.width === FRAME.width && v.height === FRAME.height, `video is ${v.width}x${v.height}`)
     must(v.r_frame_rate === '30/1' && v.avg_frame_rate === '30/1', `frame rate ${v.r_frame_rate} avg ${v.avg_frame_rate}`)
     must(by('audio').length === 1 && a.codec_name === 'aac', `audio streams: ${by('audio').map((x) => x.codec_name)}`)
-    must(by('subtitle').length === 1 && s.codec_name === 'mov_text', `subtitle streams: ${by('subtitle').map((x) => x.codec_name)}`)
+    must(by('subtitle').length === 0, `subtitle streams: ${by('subtitle').map((x) => x.codec_name)} — the subtitles are burned in`)
     const d = Number(probe.format.duration)
     must(d >= 180 && d <= 300, `duration ${d.toFixed(1)}s is outside 180–300s`)
-    return `h264 1920x1080@30 + aac + mov_text, ${d.toFixed(1)}s`
+    return `h264 ${v.width}x${v.height}@30 + aac, no subtitle track, ${d.toFixed(1)}s`
+  },
+
+  // Every line is on screen exactly once: drawn into the frames and nowhere
+  // else — no soft track for a player to lay over it, no sidecar a player
+  // auto-loads beside the mp4 — one band in the page, and that band held
+  // steady for the whole line.
+  check_subtitles_burned_once() {
+    const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_streams', '-of', 'json', MP4], { encoding: 'utf8' }))
+    const soft = probe.streams.filter((x) => x.codec_type === 'subtitle')
+    must(soft.length === 0, `the mp4 carries ${soft.length} subtitle track(s) (${soft.map((x) => x.codec_name)}) over the burned-in lines`)
+    const sidecars = readdirSync(OUT).filter((f) => new RegExp(`^${NAME}(\\..+)?\\.(srt|vtt|ass|ssa|sub)$`, 'i').test(f))
+    must(sidecars.length === 0, `sidecar(s) a player auto-loads beside ${NAME}.mp4: ${sidecars.join(', ')}`)
+    const lines = manifest().scenes.flatMap((sc) => sc.lines)
+    const doubled = lines.filter((l) => l.subtitle_layers !== 1)
+    must(doubled.length === 0, `lines drawn with ≠1 band: ${doubled.map((l) => `${l.id}×${l.subtitle_layers}`).join(', ')}`)
+    const drift = bandDrift(lines)
+    const bad = drift.filter((d) => d.worst > MAX_BAND_DRIFT)
+    must(bad.length === 0, `band left or changed mid-line: ${bad.map((d) => `${d.id} Δ${d.worst.toFixed(1)} at ${d.at.toFixed(2)}s`).join(', ')}`)
+    const worst = drift.reduce((m, d) => (d.worst > m.worst ? d : m), { worst: 0, id: '-' })
+    return `no soft track, no sidecar, ${lines.length} lines × 1 band, worst band drift ${worst.worst.toFixed(1)} (${worst.id})`
+  },
+
+  check_rail_collapsed() {
+    const scenes = manifest().scenes.filter((sc) => sc.surface !== 'card')
+    const open = scenes.flatMap((sc) => [
+      ...sc.lines.filter((l) => l.rail !== 'collapsed').map((l) => `${l.id}: ${l.rail}`),
+      ...(sc.rail_at_hero === 'collapsed' ? [] : [`${sc.id} hero: ${sc.rail_at_hero}`]),
+    ])
+    must(open.length === 0, `the rail was not collapsed at: ${open.join(', ')}`)
+    const n = scenes.reduce((k, sc) => k + sc.lines.length + 1, 0)
+    return `collapsed at all ${n} line starts and hero moments of ${scenes.length} scenes`
+  },
+
+  check_no_flash_or_hard_cut() {
+    const log = spawnSync('ffmpeg', ['-hide_banner', '-nostats', '-i', MP4, '-an', '-vf',
+      'scale=640:360,scdet=threshold=0,signalstats,metadata=print:file=-', '-f', 'null', '-'],
+    { encoding: 'utf8', maxBuffer: 256 << 20 })
+    if (log.status !== 0) throw new Error(`ffmpeg scdet failed:\n${log.stderr.slice(-1500)}`)
+    const rows = []
+    for (const line of log.stdout.split('\n')) {
+      const f = line.match(/pts_time:([\d.]+)/)
+      if (f) { rows.push({ t: Number(f[1]), score: 0, y: 0 }); continue }
+      const m = line.match(/lavfi\.(scd\.score|signalstats\.YAVG)=([\d.]+)/)
+      if (m && rows.length) rows.at(-1)[m[1] === 'scd.score' ? 'score' : 'y'] = Number(m[2])
+    }
+    must(rows.length > 0, 'no frames measured')
+    const cuts = rows.filter((r) => r.score > MAX_SCENE_SCORE)
+    const flashes = rows.slice(1).map((r, i) => ({ t: r.t, dy: Math.abs(r.y - rows[i].y) })).filter((r) => r.dy > MAX_LUMA_STEP)
+    must(cuts.length === 0, `hard cuts (scene score > ${MAX_SCENE_SCORE}) at ${cuts.slice(0, 10).map((r) => `${r.t.toFixed(2)}s (${r.score.toFixed(1)})`).join(', ')}`)
+    must(flashes.length === 0, `luma jumps > ${MAX_LUMA_STEP} at ${flashes.slice(0, 10).map((r) => `${r.t.toFixed(2)}s (Δ${r.dy.toFixed(0)})`).join(', ')}`)
+    const top = rows.reduce((m, r) => (r.score > m.score ? r : m))
+    return `${rows.length} frames; max scene score ${top.score.toFixed(2)} at ${top.t.toFixed(2)}s; no luma step > ${MAX_LUMA_STEP}`
   },
 
   check_route_coverage_and_share() {
@@ -93,7 +191,7 @@ const checks = {
 
   check_subtitles_match_audio() {
     const placed = placedLines(manifest(), storyboard())
-    const cues = parseSrt(readFileSync(join(OUT, `${NAME}.srt`), 'utf8'))
+    const cues = parseSrt(readFileSync(join(OUT, CAPTIONS), 'utf8'))
     must(cues.length === placed.length, `${cues.length} cues for ${placed.length} lines`)
     const log = ffmpegStderr(['-i', MP4, '-map', '0:a', '-af', 'silencedetect=noise=-45dB:d=0.2', '-f', 'null', '-'])
     const starts = [...log.matchAll(/silence_start: ([\d.]+)/g)].map((m) => Number(m[1]))
