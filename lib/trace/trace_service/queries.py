@@ -540,7 +540,9 @@ def _session_activity(conn, trace_id):
     ).fetchone()
     if row is None:
         return None
-    return {'status': row['status'], 'last_seen': row['last_seen']}
+    from lib.trace.pending_spans import never_ran_blocker_agents
+    return {'status': row['status'], 'last_seen': row['last_seen'],
+            'never_ran': never_ran_blocker_agents(conn, params)}
 
 
 def _compute_retired_ids(raw, grafted):

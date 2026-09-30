@@ -704,6 +704,28 @@ def test_a_subagent_prompt_does_not_retire_a_park(tmp_db):
     assert len(blockers.live_blockers()) == 1
 
 
+def test_a_side_fork_ask_is_not_a_blocker(tmp_db):
+    """Defect #228: Claude Code's next-prompt suggestion fork fires PreToolUse
+    for an AskUserQuestion under a fresh agent_id and never runs it — no
+    subagent.start, no resolution, nothing on the terminal to answer. Its
+    placeholder is not a park."""
+    _seed_session(tmp_db)
+    _seed_span(tmp_db, 'pending-toolu_fork', name='tool.AskUserQuestion',
+               attrs={**_ask_attrs('a', 'b', tool_use_id=_TU_A),
+                      'agent_id': 'fork1', 'agent_type': 'claude'})
+    assert blockers.live_blockers() == []
+
+
+def test_a_started_subagents_ask_is_a_blocker(tmp_db):
+    _seed_session(tmp_db)
+    _seed_span(tmp_db, 'sa-start', name='subagent.start', status='OK',
+               start=_stamp(3), attrs={'agent_id': 'sa-1'})
+    _seed_span(tmp_db, 'pending-toolu_sa', name='tool.AskUserQuestion',
+               attrs={**_ask_attrs('a', 'b', tool_use_id=_TU_A),
+                      'agent_id': 'sa-1'})
+    assert len(blockers.live_blockers()) == 1
+
+
 # ── The SDK leg ──────────────────────────────────────────────────
 
 @pytest.fixture()

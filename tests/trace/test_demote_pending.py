@@ -238,3 +238,30 @@ def test_demotion_does_not_mutate_input():
     merge_spans(rows)
     assert rows[0]['status_code'] == 'PENDING'
     assert 'is_interrupt' not in rows[0]['attributes']
+
+
+# ── rule (c): the agent never ran ────────────────────────────────
+
+def test_a_side_fork_ask_is_demoted_on_an_active_session():
+    """Defect #228: a side fork's AskUserQuestion placeholder is its agent's
+    only span, so the newest-blocker exemption would hold it PENDING forever.
+    Its agent never ran, so nobody can answer it."""
+    now = datetime.now()
+    rows = [_row('pending-fork', 'tool.AskUserQuestion',
+                 {'tool_use_id': 'tuF', 'agent_id': 'fork1'},
+                 status='PENDING', start=_iso(now), id=1)]
+    served = _served(rows, session_activity={
+        'status': 'active', 'last_seen': _iso(now),
+        'never_ran': {('t1', 'fork1')}})
+    assert served['pending-fork']['status_code'] == 'ERROR'
+
+
+def test_a_started_agents_ask_is_not_demoted_by_rule_c():
+    now = datetime.now()
+    rows = [_row('pending-a1', 'tool.AskUserQuestion',
+                 {'tool_use_id': 'tuA', 'agent_id': 'a1'},
+                 status='PENDING', start=_iso(now), id=1)]
+    served = _served(rows, session_activity={
+        'status': 'active', 'last_seen': _iso(now),
+        'never_ran': {('t1', 'fork1')}})
+    assert served['pending-a1']['status_code'] == 'PENDING'

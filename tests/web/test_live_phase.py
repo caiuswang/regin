@@ -260,6 +260,94 @@ def test_summary_main_idle_while_subagent_streams(trace_db):
     assert summary['phase'] == 'working'
 
 
+def test_a_side_fork_ask_does_not_park_the_session(trace_db):
+    """Defect #228: Claude Code's next-prompt suggestion fork fires PreToolUse
+    for an AskUserQuestion it never runs — a fresh agent_id with no
+    subagent.start and no resolved span. It is not a subagent, so it must not
+    hold the session at waiting-input while main sits idle."""
+    now = datetime.now()
+    conn = sqlite3.connect(str(trace_db))
+    try:
+        _seed_session(conn, 'tF', last_seen=now.isoformat())
+        _seed_span(conn, 'tF', 'mresp', 'assistant_response',
+                   start=(now - timedelta(seconds=60)).isoformat())
+        _seed_span(conn, 'tF', 'pending-toolu_fork', 'tool.AskUserQuestion',
+                   start=(now - timedelta(seconds=30)).isoformat(),
+                   status='PENDING',
+                   attrs={'agent_id': 'fork1', 'agent_type': 'claude'},
+                   agent_id_col='fork1')
+        conn.commit()
+    finally:
+        conn.close()
+    summary = S._session_summary('tF')
+    assert 'fork1' not in summary['agent_phase']
+    assert summary['phase'] == 'idle'
+
+
+def test_a_started_subagent_ask_still_parks_the_session(trace_db):
+    now = datetime.now()
+    conn = sqlite3.connect(str(trace_db))
+    try:
+        _seed_session(conn, 'tA', last_seen=now.isoformat())
+        _seed_span(conn, 'tA', 'mresp', 'assistant_response',
+                   start=(now - timedelta(seconds=60)).isoformat())
+        _seed_span(conn, 'tA', 'sa-start-a1', 'subagent.start',
+                   start=(now - timedelta(seconds=50)).isoformat(),
+                   attrs={'agent_id': 'a1'}, agent_id_col='a1')
+        _seed_span(conn, 'tA', 'pending-toolu_a1', 'tool.AskUserQuestion',
+                   start=(now - timedelta(seconds=30)).isoformat(),
+                   status='PENDING', attrs={'agent_id': 'a1'},
+                   agent_id_col='a1')
+        conn.commit()
+    finally:
+        conn.close()
+    summary = S._session_summary('tA')
+    assert summary['agent_phase']['a1'] == 'waiting-input'
+    assert summary['phase'] == 'waiting-input'
+
+
+def test_a_ghost_agent_with_lost_markers_stays_on_the_roster(trace_db):
+    """The side-fork filter keys on 'never ran', not 'no start marker': an
+    agent whose markers were lost but whose resolved spans survive stays."""
+    now = datetime.now()
+    conn = sqlite3.connect(str(trace_db))
+    try:
+        _seed_session(conn, 'tG', last_seen=now.isoformat())
+        _seed_span(conn, 'tG', 'g-read', 'tool.Read',
+                   start=(now - timedelta(seconds=5)).isoformat(),
+                   attrs={'agent_id': 'g1'}, agent_id_col='g1')
+        conn.commit()
+    finally:
+        conn.close()
+    assert 'g1' in _roster_by_id('tG')
+
+
+def test_the_switcher_needs_text_skips_a_side_fork_ask(trace_db):
+    from lib.orm.engine import get_connection
+    from web.blueprints.trace.switcher import _needs_for
+    now = datetime.now()
+    conn = sqlite3.connect(str(trace_db))
+    try:
+        _seed_session(conn, 'tN', last_seen=now.isoformat())
+        _seed_span(conn, 'tN', 'permreq-main', 'permission.request',
+                   start=(now - timedelta(seconds=60)).isoformat(),
+                   status='PENDING', attrs={'command': 'rm -rf build'})
+        _seed_span(conn, 'tN', 'pending-fork', 'tool.AskUserQuestion',
+                   start=(now - timedelta(seconds=5)).isoformat(),
+                   status='PENDING',
+                   attrs={'agent_id': 'fork1', 'question': 'which next?'},
+                   agent_id_col='fork1')
+        conn.commit()
+    finally:
+        conn.close()
+    conn = get_connection()
+    try:
+        needs = _needs_for(conn, ['tN'])
+    finally:
+        conn.close()
+    assert needs == 'rm -rf build'
+
+
 # ── Roster: implicit stop from a resolved launch (lost subagent.stop) ─
 
 def _roster_by_id(trace_id):

@@ -128,12 +128,16 @@ def _needs_for(conn, group: list[str]) -> str | None:
     own words, so the facet reads as an inbox rather than as a status list."""
     marks = ','.join('?' for _ in group)
     names = ','.join('?' for _ in _BLOCKER_NAMES)
+    from lib.trace.pending_spans import AGENT_ID_SQL, never_ran_blocker_agents
+    forks = sorted({a for _, a in never_ran_blocker_agents(conn, group)})
+    skip = (f" AND ({AGENT_ID_SQL} IS NULL OR {AGENT_ID_SQL} NOT IN "
+            f"({','.join('?' for _ in forks)}))") if forks else ''
     row = conn.execute(
         "SELECT name, attributes FROM session_spans "
         f" WHERE trace_id IN ({marks}) AND status_code = 'PENDING' "
-        f"   AND (name IN ({names}) OR span_id LIKE 'permreq-%') "
+        f"   AND (name IN ({names}) OR span_id LIKE 'permreq-%'){skip} "
         " ORDER BY start_time DESC, id DESC LIMIT 1",
-        (*group, *_BLOCKER_NAMES)).fetchone()
+        (*group, *_BLOCKER_NAMES, *forks)).fetchone()
     if not row:
         return None
     attrs = _attrs(row['attributes'])

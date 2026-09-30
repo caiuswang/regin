@@ -177,7 +177,17 @@ def _map_session_activity(stored: list[str]) -> dict | None:
             .where(SessionModel.trace_id.in_(stored))
             .order_by(SessionModel.last_seen.desc())
         ).first()
-    return {'status': act_row[0], 'last_seen': act_row[1]} if act_row else None
+    if not act_row:
+        return None
+    from lib.orm.engine import get_connection
+    from lib.trace.pending_spans import never_ran_blocker_agents
+    conn = get_connection()
+    try:
+        never_ran = never_ran_blocker_agents(conn, stored)
+    finally:
+        conn.close()
+    return {'status': act_row[0], 'last_seen': act_row[1],
+            'never_ran': never_ran}
 
 
 def _structural_map_spans(trace_id: str) -> list[dict]:

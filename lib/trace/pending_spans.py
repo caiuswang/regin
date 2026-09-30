@@ -211,3 +211,42 @@ def is_human_blocker(name, span_id=None) -> bool:
     if name in HUMAN_BLOCKER_NAMES:
         return True
     return isinstance(span_id, str) and span_id.startswith(PERM_PENDING_PREFIX)
+
+
+def never_ran_blocker_agents(conn, trace_ids) -> set[tuple[str, str]]:
+    """(trace_id, agent_id) pairs holding a PENDING human blocker whose agent
+    never produced a single resolved span.
+
+    A real subagent's first act is its `subagent.start` marker (status OK), so
+    every agent the session launched has a resolved span. What does not:
+    Claude Code's side forks (the next-prompt suggestion runs one after a turn
+    ends). The harness fires PreToolUse for the fork's tool calls under a fresh
+    `agent_id` and never executes them — no SubagentStart, no PostToolUse, no
+    denial, no transcript — so the placeholder stays PENDING forever and
+    nobody, the operator included, can answer it.
+
+    Read over the whole store, never a paged window: a window can cut off a
+    live subagent's start marker and make it look like a fork.
+    """
+    trace_ids = list(trace_ids)
+    if not trace_ids:
+        return set()
+    traces = ','.join('?' * len(trace_ids))
+    names = ','.join("'%s'" % n for n in HUMAN_BLOCKER_NAMES)
+    parked = {
+        (r[0], r[1]) for r in conn.execute(
+            f"SELECT DISTINCT trace_id, {AGENT_ID_SQL} FROM session_spans "
+            f" WHERE trace_id IN ({traces}) AND status_code = 'PENDING' "
+            f"   AND (name IN ({names}) OR span_id LIKE '{PERM_PENDING_PREFIX}%')",
+            trace_ids).fetchall()
+        if r[1]}
+    if not parked:
+        return set()
+    agents = sorted({a for _, a in parked})
+    ran = {
+        (r[0], r[1]) for r in conn.execute(
+            f"SELECT DISTINCT trace_id, {AGENT_ID_SQL} FROM session_spans "
+            f" WHERE trace_id IN ({traces}) AND status_code != 'PENDING' "
+            f"   AND {AGENT_ID_SQL} IN ({','.join('?' * len(agents))})",
+            (*trace_ids, *agents)).fetchall()}
+    return parked - ran

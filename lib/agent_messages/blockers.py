@@ -390,6 +390,16 @@ def _latest_denials(trace_ids: list[str]) -> dict:
     return {(r['trace_id'], r['tn']): r['at'] for r in rows if r['tn'] and r['at']}
 
 
+def _never_ran_agents(trace_ids: list[str]) -> set[tuple]:
+    from lib.orm.engine import get_connection
+    from lib.trace.pending_spans import never_ran_blocker_agents
+    conn = get_connection()
+    try:
+        return never_ran_blocker_agents(conn, trace_ids)
+    finally:
+        conn.close()
+
+
 class _RetireSignals:
     """The read-time evidence that a pending span's question was decided."""
 
@@ -400,6 +410,12 @@ class _RetireSignals:
         self.completed = _latest_tool_completions(trace_ids)
         self.denied = _latest_denials(trace_ids)
         self.request_calls = request_calls or {}
+        self.never_ran = _never_ran_agents(trace_ids)
+
+    def never_asked(self, trace_id: str, span: dict) -> bool:
+        """A side fork's placeholder — see `never_ran_blocker_agents`."""
+        agent = _attributes(span).get('agent_id')
+        return bool(agent) and (trace_id, agent) in self.never_ran
 
     def retires(self, trace_id: str, span: dict) -> bool:
         attrs = _attributes(span)
@@ -778,6 +794,7 @@ def _prompted_after_raise(signals: "_RetireSignals", trace_id: str,
 def _surviving_park(trace_id: str, spans: dict, signals) -> dict | None:
     pending = [s for s in spans.values()
                if s.get('status_code') == 'PENDING'
+               and not signals.never_asked(trace_id, s)
                and not signals.retires(trace_id, s)]
     if not pending:
         return None

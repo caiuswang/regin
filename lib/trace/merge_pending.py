@@ -223,7 +223,10 @@ def _demote_stale_pending(
           and the pending is older than `_STALE_PENDING_OLDER_THAN_SEC` —
           EXCEPT for a human blocker that is the session's newest span on a
           still-open session (`_blocks_on_a_human`), whose age measures the
-          wait, not a fault.
+          wait, not a fault, OR
+      (c) its agent never ran (`session_activity['never_ran']`, read off the
+          whole store by `pending_spans.never_ran_blocker_agents`): a side
+          fork's placeholder that no one can ever answer.
 
     INVARIANT: a legitimately-running long tool on an ACTIVE session with no
     same-agent completion activity after it is never demoted — (a) needs a
@@ -243,8 +246,12 @@ def _demote_stale_pending(
     move_on_ts = _latest_move_on_ts(spans)
     latest_span_ts = _latest_span_ts(spans)
 
+    never_ran = (session_activity or {}).get('never_ran') or set()
+
     def demote(s: dict) -> bool:
         if _moved_on_past_grace(s, move_on_ts):
+            return True
+        if (s.get('trace_id'), _attrs(s).get('agent_id')) in never_ran:
             return True
         if not inactive or _blocks_on_a_human(s, session_activity,
                                               latest_span_ts):

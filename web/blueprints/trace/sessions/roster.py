@@ -519,13 +519,25 @@ def _waiting_map(act_rows) -> dict:
     return out
 
 
+def _agents_that_ran(act_rows, segments) -> list:
+    """Subagent activity rows, minus agent_ids that never ran.
+
+    An agent_id with no marker and no resolved span is a Claude Code side
+    fork whose PreToolUse fired for a call the harness never executed (see
+    `pending_spans.never_ran_blocker_agents`). A ghost whose markers were lost still has
+    resolved spans, so it stays."""
+    return [r for r in act_rows
+            if r['aid'] and (r['aid'] in segments or r['internal_count'])]
+
+
 def _build_roster(act_rows, marks, launches, ended) -> list[dict]:
     """Assemble roster entries from the shared grouped rows. `waiting` (newest
     PENDING ask/permission per agent) is derived from each row's perm_ts/ask_ts
     rather than a separate query."""
-    activity = {r['aid']: dict(r) for r in act_rows if r['aid']}
-    waiting = _waiting_map(act_rows)
     segments = _roster_segments(marks)
+    ran = _agents_that_ran(act_rows, segments)
+    activity = {r['aid']: dict(r) for r in ran}
+    waiting = _waiting_map(ran)
     entries = [
         _roster_entry_base(aid, segments.get(aid), activity, waiting)
         for aid in set(activity) | set(segments)
