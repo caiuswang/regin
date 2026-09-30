@@ -38,7 +38,7 @@ export function installOverlay(boot) {
     #promo-card p::before{content:"$ ";color:#5b6679}
     #promo-sub{position:absolute;left:0;right:0;bottom:30px;display:flex;justify-content:center;opacity:0}
     #promo-sub span{font:600 24px/1.5 "PingFang SC","Hiragino Sans GB",sans-serif;color:#fff;
-      background:rgba(7,9,13,.86);padding:7px 20px;border-radius:10px;letter-spacing:.03em;
+      background:#0b0e14;padding:7px 20px;border-radius:10px;letter-spacing:.03em;
       max-width:86vw;text-align:center;box-shadow:0 8px 28px rgba(0,0,0,.4)}
     #promo-sub b{font-weight:inherit}
     #promo-cursor{position:absolute;left:0;top:0;width:30px;height:34px;will-change:transform}

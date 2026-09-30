@@ -28,9 +28,10 @@ const must = (cond, msg) => { if (!cond) throw new Fail(msg) }
 // dark pages scores ~90 and moves the mean luma by ~200.
 const MAX_SCENE_SCORE = 10
 const MAX_LUMA_STEP = 8
-// A line's subtitle band, sampled through the line, may change by at most
-// this mean per-pixel difference (0–255): what the page behind its 86%
-// opaque background moves it by. A band that vanished scores 20+.
+// A line's subtitle band, read through the line, may change by at most this
+// mean per-pixel difference (0–255). The band is opaque, so a steady one
+// scores ~0 whatever scrolls or zooms behind it; a band that vanished or
+// changed text scores 20+.
 const MAX_BAND_DRIFT = 8
 
 function ffmpegStderr(args) {

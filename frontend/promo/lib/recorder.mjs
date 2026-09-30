@@ -13,9 +13,12 @@ export const LINE_GAP_S = 0.45
 const DISSOLVE_MS = 560
 const CARD_MS = 900
 const CAMERA_MS = 1100
-// A page is settled once this many consecutive frames pass with no DOM
-// mutation, no scroll and no finite animation running, and no /api request
-// is in flight. Counted in frames, not milliseconds (I3).
+// A page is settled once this many consecutive frames pass with no change to
+// its elements or attributes, no scroll and no finite animation running, and
+// no /api request is in flight. Counted in frames, not milliseconds (I3).
+// Text-only changes do not count: a live clock ("waiting 7m 3s") ticks for
+// as long as the page is open, and under 4K capture a second can be fewer
+// frames than the quiet run needs.
 const QUIET_FRAMES = 12
 const SETTLE_MAX_FRAMES = 1200
 // Keeps a target clear of the subtitle band, and a 'start' target clear of
@@ -69,7 +72,10 @@ function quietFrames([need, max]) {
   return new Promise((done) => {
     let quiet = 0, total = 0, dirty = false
     const mark = () => { dirty = true }
-    const mo = new MutationObserver(mark)
+    const text = (n) => n.nodeType === Node.TEXT_NODE
+    const textOnly = (r) => r.type === 'characterData' ||
+      (r.type === 'childList' && [...r.addedNodes].every(text) && [...r.removedNodes].every(text))
+    const mo = new MutationObserver((records) => { if (!records.every(textOnly)) mark() })
     mo.observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true })
     document.addEventListener('scroll', mark, true)
     const moving = () => document.getAnimations().some((a) => {

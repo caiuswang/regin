@@ -15,8 +15,10 @@ export const sceneFns = {
       await ctx.aim(tid('loop-features'))
       await ctx.aim(tid('loop-defects'))
     })
+    // Running now shows only while a task runs; these two panels always do.
     await ctx.line(1, async () => {
-      await ctx.aim('#rnw-title')
+      await ctx.aim(`${tid('run-next')} .pl-panel__title`)
+      await ctx.aim(`${tid('needs-decision')} .pl-panel__title`)
       await ctx.hero()
     })
     await ctx.line(2, () => ctx.follow(tid('pipeline-tab-tasks'), tid('next-step-list')))
