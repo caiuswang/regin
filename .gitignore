@@ -107,3 +107,6 @@ db/*.db.bak*
 
 # Promo video build output (snapshot DB, voice clips, frames, the mp4)
 frontend/promo/out/
+
+# Film stills, review sheet and (once approved) frames and the mp4
+frontend/film/out/

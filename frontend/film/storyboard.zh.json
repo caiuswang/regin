@@ -1,0 +1,629 @@
+{
+  "title": "天亮以前",
+  "title_en": "BEFORE DAWN",
+  "brand": "regin · 未来 AI 工作台",
+  "logline": "一个人睡前留下一句话，一百个 AI 替他干了一整夜。天亮时，他只需要做一个决定——因为每一步，他都看得见。",
+  "fps": 30,
+  "acts": [
+            {"id": "prologue", "name": "序 · 今夜"},
+            {"id": "night", "name": "一 · 长夜"},
+            {"id": "doubt", "name": "二 · 疑问"},
+            {"id": "seeing", "name": "三 · 看见"},
+            {"id": "dawn", "name": "四 · 天亮"}
+          ],
+  "shots": [
+            {
+              "id": "s01-tonight",
+              "act": "prologue",
+              "name": "今晚",
+              "world": "plain",
+              "grade": "night",
+              "dur": 6,
+              "picture": "黑场里，一点暖橙色的光慢慢亮起，停在画面下方正中，微微呼吸。光下是一片看不见边际的湿润黑色地面，映出一道拉长的暖色倒影；天上只有很淡的星。整个画面只有这一点光——这是「你」。",
+              "camera": "35mm，固定机位，6 秒内极缓慢推近。",
+              "transition": "黑场淡入。",
+              "params": {
+                          "cam": {
+                                  "pos": [0, 1.0, 23],
+                                  "target": [0, 0.62, 30],
+                                  "fov": {"from": 38, "to": 36.5, "t0": 0, "t1": 6}
+                                },
+                          "stars": 0.35,
+                          "cityGlow": 0,
+                          "human": {
+                                    "pos": [0, 0.45, 30],
+                                    "intensity": {"from": 0, "to": 90, "t0": 0.2, "t1": 2.4},
+                                    "size": 0.05,
+                                    "reflGain": 0.25
+                                  }
+                        },
+              "lines": [{"id": "s01-1", "text": "今晚，", "in": 1.4, "out": 5.4}]
+            },
+            {
+              "id": "s02-hundred",
+              "act": "prologue",
+              "name": "一百个 AI",
+              "world": "plain",
+              "grade": "night",
+              "dur": 9,
+              "picture": "镜头从暖光身后升起、后拉。暖光之外一片漆黑——然后一盏盏冷蓝色的灯由近及远依次亮起，像一座城市在夜里醒来，一直铺到地平线。每一盏灯都是一个正在工作的 AI；湿地面把它们拉成一道道倒影，地平线上浮起一层冷蓝的光雾。",
+              "camera": "升降加后拉：离地 1 米升到 6 米，同时后退 23 米；焦段 38→50mm。",
+              "transition": "与上一镜连续，不切。",
+              "params": {
+                          "cam": {
+                                  "pos": {"from": [0, 1.0, 23], "to": [0, 6, 0], "t0": 0, "t1": 8.5},
+                                  "target": {"from": [0, 0.62, 30], "to": [0, 0, 150], "t0": 0, "t1": 8.5},
+                                  "fov": {"from": 36.5, "to": 50, "t0": 0, "t1": 8.5}
+                                },
+                          "stars": 1,
+                          "cityGlow": {"from": 0, "to": 0.35, "t0": 1, "t1": 8},
+                          "stretch": 5,
+                          "human": {"pos": [0, 0.45, 30], "intensity": 90, "size": 0.05, "reflGain": 0.25},
+                          "lights": {
+                                      "seed": 7,
+                                      "count": 9000,
+                                      "wake": {"origin": [0, 30], "start": 0.6, "speed": 110, "jitter": 1.2}
+                                    }
+                        },
+              "lines": [{"id": "s02-1", "text": "一百个 AI，正在替你写代码。", "in": 0.8, "out": 8.4, "still": 7.0}]
+            },
+            {
+              "id": "s03-dare",
+              "act": "prologue",
+              "name": "你敢睡吗",
+              "world": "card",
+              "grade": "card",
+              "dur": 4,
+              "hero": 2.6,
+              "picture": "硬切黑场。画面正中，一行宋体大字从虚焦中收拢成形：「你敢睡吗？」几粒暖色的尘埃在黑暗里缓慢漂浮。",
+              "camera": "固定，字卡缓推 3%。",
+              "transition": "硬切入，硬切出。",
+              "params": {
+                          "lines": [{"text": "你敢睡吗？", "size": 0.075, "tracking": 0.32}],
+                          "motes": {"count": 50},
+                          "in": 0.25
+                        }
+            },
+            {
+              "id": "s04-ident",
+              "act": "prologue",
+              "name": "出品",
+              "world": "mark",
+              "grade": "card",
+              "dur": 5,
+              "hero": 3.0,
+              "picture": "片头标识。一道极细的暖白光线从画面中心向两侧展开；「regin」字标在光线上方由虚到实浮现，一道斜向高光从左扫到右；下方一行小字「出品」。",
+              "camera": "固定。",
+              "transition": "黑场淡入，黑场淡出。",
+              "params": {"mode": "ident", "out": 4.2}
+            },
+            {
+              "id": "s05-title",
+              "act": "prologue",
+              "name": "片名",
+              "world": "card",
+              "grade": "card",
+              "dur": 5,
+              "hero": 3.4,
+              "picture": "片名卡。黑色天幕中，一条暖金色的地平线从中间亮起，像天亮前的第一道光；宋体片名「天亮以前」在光线上方显影，下面是字距极宽的英文 BEFORE DAWN。尘埃在光里缓慢漂浮。",
+              "camera": "固定，缓推。",
+              "transition": "淡入；结尾溶到下一镜。",
+              "params": {
+                          "horizon": 1.0,
+                          "lines": [
+                                    {"text": "天亮以前", "size": 0.11, "tracking": 0.34, "dy": -0.04},
+                                    {
+                                      "text": "BEFORE DAWN",
+                                      "family": "Avenir Next",
+                                      "weight": 200,
+                                      "size": 0.022,
+                                      "tracking": 1.1,
+                                      "dy": 0.07,
+                                      "delay": 0.6,
+                                      "alpha": 0.8
+                                    }
+                                  ],
+                          "motes": {"count": 90}
+                        }
+            },
+            {
+              "id": "s06-sentence",
+              "act": "night",
+              "name": "一句话",
+              "world": "sentence",
+              "grade": "warm",
+              "dur": 9,
+              "picture": "微距。一张深色玻璃桌面，远处是虚化的冷暖光斑。一个暖色光标在闪，一行暖光宋体字被一个字一个字地敲出来：「让每一次失败，都说得出原因。」——这就是人留给 AI 的全部指令。字的倒影落在玻璃上，景深很浅，句子两端微微失焦。",
+              "camera": "低机位斜侧 30°，50mm，缓慢横移。",
+              "transition": "从片名溶入。",
+              "params": {
+                          "text": "让每一次失败，都说得出原因。",
+                          "type": {"start": 0.8, "cps": 4.2},
+                          "glyphHeight": 0.15,
+                          "aperture": 0.16,
+                          "focus": 5.6,
+                          "shift": 0.38,
+                          "cam": {
+                                  "pos": {
+                                          "from": [-0.5, 0.5, -5.5],
+                                          "to": [-0.2, 0.47, -5.35],
+                                          "t0": 0,
+                                          "t1": 9
+                                        },
+                                  "target": [0.4, 0.12, 0.5],
+                                  "fov": 34
+                                }
+                        },
+              "lines": [{"id": "s06-1", "text": "睡前，你只留下一句话。", "in": 0.6, "out": 8.2, "still": 6.2}]
+            },
+            {
+              "id": "s07-split",
+              "act": "night",
+              "name": "拆开",
+              "world": "bloom",
+              "grade": "night",
+              "dur": 9,
+              "picture": "那句话碎成暖色火星，向上飞、汇成一个发光的点；点炸开成六条光路，每条光路的尽头是一件拆出来的事；每件事又分出几条冷蓝细线，一颗颗冷蓝的彗星沿线飞出——每一颗都是一个被派出去干活的 AI。整张网在黑暗里慢慢长大。",
+              "camera": "缓慢后拉并轻微环绕，35mm，景深随距离变化。",
+              "transition": "接上一镜碎开的字，火星从画面下方升起。",
+              "params": {},
+              "lines": [
+                        {"id": "s07-1", "text": "它被拆开，", "in": 0.4, "out": 3.0, "still": 1.15},
+                        {"id": "s07-2", "text": "被分派，", "in": 3.1, "out": 5.4, "still": 5.1},
+                        {"id": "s07-3", "text": "被一件一件做完。", "in": 5.5, "out": 8.7}
+                      ]
+            },
+            {
+              "id": "s08-read",
+              "act": "night",
+              "name": "读",
+              "world": "code",
+              "grade": "code",
+              "dur": 2.4,
+              "picture": "快切。深色玻璃上斜铺着一页代码，一条冷蓝的阅读光带自上而下扫过，被读到的那一行亮成白色，读过的行留下一层淡蓝。",
+              "camera": "斜俯 32°，景深极浅，焦点跟着光带走。",
+              "transition": "硬切，卡在节拍上。",
+              "params": {
+                          "mode": "read",
+                          "origin": [-3.2, 1.6, 0],
+                          "cam": {"pos": [-1.9, 2.3, -4.8], "target": [0.6, -0.6, 1.4], "fov": 46},
+                          "reading": {"from": 5, "to": 9, "t0": 0, "t1": 2.4, "ease": "linear"},
+                          "aperture": 0.55
+                        },
+              "lines": [{"id": "s08-1", "text": "读。", "in": 0.15, "out": 2.3}]
+            },
+            {
+              "id": "s09-edit",
+              "act": "night",
+              "name": "改",
+              "world": "code",
+              "grade": "code",
+              "dur": 2.4,
+              "picture": "快切。一段差异的特写：红色的旧行被划掉、暗下去；下面一行青绿色的新代码被一口气敲出来，光标在行尾闪。",
+              "camera": "近景，斜侧 14°。",
+              "transition": "硬切。",
+              "params": {
+                          "mode": "edit",
+                          "origin": [-2.4, 0.8, 0],
+                          "tilt": 8,
+                          "yaw": 9,
+                          "cam": {"pos": [-1.1, 0.75, -5.2], "target": [1.3, 0.3, 0.8], "fov": 40},
+                          "typeStart": 0.3,
+                          "cps": 40,
+                          "aperture": 0.22
+                        },
+              "lines": [{"id": "s09-1", "text": "改。", "in": 0.15, "out": 2.3, "still": 1.9}]
+            },
+            {
+              "id": "s10-test",
+              "act": "night",
+              "name": "测",
+              "world": "code",
+              "grade": "code",
+              "dur": 2.4,
+              "picture": "快切。测试输出一行行滚上来，每一行末尾跳出一个青绿色的 PASSED；最后一行总结：全部通过。",
+              "camera": "斜俯 26°，景深浅。",
+              "transition": "硬切。",
+              "params": {
+                          "mode": "tests",
+                          "origin": [-3.1, 1.3, 0],
+                          "tilt": 18,
+                          "yaw": 12,
+                          "cam": {"pos": [-1.2, 1.3, -6.2], "target": [1.6, -0.6, 1.2], "fov": 42},
+                          "rate": 7.2,
+                          "window": 9,
+                          "aperture": 0.25
+                        },
+              "lines": [{"id": "s10-1", "text": "测。", "in": 0.15, "out": 2.3, "still": 1.9}]
+            },
+            {
+              "id": "s11-again",
+              "act": "night",
+              "name": "再来",
+              "world": "plain",
+              "grade": "night",
+              "dur": 3,
+              "picture": "急速拉远：刚才那一块代码，只是大地上成千上万块发光小屏中的一块。每块屏都在闪——读、改、测，再来一遍。它们铺满整片黑色平原，一直到地平线。",
+              "camera": "高速升拉，1.4 秒内从贴地升到 18 米，然后悬停。",
+              "transition": "硬切。",
+              "params": {
+                          "cam": {
+                                  "pos": {
+                                          "from": [0, 1.2, 28],
+                                          "to": [0, 18, -30],
+                                          "t0": 0,
+                                          "t1": 1.4,
+                                          "ease": "out"
+                                        },
+                                  "target": {
+                                              "from": [0, 0.6, 40],
+                                              "to": [0, 0, 160],
+                                              "t0": 0,
+                                              "t1": 1.4,
+                                              "ease": "out"
+                                            },
+                                  "fov": 50
+                                },
+                          "stars": 0.6,
+                          "cityGlow": 0.4,
+                          "stretch": 3,
+                          "lights": {"seed": 11, "count": 12000, "panel": true, "flicker": 0.5, "gain": 0.8}
+                        },
+              "lines": [{"id": "s11-1", "text": "再来。", "in": 0.2, "out": 2.9, "still": 2.2}]
+            },
+            {
+              "id": "s12-tireless",
+              "act": "night",
+              "name": "不知疲倦",
+              "world": "plain",
+              "grade": "night",
+              "dur": 8,
+              "picture": "延时摄影般的长夜。镜头高悬在平原上空，AI 的灯火之间，无数条冷白的光轨沿着街道来回穿梭，像一座通宵不眠的城市。左上角的时钟从凌晨一点飞快跳到四点多。",
+              "camera": "高空俯角 20°，缓慢横移。",
+              "transition": "硬切。",
+              "params": {
+                          "cam": {
+                                  "pos": {
+                                          "from": [-24, 26, -40],
+                                          "to": [8, 26, -40],
+                                          "t0": 0,
+                                          "t1": 8,
+                                          "ease": "linear"
+                                        },
+                                  "target": {
+                                              "from": [-14, 0, 120],
+                                              "to": [18, 0, 120],
+                                              "t0": 0,
+                                              "t1": 8,
+                                              "ease": "linear"
+                                            },
+                                  "fov": 52
+                                },
+                          "stars": 0.5,
+                          "cityGlow": 0.45,
+                          "lights": {"seed": 7, "count": 9000, "flicker": 0.3},
+                          "trails": {"count": 700, "speed": 45, "length": 18, "alpha": 0.55},
+                          "clock": {"minutes": {"from": 72, "to": 262, "t0": 0, "t1": 8, "ease": "linear"}}
+                        },
+              "lines": [
+                        {"id": "s12-1", "text": "它们不知疲倦，", "in": 0.6, "out": 3.9},
+                        {"id": "s12-2", "text": "也从不犹豫。", "in": 4.2, "out": 7.6}
+                      ]
+            },
+            {
+              "id": "s13-problem",
+              "act": "night",
+              "name": "问题",
+              "world": "card",
+              "grade": "card",
+              "dur": 4,
+              "hero": 2.8,
+              "picture": "所有的光、所有的动静一起掐断，只剩黑。停顿半拍，黑场正中浮出一行宋体字：「这，恰恰是问题。」",
+              "camera": "固定。",
+              "transition": "硬切黑。",
+              "params": {"lines": [{"text": "这，恰恰是问题。", "size": 0.068, "tracking": 0.26}], "in": 0.35}
+            },
+            {
+              "id": "s14-what",
+              "act": "doubt",
+              "name": "它做了什么",
+              "world": "card",
+              "grade": "alarm",
+              "dur": 3,
+              "hero": 2.0,
+              "picture": "字卡。背景是失焦、泛红、缠成一团的光线——那一整夜的工作，此刻看不清，也理不清。正中一行字：「它做了什么？」",
+              "camera": "固定，背景光线缓慢蠕动。",
+              "transition": "硬切，三张问句卡连续快切。",
+              "params": {
+                          "lines": [{"text": "它做了什么？", "size": 0.07, "tracking": 0.28}],
+                          "tangle": {"alpha": 0.42, "blur": 12},
+                          "in": 0.12,
+                          "reveal": 0.7
+                        }
+            },
+            {
+              "id": "s15-right",
+              "act": "doubt",
+              "name": "做对了吗",
+              "world": "card",
+              "grade": "alarm",
+              "dur": 3,
+              "hero": 2.0,
+              "picture": "同一团泛红、失焦、缠绕的光线，换了一个角度，蠕动得更快。正中一行字：「做对了吗？」",
+              "camera": "固定。",
+              "transition": "硬切。",
+              "params": {
+                          "lines": [{"text": "做对了吗？", "size": 0.07, "tracking": 0.28}],
+                          "tangle": {"alpha": 0.42, "blur": 12, "speed": 0.6},
+                          "in": 0.12,
+                          "reveal": 0.7
+                        }
+            },
+            {
+              "id": "s16-cost",
+              "act": "doubt",
+              "name": "花了多少",
+              "world": "card",
+              "grade": "alarm",
+              "dur": 3,
+              "hero": 2.0,
+              "picture": "光线更乱、更暗，几乎要把画面吞掉。正中一行字：「花了多少？」——三张问句卡，一张比一张更短促。",
+              "camera": "固定。",
+              "transition": "硬切。",
+              "params": {
+                          "lines": [{"text": "花了多少？", "size": 0.07, "tracking": 0.28}],
+                          "tangle": {"alpha": 0.36, "blur": 16, "speed": 0.8},
+                          "in": 0.12,
+                          "reveal": 0.7
+                        }
+            },
+            {
+              "id": "s17-absent",
+              "act": "doubt",
+              "name": "不在场",
+              "world": "plain",
+              "grade": "night",
+              "dur": 6,
+              "picture": "极远的大全景。整片平原的冷光在画面远处翻涌、忙碌；那一点暖光被留在画面左下角，小得几乎看不见，和那片光海之间隔着一大片黑。",
+              "camera": "高机位大俯角，24mm，静止。",
+              "transition": "硬切。",
+              "params": {
+                          "cam": {"pos": [0, 34, -90], "target": [14, 0, 130], "fov": 58},
+                          "stars": 0.8,
+                          "cityGlow": 0.4,
+                          "human": {"pos": [-40, 0.45, 40], "intensity": 130, "size": 0.08, "reflGain": 0.25},
+                          "lights": {"seed": 7, "count": 9000, "z": [150, 900], "flicker": 0.3},
+                          "trails": {"count": 260, "speed": 40, "length": 16, "alpha": 0.35, "z": [160, 420]}
+                        },
+              "lines": [{"id": "s17-1", "text": "而这一切发生时，你不在场。", "in": 0.6, "out": 5.7}]
+            },
+            {
+              "id": "s18-thesis",
+              "act": "seeing",
+              "name": "看得见的过程",
+              "world": "weave",
+              "grade": "night",
+              "dur": 12,
+              "picture": "满屏纠缠的光线——那是一整夜的工作，交错、打结，分不清头尾。一道竖直的暖白光束从左向右扫过；光束扫过的地方，每一根线都被理顺，平平躺进各自的轨道，轨道上浮现出一格一格发亮的步骤。左边秩序井然，右边依旧混沌。",
+              "camera": "正面平视，缓慢推近。",
+              "transition": "从黑场里亮起。",
+              "params": {"beam": {"from": -0.05, "to": 1.08, "t0": 0.8, "t1": 11.6, "ease": "inOut"}},
+              "lines": [
+                        {"id": "s18-1", "text": "未来的人机协作，", "in": 0.5, "out": 4.0},
+                        {"id": "s18-2", "text": "不是更快的答案，", "in": 4.1, "out": 7.6},
+                        {"id": "s18-3", "text": "而是看得见的过程。", "in": 7.7, "out": 11.6}
+                      ]
+            },
+            {
+              "id": "s19-trace",
+              "act": "seeing",
+              "name": "痕迹",
+              "world": "trace",
+              "grade": "night",
+              "dur": 8,
+              "picture": "理顺后的轨道近看，是一次会话的时间线：每条轨道是一个 AI，每个发光的块是一步——Read、Edit、Bash、pytest ✓……子代理从主轨道分出，又汇回来。一道暖白的回放线沿着时间向前推，走过的每一步依次亮起。",
+              "camera": "低角度沿时间轴推轨，50mm，前后景虚化。",
+              "transition": "推进，从上一镜的轨道「钻进去」。",
+              "params": {},
+              "lines": [{"id": "s19-1", "text": "每一步，都留下痕迹。", "in": 0.6, "out": 7.4}]
+            },
+            {
+              "id": "s20-doubt",
+              "act": "seeing",
+              "name": "怀疑",
+              "world": "verify",
+              "grade": "night",
+              "dur": 10,
+              "picture": "两盏灯，一张清单。左边冷蓝的灯把验收项一条条建出来；右边亮起一盏淡紫的灯，投下一道扫描光，把每一条重新读一遍：一格格变成青绿的 ✓——直到有一条变红，打上 ✗，一道红线把它退回给左边的灯。",
+              "camera": "斜侧 15°，缓慢推近。",
+              "transition": "硬切。",
+              "params": {},
+              "lines": [
+                        {"id": "s20-1", "text": "一个负责完成，", "in": 0.5, "out": 4.4},
+                        {"id": "s20-2", "text": "另一个，负责怀疑。", "in": 4.8, "out": 9.6}
+                      ]
+            },
+            {
+              "id": "s21-source",
+              "act": "seeing",
+              "name": "源头",
+              "world": "source",
+              "grade": "night",
+              "dur": 8,
+              "picture": "整张工作图从左到右铺开：最左边是那个功能，往右是切片、任务、每一次运行、每一步。最右端一个节点冒出红色火花——一个错误。一道红光沿连线逆流而上，只走一条路，一直追到最左边的源头；源头亮起一圈圈红色标记环。",
+              "camera": "斜侧俯角，缓慢向左横移，跟着红光走。",
+              "transition": "硬切。",
+              "params": {},
+              "lines": [{"id": "s21-1", "text": "每一个错误，都能追到源头。", "in": 0.8, "out": 7.6, "still": 5.9}]
+            },
+            {
+              "id": "s22-memory",
+              "act": "seeing",
+              "name": "同一个坑",
+              "world": "memory",
+              "grade": "night",
+              "dur": 9,
+              "picture": "俯视一口深井：井里层层叠叠盘旋着金色的碎片，每一片都是一条被记住的教训，一直延伸到看不见的深处。一颗红色的错误坠进井里，落下时变成金色，成了新的一片。镜头升起——一颗新的冷蓝彗星正朝同一个坑飞来；井边升起一片金光，彗星在坑前转弯，绕了过去。",
+              "camera": "先垂直俯视，再升起、后拉到斜俯 25°。",
+              "transition": "硬切。",
+              "params": {},
+              "lines": [
+                        {"id": "s22-1", "text": "同一个坑，", "in": 0.6, "out": 3.8},
+                        {"id": "s22-2", "text": "不会踩第二次。", "in": 4.4, "out": 8.6, "still": 7.2}
+                      ]
+            },
+            {
+              "id": "s23-dawn",
+              "act": "dawn",
+              "name": "天亮了",
+              "world": "plain",
+              "grade": "dawn",
+              "dur": 9,
+              "picture": "天亮了。地平线烧成琥珀色，天顶还是深蓝，平原像一面镜子，映着整片晨光。那些冷蓝的灯一盏盏熄灭——活干完了。前景里，那一点暖光还亮着。",
+              "camera": "低机位，缓慢前推。",
+              "transition": "从黑场慢慢亮起（整片最亮的一次曝光变化）。",
+              "params": {
+                          "cam": {
+                                  "pos": {"from": [0, 3, 0], "to": [0, 3.1, 7], "t0": 0, "t1": 9},
+                                  "target": [0, 3.6, 200],
+                                  "fov": 46
+                                },
+                          "dawn": 1,
+                          "stars": 0.3,
+                          "mist": 0.1,
+                          "gloss": 0.6,
+                          "sunDir": [-0.22, 0, 1],
+                          "fogA": 0.0018,
+                          "human": {"pos": [9, 0.45, 26], "intensity": 70, "size": 0.05, "reflGain": 0.3},
+                          "lights": {
+                                      "seed": 7,
+                                      "count": 9000,
+                                      "gain": {"from": 0.55, "to": 0.28, "t0": 0.5, "t1": 8}
+                                    }
+                        },
+              "lines": [
+                        {"id": "s23-1", "text": "天亮了。", "in": 0.8, "out": 3.6},
+                        {"id": "s23-2", "text": "一整夜的工作，摊开在你面前。", "in": 4.0, "out": 8.6}
+                      ]
+            },
+            {
+              "id": "s24-decide",
+              "act": "dawn",
+              "name": "最后一个决定",
+              "world": "decide",
+              "grade": "dawn",
+              "dur": 9,
+              "picture": "晨光失焦成一片暖色。一张磨砂玻璃卡片浮在画面中央：「已完成 · 已验证」，标题正是昨晚那句话；下面四行——过程每一步都可回放、验收全部通过且经独立复核、缺陷已追到源头并修复、教训已记住。右下角一个暖橙色的「合并」按钮。光标缓缓移过去，停住，按下。",
+              "camera": "固定，极缓慢推近。",
+              "transition": "溶入。",
+              "params": {
+                          "plain": {
+                                    "cam": {"pos": [0, 3, 4], "target": [0, 3.4, 200], "fov": 46},
+                                    "dawn": 1,
+                                    "stars": 0.2,
+                                    "mist": 0.1,
+                                    "gloss": 0.6,
+                                    "sunDir": [-0.22, 0, 1],
+                                    "fogA": 0.0018,
+                                    "focus": 2,
+                                    "aperture": 2.2,
+                                    "human": {
+                                              "pos": [9, 0.45, 26],
+                                              "intensity": 70,
+                                              "size": 0.05,
+                                              "reflGain": 0.3
+                                            },
+                                    "lights": {"seed": 7, "count": 9000, "gain": 0.35}
+                                  },
+                          "title": "让每一次失败，都说得出原因。",
+                          "rows": [
+                                    ["过程", "每一步都可回放"],
+                                    ["验收", "全部通过 · 独立复核"],
+                                    ["缺陷", "已追到源头 · 已修复"],
+                                    ["教训", "已记住"]
+                                  ],
+                          "cursorFrom": 3.0,
+                          "click": 6.4
+                        },
+              "lines": [{"id": "s24-1", "text": "你要做的，只剩最后一个决定。", "in": 0.6, "out": 8.4, "still": 6.0}]
+            },
+            {
+              "id": "s25-tagline",
+              "act": "dawn",
+              "name": "标语",
+              "world": "plain",
+              "grade": "dawn",
+              "dur": 6,
+              "hero": 3.6,
+              "picture": "晨光里的平原完全虚化成柔和的色块，画面压暗。正中一行宋体大字：「看得见，才放得下。」",
+              "camera": "固定，缓推。",
+              "transition": "溶入，结尾黑场。",
+              "params": {
+                          "cam": {"pos": [0, 3, 6], "target": [0, 3.6, 200], "fov": 46},
+                          "dawn": 1,
+                          "stars": 0.2,
+                          "mist": 0.1,
+                          "gloss": 0.6,
+                          "sunDir": [-0.22, 0, 1],
+                          "fogA": 0.0018,
+                          "focus": 1.2,
+                          "aperture": 3.2,
+                          "lights": {"seed": 7, "count": 9000, "gain": 0.3},
+                          "look": {"exposure": -1.1},
+                          "card": {
+                                    "lines": [{"text": "看得见，才放得下。", "size": 0.08, "tracking": 0.3}],
+                                    "in": 0.4,
+                                    "gain": 2.8
+                                  }
+                        }
+            },
+            {
+              "id": "s26-logo",
+              "act": "dawn",
+              "name": "regin",
+              "world": "mark",
+              "grade": "card",
+              "dur": 6,
+              "hero": 3.8,
+              "picture": "标志定版。暖色圆角方框的描边一笔亮起，框里一个「r」；下面是字标 regin，一道高光扫过；再下面一行字：未来 AI 工作台。背景底部留着一线晨光。",
+              "camera": "固定。",
+              "transition": "淡入，淡出到黑。",
+              "params": {"mode": "logo", "warm": 0.9, "horizonY": 0.2, "out": 5.2}
+            },
+            {
+              "id": "s27-sleep",
+              "act": "dawn",
+              "name": "晚安",
+              "world": "plain",
+              "grade": "night",
+              "dur": 5,
+              "hero": 2.2,
+              "picture": "又回到夜里那片平原，只剩画面下方那一点暖光。一行小字浮现：「今晚，睡个好觉。」随后暖光像关灯一样缓缓熄灭，黑场。",
+              "camera": "与第一镜同一机位。",
+              "transition": "淡出到黑，全片结束。",
+              "params": {
+                          "cam": {"pos": [0, 1.0, 23], "target": [0, 0.62, 30], "fov": 36.5},
+                          "stars": 0.4,
+                          "cityGlow": 0,
+                          "human": {
+                                    "pos": [0, 0.45, 30],
+                                    "intensity": {"from": 90, "to": 0, "t0": 3.0, "t1": 4.6},
+                                    "size": 0.05,
+                                    "reflGain": 0.25
+                                  },
+                          "card": {
+                                    "lines": [
+                                              {
+                                                "text": "今晚，睡个好觉。",
+                                                "size": 0.042,
+                                                "tracking": 0.34,
+                                                "dy": -0.13
+                                              }
+                                            ],
+                                    "in": 0.3,
+                                    "gain": 1.3
+                                  }
+                        }
+            }
+          ]
+}
