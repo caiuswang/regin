@@ -69,6 +69,7 @@ export async function record({ storyboard, sceneFns, durations, outDir, auth }) 
   try {
     for (const scene of storyboard.scenes) {
       const entry = await playScene({ page, scene, storyboard, sceneFns, durations, now, heroDir, textDir,
+        frameClock: screencast.clock,
         showCard: async (c) => { card = c; await page.goto(`${APP_BASE}${CARD_PATH}`) } })
       manifestScenes.push(entry)
     }
@@ -77,6 +78,9 @@ export async function record({ storyboard, sceneFns, durations, outDir, auth }) 
     await screencast.stop()
     await context.close()
     await browser.close()
+  }
+  for (const entry of manifestScenes) {
+    if (entry.hero_s !== null) entry.hero_s = frameShownAt(screencast.frames, entry.hero_s, entry.id)
   }
   writeFrameList(screencast.frames, frameDir, manifestScenes.at(-1)?.end_s ?? now())
   return { scenes: manifestScenes, console_errors: consoleErrors, blocked_writes: blockedWrites,
@@ -99,7 +103,22 @@ async function startScreencast(context, page, frameDir, t0Wall) {
   await cdp.send('Page.startScreencast', {
     format: 'jpeg', quality: 95, maxWidth: FRAME.width, maxHeight: FRAME.height, everyNthFrame: 1,
   })
-  return { frames, stop: () => cdp.send('Page.stopScreencast').catch(() => {}) }
+  return {
+    frames,
+    clock: () => Date.now() / 1000 - t0Wall,
+    stop: () => cdp.send('Page.stopScreencast').catch(() => {}),
+  }
+}
+
+// The frame on screen when page.screenshot() returned. Its capture repaints
+// only when the page changed during Playwright's pre-capture steps, and that
+// frame is stamped just before the screenshot returns; a still page yields no
+// frame at all, so an earlier one is the hero. Frame events can arrive after
+// the screenshot resolves, hence resolving once the screencast has stopped.
+function frameShownAt(frames, shotEnd, sceneId) {
+  const frame = frames.findLast((f) => f.t <= shotEnd)
+  if (!frame) throw new Error(`scene ${sceneId}: no screencast frame by the end of its hero screenshot`)
+  return frame.t
 }
 
 // An ffconcat list holding each frame until the next one arrived: the
@@ -116,7 +135,7 @@ function writeFrameList(frames, frameDir, end) {
   writeFileSync(join(frameDir, 'frames.ffconcat'), `${out.join('\n')}\n`)
 }
 
-async function playScene({ page, scene, storyboard, sceneFns, durations, now, heroDir, textDir, showCard }) {
+async function playScene({ page, scene, storyboard, sceneFns, durations, now, frameClock, heroDir, textDir, showCard }) {
   const pins = storyboard.pins
   const entry = {
     id: scene.id, route: scene.route, surface: scene.surface, start_s: now(), end_s: null,
@@ -154,9 +173,9 @@ async function playScene({ page, scene, storyboard, sceneFns, durations, now, he
       await page.locator(scene.hero).first().waitFor({ state: 'visible' })
       await page.evaluate(() => document.fonts.ready)
       entry.hero_errors = await visibleErrors(page)
-      const before = now()
       await page.screenshot({ path: join(heroDir, `${scene.id}.png`) })
-      entry.hero_s = (before + now()) / 2
+      // On the screencast's clock; record() moves it onto the frame shown at this instant.
+      entry.hero_s = frameClock()
       writeFileSync(join(textDir, `${scene.id}.txt`), await page.evaluate(() => document.body.innerText))
     },
     async point(selector) {
