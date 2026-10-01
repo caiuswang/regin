@@ -14,6 +14,14 @@ function cardText(shot) {
   return [...(p.lines ?? []), ...(p.card?.lines ?? [])].map((l) => l.text).join(' / ')
 }
 
+// The cut as rendered, under the 转场 description it has to agree with.
+function cutLabel(shot, next) {
+  const { enter, exit } = shot
+  const head = !enter ? '切入' : enter.type === 'fade' ? `黑场淡入 ${enter.dur}s` : `${enter.push ? '推进溶入' : '溶入'} ${enter.dur}s`
+  const tail = exit ? `淡出到黑 ${exit.dur}s` : next?.enter?.type === 'dissolve' ? `溶出 ${next.enter.dur}s` : '切出'
+  return `${head} · ${tail}`
+}
+
 const CSS = `
 :root { color-scheme: dark; --bg: #07080b; --panel: #0e1015; --line: #1d212b; --ink: #e9e6df; --dim: #8b8f99; --warm: #f2b26b; --cool: #6fd3f5; }
 * { box-sizing: border-box; }
@@ -64,7 +72,7 @@ function scriptRows(board, rows) {
   return out.join('\n')
 }
 
-function shotBlock(manifest, { shot, start, end }, n) {
+function shotBlock(manifest, { shot, start, end }, n, next) {
   const stills = manifest.shots[shot.id] ?? []
   const figs = stills.map((s) => `<figure><img loading="lazy" src="${esc(s.jpg)}" alt="${esc(shot.name)} ${esc(s.tag)}">` +
     `<figcaption>${tc(start + s.t)}${s.subtitle ? ` · 字幕「${esc(s.subtitle)}」` : ''}</figcaption></figure>`).join('')
@@ -80,7 +88,7 @@ function shotBlock(manifest, { shot, start, end }, n) {
     ${shot.camera ? `<h3>镜头</h3><p>${esc(shot.camera)}</p>` : ''}
     ${card ? `<h3>${shot.world === 'sentence' || shot.world === 'decide' ? '画面字' : '字卡'}</h3><p class="cardline">${esc(card)}</p>` : ''}
     ${lines ? `<h3>字幕</h3><ol>${lines}</ol>` : ''}
-    ${shot.transition ? `<h3>转场</h3><p>${esc(shot.transition)}</p>` : ''}
+    <h3>转场</h3>${shot.transition ? `<p>${esc(shot.transition)}</p>` : ''}<p class="id">${esc(cutLabel(shot, next))}</p>
   </div>
 </article>`
 }
@@ -95,7 +103,7 @@ export function writeReview(board, manifest, outDir) {
       act = row.shot.act
       sections.push(`<h2>${esc(board.acts.find((a) => a.id === act)?.name)}</h2>`)
     }
-    sections.push(shotBlock(manifest, row, i + 1))
+    sections.push(shotBlock(manifest, row, i + 1, rows[i + 1]?.shot))
   })
   const html = `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
