@@ -5,6 +5,8 @@ import { Post } from './post.js'
 
 export const ASPECT = 2.39
 const SUB_FADE_S = 0.3
+// The film camera's shutter, as a fraction of the frame interval (180°).
+const SHUTTER = 0.5
 
 // Chinese film subtitles carry no end punctuation, and a pause inside a line
 // is a wide space; a question keeps its mark.
@@ -108,19 +110,47 @@ export class Stage {
     c.fillText(sub.text, this.W / 2 + size * 0.07, this.H - this.barPx / 2)
   }
 
-  render(world, f) {
-    const gl = this.gl
+  composite(world, f) {
+    const { emit, over } = this.layers
     this.scene.bind(true)
-    for (const l of Object.values(this.layers)) l.clear()
+    emit.clear()
+    over.clear()
     this.glass = null
     const overrides = world.render(f, this) ?? {}
-    this.drawSubtitle(f.subtitle)
-    for (const l of Object.values(this.layers)) l.upload()
+    emit.upload()
+    over.upload()
     const grade = gradeFor(f.shot.grade ?? world.grade ?? 'night', { ...overrides, ...(f.shot.look ?? {}) })
-    this.post.run({
-      scene: this.scene, emit: this.layers.emit, over: this.layers.over, subs: this.layers.subs,
-      grade, frame: f.frame, bar: this.barPx / this.H, glass: this.glass,
-    })
-    gl.finish()
+    return { grade, comp: this.post.composite({ scene: this.scene, emit, over, grade, bar: this.barPx / this.H, glass: this.glass }) }
+  }
+
+  // `out` is an offscreen frame for a dissolve to mix; the canvas otherwise.
+  // A shot with `motionBlur: n` integrates n instants across the shutter,
+  // centred on t; subtitles, fades and grain belong to the frame, not to them.
+  render(world, f, out = null) {
+    const n = f.shot.motionBlur ?? 1
+    let shot
+    for (let k = 0; k < n; k++) {
+      const dt = n > 1 ? ((k + 0.5) / n - 0.5) * (SHUTTER / (f.board.fps ?? 30)) : 0
+      shot = this.composite(world, dt ? { ...f, t: f.t + dt } : f)
+      if (n > 1) shot.comp = this.post.accumulate(1 / n, k === 0)
+    }
+    const subs = this.layers.subs
+    subs.clear()
+    this.drawSubtitle(f.subtitle)
+    subs.upload()
+    shot.grade.fade *= f.fade ?? 1
+    this.post.finish({ comp: shot.comp, subs, grade: shot.grade, frame: f.frame, bar: this.barPx / this.H, out })
+    this.gl.finish()
+  }
+
+  get frames() {
+    this._frames ??= [new Target(this.gl, this.W, this.H), new Target(this.gl, this.W, this.H)]
+    return this._frames
+  }
+
+  mix(w, zoom) {
+    const [a, b] = this.frames
+    this.post.mix(a, b, { w, zoom, bar: this.barPx / this.H })
+    this.gl.finish()
   }
 }

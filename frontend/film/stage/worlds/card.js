@@ -77,7 +77,6 @@ export default {
     if (p.tangle) drawWeave(f, stage, depth, { beam: -1, alpha: p.tangle.alpha ?? 0.5, blurBoost: p.tangle.blur ?? 10, speed: p.tangle.speed ?? 0.4 })
     drawCardLines(f, stage, depth, p)
     depth.flush(stage.emit)
-    const out = p.out != null ? 1 - ramp(f.t, p.out, f.dur) : 1
-    return { emitGain: p.gain ?? 1.5, fade: out }
+    return { emitGain: p.gain ?? 1.5 }
   },
 }

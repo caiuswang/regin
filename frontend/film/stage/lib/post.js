@@ -160,6 +160,27 @@ void main() {
   outColor = vec4(clamp(c, 0.0, 1.0), 1.0);
 }`
 
+// A dissolve: the outgoing frame pushed in about the picture's centre while
+// the incoming one fades up. Zooming in never reaches the outgoing frame's
+// bars, and the bars stay black.
+const MIX_FS = HEADER + `
+uniform sampler2D uA;
+uniform sampler2D uB;
+uniform float uW;
+uniform float uZoom;
+uniform float uBar;
+void main() {
+  vec3 a = texture(uA, 0.5 + (vUv - 0.5) / uZoom).rgb;
+  vec3 b = texture(uB, vUv).rgb;
+  float m = step(uBar, vUv.y) * step(vUv.y, 1.0 - uBar);
+  outColor = vec4(mix(a, b, uW) * m, 1.0);
+}`
+
+const SCALE_FS = HEADER + `
+uniform sampler2D uSrc;
+uniform float uWeight;
+void main() { outColor = vec4(texture(uSrc, vUv).rgb * uWeight, 1.0); }`
+
 const BLOOM_LEVELS = 7
 
 export class Post {
@@ -175,6 +196,8 @@ export class Post {
       up: P(UP_FS, 'up'),
       streak: P(STREAK_FS, 'streak'),
       final: P(FINAL_FS, 'final'),
+      mix: P(MIX_FS, 'mix'),
+      scale: P(SCALE_FS, 'scale'),
     }
     this.comp = new Target(gl, W, H)
     this.down = []
@@ -191,11 +214,11 @@ export class Post {
     this.vao = gl.createVertexArray()
   }
 
-  pass(prog, target, uniforms) {
+  pass(prog, target, uniforms, { add = false } = {}) {
     const gl = this.gl
     if (target) target.bind(false)
     else { gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, this.W, this.H) }
-    gl.disable(gl.BLEND)
+    if (add) { gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE) } else gl.disable(gl.BLEND)
     prog.use().set({ uRes: [target ? target.w : this.W, target ? target.h : this.H], ...uniforms })
     gl.bindVertexArray(this.vao)
     gl.drawArrays(gl.TRIANGLES, 0, 3)
@@ -209,8 +232,12 @@ export class Post {
     return this.blurB
   }
 
-  run({ scene, emit, over, subs, grade, frame, bar, glass }) {
-    const g = grade
+  mix(a, b, { w, zoom, bar }) {
+    this.pass(this.progs.mix, null, { uA: a, uB: b, uW: w, uZoom: zoom, uBar: bar })
+  }
+
+  // The scene with its 2D layers, in linear HDR, before any lens or film.
+  composite({ scene, emit, over, grade: g, bar, glass }) {
     const blurred = glass ? this.blurScene(scene) : scene
     this.pass(this.progs.composite, this.comp, {
       uScene: scene, uEmit: emit, uOver: over, uBlurred: blurred,
@@ -218,7 +245,21 @@ export class Post {
       uGlass: glass?.rect ?? [0, 0, 0, 0], uGlassRadius: glass?.radius ?? 0,
       uGlassAmt: glass?.amount ?? 0, uGlassTint: glass?.tint ?? [1, 1, 1],
     })
-    this.pass(this.progs.bright, this.down[0], { uSrc: this.comp, uThreshold: g.threshold, uKnee: g.knee })
+    return this.comp
+  }
+
+  // Motion blur: a frame's sub-sample composites summed at weight 1/n, so
+  // bloom, grain and the grade run once on the average.
+  accumulate(weight, first) {
+    this.acc ??= new Target(this.gl, this.W, this.H)
+    this.acc.bind(first)
+    this.pass(this.progs.scale, this.acc, { uSrc: this.comp, uWeight: weight }, { add: true })
+    return this.acc
+  }
+
+  finish({ comp, subs, grade, frame, bar, out = null }) {
+    const g = grade
+    this.pass(this.progs.bright, this.down[0], { uSrc: comp, uThreshold: g.threshold, uKnee: g.knee })
     for (let i = 1; i < BLOOM_LEVELS; i++) {
       const src = this.down[i - 1]
       this.pass(this.progs.down, this.down[i], { uSrc: src, uTexel: [1 / src.w, 1 / src.h] })
@@ -236,8 +277,8 @@ export class Post {
       this.pass(this.progs.streak, b, { uSrc: a, uTexel: [1 / a.w, 1 / a.h], uStep: step })
       ;[a, b] = [b, a]
     }
-    this.pass(this.progs.final, null, {
-      uComp: this.comp, uBloom: this.up[0], uStreak: a, uSubs: subs,
+    this.pass(this.progs.final, out, {
+      uComp: comp, uBloom: this.up[0], uStreak: a, uSubs: subs,
       uFrame: frame, uBar: bar, uExposure: g.exposure,
       uBloomStr: g.bloom / BLOOM_LEVELS, uStreakStr: g.streak,
       uBloomTint: g.bloomTint, uStreakTint: g.streakTint,

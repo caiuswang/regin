@@ -176,20 +176,25 @@ function drawEdit(f, depth, sheet, p, style) {
   })
 }
 
+// Seconds into the test run; `lead` cuts in with the run already under way,
+// so the shot's first frame is not an empty screen.
+const runAt = (f, p) => f.t + (p.lead ?? 0)
+
 function drawTests(f, depth, sheet, p, style) {
   const rate = p.rate ?? 6.5
-  const shown = Math.min(TESTS.length, Math.floor(f.t * rate) + 1)
+  const run = runAt(f, p)
+  const shown = Math.min(TESTS.length, Math.floor(run * rate) + 1)
   const scroll = Math.max(0, shown - (p.window ?? 9))
   for (let i = 0; i < shown; i++) {
     const row = i - scroll
-    const age = f.t - i / rate
+    const age = run - i / rate
     const flash = 1 + 0.9 * Math.exp(-age * 5)
     const path = `tests/trace/test_explain.py::${TESTS[i]}`
     sheet.run(depth, path, 0, row, C.base, 0.55, style)
     sheet.draw(depth, 'PASSED', path.length + 1, row, C.pass, Math.min(1, 0.85 * flash), { ...style, weight: 700 })
   }
-  if (shown === TESTS.length && f.t * rate > TESTS.length + 1) {
-    const done = smooth(0, 0.4, f.t - (TESTS.length + 1) / rate)
+  if (shown === TESTS.length && run * rate > TESTS.length + 1) {
+    const done = smooth(0, 0.4, run - (TESTS.length + 1) / rate)
     sheet.run(depth, `======== ${TESTS.length} passed in 1.83s ========`, 0, TESTS.length - scroll + 0.6, C.pass, done, { ...style, weight: 700 })
   }
 }
@@ -199,7 +204,7 @@ function drawTests(f, depth, sheet, p, style) {
 function focusCell(f, p) {
   if (p.mode === 'read') return [16, at(p.reading ?? { from: 3, to: 18, t0: 0, t1: f.dur, ease: 'linear' }, f.t)]
   if (p.mode === 'edit') return [18, 2]
-  const shown = Math.min(TESTS.length, Math.floor(f.t * (p.rate ?? 6.5)) + 1)
+  const shown = Math.min(TESTS.length, Math.floor(runAt(f, p) * (p.rate ?? 6.5)) + 1)
   return [30, shown - 1 - Math.max(0, shown - (p.window ?? 9))]
 }
 

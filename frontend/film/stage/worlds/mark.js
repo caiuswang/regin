@@ -109,7 +109,6 @@ export default {
     else if (p.mode === 'logo') logo(f, stage, p, depth)
     else throw new Error(`mark: unknown mode ${p.mode}`)
     depth.flush(stage.emit)
-    const out = p.out != null ? 1 - smooth(p.out, f.dur, f.t) : 1
-    return { emitGain: p.gain ?? 1.5, fade: out }
+    return { emitGain: p.gain ?? 1.5 }
   },
 }

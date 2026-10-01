@@ -2,42 +2,17 @@
 // Renders the storyboard's key frames (one per subtitle line, or the shot's
 // hero moment) at 4K, plus the review sheet that pairs each frame with its
 // 画面 and 字幕. The film itself is rendered from the same stage, frame by
-// frame, once the operator has approved the storyboard.
+// frame, by film.mjs.
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
-import { chromium } from 'playwright'
 
+import { openStage, SIZES } from './lib/host.mjs'
 import { writeReview } from './lib/review.mjs'
-import { serveDir } from './lib/serve.mjs'
 import { loadStoryboard, stillsOf } from './lib/storyboard.mjs'
 
 const FILM_DIR = dirname(fileURLToPath(import.meta.url))
-const SIZES = { '4k': [3840, 2160], '1080': [1920, 1080] }
-const GPU_ARGS = ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist']
-
-async function openStage(size) {
-  const server = await serveDir(FILM_DIR)
-  const browser = await chromium.launch({ headless: true, args: GPU_ARGS })
-  const page = await browser.newPage({ viewport: { width: 1280, height: 720 } })
-  const errors = []
-  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
-  page.on('console', (m) => { if (m.type() === 'error') errors.push(`console: ${m.text()}`) })
-  const [W, H] = SIZES[size]
-  await page.goto(`${server.url}/stage/index.html?w=${W}&h=${H}`)
-  await page.waitForFunction(() => window.film, null, { timeout: 30_000 }).catch(() => {
-    throw new Error(`stage did not start:\n${errors.join('\n')}`)
-  })
-  const renderer = await page.evaluate(() => {
-    const gl = document.createElement('canvas').getContext('webgl2')
-    const ext = gl.getExtension('WEBGL_debug_renderer_info')
-    return gl.getParameter(ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER)
-  })
-  if (/SwiftShader/i.test(renderer)) console.warn(`warning: software WebGL (${renderer}); frames are correct but slow`)
-  const close = async () => { await browser.close(); await server.close() }
-  return { page, errors, close, renderer }
-}
 
 async function main() {
   const { values } = parseArgs({
@@ -70,7 +45,7 @@ async function main() {
     manifest.renderer = stage.renderer
     for (const shot of board.shots) {
       if (only && !only.has(shot.id)) continue
-      const stills = values.at != null ? [{ tag: `${shot.id}-at`, t: Number(values.at) }] : stillsOf(shot)
+      const stills = values.at != null ? [{ tag: `${shot.id}-at`, t: Number(values.at) }] : stillsOf(shot, board.fps)
       const rows = []
       for (const s of stills) {
         const t0 = Date.now()
