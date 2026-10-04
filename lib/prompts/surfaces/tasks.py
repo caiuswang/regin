@@ -32,14 +32,20 @@ FINISH_BASE_UNNAMED_SURFACE_ID = "task-run-finish-base-unnamed"
 FINISH_ORDER_DEFECTS_SURFACE_ID = "task-run-finish-order-defects"
 FOLLOWUP_OMITTED_SURFACE_ID = "task-run-followup-omitted"
 SPEC_SURFACE_ID = "task-run-spec"
+REFERENCES_SURFACE_ID = "task-run-references"
 
 # NOTE: tests/prompts/test_task_run_parity.py asserts `runs._prompt` == a
 # frozen reference builder, so the port stays provable against the f-strings it
 # replaced. Edit the wording here and that reference together.
 _LAUNCH_BODY = (
     "{{invocation}}{{body}}{{tracker}}{{followup}}{{feature}}{{spec}}"
-    "{{finish}}"
+    "{{references}}{{finish}}"
 )
+
+_REFERENCES_BODY = """<references>
+What the task and its feature's spec cite, looked up when this run was launched: a title or state below is current, where the label written into the link may be stale. These are pointers, not copies — before you rely on one, read it with the command on its line.
+{{lines}}
+</references>"""
 
 _SPEC_BODY = """<spec>
 This run is the spec step of feature {{feature_named}}. Its deliverable is the feature's spec, written onto the feature row — nothing else:
@@ -120,7 +126,25 @@ register_surface(
         PromptVariable("followup", "Rendered `task-run-followup` block. Empty when no thread is open.", required=False),
         PromptVariable("feature", "Rendered `task-run-feature` block. Empty for a task under no feature.", required=False),
         PromptVariable("spec", "Rendered `task-run-spec` block. Present only when the task is a feature's spec step.", required=False),
+        PromptVariable("references", "Rendered `task-run-references` block. Empty when neither the task body nor its feature's spec cites anything.", required=False),
         PromptVariable("finish", "Rendered `task-run-finish` block. Always present."),
+    ),
+)
+
+register_surface(
+    REFERENCES_SURFACE_ID,
+    label="Task run — references block",
+    area="task-run",
+    default_body=_REFERENCES_BODY,
+    description=(
+        "Every @-reference in the task body and its feature's spec, resolved "
+        "at launch: one line each with its live title and state, and the "
+        "command that reads it in full. A pointer rather than a copy, so it "
+        "cannot drift from what it names."
+    ),
+    applies_to=("external-agent",),
+    variables=(
+        PromptVariable("lines", "One `- …` line per distinct reference, body first, then spec, in order of first appearance; at most 20, then `… and N more references`."),
     ),
 )
 
@@ -312,3 +336,7 @@ register_retired_default(
 register_retired_default(
     LAUNCH_SURFACE_ID,
     sha256="6e8b6bae19adb35e5d14bfb4486d84eb3b40d593b8812a7f62a724140040388a")
+# The envelope before it carried the references block.
+register_retired_default(
+    LAUNCH_SURFACE_ID,
+    sha256="7cdf66128594b8ff971201061cd752fe550e865167fafe002fa481d5468eea0e")
