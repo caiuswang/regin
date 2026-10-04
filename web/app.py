@@ -198,6 +198,10 @@ def create_app(replica: bool = False):
     from web.blueprints.pipeline import pipeline_bp
     app.register_blueprint(pipeline_bp)
 
+    # ── @-references in spec and task bodies (search + resolve) ──
+    from web.blueprints.refs import refs_bp
+    app.register_blueprint(refs_bp)
+
     from web.blueprints.api_keys import api_keys_bp
     app.register_blueprint(api_keys_bp)
 

@@ -71,6 +71,7 @@
     "gate",
     "prompts",
     "fulltext",
+    "refs",
     "other"
   ],
   "_providers": "Per-provider deploy targets. active_provider selects the default; providers{} carries optional per-provider path overrides. Flip experimental_providers to surface codex/generic in the Settings UI.",
