@@ -13,7 +13,7 @@ import Button from '../ui/Button.vue'
 import Card from '../Card.vue'
 import Icon from '../ui/Icon.vue'
 import MarkdownContent from '../MarkdownContent.vue'
-import Textarea from '../ui/Textarea.vue'
+import RefTextarea from '../refs/RefTextarea.vue'
 import { caretTarget, withCaretInsert } from '../../utils/caret'
 import { imageFilesFrom } from '../../utils/imageFiles'
 import { IMAGE_REF_HINT, imageRefBlock, resolveImageRefs } from '../../utils/taskBodyImages'
@@ -125,10 +125,11 @@ async function onDrop(e) {
       <!-- v-show, not v-if: the textarea has to keep its caret and its scroll
            position across a preview, or toggling back drops the operator at
            the top of a spec they were editing the middle of. -->
-      <Textarea
+      <RefTextarea
         v-show="!previewing"
         ref="area"
         v-model="draft"
+        :project="task.project_id"
         :rows="18"
         class="tbe-area"
         spellcheck="false"

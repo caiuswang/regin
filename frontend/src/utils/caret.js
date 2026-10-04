@@ -3,6 +3,13 @@
 // Shared because every surface that takes a pasted image now writes an
 // `![](image:N)` reference where the paste happened, and six copies of "read
 // selectionStart off the component's root element" is how five of them drift.
+//
+// A field component whose root is a wrapper exposes the textarea itself as
+// `textarea`, so that is read before any root.
+
+function fieldOf(area) {
+  return area?.textarea ?? area?.$el ?? area
+}
 
 /**
  * `text` spliced into `value` at the caret of `el`, or appended when there is
@@ -13,7 +20,7 @@
  * of its own.
  */
 export function withCaretInsert(el, value, text) {
-  const node = el?.$el ?? el
+  const node = fieldOf(el)
   const current = value || ''
   const at = node?.selectionStart
   if (at === undefined || at === null) return current + text
@@ -29,6 +36,6 @@ export function withCaretInsert(el, value, text) {
  * off the wrong field would splice the reference into the middle of a word.
  */
 export function caretTarget(event, area) {
-  const node = area?.$el ?? area
+  const node = fieldOf(area)
   return node && event?.target === node ? node : null
 }

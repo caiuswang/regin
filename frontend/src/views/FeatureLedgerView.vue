@@ -340,6 +340,7 @@ function onDeclared() {
         :tracked="!ledger.stage_live"
         :tracker="ledger.origin"
         :external-url="ledger.external_url"
+        :project="ledger.project_id"
         @saved="ledger = $event"
       />
 

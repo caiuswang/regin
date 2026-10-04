@@ -26,7 +26,7 @@ import Button from '../ui/Button.vue'
 import Card from '../Card.vue'
 import Icon from '../ui/Icon.vue'
 import MarkdownContent from '../MarkdownContent.vue'
-import Textarea from '../ui/Textarea.vue'
+import RefTextarea from '../refs/RefTextarea.vue'
 import { caretTarget, withCaretInsert } from '../../utils/caret'
 import { imageFilesFrom } from '../../utils/imageFiles'
 import { SPEC_ANCHOR } from '../../utils/featureLinks'
@@ -44,6 +44,8 @@ const props = defineProps({
   tracked: { type: Boolean, default: false },
   tracker: { type: String, default: '' },
   externalUrl: { type: String, default: null },
+  // The feature's project: what an `@` in the spec searches first.
+  project: { type: Number, default: null },
 })
 const emit = defineEmits(['saved'])
 
@@ -154,10 +156,10 @@ async function onDrop(e) {
     </div>
 
     <template v-if="editing && !tracked">
-      <Textarea
+      <RefTextarea
         v-show="!previewing"
         ref="area"
-        v-model="draft" :rows="14" class="fs-area" spellcheck="false"
+        v-model="draft" :project="project" :rows="14" class="fs-area" spellcheck="false"
         aria-label="Feature spec markdown" data-testid="feature-spec-input"
         @paste="onPaste"
         @dragover.prevent

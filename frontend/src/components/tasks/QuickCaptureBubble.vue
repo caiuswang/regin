@@ -16,7 +16,7 @@ import Dialog from '../ui/Dialog.vue'
 import Input from '../ui/Input.vue'
 import NavIcon from '../NavIcon.vue'
 import TaskImageStrip from './TaskImageStrip.vue'
-import Textarea from '../ui/Textarea.vue'
+import RefTextarea from '../refs/RefTextarea.vue'
 import { imageFilesFrom } from '../../utils/imageFiles'
 import { TITLE_MAX } from '../../composables/useTasks.js'
 import { useFlash } from '../../composables/useFlash.js'
@@ -164,10 +164,11 @@ async function submit() {
         <label class="field-label" for="quick-capture-body">
           Details <span class="font-normal text-slate-400">(optional)</span>
         </label>
-        <Textarea
+        <RefTextarea
           id="quick-capture-body"
           ref="bodyArea"
           v-model="draft.body"
+          :project="shellProjectId()"
           :rows="3"
           aria-label="Idea details"
           @keydown.enter.meta.prevent="submit"
