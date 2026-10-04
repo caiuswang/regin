@@ -191,12 +191,15 @@ def test_launch_envelope_parity(monkeypatch):
     monkeypatch.setattr(run_prompt, "_tracker_block", lambda feature: "<T>")
     monkeypatch.setattr(run_prompt, "_followup_block", lambda task_id: "<U>")
     monkeypatch.setattr(run_prompt, "_feature_block", lambda task: "<F>")
+    monkeypatch.setattr(run_prompt, "_references_block",
+                        lambda task, feature: "<R>")
     monkeypatch.setattr(run_prompt, "_finish_block",
                         lambda run_id, linked=False, base="", task_id=None: "<D>")
     task = {"id": 1, "title": "t", "body": "the idea", "feature_id": None}
     params = {"skill": {"name": "goal-verified", "args": "go"}}
     assert (runs._prompt(task, 7, params)
-            == "/goal-verified go\n\nthe idea" + "<T>" + "<U>" + "<F>" + "<D>")
+            == "/goal-verified go\n\nthe idea" + "<T>" + "<U>" + "<F>" + "<R>"
+            + "<D>")
 
 
 def test_launch_envelope_parity_empty_blocks(monkeypatch):

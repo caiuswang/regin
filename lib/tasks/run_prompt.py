@@ -12,6 +12,7 @@ from lib.agent_sdk import worktree
 from lib.comments import store as comments
 from lib.orm.models.comments import RESOLUTION_OPEN, SUBJECT_TASK
 from lib.orm.models.tasks import TASK_KIND_SPEC
+from lib.refs.grammar import RefError, format_label, parse_refs
 from lib.settings import settings
 from lib.tasks import images
 from lib.tasks.integrations import registry
@@ -23,6 +24,9 @@ PROMPT_MAX = 8000
 # A comment is already capped at `COMMENT_BODY_MAX`, but the number of threads
 # is not, so an unresolved conversation could otherwise crowd out the task.
 FOLLOWUP_MAX = 8000
+
+
+REFERENCES_MAX = 20
 
 
 _LAUNCH_DEFAULTS: dict = {"cwd": None, "model": "", "effort": "",
@@ -284,6 +288,96 @@ def _spec_block(task: dict) -> str:
                                  "--file", "-")})
 
 
+def _cited_refs(task: dict, feature) -> list[str]:
+    """Every reference the task body cites, then each one its feature's spec
+    adds, once, in order of first appearance.
+
+    The whole body is read, not its `PROMPT_MAX` cut: a reference past the cut
+    is the one whose text the run never sees, so its line is the only trace of
+    it the run gets.
+    """
+    spec = feature.body if feature is not None else None
+    cited = (ref.ref for text in (task.get("body"), spec)
+             for ref in parse_refs(text))
+    return list(dict.fromkeys(cited))
+
+
+def _project_of(task: dict, feature) -> Optional[int]:
+    if task.get("project_id") is not None:
+        return task["project_id"]
+    return feature.project_id if feature is not None else None
+
+
+def _resolved(refs: list[str], project_id: Optional[int]) -> dict:
+    """`resolve_refs` for the run's own agent, which reads sessions as the
+    operator does."""
+    from lib.refs.resolve import resolve_refs  # noqa: PLC0415
+
+    try:
+        return resolve_refs(refs, project_id=project_id,
+                            can_read_sessions=True)
+    except RefError:
+        # A project id carries no foreign key. A repo dropped since the task
+        # was filed only unscopes its file lines; it must not stop the launch.
+        return resolve_refs(refs, can_read_sessions=True)
+
+
+def _read_command(kind: str, key: str) -> str:
+    argv = {"feature": ("feature", "spec", key),
+            "task": ("task", "show", key),
+            "session": ("trace", "dump", key, "--index"),
+            "memory": ("memory", "read", key)}.get(kind)
+    return _cli_command(*argv) if argv else ""
+
+
+def _reference_line(ref: str, item: Optional[dict]) -> str:
+    """One reference as the run reads it: what it is now, and how to read the
+    rest. A defect has no read command, so its line carries the symptom whole.
+    """
+    if item is None:
+        return f"- {ref} — not found"
+    kind = item["kind"]
+    if kind == "file":
+        where = f" in project {item['project']}" if item["project"] else ""
+        return " ".join(f"- file {item['title']}{where}".splitlines())
+    title = " ".join(item["title"].split())
+    head = format_label(kind, item["key"]) + (f" 「{title}」" if title else "")
+    facts = [kind]
+    if item["status"]:
+        facts.append(("stage " if kind == "feature" else "status ")
+                     + item["status"])
+    if kind == "defect" and item["feature_id"] is not None:
+        facts.append(f"feature #{item['feature_id']}")
+    read = _read_command(kind, item["key"])
+    return f"- {head} — {', '.join(facts)}" + (f" — read: {read}" if read
+                                               else "")
+
+
+def _references_block(task: dict, feature) -> str:
+    """The `<references>` instruction: what the task and its feature's spec
+    point at, resolved at launch rather than copied, so it cannot drift from
+    what it names.
+
+    Empty — not an empty block — when nothing is cited, so such a run carries
+    the prompt it always did.
+    """
+    refs = _cited_refs(task, feature)
+    if not refs:
+        return ""
+    from lib.prompts import render_surface  # noqa: PLC0415
+    from lib.prompts.surfaces.tasks import (  # noqa: PLC0415
+        REFERENCES_SURFACE_ID)
+
+    shown = refs[:REFERENCES_MAX]
+    items = _resolved(shown, _project_of(task, feature))
+    lines = [_reference_line(ref, items.get(ref)) for ref in shown]
+    more = len(refs) - len(shown)
+    if more:
+        lines.append(f"… and {more} more reference{'' if more == 1 else 's'}")
+    return "\n\n" + render_surface(REFERENCES_SURFACE_ID,
+                                   {"lines": "\n".join(lines)})
+
+
 def _prompt(task: dict, run_id: int, params: Optional[dict] = None) -> str:
     """The sentence a run is launched with, plus how to report it finished.
 
@@ -332,6 +426,7 @@ def _prompt(task: dict, run_id: int, params: Optional[dict] = None) -> str:
         "followup": _followup_block(task["id"]),
         "feature": _feature_block(task),
         "spec": _spec_block(task),
+        "references": _references_block(task, feature),
         "finish": finish})
     # An envelope edited to drop `{{finish}}` renders fine — a *missing*
     # placeholder is not a render error, so `render_surface` never falls back —
