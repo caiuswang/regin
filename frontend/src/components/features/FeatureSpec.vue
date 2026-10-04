@@ -166,7 +166,7 @@ async function onDrop(e) {
         @drop="onDrop"
       />
       <MarkdownContent
-        v-if="previewing" class="fs-body" :markdown="draftRendered"
+        v-if="previewing" class="fs-body" :markdown="draftRendered" refs :project="project"
         data-testid="feature-spec-preview-pane"
       />
       <p class="fs-hint">
@@ -182,7 +182,10 @@ async function onDrop(e) {
       <p v-if="tracked" class="fs-hint" data-testid="feature-spec-tracked-hint">
         The text of the {{ trackerLabel }} issue. Refresh on the stage line pulls it again.
       </p>
-      <MarkdownContent v-if="body" class="fs-body" :markdown="rendered" />
+      <MarkdownContent
+        v-if="body" class="fs-body" :markdown="rendered" refs :project="project"
+        data-testid="feature-spec-body"
+      />
       <p v-else class="fs-empty" data-testid="feature-spec-empty">
         Declared with no spec. Without one there is nothing for the acceptance
         list to be checked against.

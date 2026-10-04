@@ -10,6 +10,7 @@
 import { nextTick, onMounted, ref, watch } from 'vue'
 import Icon from '../ui/Icon.vue'
 import { KIND_LABELS } from '../../composables/useRefMentions.js'
+import { REF_GLYPHS as GLYPHS, shortKey } from './refDisplay.js'
 
 const props = defineProps({
   listId: { type: String, required: true },
@@ -25,11 +26,6 @@ const props = defineProps({
 })
 defineEmits(['pick', 'hover', 'drill'])
 
-const GLYPHS = {
-  feature: 'flag', task: 'list-checks', defect: 'alert-triangle',
-  session: 'terminal', file: 'file', memory: 'archive',
-}
-const PREFIX = { feature: 'F', task: 'T', defect: 'D', session: 'S', memory: 'M' }
 const GAP = 4
 const EDGE = 8
 const NARROW = 640
@@ -38,12 +34,6 @@ const root = ref(null)
 
 const optionId = (index) => `${props.listId}-opt-${index}`
 const headId = (section) => `${props.listId}-head-${section.key}`
-
-function shortKey(item) {
-  if (item.kind === 'file') return item.title || item.key
-  const key = item.kind === 'session' || item.kind === 'memory' ? item.key.slice(0, 8) : item.key
-  return `${PREFIX[item.kind]}${key}`
-}
 
 function foreign(item) {
   return item.project && item.project_id !== props.project
