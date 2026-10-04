@@ -11,10 +11,11 @@ from lib.trace.session_tags import (
 )
 from lib.orm import SessionLocal
 from lib.orm.models import (
-    PlanSession, Session as SessionModel, SessionRepo, SessionSpan,
+    PlanSession, Session as SessionModel, SessionRepo,
 )
 from lib.utils.pagination import clamp_size, keyset_page_stmt
 from lib.trace.alias import aliased_run_ids
+from lib.trace.session_search import search_clause
 from web.blueprints.trace import trace_bp
 from web.blueprints.trace.sessions.phase import _owned_run_phase
 
@@ -486,28 +487,6 @@ def _session_list_kind():
     return 'all' if include_tests else 'real'
 
 
-def _search_clause(search, scope):
-    from sqlalchemy import func as _func, or_ as _or
-    from sqlmodel import select as _select
-    # COLLATE NOCASE via .ilike on SQLite; for MySQL the default
-    # collation already matches case-insensitively on varchar columns.
-    title_clause = SessionModel.title.ilike(f"%{search}%")
-    # Substring match on the `text` attribute of `prompt` spans.
-    # json_extract isolates the field so a hit on (say) a tool
-    # input that happens to contain the term doesn't pollute the
-    # result set. SQLite 3.38+ ships json1 by default.
-    prompt_clause = SessionModel.trace_id.in_(
-        _select(SessionSpan.trace_id)
-        .where(SessionSpan.name == 'prompt')
-        .where(
-            _func.json_extract(SessionSpan.attributes, '$.text')
-            .ilike(f"%{search}%")
-        )
-    )
-    return {'title': title_clause, 'prompt': prompt_clause}.get(
-        scope, _or(title_clause, prompt_clause))
-
-
 _KIND_IS_TEST = {'real': 0, 'test': 1}
 
 
@@ -574,7 +553,7 @@ class _SessionListQuery:
         if self.active_filter != 'all':
             s = s.where(_session_active_clause(self.active_filter == 'active'))
         if self.search:
-            s = s.where(_search_clause(self.search, self.scope))
+            s = s.where(search_clause(self.search, self.scope))
         if not skip_date:
             s = self._apply_dates(s)
         if skip_repo:

@@ -1,0 +1,577 @@
+{
+  "parse": [
+    {
+      "name": "01 a plain reference",
+      "text": "builds on [F128 regin未来AI工作台的宣传电影](feature:128) today",
+      "refs": [
+        {
+          "ref": "feature:128",
+          "label": "F128 regin未来AI工作台的宣传电影"
+        }
+      ]
+    },
+    {
+      "name": "02 escaped [ ] in a label",
+      "text": "see [T5 fix \\[x\\] now](task:5)",
+      "refs": [
+        {
+          "ref": "task:5",
+          "label": "T5 fix [x] now"
+        }
+      ]
+    },
+    {
+      "name": "03 escaped < > & ` in a label",
+      "text": "[F7 \\<img src=x\\> \\& \\`x\\`](feature:7)",
+      "refs": [
+        {
+          "ref": "feature:7",
+          "label": "F7 <img src=x> & `x`"
+        }
+      ]
+    },
+    {
+      "name": "04 an image is not a reference",
+      "text": "![shot](image:1) and ![F1 a](feature:1)",
+      "refs": []
+    },
+    {
+      "name": "05 inline code",
+      "text": "see `[F1 a](feature:1)` and [F2 b](feature:2)",
+      "refs": [
+        {
+          "ref": "feature:2",
+          "label": "F2 b"
+        }
+      ]
+    },
+    {
+      "name": "06 fenced code",
+      "text": "```md\n[F1 a](feature:1)\n```\n[F2 b](feature:2)\n~~~\n[F3 c](feature:3)\n~~~\n",
+      "refs": [
+        {
+          "ref": "feature:2",
+          "label": "F2 b"
+        }
+      ]
+    },
+    {
+      "name": "07 an unknown kind",
+      "text": "[x](widget:1) [y](Feature:1) [z](image:2) [w](http://x/features/1)",
+      "refs": []
+    },
+    {
+      "name": "08 a malformed or zero id",
+      "text": "[a](feature:0) [b](task:01) [c](defect:12345678901) [d](feature:1a) [e](feature:) [f](task:-1)",
+      "refs": []
+    },
+    {
+      "name": "09 a percent-encoded file path",
+      "text": "[docs/a b.md](file:docs/a%20b.md) and [中文/说明(1).md](file:%E4%B8%AD%E6%96%87/%E8%AF%B4%E6%98%8E%281%29.md)",
+      "refs": [
+        {
+          "ref": "file:docs/a%20b.md",
+          "label": "docs/a b.md"
+        },
+        {
+          "ref": "file:%E4%B8%AD%E6%96%87/%E8%AF%B4%E6%98%8E%281%29.md",
+          "label": "中文/说明(1).md"
+        }
+      ]
+    },
+    {
+      "name": "10 a file with a .. segment",
+      "text": "[x](file:../etc/passwd) [y](file:a/../b) [z](file:%2E%2E/b) [w](file:./a)",
+      "refs": []
+    },
+    {
+      "name": "11 an absolute file path",
+      "text": "[x](file:/etc/passwd) [y](file:%2Fetc/passwd) [z](file:a//b) [v](file:a/)",
+      "refs": []
+    },
+    {
+      "name": "12 a session id",
+      "text": "[S3fd8137e first prompt](session:3fd8137e-e0fd-4a5b-9c1d-0123456789ab) [S short](session:abc1234)",
+      "refs": [
+        {
+          "ref": "session:3fd8137e-e0fd-4a5b-9c1d-0123456789ab",
+          "label": "S3fd8137e first prompt"
+        }
+      ]
+    },
+    {
+      "name": "13 a 32-hex memory id",
+      "text": "[M8866e26a t](memory:8866e26ad9fa4f7abccd291a9a5d71af) [M up](memory:8866E26AD9FA4F7ABCCD291A9A5D71AF) [M short](memory:8866e26a)",
+      "refs": [
+        {
+          "ref": "memory:8866e26ad9fa4f7abccd291a9a5d71af",
+          "label": "M8866e26a t"
+        }
+      ]
+    },
+    {
+      "name": "14 two references on one line",
+      "text": "[F1 a](feature:1), [T2 b](task:2)",
+      "refs": [
+        {
+          "ref": "feature:1",
+          "label": "F1 a"
+        },
+        {
+          "ref": "task:2",
+          "label": "T2 b"
+        }
+      ]
+    },
+    {
+      "name": "15 a duplicate reference is returned twice",
+      "text": "[F1 a](feature:1) then [F1 a](feature:1) again",
+      "refs": [
+        {
+          "ref": "feature:1",
+          "label": "F1 a"
+        },
+        {
+          "ref": "feature:1",
+          "label": "F1 a"
+        }
+      ]
+    },
+    {
+      "name": "16 CJK on both sides",
+      "text": "基于[F125 二期设计](feature:125)继续，修复[D228 侧分支](defect:228)。",
+      "refs": [
+        {
+          "ref": "feature:125",
+          "label": "F125 二期设计"
+        },
+        {
+          "ref": "defect:228",
+          "label": "D228 侧分支"
+        }
+      ]
+    },
+    {
+      "name": "17 a bare regin url and an autolink are not references",
+      "text": "http://localhost:8321/features/1 <feature:1> <http://localhost:8321/tasks/2> feature:3",
+      "refs": []
+    },
+    {
+      "name": "18 a link with a title part is not a reference",
+      "text": "[x](feature:1 \"t\") [y](feature:2 't') [z](feature:3 (t))",
+      "refs": []
+    },
+    {
+      "name": "19 an escaped opening bracket",
+      "text": "\\[F1 a](feature:1) but \\\\[F2 b](feature:2)",
+      "refs": [
+        {
+          "ref": "feature:2",
+          "label": "F2 b"
+        }
+      ]
+    },
+    {
+      "name": "20 an unclosed fence runs to the end",
+      "text": "[F1 a](feature:1)\n```\n[F2 b](feature:2)",
+      "refs": [
+        {
+          "ref": "feature:1",
+          "label": "F1 a"
+        }
+      ]
+    },
+    {
+      "name": "21 a tilde fence is not closed by backticks",
+      "text": "~~~\n```\n[F1 a](feature:1)\n~~~\n[F2 b](feature:2)",
+      "refs": [
+        {
+          "ref": "feature:2",
+          "label": "F2 b"
+        }
+      ]
+    },
+    {
+      "name": "22 a shorter closing fence does not close",
+      "text": "````\n```\n[F1 a](feature:1)\n````\n[F2 b](feature:2)",
+      "refs": [
+        {
+          "ref": "feature:2",
+          "label": "F2 b"
+        }
+      ]
+    },
+    {
+      "name": "23 a backtick info string with a backtick is not a fence",
+      "text": "``` a`b\n[F1 a](feature:1)",
+      "refs": [
+        {
+          "ref": "feature:1",
+          "label": "F1 a"
+        }
+      ]
+    },
+    {
+      "name": "24 a double-backtick code span",
+      "text": "``a ` [F1 x](feature:1)`` [F2 b](feature:2)",
+      "refs": [
+        {
+          "ref": "feature:2",
+          "label": "F2 b"
+        }
+      ]
+    },
+    {
+      "name": "25 a lone backtick is literal",
+      "text": "a ` [F1 a](feature:1)",
+      "refs": [
+        {
+          "ref": "feature:1",
+          "label": "F1 a"
+        }
+      ]
+    },
+    {
+      "name": "26 escaped backticks open no code",
+      "text": "\\`[F1 a](feature:1)\\`",
+      "refs": [
+        {
+          "ref": "feature:1",
+          "label": "F1 a"
+        }
+      ]
+    },
+    {
+      "name": "27 a code span crossing a reference",
+      "text": "[F1 a`b](feature:1)` [F2 b](feature:2)",
+      "refs": [
+        {
+          "ref": "feature:2",
+          "label": "F2 b"
+        }
+      ]
+    },
+    {
+      "name": "28 a code span across lines of one paragraph",
+      "text": "`a\n[F1 a](feature:1)` [F2 b](feature:2)",
+      "refs": [
+        {
+          "ref": "feature:2",
+          "label": "F2 b"
+        }
+      ]
+    },
+    {
+      "name": "29 a code span does not cross a blank line",
+      "text": "`a\n\n[F1 a](feature:1)` [F2 b](feature:2)",
+      "refs": [
+        {
+          "ref": "feature:1",
+          "label": "F1 a"
+        },
+        {
+          "ref": "feature:2",
+          "label": "F2 b"
+        }
+      ]
+    },
+    {
+      "name": "30 non-canonical file keys",
+      "text": "[a](file:a%2fb) [b](file:%41.md) [c](file:a%2Fb) [d](file:%FF.md) [e](file:docs/a%20b.md) [f](file:x.md) [g](file:a~b_c-d.e)",
+      "refs": [
+        {
+          "ref": "file:docs/a%20b.md",
+          "label": "e"
+        },
+        {
+          "ref": "file:x.md",
+          "label": "f"
+        },
+        {
+          "ref": "file:a~b_c-d.e",
+          "label": "g"
+        }
+      ]
+    },
+    {
+      "name": "31 astral characters before a reference",
+      "text": "🙂🙂 [F1 a](feature:1) 🙂",
+      "refs": [
+        {
+          "ref": "feature:1",
+          "label": "F1 a"
+        }
+      ]
+    },
+    {
+      "name": "32 nested brackets are not a reference",
+      "text": "[a [b] c](feature:1)",
+      "refs": []
+    },
+    {
+      "name": "33 an empty label",
+      "text": "[](feature:1)",
+      "refs": [
+        {
+          "ref": "feature:1",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "name": "34 unescaping keeps a backslash before a non-punctuation character",
+      "text": "[F1 a\\b \\* c](feature:1)",
+      "refs": [
+        {
+          "ref": "feature:1",
+          "label": "F1 a\\b * c"
+        }
+      ]
+    },
+    {
+      "name": "35 CRLF fences",
+      "text": "```\r\n[F1 a](feature:1)\r\n```\r\n[F2 b](feature:2)",
+      "refs": [
+        {
+          "ref": "feature:2",
+          "label": "F2 b"
+        }
+      ]
+    },
+    {
+      "name": "36 a fence indented three spaces is a fence",
+      "text": "   ```\n[F1 a](feature:1)\n   ```\n[F2 b](feature:2)",
+      "refs": [
+        {
+          "ref": "feature:2",
+          "label": "F2 b"
+        }
+      ]
+    },
+    {
+      "name": "37 a CR before a CRLF ends the fence line",
+      "text": "~~~\r\r\n[a](feature:1)\r\r\n~~~",
+      "refs": []
+    },
+    {
+      "name": "38 a line separator inside an info string",
+      "text": "~~~ x y\n[a](feature:1)\n~~~",
+      "refs": []
+    },
+    {
+      "name": "39 a paragraph separator after the info string",
+      "text": "```js \n[a](feature:1)\n```",
+      "refs": []
+    },
+    {
+      "name": "40 a lone CR ends the fence line",
+      "text": "~~~ a\rb\n[a](feature:1)\n~~~",
+      "refs": []
+    },
+    {
+      "name": "41 lone CR line endings throughout",
+      "text": "```\r[F1 a](feature:1)\r```\r[F2 b](feature:2)",
+      "refs": [
+        {
+          "ref": "feature:2",
+          "label": "F2 b"
+        }
+      ]
+    },
+    {
+      "name": "42 a fence inside a block quote",
+      "text": "> ~~~\n> [a](feature:1)\n> ~~~\n[F2 b](feature:2)",
+      "refs": [
+        {
+          "ref": "feature:2",
+          "label": "F2 b"
+        }
+      ]
+    },
+    {
+      "name": "43 an unclosed fence inside a block quote",
+      "text": "> ```\n> [a](feature:1)",
+      "refs": []
+    },
+    {
+      "name": "44 a longer closing fence inside a block quote",
+      "text": "> ```\n> [a](feature:1)\n> ````",
+      "refs": []
+    },
+    {
+      "name": "45 a line outside the quote ends the quoted fence",
+      "text": "> ~~~\n[F2 b](feature:2)\n> ~~~",
+      "refs": [
+        {
+          "ref": "feature:2",
+          "label": "F2 b"
+        }
+      ]
+    },
+    {
+      "name": "46 a deeper quote inside a quoted fence is code",
+      "text": "> ~~~\n> > [a](feature:1)\n> ~~~",
+      "refs": []
+    },
+    {
+      "name": "47 a doubly quoted fence, then the outer quote",
+      "text": "> > ```\n> > [a](feature:1)\n> > ```\n> [F2 b](feature:2)",
+      "refs": [
+        {
+          "ref": "feature:2",
+          "label": "F2 b"
+        }
+      ]
+    },
+    {
+      "name": "48 a quote marker without its space",
+      "text": ">~~~\n>[a](feature:1)\n>~~~\n[F2 b](feature:2)",
+      "refs": [
+        {
+          "ref": "feature:2",
+          "label": "F2 b"
+        }
+      ]
+    },
+    {
+      "name": "49 a tab after the quote marker opens a quoted fence",
+      "text": ">\t~~~\n>\tx [a](feature:1)",
+      "refs": []
+    },
+    {
+      "name": "50 a quoted fence closed, then a nested quote",
+      "text": ">\t~~~\n>~~~\n> > x [a](feature:1)",
+      "refs": [
+        {
+          "ref": "feature:1",
+          "label": "a"
+        }
+      ]
+    }
+  ],
+  "format": [
+    {
+      "kind": "feature",
+      "key": "128",
+      "title": "regin未来AI工作台的宣传电影",
+      "ref": "[F128 regin未来AI工作台的宣传电影](feature:128)"
+    },
+    {
+      "kind": "feature",
+      "key": "7",
+      "title": "<img src=x onerror=window.__pwned=1> & `code` [x] \\ y",
+      "ref": "[F7 \\<img src=x onerror=window.__pwned=1\\> \\& \\`code\\` \\[x\\] \\\\ y](feature:7)"
+    },
+    {
+      "kind": "task",
+      "key": "310",
+      "title": "line one\nline two\r\nthree",
+      "ref": "[T310 line one line two three](task:310)"
+    },
+    {
+      "kind": "defect",
+      "key": "228",
+      "title": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx yyyyyyyyyy",
+      "ref": "[D228 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…](defect:228)"
+    },
+    {
+      "kind": "session",
+      "key": "3fd8137e-e0fd-4a5b-9c1d-0123456789ab",
+      "title": "Fix the bug",
+      "ref": "[S3fd8137e Fix the bug](session:3fd8137e-e0fd-4a5b-9c1d-0123456789ab)"
+    },
+    {
+      "kind": "memory",
+      "key": "8866e26ad9fa4f7abccd291a9a5d71af",
+      "title": "A key an autocomplete consumed must stopPropagation",
+      "ref": "[M8866e26a A key an autocomplete consumed must stopPropagation](memory:8866e26ad9fa4f7abccd291a9a5d71af)"
+    },
+    {
+      "kind": "file",
+      "key": "frontend/src/a%20b%281%29.md",
+      "title": "",
+      "ref": "[frontend/src/a b(1).md](file:frontend/src/a%20b%281%29.md)"
+    },
+    {
+      "kind": "file",
+      "key": "docs/%60x%60.md",
+      "title": "ignored",
+      "ref": "[docs/\\`x\\`.md](file:docs/%60x%60.md)"
+    },
+    {
+      "kind": "feature",
+      "key": "12",
+      "title": "",
+      "ref": "[F12](feature:12)"
+    },
+    {
+      "kind": "feature",
+      "key": "1",
+      "title": "🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂",
+      "ref": "[F1 🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂…](feature:1)"
+    },
+    {
+      "kind": "feature",
+      "key": "3",
+      "title": "  \tpadded\t ",
+      "ref": "[F3 padded](feature:3)"
+    }
+  ],
+  "file_keys": [
+    {
+      "path": "docs/a b.md",
+      "key": "docs/a%20b.md"
+    },
+    {
+      "path": "中文/说明(1).md",
+      "key": "%E4%B8%AD%E6%96%87/%E8%AF%B4%E6%98%8E%281%29.md"
+    },
+    {
+      "path": "a!b*c'd~e_f-g.h",
+      "key": "a%21b%2Ac%27d~e_f-g.h"
+    },
+    {
+      "path": "x/.hidden",
+      "key": "x/.hidden"
+    },
+    {
+      "path": "../x",
+      "key": null
+    },
+    {
+      "path": "/abs",
+      "key": null
+    },
+    {
+      "path": "a//b",
+      "key": null
+    },
+    {
+      "path": "",
+      "key": null
+    },
+    {
+      "path": "a/./b",
+      "key": null
+    },
+    {
+      "path": "a/",
+      "key": null
+    }
+  ],
+  "bad_file_keys": [
+    "a%2fb",
+    "%41.md",
+    "a%2Fb",
+    "%FF.md",
+    "..",
+    "a/./b",
+    "/a",
+    "a/",
+    "%2E%2E",
+    "%2e",
+    "a b",
+    "a%2",
+    "a%C0%AE"
+  ]
+}
