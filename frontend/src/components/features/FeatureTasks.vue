@@ -21,7 +21,7 @@ import Card from '../Card.vue'
 import Icon from '../ui/Icon.vue'
 import Input from '../ui/Input.vue'
 import Select from '../ui/Select.vue'
-import Textarea from '../ui/Textarea.vue'
+import RefTextarea from '../refs/RefTextarea.vue'
 import TaskKindChip from '../tasks/TaskKindChip.vue'
 import TaskStatusIcon from '../tasks/TaskStatusIcon.vue'
 import { TASKS_ANCHOR } from '../../utils/featureLinks'
@@ -181,9 +181,9 @@ async function submit() {
       <label class="ft-label" :for="`ft-step-${featureId}`">
         Instructions (optional)
       </label>
-      <Textarea
+      <RefTextarea
         :id="`ft-step-${featureId}`"
-        v-model="stepBody" :rows="3" :disabled="busy"
+        v-model="stepBody" :project="props.projectId" :rows="3" :disabled="busy"
         :placeholder="stepKind === 'spec' ? 'what the spec must settle' : 'what the build must respect'"
         data-testid="feature-step-body"
       />

@@ -15,7 +15,7 @@ import Dialog from '../ui/Dialog.vue'
 import Input from '../ui/Input.vue'
 import Select from '../ui/Select.vue'
 import TaskImageStrip from './TaskImageStrip.vue'
-import Textarea from '../ui/Textarea.vue'
+import RefTextarea from '../refs/RefTextarea.vue'
 import { PRIORITIES } from '../../utils/taskMeta.js'
 import { TITLE_MAX, emptyDraft, useTaskMutations }
   from '../../composables/useTasks.js'
@@ -130,7 +130,10 @@ function reset() {
         <label class="field-label" for="task-body">
           Details <span class="font-normal text-slate-400">(optional)</span>
         </label>
-        <Textarea id="task-body" ref="bodyArea" v-model="draft.body" :rows="4" />
+        <RefTextarea
+          id="task-body" ref="bodyArea" v-model="draft.body"
+          :project="draft.project_id" :rows="4"
+        />
       </div>
       <div class="tc-row">
         <div class="tc-col">

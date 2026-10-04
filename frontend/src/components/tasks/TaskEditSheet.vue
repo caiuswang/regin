@@ -14,7 +14,7 @@ import FeaturePicker from '../pipeline/FeaturePicker.vue'
 import Input from '../ui/Input.vue'
 import Select from '../ui/Select.vue'
 import TaskImageStrip from './TaskImageStrip.vue'
-import Textarea from '../ui/Textarea.vue'
+import RefTextarea from '../refs/RefTextarea.vue'
 import { PRIORITIES } from '../../utils/taskMeta.js'
 import { imageFilesFrom } from '../../utils/imageFiles'
 import { useProjects } from '../../composables/useProjects.js'
@@ -110,10 +110,11 @@ async function submit() {
       </div>
       <div>
         <label class="field-label" for="task-edit-body">Details</label>
-        <Textarea
+        <RefTextarea
           id="task-edit-body"
           ref="bodyArea"
           v-model="draft.body"
+          :project="draft.project_id"
           :rows="4"
           aria-label="Task details"
         />

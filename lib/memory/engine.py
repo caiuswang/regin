@@ -13,6 +13,7 @@ file survives `regin init` / `rebuild` and dodges the schema-drift trap).
 from __future__ import annotations
 
 import os
+import threading
 from typing import Optional
 
 from sqlalchemy import Engine, text as sa_text
@@ -65,6 +66,10 @@ _RENAME_MIGRATIONS = (
 _memory_engine: Optional[Engine] = None
 _memory_engine_url: Optional[str] = None
 _MemorySessionFactory: Optional[sessionmaker] = None
+# Web requests run on threads. Unguarded, a second request arriving while the
+# first was still creating the schema saw the engine already published and
+# its session factory still None.
+_engine_lock = threading.RLock()
 
 
 def memory_db_path() -> str:
@@ -141,18 +146,19 @@ def get_memory_engine() -> Engine:
     (tests monkeypatch `settings.agent_memory.db_path` per case)."""
     global _memory_engine, _memory_engine_url, _MemorySessionFactory
     url = _resolve_memory_url()
-    if _memory_engine is None or _memory_engine_url != url:
-        if _memory_engine is not None:
-            _memory_engine.dispose()
-        os.makedirs(os.path.dirname(memory_db_path()), exist_ok=True)
-        _memory_engine = _build_engine(url)
-        _memory_engine_url = url
-        _init_memory_schema(_memory_engine)
-        _MemorySessionFactory = sessionmaker(
-            bind=_memory_engine, class_=Session,
-            autoflush=False, expire_on_commit=False, future=True,
-        )
-    return _memory_engine
+    with _engine_lock:
+        if _memory_engine is None or _memory_engine_url != url:
+            if _memory_engine is not None:
+                _memory_engine.dispose()
+            os.makedirs(os.path.dirname(memory_db_path()), exist_ok=True)
+            _memory_engine = _build_engine(url)
+            _memory_engine_url = url
+            _init_memory_schema(_memory_engine)
+            _MemorySessionFactory = sessionmaker(
+                bind=_memory_engine, class_=Session,
+                autoflush=False, expire_on_commit=False, future=True,
+            )
+        return _memory_engine
 
 
 def MemorySessionLocal() -> Session:
@@ -166,11 +172,12 @@ def MemorySessionLocal() -> Session:
 def dispose_memory_engine() -> None:
     """Tear down the cached engine + pool. Primarily for tests."""
     global _memory_engine, _memory_engine_url, _MemorySessionFactory
-    if _memory_engine is not None:
-        _memory_engine.dispose()
-    _memory_engine = None
-    _memory_engine_url = None
-    _MemorySessionFactory = None
+    with _engine_lock:
+        if _memory_engine is not None:
+            _memory_engine.dispose()
+        _memory_engine = None
+        _memory_engine_url = None
+        _MemorySessionFactory = None
 
 
 __all__ = [

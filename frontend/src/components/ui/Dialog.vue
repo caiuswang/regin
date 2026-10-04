@@ -18,6 +18,14 @@ defineProps({
   // a horizontal-scroll ribbon.
   wide: { type: Boolean, default: false },
 })
+
+// A `[data-ref-menu]` popup is teleported to <body> from a field inside this
+// dialog, so reka reads a click on it as a click outside and dismisses the
+// dialog, and the draft with it.
+function keepForRefMenu(event) {
+  const target = event.detail?.originalEvent?.target ?? event.target
+  if (target instanceof Element && target.closest('[data-ref-menu]')) event.preventDefault()
+}
 </script>
 
 <template>
@@ -31,6 +39,9 @@ defineProps({
         class="ds-dialog"
         :class="{ 'ds-dialog-wide': wide }"
         @open-auto-focus.prevent="$emit('open-auto-focus', $event)"
+        @pointer-down-outside="keepForRefMenu"
+        @focus-outside="keepForRefMenu"
+        @interact-outside="keepForRefMenu"
       >
         <DialogTitle v-if="title" class="ds-dialog-title">{{ title }}</DialogTitle>
         <DialogDescription v-if="description" class="ds-dialog-desc">

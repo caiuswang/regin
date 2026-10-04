@@ -19,9 +19,9 @@ import api from '../../api'
 import Button from '../ui/Button.vue'
 import Dialog from '../ui/Dialog.vue'
 import Input from '../ui/Input.vue'
+import RefTextarea from '../refs/RefTextarea.vue'
 import Select from '../ui/Select.vue'
 import TaskImageStrip from '../tasks/TaskImageStrip.vue'
-import Textarea from '../ui/Textarea.vue'
 import { useAttachedImages } from '../../composables/useAttachedImages.js'
 import { carriedProject, projectOptions, useProjects }
   from '../../composables/useProjects.js'
@@ -193,10 +193,11 @@ async function declare() {
         />
 
         <label class="nf-label" for="nf-body">Spec</label>
-        <Textarea
+        <RefTextarea
           id="nf-body"
           ref="bodyArea"
           v-model="body"
+          :project="projectId"
           data-testid="declare-body"
           :rows="8"
           placeholder="Intent, non-goals, and the acceptance items — as test names"
