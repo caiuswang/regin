@@ -140,14 +140,17 @@ async function onDrop(e) {
         @drop="onDrop"
       />
       <MarkdownContent
-        v-if="previewing" class="tbe-body" :markdown="draftRendered"
-        data-testid="task-body-preview-pane"
+        v-if="previewing" class="tbe-body" :markdown="draftRendered" refs
+        :project="task.project_id" data-testid="task-body-preview-pane"
       />
       <p class="tbe-hint">Markdown. {{ IMAGE_REF_HINT }} Paste or drop an image here.</p>
       <p v-if="error" class="tbe-error" role="alert" data-testid="task-body-error">{{ error }}</p>
     </template>
 
-    <MarkdownContent v-else-if="task.body" class="tbe-body" :markdown="rendered" />
+    <MarkdownContent
+      v-else-if="task.body" class="tbe-body" :markdown="rendered" refs
+      :project="task.project_id" data-testid="task-body-view"
+    />
     <p v-else class="tbe-empty" data-testid="task-body-empty">
       {{ emptyText || 'No details yet.' }}
     </p>

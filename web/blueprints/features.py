@@ -34,6 +34,7 @@ from lib.features import store as feature_store
 from lib.features import sync as sync_module
 from lib.orm import SessionLocal
 from lib.orm.models.tasks import BODY_MAX
+from lib.refs import backlinks
 from lib.tasks import feature_slices
 from lib.tasks.integrations import IntegrationError
 from lib.tasks.transcribe import TranscribeRefused
@@ -133,6 +134,7 @@ def _ledger_body(feature_id: int) -> dict:
     body["ship_check"] = next_step_module.ship_check(feature_id)
     body["slice_tasks"] = next_step_module.task_facts(
         [feature_id])[feature_id].slices
+    body["referenced_by"] = backlinks.referenced_by(feature_id)
     return body
 
 

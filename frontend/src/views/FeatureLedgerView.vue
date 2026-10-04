@@ -33,6 +33,7 @@ import { reopenMessage, shipMessage } from '../utils/featureConfirm'
 import Button from '../components/ui/Button.vue'
 import Icon from '../components/ui/Icon.vue'
 import DeclareSessionDialog from '../components/features/DeclareSessionDialog.vue'
+import FeatureBacklinks from '../components/features/FeatureBacklinks.vue'
 import FeatureDefects from '../components/features/FeatureDefects.vue'
 import FeatureEvidence from '../components/features/FeatureEvidence.vue'
 import FeatureFigures from '../components/features/FeatureFigures.vue'
@@ -343,6 +344,8 @@ function onDeclared() {
         :project="ledger.project_id"
         @saved="ledger = $event"
       />
+
+      <FeatureBacklinks :items="ledger.referenced_by || []" />
 
       <FeatureSlices
         :feature-id="ledger.id"
