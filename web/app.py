@@ -205,6 +205,10 @@ def create_app(replica: bool = False):
     from web.blueprints.api_keys import api_keys_bp
     app.register_blueprint(api_keys_bp)
 
+    # ── Read-only file viewer (meta + raw bytes, R1-confined) ─────
+    from web.blueprints.files import files_bp
+    app.register_blueprint(files_bp)
+
     # Auth gate installed last so it can validate its allowlist against the
     # fully-registered route table.
     _install_auth_gate(app)
