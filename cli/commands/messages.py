@@ -6,6 +6,8 @@ a row. These commands give a manual cleanup path; `settings.agent_messages.
 retention_days` enforces the same prune automatically after each write.
 
 Subcommands:
+  list   — the inbox feed, newest first (`--unread`, `--json`)
+  read   — mark the given ids read, or `--all`
   stats  — counts (total / unread / dismissed / pinned / test) + oldest row
   prune  — hard-delete rows by age / dismissed / keep-newest-N criteria
 """
@@ -25,6 +27,44 @@ messages_app = typer.Typer(
     help="Inspect and prune the send_to_user inbox (agent_messages)",
     no_args_is_help=True,
 )
+
+
+def _headline(m: dict) -> str:
+    if m["title"]:
+        return m["title"]
+    lines = (m["body"] or "").splitlines()
+    return lines[0][:80] if lines else ""
+
+
+@messages_app.command("list", help="List inbox messages, newest first.")
+def cmd_list(
+    unread: bool = typer.Option(False, "--unread", help="Only unread messages."),
+    limit: int = typer.Option(200, "--limit", help="At most N messages."),
+    json: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    rows = store.list_inbox(unread_only=unread, limit=limit)
+    if json:
+        print(_json.dumps(rows))
+        return
+    if not rows:
+        print("no messages")
+        return
+    for m in rows:
+        mark = " " if m["read_at"] else "*"
+        print(f"{mark} {m['id']:>6}  {m['msg_type']:<8}  "
+              f"{m['created_at'][:19]}  {_headline(m)}")
+
+
+@messages_app.command("read", help="Mark messages read: the given ids, or --all.")
+def cmd_read(
+    ids: Optional[list[int]] = typer.Argument(None, help="Message ids to mark read."),
+    all_: bool = typer.Option(False, "--all", help="Mark every unread message read."),
+) -> None:
+    if bool(ids) == all_:
+        print("error: give message ids or --all (not both)")
+        raise typer.Exit(2)
+    n = store.mark_all_read() if all_ else store.mark_read(ids)
+    print(f"marked {n} message(s) read")
 
 
 @messages_app.command("stats", help="Show inbox counts and the oldest row.")
