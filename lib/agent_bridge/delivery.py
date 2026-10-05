@@ -25,7 +25,7 @@ import re
 import time
 from typing import NamedTuple
 
-from lib.agent_bridge import store
+from lib.agent_bridge import mod_channel, store
 from lib.agent_bridge.answer_delivery import (
     _toggle_multi,
     deliver_answer,
@@ -189,8 +189,9 @@ def deliver_key(trace_id: str, key: str) -> DeliveryResult:
 
 def deliver(trace_id: str, text: str,
             as_command: bool = False) -> DeliveryResult:
-    """Resolve the reachable pane for `trace_id` and deliver `text` under the
-    delivery guards. Structured refusal (never an exception) on every
+    """Deliver `text` to `trace_id` under the delivery guards: a message goes
+    through the session's connected Mod listener when it has one, else (and
+    always for a command) into its reachable tmux pane. Structured refusal (never an exception) on every
     expected failure; every outcome is audited.
 
     `as_command` sends `text` as a slash command instead of as a message —
@@ -205,6 +206,13 @@ def deliver(trace_id: str, text: str,
     clean = sanitize_text(text) if as_command else sanitize_body(text)
     if not clean:
         return _refuse(trace_id, "empty message after sanitization")
+    # A slash command stays on tmux: whether `$.prompt.submit` runs one as a
+    # command rather than sending its text to the model is not yet verified.
+    if not as_command and mod_channel.offer(trace_id, clean):
+        result = DeliveryResult(True, "delivered via mod listener")
+        log.write("bridge_delivery_outcome", trace_id=trace_id,
+                  delivered=True, detail=result.detail, channel="mod")
+        return result
     row = store.get_reachable_pane(trace_id)
     if row is None:
         return _refuse(trace_id, "no reachable session")

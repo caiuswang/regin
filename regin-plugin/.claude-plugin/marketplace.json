@@ -16,6 +16,11 @@
       "name": "regin-band",
       "source": "./plugins/regin-band",
       "description": "Mod: shows the regin send_to_user inbox's unread count above the prompt"
+    },
+    {
+      "name": "regin-bridge",
+      "source": "./plugins/regin-bridge",
+      "description": "Mod: submits the prompts regin's agent bridge delivers to this session, in place of tmux keystrokes"
     }
   ]
 }

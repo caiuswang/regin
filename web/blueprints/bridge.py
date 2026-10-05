@@ -33,12 +33,12 @@ import hmac
 import re
 from functools import wraps
 
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, Response, request, jsonify
 
 from lib.auth import get_current_user, require_editor
 from lib.settings import settings
 from lib.agent_bridge import (store, delivery, commands, files, ansi_html,
-                              attachments, attach)
+                              attachments, attach, mod_channel)
 from lib import agent_sdk, live_session
 
 bridge_bp = Blueprint('bridge', __name__)
@@ -818,6 +818,22 @@ def _known_trace_ids(candidates: list[str]) -> set:
             .where(SessionModel.trace_id.in_(candidates))
         ).all()
     return set(rows)
+
+
+@bridge_bp.route('/api/bridge/listen', methods=['GET'])
+@require_bridge_token
+def api_bridge_listen():
+    """Hold an NDJSON stream of the prompts delivered to `?session_id`.
+
+    The session is a Mod-channel target for exactly as long as this response
+    is being streamed (`lib/agent_bridge/mod_channel.py`).
+    """
+    session_id = request.args.get("session_id")
+    if not session_id:
+        return jsonify({"error": "session_id required"}), 400
+    peer = request.environ.get("werkzeug.socket")
+    return Response(mod_channel.ndjson_stream(session_id, peer),
+                    mimetype="application/x-ndjson")
 
 
 @bridge_bp.route('/api/bridge/sessions', methods=['GET'])
