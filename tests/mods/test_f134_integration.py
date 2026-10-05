@@ -21,9 +21,10 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 INTEGRATION = "f125/integration"
 
-#: The build slices integrate waits on. The tail after it (migrate, verify)
-#: is a pair of checks that may rightly land nothing, so it is not counted.
-BUILD_SLICES = (1, 2, 3)
+#: The build slices the integrate checks wait on: S4 on S1–S3, S11 on S8–S10.
+#: The checks themselves and the tail (migrate, verify) may rightly land
+#: nothing, so they are not counted.
+BUILD_SLICES = (1, 2, 3, 8, 9, 10)
 
 #: `F134 S2: …` (the slice's own commit) or `Merge f134/s2: …` (its merge back).
 LANDED_IN_SUBJECT = re.compile(r"^(?:Merge )?f134[ /]s(\d+)\b", re.IGNORECASE)
