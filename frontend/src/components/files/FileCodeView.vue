@@ -7,58 +7,25 @@ import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import api from '../../api'
 import { useTheme } from '../../composables/useTheme'
 import { rawUrl } from './source'
+import { monacoTheme } from './render'
+import { lineHighlighter, onUserSelection } from './editorLines'
 
 const props = defineProps({
   meta: { type: Object, required: true },
   source: { type: Object, required: true },
   lines: { type: Object, default: null },
 })
-const emit = defineEmits(['failed'])
+const emit = defineEmits(['failed', 'select'])
 
 const host = ref(null)
 const ready = ref(false)
 const error = ref('')
 const editor = shallowRef(null)
-let decorations = null
+let highlight = null
 let monacoApi = null
 let disposed = false
 
 const { theme } = useTheme()
-const monacoTheme = (t) => (t === 'dark' ? 'vs-dark' : 'vs')
-
-function toBufferLine(fileLine) {
-  return fileLine - (props.meta.first_line || 1) + 1
-}
-
-function applyLines() {
-  const ed = editor.value
-  if (!ed || !decorations) return
-  const model = ed.getModel()
-  if (!props.lines || !model) {
-    decorations.clear()
-    return
-  }
-  const count = model.getLineCount()
-  const first = toBufferLine(props.lines.start)
-  const last = toBufferLine(props.lines.end)
-  // An anchor outside the buffer (a span that captured lines 100–150 asked
-  // for #L10) names no line here; clamping would point at the wrong one.
-  if (last < 1 || first > count) {
-    decorations.clear()
-    return
-  }
-  const start = Math.max(first, 1)
-  const end = Math.min(last, count)
-  decorations.set([{
-    range: new monacoApi.Range(start, 1, end, 1),
-    options: {
-      isWholeLine: true,
-      className: 'fv-line-highlight',
-      linesDecorationsClassName: 'fv-line-highlight-gutter',
-    },
-  }])
-  ed.revealLinesInCenter(start, end)
-}
 
 onMounted(async () => {
   let text
@@ -75,7 +42,7 @@ onMounted(async () => {
     return
   }
   if (disposed || !host.value) return
-  const offset = (props.meta.first_line || 1) - 1
+  const firstLine = props.meta.first_line || 1
   editor.value = monacoApi.editor.create(host.value, {
     value: text,
     language: props.meta.language || 'plaintext',
@@ -85,15 +52,16 @@ onMounted(async () => {
     scrollBeyondLastLine: false,
     renderWhitespace: 'selection',
     theme: monacoTheme(theme.value),
-    lineNumbers: (n) => String(n + offset),
+    lineNumbers: (n) => String(n + firstLine - 1),
     fontSize: 13,
   })
-  decorations = editor.value.createDecorationsCollection()
-  applyLines()
+  highlight = lineHighlighter(monacoApi, editor.value, firstLine)
+  onUserSelection(editor.value, firstLine, (lines) => emit('select', lines))
+  highlight(props.lines)
   ready.value = true
 })
 
-watch(() => props.lines, applyLines)
+watch(() => props.lines, (lines) => highlight?.(lines))
 watch(theme, (t) => monacoApi?.editor.setTheme(monacoTheme(t)))
 
 onBeforeUnmount(() => {

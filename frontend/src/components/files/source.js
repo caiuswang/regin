@@ -24,6 +24,26 @@ export function sourceQueryString(source, extra = {}) {
   return params.toString()
 }
 
+// The viewer's own state beside the source (I8): `view=source|diff` (absent
+// means the kind's default view) and `layout=inline` for the diff editor.
+const VIEWS = new Set(['source', 'diff'])
+
+export function viewFromQuery(query) {
+  const one = (v) => (Array.isArray(v) ? v[0] : v)
+  const view = VIEWS.has(one(query?.view)) ? one(query.view) : ''
+  return {
+    view,
+    layout: view === 'diff' && one(query?.layout) === 'inline' ? 'inline' : '',
+  }
+}
+
+export function filesPageHref(source, state = {}, anchor = '') {
+  const extra = {}
+  if (state.view) extra.view = state.view
+  if (state.view === 'diff' && state.layout) extra.layout = state.layout
+  return `/files?${sourceQueryString(source, extra)}${anchor || ''}`
+}
+
 export function rawUrl(source, extra) {
   return `/files/raw?${sourceQueryString(source, extra)}`
 }

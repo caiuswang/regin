@@ -46,11 +46,20 @@ test.beforeAll(async ({ playwright }) => {
   const login = await ctx.post(`${API_BASE}/api/auth/login`, { data: TEST_USER })
   const { token } = await login.json()
   const headers = { Authorization: `Bearer ${token}` }
-  const added = await ctx.post(`${API_BASE}/api/repos`, { headers, data: { path: root } })
-  expect(added.ok(), await added.text()).toBeTruthy()
-  const { repo } = await added.json()
-  const listed = await (await ctx.get(`${API_BASE}/api/repos`, { headers })).json()
-  projectId = listed.repos.find((r) => r.name === repo.name).id
+  // The other file-viewer specs register their repos from parallel workers,
+  // and `repo_paths` is a read-modify-write: a concurrent registration can
+  // drop this path. Register until the list holds it, not just the response;
+  // a retry that finds the path still saved is refused, which is fine.
+  const name = root.split('/').pop()
+  let listedRepo
+  for (let attempt = 0; attempt < 3 && !listedRepo; attempt++) {
+    const added = await ctx.post(`${API_BASE}/api/repos`, { headers, data: { path: root } })
+    if (attempt === 0) expect(added.ok(), await added.text()).toBeTruthy()
+    const listed = await (await ctx.get(`${API_BASE}/api/repos`, { headers })).json()
+    listedRepo = listed.repos.find((r) => r.name === name)
+  }
+  expect(listedRepo, 'repo registration kept losing to a concurrent one').toBeTruthy()
+  projectId = listedRepo.id
   await ctx.dispose()
 })
 

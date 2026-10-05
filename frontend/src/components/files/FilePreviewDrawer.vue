@@ -7,11 +7,11 @@ import { FocusScope } from 'reka-ui'
 import Button from '../ui/Button.vue'
 import FileViewer from './FileViewer.vue'
 import { useFilePreview } from '../../composables/useFilePreview'
-import { sourceQueryString } from './source'
+import { filesPageHref } from './source'
 
-const { open, source, anchor, closeFilePreview } = useFilePreview()
+const { open, source, anchor, view, layout, openFilePreview, closeFilePreview } = useFilePreview()
 const pageHref = computed(() => (source.value
-  ? `/files?${sourceQueryString(source.value)}${anchor.value || ''}`
+  ? filesPageHref(source.value, { view: view.value, layout: layout.value }, anchor.value)
   : '/files'))
 
 // Escape inside the editor belongs to Monaco (find widget, read-only notice).
@@ -36,7 +36,13 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
            back on close; a plain element would have its focus yanked back. -->
       <FocusScope as="aside" trapped class="fpd" role="dialog" aria-modal="true"
                   aria-label="File preview" data-testid="file-preview-drawer" data-file-preview>
-        <FileViewer :source="source" :anchor="anchor">
+        <FileViewer
+          v-model:view="view"
+          v-model:layout="layout"
+          v-model:anchor="anchor"
+          :source="source"
+          @navigate="openFilePreview"
+        >
           <template #actions>
             <router-link :to="pageHref" class="fpd-link" data-testid="file-preview-open-page"
                          @click="closeFilePreview">Open page</router-link>

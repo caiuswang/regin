@@ -5,12 +5,10 @@
  * under the suite's scratch dir and registered through POST /api/repos, so the
  * meta, the classification and the raw bytes are the server's, not mocks.
  */
-import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { expect, test } from './auth-fixture.js'
-import { SCRATCH_DIR, TEST_USER } from '../e2e-env.js'
-import { API_BASE } from './helpers/api-base.js'
+import { registerFixtureRepo } from './helpers/fixtureRepo.js'
 
 const PY_LINES = Array.from({ length: 300 }, (_, i) => `value_${i + 1} = ${i + 1}`)
 PY_LINES[0] = 'def greet(name):'
@@ -47,24 +45,12 @@ test.describe.configure({ mode: 'serial' })
 let projectId
 
 test.beforeAll(async ({ playwright }) => {
-  mkdirSync(SCRATCH_DIR, { recursive: true })
-  const root = mkdtempSync(join(SCRATCH_DIR, 'f133-viewer-'))
-  writeFileSync(join(root, 'main.py'), PY_LINES.join('\n') + '\n')
-  writeFileSync(join(root, 'pic.svg'), SVG)
-  writeFileSync(join(root, 'doc.pdf'), minimalPdf())
-  writeFileSync(join(root, 'blob.dat'), Buffer.from([0x00, 0x01, 0x02, 0xff, 0x00, 0x10, 0x20]))
-  execFileSync('git', ['init', '-q', root])
-
-  const ctx = await playwright.request.newContext()
-  const login = await ctx.post(`${API_BASE}/api/auth/login`, { data: TEST_USER })
-  const { token } = await login.json()
-  const headers = { Authorization: `Bearer ${token}` }
-  const added = await ctx.post(`${API_BASE}/api/repos`, { headers, data: { path: root } })
-  expect(added.ok(), await added.text()).toBeTruthy()
-  const { repo } = await added.json()
-  const listed = await (await ctx.get(`${API_BASE}/api/repos`, { headers })).json()
-  projectId = listed.repos.find((r) => r.name === repo.name).id
-  await ctx.dispose()
+  projectId = await registerFixtureRepo(playwright, 'f133-viewer-', (root) => {
+    writeFileSync(join(root, 'main.py'), PY_LINES.join('\n') + '\n')
+    writeFileSync(join(root, 'pic.svg'), SVG)
+    writeFileSync(join(root, 'doc.pdf'), minimalPdf())
+    writeFileSync(join(root, 'blob.dat'), Buffer.from([0x00, 0x01, 0x02, 0xff, 0x00, 0x10, 0x20]))
+  })
 })
 
 const fileUrl = (path, hash = '') => `/files?project=${projectId}&path=${encodeURIComponent(path)}${hash}`
