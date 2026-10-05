@@ -30,7 +30,7 @@ has one column to say so in.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional
 
 from sqlmodel import select, text
@@ -79,9 +79,9 @@ class AttributedSession:
     provenance: str
     is_primary: int
     round: Optional[int] = None
-    #: The run whose task put this session here. Only a `run` row has one — it
-    #: is the provenance's evidence, and a tag naming no run is a provenance
-    #: nobody can audit.
+    #: The task whose run produced this session. A `run` row always has one —
+    #: it is the provenance's evidence — and a declared row has one when a run
+    #: also produced it.
     task_id: Optional[int] = None
 
 
@@ -125,7 +125,7 @@ def _lane_traces(feature_id: int) -> list[tuple]:
     with SessionLocal() as session:
         rows = session.exec(text(
             f"WITH {LANE} SELECT DISTINCT trace_id, task_id FROM lane"
-            " WHERE feature_id = :f"
+            " WHERE feature_id = :f ORDER BY trace_id, task_id"
         ).bindparams(f=feature_id)).all()
     return [(row[0], row[1]) for row in rows]
 
@@ -207,6 +207,10 @@ def sessions_for_feature(feature_id: int) -> list[AttributedSession]:
         for row in declared}
     for trace, task_id in _lane_traces(feature_id):
         if trace in rows:
+            # The declaration keeps its provenance, but the run that produced
+            # the session is still a fact the task's row has to be able to see.
+            if rows[trace].task_id is None:
+                rows[trace] = replace(rows[trace], task_id=task_id)
             continue
         rows[trace] = AttributedSession(
             trace_id=trace, provenance=RUN,

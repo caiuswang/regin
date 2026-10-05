@@ -370,6 +370,8 @@ function onDeclared() {
         :feature-id="ledger.id" :can-write="canWrite"
         :has-slices="ledger.slice_tasks > 0"
         :project-id="ledger.project_id"
+        :sessions="ledger.sessions.rows"
+        :can-open-trace="canOpenTrace"
         @counted="taskCount = $event"
       />
 

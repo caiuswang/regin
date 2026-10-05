@@ -19,6 +19,7 @@ the stage came from a tracker the CLI might not reach.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Optional
 
@@ -29,6 +30,17 @@ from lib.features import events as events_module
 from lib.features import store as feature_store
 
 TRACE_PREFIX = 8
+
+#: A session whose whole title is one slash command — the skill line a task
+#: run opens with. It names how the session was driven, not what it built, so
+#: every run of one skill would otherwise read identically in the list.
+_BARE_COMMAND = re.compile(r"/[A-Za-z0-9][\w:.-]*")
+
+
+def bare_command(title: Optional[str]) -> Optional[str]:
+    """The command when `title` is nothing but one, else None."""
+    text = (title or "").strip()
+    return text if _BARE_COMMAND.fullmatch(text) else None
 
 
 @dataclass(frozen=True)
@@ -42,22 +54,36 @@ class SessionRow:
     provenance: str
     round: Optional[int]
     is_primary: int
-    #: The task whose run put this session here, carried through from
-    #: `AttributedSession`. Only a `run` row has one — it is what the
-    #: provenance tag links to, and a tag naming no task is a provenance
-    #: nobody can audit.
+    #: The task whose run produced this session, carried through from
+    #: `AttributedSession`. A `run` row always has one — a tag naming no task
+    #: is a provenance nobody can audit — and a declared row has one when a
+    #: run also produced it.
     task_id: Optional[int] = None
+    task_title: Optional[str] = None
 
     @property
     def short_trace(self) -> str:
         return self.trace_id[:TRACE_PREFIX]
 
+    @property
+    def command(self) -> Optional[str]:
+        return bare_command(self.title)
+
+    @property
+    def display_title(self) -> str:
+        """The task's title stands in for a skill-line title; any other title
+        is the session's own words and is kept."""
+        if self.command and self.task_title:
+            return self.task_title
+        return self.title
+
     def to_dict(self) -> dict:
         return {"trace_id": self.trace_id, "short_trace": self.short_trace,
                 "date": self.date, "title": self.title,
+                "display_title": self.display_title, "command": self.command,
                 "cost_usd": self.cost_usd, "provenance": self.provenance,
                 "round": self.round, "is_primary": bool(self.is_primary),
-                "task_id": self.task_id}
+                "task_id": self.task_id, "task_title": self.task_title}
 
 
 @dataclass(frozen=True)
@@ -148,6 +174,7 @@ def build(feature_id: int) -> Ledger:
 
     facts = cost_module.facts_for(row.trace_id for row in attributed)
     cost, work_time, tokens = cost_module.roll_up(attributed, facts)
+    titles = feature_store.task_titles(row.task_id for row in attributed)
     rows = sorted(
         (SessionRow(trace_id=row.trace_id,
                     date=(facts[row.trace_id].started_at or "")[:10],
@@ -155,7 +182,8 @@ def build(feature_id: int) -> Ledger:
                     cost_usd=(facts[row.trace_id].cost_usd
                               if row.is_primary else 0.0),
                     provenance=row.provenance, round=row.round,
-                    is_primary=row.is_primary, task_id=row.task_id)
+                    is_primary=row.is_primary, task_id=row.task_id,
+                    task_title=titles.get(row.task_id))
          for row in attributed),
         key=lambda r: (r.date, r.trace_id))
 
@@ -255,7 +283,7 @@ def _render_sessions(report: Ledger) -> list[str]:
     lines = ["sessions"]
     for row in report.rows:
         lines.append(
-            f"  {row.date:<10}  {row.short_trace}  {row.title[:44]:<44}  "
+            f"  {row.date:<10}  {row.short_trace}  {row.display_title[:44]:<44}  "
             f"{_money(row.cost_usd):>10}  {row.provenance:<9}  "
             f"round {row.round if row.round is not None else '—'}")
     if not report.rows:

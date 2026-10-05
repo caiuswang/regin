@@ -79,3 +79,29 @@ export function asOf(iso) {
     day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
   })
 }
+
+// The ledger's session rows, keyed by the task whose run produced them. Read
+// off the same rows the Sessions card draws, so a task's figure and the
+// evidence list can never disagree about which sessions exist.
+export function sessionsByTask(rows) {
+  const out = new Map()
+  for (const r of rows || []) {
+    if (r.task_id === null || r.task_id === undefined) continue
+    if (!out.has(r.task_id)) out.set(r.task_id, [])
+    out.get(r.task_id).push(r)
+  }
+  return out
+}
+
+// A sum over rows whose cost may be missing. The qualifier rides inside the
+// number: `≥ $4.10` when some rows have no usage, `no usage` when none do —
+// never `$0.00`, which would be a claim, not an absence. A shared session's
+// cost is counted under its primary feature, so it adds nothing here.
+export function costSum(rows) {
+  const own = (rows || []).filter(r => r.is_primary !== false)
+  if (!own.length) return rows?.length ? 'charged elsewhere' : 'no usage'
+  const known = own.filter(r => r.cost_usd !== null && r.cost_usd !== undefined)
+  if (!known.length) return 'no usage'
+  const total = money(known.reduce((n, r) => n + r.cost_usd, 0))
+  return known.length < own.length ? `≥ ${total}` : total
+}

@@ -209,6 +209,17 @@ def project_name(project_id: Optional[int]) -> Optional[str]:
     return repo.name if repo else None
 
 
+def task_titles(task_ids) -> dict[int, str]:
+    """`{task id: title}` for the ids that still exist."""
+    wanted = {tid for tid in task_ids if tid is not None}
+    if not wanted:
+        return {}
+    with SessionLocal() as session:
+        rows = session.exec(select(AgentTask.id, AgentTask.title)
+                            .where(AgentTask.id.in_(wanted))).all()
+    return {row[0]: row[1] for row in rows}
+
+
 # ── the operator's three declarations ─────────────────────────
 
 class VerbRefused(FeatureError):

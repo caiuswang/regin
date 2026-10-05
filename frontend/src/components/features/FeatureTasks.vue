@@ -13,11 +13,12 @@
 // No Arm and no Run here, deliberately. Execution parameters and run control
 // stay on the task page — a second copy of the run machinery would be a second
 // writer of the same lifecycle. Each row is a link to where that work happens.
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '../../api'
 import Button from '../ui/Button.vue'
 import Card from '../Card.vue'
+import FeatureTaskSessions from './FeatureTaskSessions.vue'
 import Icon from '../ui/Icon.vue'
 import Input from '../ui/Input.vue'
 import Select from '../ui/Select.vue'
@@ -25,6 +26,7 @@ import RefTextarea from '../refs/RefTextarea.vue'
 import TaskKindChip from '../tasks/TaskKindChip.vue'
 import TaskStatusIcon from '../tasks/TaskStatusIcon.vue'
 import { TASKS_ANCHOR } from '../../utils/featureLinks'
+import { sessionsByTask } from '../../utils/ledgerFormat'
 import { carriedProject, projectOptions, useProjects }
   from '../../composables/useProjects.js'
 
@@ -35,6 +37,10 @@ const props = defineProps({
   // Transcribed slices are the feature's build; a second Build step beside
   // them would be a second way to build one feature.
   hasSlices: { type: Boolean, default: false },
+  // The ledger's session rows — the Sessions card's own list, regrouped here
+  // by the task whose run produced each one.
+  sessions: { type: Array, default: () => [] },
+  canOpenTrace: { type: Boolean, default: true },
 })
 const emit = defineEmits(['counted'])
 const { items: projects, ensure: ensureProjects } = useProjects()
@@ -51,6 +57,7 @@ const projectId = ref('')
 const stepKind = ref('')
 const stepBody = ref('')
 const newKind = ref('task')
+const byTask = computed(() => sessionsByTask(props.sessions))
 
 // A free-form step may declare any stage but fix: a fix step belongs to a
 // defect and is made from the defect, never typed here.
@@ -259,6 +266,10 @@ async function submit() {
           :data-testid="`feature-task-fixes-${task.id}-${d}`"
         >fixes #{{ d }}</router-link>
         <span v-if="task.run_count" class="ft-runs">{{ task.run_count }} runs</span>
+        <FeatureTaskSessions
+          :task-id="task.id" :rows="byTask.get(task.id) || []"
+          :can-open-trace="canOpenTrace"
+        />
       </li>
     </ul>
   </Card>
@@ -282,9 +293,9 @@ async function submit() {
     background: var(--color-amber-50); border-radius: 0.4rem;
     padding: 0.25rem 0.45rem;
 }
-.ft-row { display: flex; align-items: center; gap: 0.5rem; }
+.ft-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
 .ft-link {
-    display: flex; align-items: center; gap: 0.5rem; min-width: 0; flex: 1 1 auto;
+    display: flex; align-items: center; gap: 0.5rem; min-width: 10rem; flex: 1 1 0;
     text-decoration: none; color: var(--color-fg);
 }
 .ft-link:focus-visible { outline: 2px solid var(--color-blue-500); }

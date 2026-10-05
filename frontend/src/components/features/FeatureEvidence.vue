@@ -33,6 +33,14 @@ defineEmits(['undeclare'])
 
 const gaps = computed(() => gapList(props.gaps))
 const ghosts = computed(() => gapTotal(props.gaps) > props.rows.length)
+
+// `declared` is the default and wears no tag; a `run` whose task is linked
+// beside it would only repeat the link.
+function provenanceTag(r) {
+  if (!r.is_primary || r.provenance === 'declared') return ''
+  if (r.provenance === 'run' && r.task_id) return ''
+  return r.provenance
+}
 </script>
 
 <template>
@@ -60,17 +68,22 @@ const ghosts = computed(() => gapTotal(props.gaps) > props.rows.length)
           :class="canOpenTrace ? 'ev-id-link' : ''"
           :title="r.trace_id"
         >{{ r.short_trace }}</component>
-        <span class="ev-title" :title="r.title">{{ r.title || '—' }}</span>
+        <!-- A skill-line title names how the session was driven, not what it
+             built; the server swaps in the task's title and the command
+             becomes a chip, so N runs of one skill stop reading identically. -->
+        <span class="ev-title" :title="r.title">{{ r.display_title || r.title || '—' }}</span>
+        <span v-if="r.command && r.display_title !== r.title" class="ev-cmd">{{ r.command }}</span>
 
         <span v-if="!r.is_primary" class="ledger-tag ledger-tag-amber">shared</span>
         <!-- The tag is the reason this session is counted, so a `run` one
-             that names no task is a provenance nobody can audit. -->
+             that names no task is a provenance nobody can audit. A declared
+             session a run also produced links its task the same way. -->
         <router-link
-          v-else-if="r.provenance === 'run' && r.task_id"
+          v-else-if="r.task_id"
           class="ledger-tag"
           :to="`/tasks/${r.task_id}`"
         >task #{{ r.task_id }}</router-link>
-        <span v-else-if="r.provenance !== 'declared'" class="ledger-tag">{{ r.provenance }}</span>
+        <span v-if="provenanceTag(r)" class="ledger-tag">{{ provenanceTag(r) }}</span>
         <span v-if="r.round" class="ledger-tag">round {{ r.round }}</span>
 
         <span
@@ -137,6 +150,10 @@ const ghosts = computed(() => gapTotal(props.gaps) > props.rows.length)
 .ev-title {
     flex: 1 1 auto; min-width: 0; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap; color: var(--color-fg);
+}
+.ev-cmd {
+    flex: none; font-family: var(--font-mono, monospace); font-size: 10.5px;
+    color: var(--color-fg-faint);
 }
 .ev-ghost .ev-title { font-style: italic; white-space: normal; }
 .ev-cost {
