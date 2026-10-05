@@ -245,7 +245,7 @@ class Settings(BaseSettings):
             "agent_messages", "agent_bridge", "agent_sdk", "live_session",
             "notifications", "tasks", "defects", "features",
             "memory", "grader",
-            "goal", "gate", "prompts", "fulltext", "refs", "other",
+            "goal", "gate", "prompts", "fulltext", "refs", "files", "other",
         ]
     )
 
