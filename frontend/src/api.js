@@ -96,6 +96,16 @@ async function getBlobUrl(path) {
   return URL.createObjectURL(await res.blob())
 }
 
+async function getText(path) {
+  const res = await fetch(`/api${path}`, { headers: authHeaders() })
+  if (res.status === 401) {
+    handleUnauthorized()
+    throw new Error('Session expired. Please log in again.')
+  }
+  if (!res.ok) throw await requestError(res)
+  return res.text()
+}
+
 async function post(path, body, options) {
   return _mutate('POST', path, body, options)
 }
@@ -197,7 +207,7 @@ async function checkAuth() {
 }
 
 export default {
-  get, post, put, patch, del, delete: del, getBlobUrl,
+  get, post, put, patch, del, delete: del, getBlobUrl, getText,
   login, register, logout, checkAuth,
   getToken, getStoredUser, clearAuth, onUnauthorized,
 }

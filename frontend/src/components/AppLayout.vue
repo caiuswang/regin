@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch, onMounted, computed } from 'vue'
+import { ref, watch, onMounted, computed, defineAsyncComponent } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import Drawer from 'primevue/drawer'
 import ConfirmDialog from './ConfirmDialog.vue'
@@ -21,6 +21,12 @@ import { useNotificationCenter } from '../composables/useNotificationCenter'
 import { notificationTier } from '../constants/inboxTypes'
 import { useTheme } from '../composables/useTheme'
 import Button from './ui/Button.vue'
+import { useFilePreview } from '../composables/useFilePreview'
+
+// Lazy and gated on `open`: the viewer (and, through it, Monaco) must not ride
+// in the entry bundle (I4).
+const FilePreviewDrawer = defineAsyncComponent(() => import('./files/FilePreviewDrawer.vue'))
+const { open: filePreviewOpen } = useFilePreview()
 
 const { theme, toggleTheme } = useTheme()
 const { pending: driftPending } = useDriftSummary()
@@ -285,6 +291,8 @@ const navGroups = computed(() => [
     />
 
     <ConfirmDialog />
+
+    <FilePreviewDrawer v-if="filePreviewOpen" />
   </div>
 </template>
 
