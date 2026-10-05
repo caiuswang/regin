@@ -20,6 +20,7 @@
     "diff": "^9.0.0",
     "highlight.js": "^11.11.1",
     "marked": "^18.0.0",
+    "monaco-editor": "^0.57.0",
     "postcss": "^8.5.9",
     "primevue": "^4.5.5",
     "reka-ui": "^2.9.10",

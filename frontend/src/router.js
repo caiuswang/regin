@@ -42,6 +42,7 @@ const TaskDetailView = () => import('./views/TaskDetailView.vue')
 const SchemaDriftView = () => import('./views/SchemaDriftView.vue')
 const PayloadLogView = () => import('./views/PayloadLogView.vue')
 const DesignSystemView = () => import('./views/DesignSystemView.vue')
+const FilesView = () => import('./views/FilesView.vue')
 const NotFoundView = () => import('./views/NotFoundView.vue')
 // PROTOTYPE — throwaway (CAI-269). Delete with the branch; never ships.
 
@@ -133,6 +134,7 @@ const routes = [
   { path: '/audit', name: 'audit', component: AuditView },
   { path: '/schema-drift', name: 'schema-drift', component: SchemaDriftView },
   { path: '/payload-log', name: 'payload-log', component: PayloadLogView },
+  { path: '/files', name: 'files', component: FilesView, meta: { fixedViewport: true } },
   { path: '/ds', name: 'design-system', component: DesignSystemView },
   { path: '/account', name: 'account', component: UsersView },
   { path: '/tasks/:id', name: 'task-detail', component: TaskDetailView },
