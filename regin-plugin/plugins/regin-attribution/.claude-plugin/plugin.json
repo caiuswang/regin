@@ -1,0 +1,1 @@
+{ "name": "regin-attribution", "version": "0.1.0", "description": "Drops the Claude-Session trailer and bare session links from the commit and PR attribution text", "author": { "name": "regin" } }

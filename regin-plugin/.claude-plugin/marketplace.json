@@ -26,6 +26,11 @@
       "name": "regin-bridge",
       "source": "./plugins/regin-bridge",
       "description": "Mod: submits the prompts regin's agent bridge delivers to this session, in place of tmux keystrokes"
+    },
+    {
+      "name": "regin-attribution",
+      "source": "./plugins/regin-attribution",
+      "description": "Mod: drops the Claude-Session trailer and bare claude.ai/code/session_ links from commit and PR attribution text"
     }
   ]
 }

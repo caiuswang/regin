@@ -54,6 +54,7 @@ the two drift apart.
 |---|---|
 | `regin-band` | An `AbovePrompt` band, `regin inbox: N unread`, refreshed on session start and at each turn's end from `regin messages stats`; hidden when nothing is unread |
 | `regin-bridge` | The agent bridge's Mod channel: on session start it spawns `regin bridge listen --session <id>` once and submits each line it prints as a prompt. While that child is connected, `deliver()` sends the session's bridge messages through it (audited `channel=mod`) instead of typing into its tmux pane; needs `regin serve` running and `agent_bridge.token` set |
+| `regin-attribution` | An `attribution.text` hook: for `commit` and `pr` it takes the text Claude Code composed and drops every `Claude-Session:` line and bare `https://claude.ai/code/session_…` link, leaving the rest verbatim; `exemption` and `remedy` pass through |
 
 Install a mod the same way as any plugin in this marketplace:
 
