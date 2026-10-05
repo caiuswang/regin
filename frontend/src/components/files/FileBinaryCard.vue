@@ -1,11 +1,10 @@
 <script setup>
 // The download_only state: metadata and a Download, no content. Shared by
-// `binary` and `too_large`. Download goes through a blob because the raw route
-// is behind a bearer token, which a plain <a href> cannot send.
-import { onBeforeUnmount, ref } from 'vue'
-import api from '../../api'
+// `binary` and `too_large`.
+import { ref } from 'vue'
 import Button from '../ui/Button.vue'
-import { formatBytes, rawUrl } from './source'
+import { downloadFile } from './actions'
+import { formatBytes } from './source'
 
 const props = defineProps({
   meta: { type: Object, required: true },
@@ -15,26 +14,18 @@ const props = defineProps({
 
 const busy = ref(false)
 const error = ref('')
-let lastUrl = ''
 
 async function download() {
   busy.value = true
   error.value = ''
   try {
-    if (lastUrl) URL.revokeObjectURL(lastUrl)
-    lastUrl = await api.getBlobUrl(rawUrl(props.source, { download: '1' }))
-    const a = document.createElement('a')
-    a.href = lastUrl
-    a.download = props.meta.name
-    a.click()
+    await downloadFile(props.source, props.meta.name)
   } catch (err) {
     error.value = err.message || 'Download failed.'
   } finally {
     busy.value = false
   }
 }
-
-onBeforeUnmount(() => { if (lastUrl) URL.revokeObjectURL(lastUrl) })
 </script>
 
 <template>

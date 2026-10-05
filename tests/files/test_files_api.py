@@ -225,14 +225,29 @@ def test_diffable_is_false_for_unmodified_untracked_and_non_git(
         flask_client, repo, traced_session, tmp_path):
     pid, root = repo
     (root / "new.py").write_text("x = 1\n")
-    assert _meta(flask_client, project=pid, path="f.py").get_json()["diffable"] is False
-    assert _meta(flask_client, project=pid, path="new.py").get_json()["diffable"] is False
+    unmodified = _meta(flask_client, project=pid, path="f.py").get_json()
+    untracked = _meta(flask_client, project=pid, path="new.py").get_json()
+    assert (unmodified["in_head"], unmodified["diffable"]) == (True, False)
+    assert (untracked["in_head"], untracked["diffable"]) == (False, False)
     plain = tmp_path / "plain"
     plain.mkdir()
     (plain / "a.py").write_text("x = 1\n")
     traced_session("S", plain)
-    meta = _meta(flask_client, headers=ADMIN, session="S", path=str(plain / "a.py"))
-    assert meta.get_json()["diffable"] is False
+    meta = _meta(flask_client, headers=ADMIN, session="S", path=str(plain / "a.py")).get_json()
+    assert (meta["in_head"], meta["diffable"]) == (False, False)
+
+
+def test_only_text_kinds_are_diffable(flask_client, repo):
+    pid, root = repo
+    (root / "a.png").write_bytes(b"\x89PNG\r\n\x1a\nv1")
+    (root / "big.txt").write_text("x" * (3 * 1024 * 1024))
+    git(root, "add", "a.png", "big.txt")
+    git(root, "commit", "-qm", "media")
+    (root / "a.png").write_bytes(b"\x89PNG\r\n\x1a\nv2")
+    (root / "big.txt").write_text("y" * (3 * 1024 * 1024))
+    for name, preview in (("a.png", "image"), ("big.txt", "too_large")):
+        meta = _meta(flask_client, project=pid, path=name).get_json()
+        assert (meta["preview"], meta["in_head"], meta["diffable"]) == (preview, True, False)
 
 
 def test_session_source_reads_head_inside_a_git_cwd(flask_client, repo, traced_session):

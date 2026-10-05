@@ -61,6 +61,11 @@ _LANGUAGE_BY_EXT = {
 _LANGUAGE_BY_NAME = {"dockerfile": "dockerfile"}
 
 
+# The kinds whose bytes are text, so a HEAD-vs-worktree text diff means
+# something; an image, a binary or a too_large file is never diffed.
+TEXT_KINDS = frozenset({"code", "markdown", "html", "svg", "csv", "notebook"})
+
+
 @dataclass(frozen=True)
 class Classification:
     preview: str
