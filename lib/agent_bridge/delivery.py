@@ -225,6 +225,25 @@ def deliver(trace_id: str, text: str,
     return result
 
 
+def send_now(trace_id: str) -> DeliveryResult:
+    """Abort `trace_id`'s running turn through its Mod listener, so Claude Code
+    goes on to the prompts queued behind it.
+
+    Mod channel only: tmux's Escape would pull the queued prompts back into the
+    composer instead of running them, so no listener means a refusal.
+    """
+    if not settings.agent_bridge.enabled:
+        return _refuse(trace_id, "bridge disabled")
+    if not _rate_ok(trace_id):
+        return _refuse(trace_id, "rate limit exceeded")
+    if not mod_channel.offer_control(trace_id, "abort"):
+        return _refuse(trace_id, "no mod listener")
+    result = DeliveryResult(True, "abort sent via mod listener")
+    log.write("bridge_delivery_outcome", trace_id=trace_id, delivered=True,
+              detail=result.detail, channel="mod", op="abort")
+    return result
+
+
 # Liveness has three answers, not two. Collapsing the last two into False is
 # right for a gate that must fail closed (a resume refused on no evidence
 # costs little), and WRONG for confirming a shutdown: "the probe broke" would

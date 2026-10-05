@@ -219,3 +219,74 @@ def test_listen_cli_prints_prompts_and_its_exit_unregisters(tmp_db, monkeypatch)
     finally:
         proc.kill()
         server.shutdown()
+
+
+def test_send_now_goes_over_the_mod_channel(flask_client, monkeypatch):
+    calls = _install_tmux(monkeypatch, capture="> hi")
+    events = _audit(monkeypatch)
+    resp, lines = _listen(flask_client, "A")
+    try:
+        res = flask_client.post("/api/sessions/A/bridge-send-now")
+        frame = json.loads(next(lines))
+    finally:
+        resp.close()
+
+    assert res.status_code == 200
+    assert res.get_json()["delivered"] is True
+    assert res.get_json()["channel"] == "mod"
+    assert (frame["type"], frame["op"], frame["session_id"]) == ("control", "abort", "A")
+    assert calls == []
+    assert any(ev == "bridge_delivery_outcome" and kw.get("channel") == "mod"
+               and kw.get("op") == "abort" for ev, kw in events)
+
+
+def test_send_now_refuses_without_a_mod_listener(flask_client, monkeypatch):
+    calls = _install_tmux(monkeypatch, capture="> hi")
+    resp_b, _b = _listen(flask_client, "B")
+    try:
+        res = flask_client.post("/api/sessions/A/bridge-send-now")
+    finally:
+        resp_b.close()
+
+    assert res.status_code == 409
+    assert res.get_json()["delivered"] is False
+    assert calls == []
+
+
+def test_live_state_reports_the_mod_listener(flask_client):
+    assert flask_client.get("/api/sessions/A/live-state").get_json()["mod_listener"] is False
+    resp, _lines = _listen(flask_client, "A")
+    try:
+        assert flask_client.get("/api/sessions/A/live-state").get_json()["mod_listener"] is True
+        assert flask_client.get("/api/sessions/B/live-state").get_json()["mod_listener"] is False
+    finally:
+        resp.close()
+    assert flask_client.get("/api/sessions/A/live-state").get_json()["mod_listener"] is False
+
+
+def test_listen_cli_passes_control_frames_through():
+    from cli.commands.bridge import listener_lines
+
+    stream = [json.dumps({"type": "ready", "session_id": "A"}),
+              json.dumps({"type": "control", "op": "abort", "id": "1", "session_id": "A"}),
+              json.dumps({"type": "prompt", "text": "hi", "id": "2", "session_id": "A"})]
+
+    assert [json.loads(line) for line in listener_lines(stream)] == [
+        {"op": "abort", "id": "1", "session_id": "A"},
+        {"text": "hi", "id": "2", "session_id": "A"},
+    ]
+
+
+def test_send_now_respects_the_bridge_kill_switch(flask_client, monkeypatch):
+    resp, _lines = _listen(flask_client, "A")
+    try:
+        monkeypatch.setattr(settings.agent_bridge, "enabled", False)
+        res = flask_client.post("/api/sessions/A/bridge-send-now")
+        state = flask_client.get("/api/sessions/A/live-state").get_json()
+        assert mod_channel._listeners["A"][-1]._frames.empty()
+    finally:
+        resp.close()
+
+    assert res.status_code == 409
+    assert res.get_json()["detail"] == "bridge disabled"
+    assert state["mod_listener"] is False

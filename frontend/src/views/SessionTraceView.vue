@@ -65,7 +65,8 @@ const loading = ref(true)
 // /live card drives — `_queued_prompts` serves both surfaces — so the write
 // surface is the composable, not a second copy of the logic.
 const queued = useQueuedPrompts(
-  () => session.value?.queued_prompts, () => session.value?.trace_id || '')
+  () => session.value?.queued_prompts, () => session.value?.trace_id || '',
+  { offerSendNow: true })
 
 async function onQueueEdit({ id, text, done }) {
   if (await queued.edit(id, text)) done?.()
@@ -1834,7 +1835,10 @@ watch(turnsSidebarShown, (shown) => {
       :items="queued.items"
       :busy-ids="queued.busyIds"
       :notice="queued.notice"
+      :can-send-now="queued.modListener"
+      :sending="queued.sending"
       @edit="onQueueEdit"
+      @send-now="queued.sendNow()"
       @remove="e => queued.remove(e.id)"
     />
 

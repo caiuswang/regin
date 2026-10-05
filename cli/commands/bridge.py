@@ -2,7 +2,8 @@
 
 The regin-bridge mod spawns this once per session. It holds
 `GET /api/bridge/listen` open with the bridge token and prints one JSON line
-per prompt delivered to that session; the mod submits each line's `text`.
+per frame delivered to that session: a prompt, whose `text` the mod submits,
+or a control `op` such as `abort`.
 While it runs, `deliver()` prefers it over the session's tmux pane.
 """
 
@@ -24,16 +25,20 @@ bridge_app = typer.Typer(
 )
 
 
-def prompt_lines(lines: Iterable[str]) -> Iterator[str]:
-    """The stream's prompt frames as the JSON lines the mod reads."""
+_FIELDS = {"prompt": ("text", "id", "session_id"),
+           "control": ("op", "id", "session_id")}
+
+
+def listener_lines(lines: Iterable[str]) -> Iterator[str]:
+    """The stream's prompt and control frames as the JSON lines the mod reads."""
     for line in lines:
         if not line.strip():
             continue
         frame = json.loads(line)
-        if frame.get("type") != "prompt":
+        fields = _FIELDS.get(frame.get("type"))
+        if fields is None:
             continue
-        yield json.dumps({k: frame[k] for k in
-                          ("text", "id", "session_id")})
+        yield json.dumps({k: frame[k] for k in fields})
 
 
 @bridge_app.command("listen", help="Print each prompt delivered to a session, one JSON line each.")
@@ -54,7 +59,7 @@ def cmd_listen(
                 print(f"bridge listen refused: HTTP {resp.status_code}",
                       file=sys.stderr)
                 raise typer.Exit(1)
-            for line in prompt_lines(resp.iter_lines()):
+            for line in listener_lines(resp.iter_lines()):
                 print(line, flush=True)
 
 

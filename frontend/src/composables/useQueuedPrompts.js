@@ -1,4 +1,4 @@
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import api from '../api'
 
 // Queued / steering prompts for the /live card — a pure render of the
@@ -27,7 +27,8 @@ import api from '../api'
 const PROMPT_MAX = 8000
 const norm = (s) => (s || '').trim().replace(/\s+/g, ' ')
 
-export function useQueuedPrompts(getQueued, getSessionId = () => '') {
+export function useQueuedPrompts(getQueued, getSessionId = () => '',
+                                 { offerSendNow = false } = {}) {
   // id → the local view of a mutation the server hasn't confirmed yet:
   // `null` for a removal, a string for a rewrite.
   const localOps = ref(new Map())
@@ -144,15 +145,62 @@ export function useQueuedPrompts(getQueued, getSessionId = () => '') {
     .map(q => ({ id: q.id, content: q.content, source: q.source,
                  detail: q.detail }))))
 
+  // ── Send now ──
+  // Only a session whose regin-bridge mod is listening can abort its turn and
+  // let Claude Code run the queue; tmux's Escape would pull the queue back
+  // into the composer instead, so without a listener there is no control.
+  // Asked when the queue first shows and whenever its rows change, which is
+  // when the answer matters — never on a timer.
+  const modListener = ref(false)
+  const sending = ref(false)
+  let probeSeq = 0
+
+  async function probeModListener() {
+    const id = getSessionId()
+    const seq = ++probeSeq
+    let state = null
+    if (id) {
+      try { state = await api.get(`/sessions/${id}/live-state`) } catch { state = null }
+    }
+    if (seq === probeSeq) modListener.value = !!state?.mod_listener
+  }
+
+  if (offerSendNow) watch(() => {
+    const rows = getQueued() || []
+    return rows.length ? `${getSessionId()}|${rows.map(q => q?.id || q?.content).join('|')}` : ''
+  }, (key) => {
+    if (key) probeModListener()
+    else { probeSeq++; modListener.value = false }
+  }, { immediate: true })
+
+  async function sendNow() {
+    if (sending.value) return false
+    sending.value = true
+    notice.value = ''
+    let res = null
+    try {
+      res = await api.post(`/sessions/${getSessionId()}/bridge-send-now`, {})
+    } catch { res = null }
+    sending.value = false
+    if (res?.delivered) return true
+    fail('', res?.detail || 'the session did not take send now')
+    probeModListener()
+    return false
+  }
+
   // Session switch: the persistent host view reuses this composable across
   // trace ids. Queue ids are per-runner (and bridge row ids per-session
   // meaningless elsewhere), so a leftover op would collide across sessions.
   function reset() {
     localOps.value = new Map()
     busyIds.value = new Set()
+    probeSeq++
+    modListener.value = false
+    sending.value = false
     notice.value = ''
     if (noticeTimer) { clearTimeout(noticeTimer); noticeTimer = null }
   }
 
-  return reactive({ items, busyIds, notice, edit, remove, reset })
+  return reactive({ items, busyIds, notice, edit, remove, reset,
+                   modListener, sending, sendNow })
 }

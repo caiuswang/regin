@@ -4,7 +4,10 @@ const REGIN = '/Users/taowang/regin'
 
 let listening = false
 
+const TURN = { plugin: 'regin-bridge', key: 'turn' } as const
+
 export type BridgePrompt = { text: string; id: string; session_id: string }
+export type BridgeControl = { op: 'abort'; id: string; session_id: string }
 
 // A spawned child's pieces end wherever its writes did, so a line can span
 // two pieces: the unterminated tail is carried into the next call.
@@ -26,9 +29,23 @@ async function listen($: EngineInterface) {
     const [lines, tail] = splitLines(carry, text)
     carry = tail
     for (const line of lines) {
-      const prompt = JSON.parse(line) as BridgePrompt
-      await $.prompt.submit({ text: prompt.text })
+      const frame = JSON.parse(line) as BridgePrompt | BridgeControl
+      if ('op' in frame) await abortRunning($)
+      else await $.prompt.submit({ text: frame.text })
     }
+  }
+}
+
+// regin's "send now": end the running turn and Claude Code runs the prompts
+// queued behind it. Submitting one instead would only queue it behind them.
+async function abortRunning($: EngineInterface) {
+  const { value: turnId } = await $.state.get(TURN)
+  if (!turnId) return
+  try {
+    await $.turn.abort({ turnId })
+  } catch (err) {
+    // The turn ended between the frame and the call; the queue runs anyway.
+    $.ui.log(`regin-bridge: abort skipped: ${String(err)}`, { to: 'debug' })
   }
 }
 
@@ -55,5 +72,16 @@ export const register: Register = on => {
         .finally(() => { listening = false })
     }
     return started
+  })
+  on('turn.start', async ($, e, next) => {
+    await $.state.set(TURN, e.turnId)
+    return next(e)
+  })
+  on('turn.complete', async ($, e, next) => {
+    if (!e.agentId) {
+      const { value } = await $.state.get(TURN)
+      if (value === e.turnId) await $.state.set(TURN, null)
+    }
+    return next(e)
   })
 }
