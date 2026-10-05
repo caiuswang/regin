@@ -36,6 +36,9 @@ _ID_MAX = 200
 _PATH_MAX = 2000
 _CMD_MAX = 2000
 _SKILL_ARGS_MAX = 2000
+# A run opens with one slash command; the rest are named for it to invoke, and
+# a list long enough to need more than this is a prompt, not a selection.
+SKILL_ALSO_MAX = 8
 # A slash-command name as the CLI resolves it: `goal-verified`, or
 # `plugin:skill` for a namespaced one. Anything else would be sent as a
 # prompt beginning with a slash that no command answers.
@@ -128,13 +131,51 @@ def _skill(payload: dict) -> Optional[dict]:
         return None
     if not isinstance(spec, dict):
         raise CaptureRejected("skill must be an object with a name", "skill")
-    name = _string(spec, "name", _ID_MAX).lstrip("/")
+    name = _skill_name(spec.get("name"))
     if not name:
         return None
-    if not _SKILL_NAME_RE.match(name):
+    skill = {"name": name, "args": _string(spec, "args", _SKILL_ARGS_MAX)}
+    also = _also(spec.get("also"), name)
+    if also:
+        skill["also"] = also
+    return skill
+
+
+def _skill_name(value) -> str:
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise CaptureRejected("skill name must be a string", "skill")
+    name = value.strip().lstrip("/")
+    if len(name) > _ID_MAX:
+        raise CaptureRejected(f"skill name exceeds {_ID_MAX} characters",
+                              "skill")
+    if name and not _SKILL_NAME_RE.match(name):
         raise CaptureRejected(f"skill name {name!r} is not a slash command",
                               "skill")
-    return {"name": name, "args": _string(spec, "args", _SKILL_ARGS_MAX)}
+    return name
+
+
+def _also(value, first: str) -> list[str]:
+    """The further skills the run is told to invoke, de-duplicated in order.
+
+    Only the first skill can be the prompt's slash command — the CLI expands
+    one, at the start — so these are named in the prompt for the agent to load
+    with its Skill tool.
+    """
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise CaptureRejected("skill.also must be a list of names", "skill")
+    names = []
+    for item in value:
+        name = _skill_name(item)
+        if name and name != first and name not in names:
+            names.append(name)
+    if len(names) > SKILL_ALSO_MAX:
+        raise CaptureRejected(
+            f"skill.also exceeds {SKILL_ALSO_MAX} skills", "skill")
+    return names
 
 
 def parse_arm(payload) -> dict:

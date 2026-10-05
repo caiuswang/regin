@@ -1,4 +1,4 @@
-import { CUSTOM_MODEL, CUSTOM_SKILL, armDraft } from './useTaskArm.js'
+import { CUSTOM_MODEL, armDraft } from './useTaskArm.js'
 
 // Arming is a privileged write, so the remembered draft is deliberately narrow:
 // only the fields that describe HOW an operator runs things, never which branch
@@ -10,7 +10,7 @@ import { CUSTOM_MODEL, CUSTOM_SKILL, armDraft } from './useTaskArm.js'
 const KEY = 'regin.tasks.arm.last'
 const REMEMBERED = [
   'cwd', 'model', 'permission_mode', 'effort',
-  'skill', 'skillArgs', 'one_shot',
+  'skills', 'skillArgs', 'one_shot',
 ]
 
 function read() {
@@ -29,21 +29,21 @@ function read() {
  * Only a successful arm is worth remembering: a draft the server refused would
  * come back to prefill the next task with the exact payload that was rejected.
  *
- * The RESOLVED model and skill are stored, never the `custom…` sentinel. The
- * sentinel names a slot in this form, not a model — storing it would let the
- * next sheet's `adoptUnlisted` read `__custom__` as an unlisted id, move it
- * into the custom input, and arm a task with `model: "__custom__"` (which
+ * The RESOLVED model is stored, never the `custom…` sentinel. The sentinel
+ * names a slot in this form, not a model — storing it would let the next
+ * sheet's `adoptUnlisted` read `__custom__` as an unlisted id, move it into
+ * the custom input, and arm a task with `model: "__custom__"` (which
  * `lib/tasks/arm.py` accepts as a free string and only the launch would reject).
  */
 export function rememberArm(draft) {
   const kept = {}
   for (const field of REMEMBERED) kept[field] = draft[field]
   kept.model = draft.model === CUSTOM_MODEL ? draft.modelCustom.trim() : draft.model
-  kept.skill = draft.skill === CUSTOM_SKILL ? draft.skillCustom.trim() : draft.skill
+  kept.skills = [...draft.skills]
   // Args with no skill are not a selection: the sheet hides the input the
-  // moment the picker goes back to "none", so storing them would let an
-  // invisible field be the sole reason the next sheet claims a carry-over.
-  if (!kept.skill) kept.skillArgs = ''
+  // moment no skill is ticked, so storing them would let an invisible field
+  // be the sole reason the next sheet claims a carry-over.
+  if (!kept.skills.length) kept.skillArgs = ''
   try {
     localStorage.setItem(KEY, JSON.stringify(kept))
   } catch {
@@ -67,14 +67,14 @@ export function forgetArm() {
  * there.
  */
 export function hasRecalledValues(draft) {
-  return REMEMBERED.some(field => !!draft[field])
+  return REMEMBERED.some(field => !isEmpty(draft[field]))
 }
 
 // R4b: once the plan (a slice's arm-proposal) or history (the last attempt)
 // has spoken, the remembered prefs may only say HOW to run — skill and model.
 // Everything else they carry was another task's, and a cwd borrowed from it
 // would silently outrank nothing and aim this one elsewhere.
-const HOW_ONLY = ['model', 'skill', 'skillArgs']
+const HOW_ONLY = ['model', 'skills', 'skillArgs']
 
 /** A slice row's proposal (`GET /tasks/<id>/arm-proposal`) as an attempt. */
 export function proposalAttempt(proposal) {
@@ -90,6 +90,25 @@ export function proposalAttempt(proposal) {
 
 function isEmpty(value) {
   return value === '' || value === false || value == null
+    || (Array.isArray(value) && !value.length)
+}
+
+// A stored list is usable only as names: anything else is a store some other
+// sheet wrote, and arming it would send the server a shape it refuses.
+function usableStored(field, value, stored) {
+  if (field === 'skills') {
+    return Array.isArray(value) && value.length > 0
+      && value.every(name => typeof name === 'string' && !!name)
+  }
+  // The sentinel names a slot in the form, not a model — refuse it on the way
+  // in as well as on the way out, so a store written before `rememberArm`
+  // resolved it cannot put the literal `__custom__` into the custom input.
+  if (value === CUSTOM_MODEL) return false
+  // Args are meaningful only under a skill — the sheet hides the input when
+  // none is ticked, and an invisible field must never be the sole reason the
+  // banner claims a carry-over.
+  if (field === 'skillArgs' && !usableStored('skills', stored.skills, stored)) return false
+  return typeof value === 'string' ? !!value : value === true
 }
 
 // First non-empty source wins, per field. `useWorktree` follows the branch
@@ -103,34 +122,23 @@ function fillEmpty(draft, attempt) {
 
 function fillFromStored(draft, task, fields) {
   const stored = read()
-  if (!stored) return false
-  let recalled = false
+  if (!stored) return []
+  const filled = []
   for (const field of fields) {
     // A filed task's directory is its project's repo (`projectCwd`), never the
     // last task's: that is how a task filed under repo B came to run in A.
     if (field === 'cwd' && task?.project_id != null) continue
     if (!isEmpty(draft[field])) continue
     const value = stored[field]
-    // The sentinel names a slot in the form, not a model — refuse it on the way
-    // in as well as on the way out, so a store written before `rememberArm`
-    // resolved it cannot put the literal `__custom__` into the custom input.
-    const sentinel = value === CUSTOM_MODEL || value === CUSTOM_SKILL
-    // Args are meaningful only under a skill — the sheet hides the input when
-    // the picker reads "none", and an invisible field must never be the sole
-    // reason the banner claims a carry-over.
-    const orphanArgs = field === 'skillArgs' && !stored.skill
-    const usable = typeof value === 'string'
-      ? !!value && !sentinel && !orphanArgs
-      : value === true
-    if (usable) {
-      draft[field] = value
-      recalled = true
+    if (usableStored(field, value, stored)) {
+      draft[field] = Array.isArray(value) ? [...value] : value
+      filled.push(field)
     }
   }
-  return recalled
+  return filled
 }
 
-/** The draft the sheet opens with, plus whether any of it came from the last arm.
+/** The draft the sheet opens with, plus which of its fields came from the last arm.
  *
  * R4b, per field, first non-empty source wins:
  *   1. the task's pending attempt — the parameters its next run will actually
@@ -143,11 +151,11 @@ function fillFromStored(draft, task, fields) {
  */
 export function prefilledArmDraft(task, { proposal = null, lastRun = null } = {}) {
   const draft = armDraft(task)
-  if (task?.armed?.params) return { draft, recalled: false }
+  if (task?.armed?.params) return { draft, recalled: false, recalledFields: [] }
   const higher = [proposalAttempt(proposal), lastRun].filter(Boolean)
   for (const attempt of higher) fillEmpty(draft, attempt)
-  const recalled = fillFromStored(draft, task, higher.length ? HOW_ONLY : REMEMBERED)
-  return { draft, recalled }
+  const recalledFields = fillFromStored(draft, task, higher.length ? HOW_ONLY : REMEMBERED)
+  return { draft, recalled: recalledFields.length > 0, recalledFields }
 }
 
 export function seededArmDraft(task) {

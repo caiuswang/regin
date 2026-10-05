@@ -3,14 +3,15 @@
 // that may write a task's execution parameters, and its fields are exactly the
 // arm allowlist. The menus are served, not hardcoded — models, permission
 // modes, efforts and repos describe the install this page is driving.
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import Button from '../ui/Button.vue'
 import Checkbox from '../ui/Checkbox.vue'
 import Dialog from '../ui/Dialog.vue'
 import Input from '../ui/Input.vue'
 import LaunchWorktreeFields from '../live/LaunchWorktreeFields.vue'
 import Select from '../ui/Select.vue'
-import { CUSTOM_MODEL, CUSTOM_SKILL, useTaskArm } from '../../composables/useTaskArm.js'
+import TaskArmSkills from './TaskArmSkills.vue'
+import { CUSTOM_MODEL, useTaskArm } from '../../composables/useTaskArm.js'
 import api from '../../api'
 import {
   blankArmDraft, cwdWithin, forgetArm, hasRecalledValues, prefilledArmDraft,
@@ -32,7 +33,8 @@ const LAUNCH_OPTIONS = [
 ]
 
 const {
-  options, loading, error, saving, armError, skillOptions,
+  options, loading, error, saving, armError,
+  skillCatalog, loadSkills, pruneUnavailableSkills, skillMissing,
   cwdOptions, modeOptions, modelOptions, effortOptions,
   loadOptions, adoptUnlisted, pruneUnlisted, arm,
 } = useTaskArm()
@@ -46,13 +48,16 @@ const draft = reactive(seeded.draft)
 // operator who cannot see that `bypassPermissions` was carried over would arm
 // it by pressing the button they always press.
 const recalled = ref(seeded.recalled)
+let recalledFields = seeded.recalledFields
 
 // The last attempt's cwd outranks the project's (R4b): it is where this very
 // task last ran, not a default for its filing.
 const attemptCwd = ref('')
 let higher = {}
-// The form stays hidden until sources 2 and 3 have answered: they replace the
-// draft wholesale, and anything typed before they land would be overwritten.
+// The form stays hidden until sources 2 and 3 have answered — they replace the
+// draft wholesale, and anything typed before they land would be overwritten —
+// and until the first skill menu has pruned the recalled skills, or Arm could
+// send a remembered skill the run's directory lacks.
 const prefilling = ref(true)
 
 // Seeded after the recall banner is settled: a cwd that came from the task's
@@ -65,14 +70,6 @@ function seedProjectCwd() {
 
 // Sources 2 and 3 of R4b. Neither is an error when absent: a task that is no
 // slice has no proposal (404), and a task never run has no attempt.
-async function readHigherSources() {
-  try {
-    await layerHigherSources()
-  } finally {
-    prefilling.value = false
-  }
-}
-
 async function layerHigherSources() {
   if (props.task?.armed?.params || props.task?.id == null) return
   const [proposal, history] = await Promise.all([
@@ -85,18 +82,38 @@ async function layerHigherSources() {
   const seeded = prefilledArmDraft(props.task, { proposal, lastRun })
   Object.assign(draft, seeded.draft)
   recalled.value = seeded.recalled
+  recalledFields = seeded.recalledFields
   attemptCwd.value = lastRun?.params?.cwd || ''
 }
 
+// Registered in setup so it stops with the sheet; it starts answering only
+// after mount, whose own load has already read the first cwd.
+let skillsFollowCwd = false
+watch(() => draft.cwd, cwd => { if (skillsFollowCwd) loadSkills(cwd) })
+
 onMounted(async () => {
-  await Promise.all([loadOptions(), ensureProjects(), readHigherSources()])
+  try {
+    await settleDraft()
+  } finally {
+    prefilling.value = false
+    skillsFollowCwd = true
+  }
+})
+
+async function settleDraft() {
+  await Promise.all([loadOptions(), ensureProjects(), layerHigherSources()])
   if (recalled.value) {
     pruneUnlisted(draft)
     recalled.value = hasRecalledValues(draft)
   }
   seedProjectCwd()
   adoptUnlisted(draft)
-})
+  await loadSkills(draft.cwd)
+  if (recalledFields.includes('skills')) {
+    pruneUnavailableSkills(draft)
+    recalled.value = hasRecalledValues(draft)
+  }
+}
 
 // Reset drops only what the prefs carried: the plan and the history are this
 // task's own, so they come straight back.
@@ -215,30 +232,12 @@ async function submit() {
         aria-label="Reasoning effort"
       />
 
-      <label class="live-launch-lbl" for="task-arm-skill">
-        skill <span class="task-arm-note">— the run opens with <code>/&lt;skill&gt;</code> and the task as its subject</span>
-      </label>
-      <Select
-        id="task-arm-skill"
-        v-model="draft.skill"
-        block
-        :options="skillOptions"
-        data-testid="task-arm-skill"
-        aria-label="Skill to invoke"
-      />
-      <Input
-        v-if="draft.skill === CUSTOM_SKILL"
-        v-model="draft.skillCustom"
-        data-testid="task-arm-skill-custom"
-        placeholder="e.g. /my-local-skill"
-        aria-label="Custom skill name"
-      />
-      <Input
-        v-if="draft.skill"
-        v-model="draft.skillArgs"
-        data-testid="task-arm-skill-args"
-        placeholder="extra arguments, before the task body"
-        aria-label="Skill arguments"
+      <TaskArmSkills
+        v-model:skills="draft.skills"
+        v-model:args="draft.skillArgs"
+        :catalog="skillCatalog"
+        :missing="skillMissing"
+        :cwd="draft.cwd"
       />
 
       <label class="live-launch-lbl" for="task-arm-verify">

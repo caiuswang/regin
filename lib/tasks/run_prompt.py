@@ -458,6 +458,8 @@ def _invocation(params: dict) -> str:
     the invocation is the first line and the body follows as the rest of the
     skill's arguments — a skill whose procedure takes the task as its subject
     reads it from there, and one with its own arguments gets them on the line.
+    The CLI expands only that one command, so further armed skills are named
+    on the next line for the agent to load itself.
     """
     skill = (params or {}).get("skill") or {}
     name = skill.get("name")
@@ -466,7 +468,13 @@ def _invocation(params: dict) -> str:
     line = f"/{name}"
     if skill.get("args"):
         line += f" {skill['args']}"
-    return line + "\n\n"
+    line += "\n\n"
+    also = skill.get("also") or []
+    if also:
+        named = ", ".join(f"`{n}`" for n in also)
+        line += (f"Also load and follow these skills with the Skill tool: "
+                 f"{named}.\n\n")
+    return line
 
 
 def _launch_kwargs(params: dict) -> dict:

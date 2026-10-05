@@ -1287,3 +1287,33 @@ def test_a_dependent_that_launched_is_not_announced(flask_client, launcher):
 
     assert _task(task_id).status == "running"
     assert _chain_card(dep) is None
+
+
+def test_further_skills_are_stored_deduped_and_named_in_the_prompt(
+        flask_client, launcher):
+    task_id = _capture(flask_client, "shelf", body="wire the thing")
+    resp = _arm(flask_client, task_id, skill={
+        "name": "goal-verified", "args": "fast",
+        "also": ["/tdd", "goal-verified", "tdd", " ", "frontend-design:x"]})
+    assert resp.status_code == 200, resp.get_json()
+    assert resp.get_json()["armed"]["params"]["skill"] == {
+        "name": "goal-verified", "args": "fast",
+        "also": ["tdd", "frontend-design:x"]}
+    _launched_run_id(flask_client, task_id)
+
+    prompt = launcher.calls[0]["prompt"]
+    assert prompt.startswith(
+        "/goal-verified fast\n\nAlso load and follow these skills with the "
+        "Skill tool: `tdd`, `frontend-design:x`.\n\nwire the thing")
+
+
+def test_further_skills_are_validated_like_the_first(flask_client):
+    from lib.tasks.arm import SKILL_ALSO_MAX
+    task_id = _capture(flask_client, "review it")
+    too_many = [f"s{i}" for i in range(SKILL_ALSO_MAX + 1)]
+    for also in ("tdd", ["has space"], [3], too_many):
+        resp = _arm(flask_client, task_id,
+                    skill={"name": "goal-verified", "also": also})
+        assert resp.status_code == 400, also
+        assert resp.get_json()["field"] == "skill"
+    assert _task(task_id).status == "idea"

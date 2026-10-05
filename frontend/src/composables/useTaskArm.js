@@ -5,9 +5,12 @@ import api from '../api'
 // /live launch sheet keeps, because the arm allowlist accepts any model string
 // and an operator pinning an exact id must stay able to say so.
 export const CUSTOM_MODEL = '__custom__'
-// Same escape hatch for skills: regin only lists the ones it deploys, but the
-// launched CLI resolves any skill on the operator's own disk.
-export const CUSTOM_SKILL = '__custom__'
+
+/** Every skill a task was armed with, in invocation order. */
+export function armedSkills(skill) {
+  if (!skill?.name) return []
+  return [skill.name, ...(skill.also || [])]
+}
 
 /** A draft seeded from whatever the task was last armed with.
  *
@@ -21,8 +24,9 @@ export function armDraft(task) {
   const worktree = params.worktree || {}
   const skill = params.skill || {}
   return {
-    skill: skill.name || '',
-    skillCustom: '',
+    // Ordered: the first opens the run as its slash command, the rest are
+    // named after it — so selection order is part of the value.
+    skills: armedSkills(skill),
     skillArgs: skill.args || '',
     cwd: params.cwd || '',
     model: params.model || '',
@@ -58,9 +62,10 @@ function armBody(draft) {
       base: draft.worktreeBase || '',
     }
   }
-  const skillName = (draft.skill === CUSTOM_SKILL ? draft.skillCustom : draft.skill).trim()
-  if (skillName) {
-    body.skill = { name: skillName, args: draft.skillArgs.trim() }
+  const [first, ...also] = draft.skills
+  if (first) {
+    body.skill = { name: first, args: draft.skillArgs.trim() }
+    if (also.length) body.skill.also = also
   }
   return body
 }
@@ -86,16 +91,15 @@ export function useTaskArm() {
   const error = ref('')
   const saving = ref(false)
   const armError = ref(null)
-  const skillIds = ref([])
+  // Read off the repo the run will start in, not off regin's own deployments:
+  // a skill only some other repo carries is a slash command nobody answers.
+  const skillCatalog = ref([])
+  const skillsLoaded = ref(false)
+  let skillsAsked = 0
 
   async function loadOptions() {
     try {
-      const [launch, skills] = await Promise.all([
-        api.get('/agent-runs/launch-options'),
-        api.get('/skills').catch(() => null),
-      ])
-      options.value = launch
-      skillIds.value = (skills?.rows || []).map(r => r.id).sort()
+      options.value = await api.get('/agent-runs/launch-options')
     } catch (e) {
       error.value = e?.message || 'Failed to load launch options.'
     } finally {
@@ -123,18 +127,40 @@ export function useTaskArm() {
   }
 
   // What the task was armed with may be a model id the alias menu does not
-  // carry, or a skill regin does not deploy; adopting either into its custom
-  // slot keeps it visible instead of silently resetting the picker to "none".
+  // carry; adopting it into the custom slot keeps it visible instead of
+  // silently resetting the picker to the default.
   function adoptUnlisted(draft) {
     const models = options.value?.models || []
     if (draft.model && !models.includes(draft.model)) {
       draft.modelCustom = draft.model
       draft.model = CUSTOM_MODEL
     }
-    if (draft.skill && !skillIds.value.includes(draft.skill)) {
-      draft.skillCustom = draft.skill
-      draft.skill = CUSTOM_SKILL
-    }
+  }
+
+  // A cwd change can land after a newer one was asked for; only the latest
+  // answer may describe the menu.
+  async function loadSkills(cwd) {
+    const asked = ++skillsAsked
+    const query = cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''
+    const res = await api.get(`/agent-runs/skill-options${query}`).catch(() => null)
+    if (asked !== skillsAsked) return
+    skillCatalog.value = res?.skills || []
+    skillsLoaded.value = !!res
+  }
+
+  const skillNames = computed(() => new Set(skillCatalog.value.map(s => s.name)))
+
+  // Only a REMEMBERED pick is dropped: it was another task's, and in a repo
+  // that lacks it would open the run with a dead slash command. A skill the
+  // task itself carries stays, flagged, since someone chose it for this task.
+  // A catalog that failed to load proves nothing missing, so nothing is dropped.
+  function pruneUnavailableSkills(draft) {
+    if (!skillsLoaded.value) return
+    draft.skills = draft.skills.filter(name => skillNames.value.has(name))
+  }
+
+  function skillMissing(name) {
+    return skillsLoaded.value && !skillNames.value.has(name)
   }
 
   const cwdOptions = computed(() => [
@@ -157,11 +183,6 @@ export function useTaskArm() {
     deferOption(options.value?.default_effort, 'CLI'),
     ...(options.value?.efforts || []).map(e => ({ value: e, label: e })),
   ])
-  const skillOptions = computed(() => [
-    { value: '', label: 'none — send the task body as a plain prompt' },
-    ...skillIds.value.map(id => ({ value: id, label: id })),
-    { value: CUSTOM_SKILL, label: 'custom…' },
-  ])
 
   async function arm(task, draft) {
     saving.value = true
@@ -179,7 +200,8 @@ export function useTaskArm() {
   }
 
   return {
-    options, loading, error, saving, armError, skillOptions,
+    options, loading, error, saving, armError,
+    skillCatalog, skillsLoaded, loadSkills, pruneUnavailableSkills, skillMissing,
     cwdOptions, modeOptions, modelOptions, effortOptions,
     loadOptions, adoptUnlisted, pruneUnlisted, arm,
   }

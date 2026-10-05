@@ -120,7 +120,7 @@ register_surface(
     ),
     applies_to=("external-agent",),
     variables=(
-        PromptVariable("invocation", "`/<skill> <args>` line when the task was armed with a skill, else empty.", example="/goal-verified\\n\\n", required=False),
+        PromptVariable("invocation", "`/<skill> <args>` line when the task was armed with a skill (plus a line naming any further armed skills), else empty.", example="/goal-verified\\n\\n", required=False),
         PromptVariable("body", "The task's captured idea (its body, or its title when bodyless), truncated to PROMPT_MAX."),
         PromptVariable("tracker", "Rendered `task-run-tracker` block. Empty for a native feature.", required=False),
         PromptVariable("followup", "Rendered `task-run-followup` block. Empty when no thread is open.", required=False),

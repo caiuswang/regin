@@ -344,38 +344,50 @@ test.describe('/tasks — arming', () => {
     await expect(refusal).toContainText('rejected field: bogus')
   })
 
-  // The served list is whatever the scratch install deploys, which may be
-  // nothing; the tests care about the picker, so they pin what it is offered.
+  // The served list is whatever the scratch install's repo carries, which may
+  // be nothing; the tests care about the picker, so they pin what it is
+  // offered — per cwd, since a skill is only offered where it resolves.
   const SERVED_SKILLS = ['feature-pipeline', 'goal-verified']
-  async function serveSkills(page) {
-    await page.route(/\/api\/skills(\?|$)/, route => route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ rows: SERVED_SKILLS.map(id => ({ id })), total: SERVED_SKILLS.length }),
-    }))
+  async function serveSkills(page, byCwd = null) {
+    const asked = []
+    await page.route(/\/api\/agent-runs\/skill-options/, route => {
+      const cwd = new URL(route.request().url()).searchParams.get('cwd') || ''
+      asked.push(cwd)
+      const names = byCwd ? (byCwd[cwd] || []) : SERVED_SKILLS
+      return route.fulfill({ json: { cwd, skills: names.map(name => ({ name, source: 'project' })) } })
+    })
+    return asked
   }
 
-  test('the skill field is the shared listbox, offering the served skills', async ({ page }) => {
+  test('the skill picker offers what the run directory resolves', async ({ page }) => {
     await serveSkills(page)
     await gotoTasks(page)
     await rowAction(page.locator('.task-row').first(), 'arm')
     const form = page.getByTestId('task-arm-form')
     await expect(form).toBeVisible()
-    // The native suggestion popup is gone: nothing in the sheet is a datalist.
     await expect(form.locator('datalist')).toHaveCount(0)
-
-    const trigger = page.getByTestId('task-arm-skill')
-    await expect(trigger).toContainText('none')
-    await trigger.click()
-    await expect(page.getByRole('option', { name: /^none/ })).toBeVisible()
     for (const id of SERVED_SKILLS) {
-      await expect(page.getByRole('option', { name: id, exact: true })).toBeVisible()
+      await expect(page.getByTestId(`task-arm-skill-option-${id}`)).toBeVisible()
     }
-    await expect(page.getByRole('option', { name: 'custom…', exact: true })).toBeVisible()
-    await page.keyboard.press('Escape')
+    // Nothing ticked: no args field, nothing to be arguments to.
+    await expect(page.getByTestId('task-arm-skill-args')).toHaveCount(0)
   })
 
-  test('an armed skill is sent as {name, args} and shown on the row', async ({ page }) => {
+  test('a directory with no skills says so, and arms a plain prompt', async ({ page }) => {
+    await serveSkills(page, {})
+    await gotoTasks(page)
+    await capture(page, 'nothing to invoke')
+    const row = page.locator('.task-row', { hasText: 'nothing to invoke' }).first()
+    await rowAction(row, 'arm')
+    await expect(page.getByTestId('task-arm-skills-none')).toBeVisible()
+    const [armRequest] = await Promise.all([
+      page.waitForRequest(r => /\/api\/tasks\/\d+\/arm$/.test(r.url())),
+      page.getByTestId('task-arm-submit').click(),
+    ])
+    expect(armRequest.postDataJSON().skill).toBeUndefined()
+  })
+
+  test('several skills arm in pick order: the first opens, the rest ride along', async ({ page }) => {
     await serveSkills(page)
     await gotoTasks(page)
     await capture(page, 'run as a skill')
@@ -383,37 +395,40 @@ test.describe('/tasks — arming', () => {
     await rowAction(row, 'arm')
     await expect(page.getByTestId('task-arm-form')).toBeVisible()
 
-    // The args field only appears once a skill is named: with no skill there
-    // is nothing for it to be arguments to.
-    await expect(page.getByTestId('task-arm-skill-args')).toHaveCount(0)
-    await page.getByTestId('task-arm-skill').click()
-    await page.getByRole('option', { name: 'goal-verified', exact: true }).click()
+    await page.getByTestId('task-arm-skill-option-goal-verified').click()
+    await page.getByTestId('task-arm-skill-option-feature-pipeline').click()
+    await expect(page.getByTestId('task-arm-skill-picked-goal-verified')).toContainText('opens')
+    await expect(page.getByTestId('task-arm-skill-picked-feature-pipeline')).toContainText('+1')
     await page.getByTestId('task-arm-skill-args').fill('--strict')
 
     const [armRequest] = await Promise.all([
       page.waitForRequest(r => /\/api\/tasks\/\d+\/arm$/.test(r.url())),
       page.getByTestId('task-arm-submit').click(),
     ])
-    expect(armRequest.postDataJSON().skill).toEqual({ name: 'goal-verified', args: '--strict' })
+    expect(armRequest.postDataJSON().skill).toEqual(
+      { name: 'goal-verified', args: '--strict', also: ['feature-pipeline'] })
     await expect(row).toHaveAttribute('data-status', 'armed')
 
-    // The skill is an execution parameter, so the task's own page is where it
-    // is printed.
     await row.getByTestId('task-id').click()
     const params = page.locator('.td-params')
     await expect(params).toContainText('"name": "goal-verified"')
-    await expect(params).toContainText('"args": "--strict"')
+    await expect(params).toContainText('"feature-pipeline"')
 
-    // Re-opening the sheet seeds the draft from what was armed.
+    // Re-opening the sheet seeds the draft, order included, from what was armed.
     await gotoTasks(page)
     await selectStatus(page, 'Armed')
     const armed = page.locator('.task-row', { hasText: 'run as a skill' }).first()
     await rowAction(armed, 'arm')
-    await expect(page.getByTestId('task-arm-skill')).toContainText('goal-verified')
+    await expect(page.getByTestId('task-arm-skill-picked-goal-verified')).toContainText('opens')
+    await expect(page.getByTestId('task-arm-skill-picked-feature-pipeline')).toContainText('+1')
     await expect(page.getByTestId('task-arm-skill-args')).toHaveValue('--strict')
+
+    // Unticking the first promotes the next to the slash command.
+    await page.getByTestId('task-arm-skill-picked-goal-verified').click()
+    await expect(page.getByTestId('task-arm-skill-picked-feature-pipeline')).toContainText('opens')
   })
 
-  test('a skill regin does not deploy is still armable via custom…', async ({ page }) => {
+  test('a skill the directory does not list is armable by name, and flagged', async ({ page }) => {
     await serveSkills(page)
     await gotoTasks(page)
     await capture(page, 'run a local skill')
@@ -421,27 +436,26 @@ test.describe('/tasks — arming', () => {
     await rowAction(row, 'arm')
     await expect(page.getByTestId('task-arm-form')).toBeVisible()
 
-    await expect(page.getByTestId('task-arm-skill-custom')).toHaveCount(0)
-    await page.getByTestId('task-arm-skill').click()
-    await page.getByRole('option', { name: 'custom…', exact: true }).click()
-    // The slash is accepted here and stripped by the server, as before.
-    await page.getByTestId('task-arm-skill-custom').fill('/my-local-skill')
+    await expect(page.getByTestId('task-arm-skill-missing')).toHaveCount(0)
+    // The slash is accepted here and stripped, as the server would.
+    await page.getByTestId('task-arm-skill-add').fill('/my-local-skill')
+    await page.getByTestId('task-arm-skill-add').press('Enter')
+    await expect(page.getByTestId('task-arm-skill-missing')).toContainText('my-local-skill')
 
     const [armRequest] = await Promise.all([
       page.waitForRequest(r => /\/api\/tasks\/\d+\/arm$/.test(r.url())),
       page.getByTestId('task-arm-submit').click(),
     ])
-    expect(armRequest.postDataJSON().skill).toEqual({ name: '/my-local-skill', args: '' })
+    expect(armRequest.postDataJSON().skill).toEqual({ name: 'my-local-skill', args: '' })
     await expect(row).toHaveAttribute('data-status', 'armed')
 
-    // An unlisted name is adopted into the custom slot on re-open, not reset
-    // to "none".
+    // The task's OWN pick is kept on re-open, still flagged — never dropped.
     await gotoTasks(page)
     await selectStatus(page, 'Armed')
     const armed = page.locator('.task-row', { hasText: 'run a local skill' }).first()
     await rowAction(armed, 'arm')
-    await expect(page.getByTestId('task-arm-skill')).toContainText('custom…')
-    await expect(page.getByTestId('task-arm-skill-custom')).toHaveValue('my-local-skill')
+    await expect(page.getByTestId('task-arm-skill-picked-my-local-skill')).toBeVisible()
+    await expect(page.getByTestId('task-arm-skill-missing')).toContainText('my-local-skill')
   })
 
   // Arming many tasks the same way is the common case: the sheet remembers the
@@ -462,13 +476,12 @@ test.describe('/tasks — arming', () => {
     const first = page.locator('.task-row', { hasText: 'first quick arm' }).first()
     await rowAction(first, 'arm')
     await expect(page.getByTestId('task-arm-form')).toBeVisible()
-    // Nothing has been armed in this browser yet, so there is nothing to recall.
     await expect(page.getByTestId('task-arm-recalled')).toHaveCount(0)
 
     await page.getByTestId('task-arm-model').click()
     await page.getByRole('option', { name: served.models[0], exact: true }).click()
-    await page.getByTestId('task-arm-skill').click()
-    await page.getByRole('option', { name: 'goal-verified', exact: true }).click()
+    await page.getByTestId('task-arm-skill-option-goal-verified').click()
+    await page.getByTestId('task-arm-skill-option-feature-pipeline').click()
     await page.getByTestId('task-arm-skill-args').fill('--strict')
     await page.getByTestId('task-arm-verify').fill('echo remembered')
     await page.getByTestId('task-arm-submit').click()
@@ -482,11 +495,10 @@ test.describe('/tasks — arming', () => {
       () => JSON.parse(localStorage.getItem('regin.tasks.arm.last')))
     expect(Object.keys(stored).sort()).toEqual([
       'cwd', 'effort', 'model', 'one_shot', 'permission_mode',
-      'skill', 'skillArgs',
+      'skillArgs', 'skills',
     ])
+    expect(stored.skills).toEqual(['goal-verified', 'feature-pipeline'])
 
-    // Re-opening the task that WAS armed reads its own attempt, and must not
-    // claim to have been filled from somewhere else.
     await rowAction(first, 'arm')
     await expect(page.getByTestId('task-arm-form')).toBeVisible()
     await expect(page.getByTestId('task-arm-recalled')).toHaveCount(0)
@@ -497,11 +509,10 @@ test.describe('/tasks — arming', () => {
     await expect(page.getByTestId('task-arm-recalled')).toBeVisible()
     await expect(page.getByTestId('task-arm-verify')).toHaveValue('')
     await expect(page.getByTestId('task-arm-model')).toContainText(served.models[0])
-    await expect(page.getByTestId('task-arm-skill')).toContainText('goal-verified')
+    await expect(page.getByTestId('task-arm-skill-picked-goal-verified')).toContainText('opens')
+    await expect(page.getByTestId('task-arm-skill-picked-feature-pipeline')).toContainText('+1')
     await expect(page.getByTestId('task-arm-skill-args')).toHaveValue('--strict')
 
-    // Reset is the escape hatch: it blanks the form AND forgets the pick, so
-    // the next sheet opens clean rather than re-offering it.
     await page.getByTestId('task-arm-reset').click()
     await expect(page.getByTestId('task-arm-recalled')).toHaveCount(0)
     await expect(page.getByTestId('task-arm-verify')).toHaveValue('')
@@ -510,60 +521,36 @@ test.describe('/tasks — arming', () => {
       () => localStorage.getItem('regin.tasks.arm.last'))).toBeNull()
   })
 
-  // `custom…` names a slot in the form, not a model. Remembering the sentinel
-  // instead of what was typed under it would arm the next task with the literal
-  // string `__custom__` — which the arm route accepts as a free-form model and
-  // only the launch would reject.
-  test('a recalled custom model and skill carry the real ids, not the sentinel', async ({ page }) => {
-    await serveSkills(page)
+  // The defect behind #132: the last arm's skill, carried into a task whose
+  // repo lacks it, opened the run with a slash command nobody answered.
+  test('a remembered skill the run directory lacks is dropped, not carried', async ({ page }) => {
+    await serveSkills(page, { '': ['tdd'] })
     await gotoTasks(page)
-    await capture(page, 'first custom arm')
-    await capture(page, 'second custom arm')
-
-    const first = page.locator('.task-row', { hasText: 'first custom arm' }).first()
-    await rowAction(first, 'arm')
+    await capture(page, 'other repo target')
+    await page.evaluate(() => localStorage.setItem('regin.tasks.arm.last', JSON.stringify({
+      cwd: '', model: '', permission_mode: '', effort: '',
+      skills: ['goal-verified', 'tdd'], skillArgs: '', one_shot: false,
+    })))
+    const row = page.locator('.task-row', { hasText: 'other repo target' }).first()
+    await rowAction(row, 'arm')
     await expect(page.getByTestId('task-arm-form')).toBeVisible()
-    await page.getByTestId('task-arm-model').click()
-    await page.getByRole('option', { name: 'custom…', exact: true }).click()
-    await page.getByTestId('task-arm-model-custom').fill('claude-opus-4-8')
-    await page.getByTestId('task-arm-skill').click()
-    await page.getByRole('option', { name: 'custom…', exact: true }).click()
-    await page.getByTestId('task-arm-skill-custom').fill('my-local-skill')
-    await page.getByTestId('task-arm-submit').click()
-    await expect(first).toHaveAttribute('data-status', 'armed')
-
-    const stored = await page.evaluate(
-      () => JSON.parse(localStorage.getItem('regin.tasks.arm.last')))
-    expect(stored.model).toBe('claude-opus-4-8')
-    expect(stored.skill).toBe('my-local-skill')
-
-    const second = page.locator('.task-row', { hasText: 'second custom arm' }).first()
-    await rowAction(second, 'arm')
+    await expect(page.getByTestId('task-arm-skill-picked-tdd')).toContainText('opens')
+    await expect(page.getByTestId('task-arm-skill-picked-goal-verified')).toHaveCount(0)
+    await expect(page.getByTestId('task-arm-skill-missing')).toHaveCount(0)
     await expect(page.getByTestId('task-arm-recalled')).toBeVisible()
-    await expect(page.getByTestId('task-arm-model')).toContainText('custom…')
-    await expect(page.getByTestId('task-arm-model-custom')).toHaveValue('claude-opus-4-8')
-    await expect(page.getByTestId('task-arm-skill')).toContainText('custom…')
-    await expect(page.getByTestId('task-arm-skill-custom')).toHaveValue('my-local-skill')
-
-    const [armRequest] = await Promise.all([
-      page.waitForRequest(r => /\/api\/tasks\/\d+\/arm$/.test(r.url())),
-      page.getByTestId('task-arm-submit').click(),
-    ])
-    const body = armRequest.postDataJSON()
-    expect(body.model).toBe('claude-opus-4-8')
-    expect(body.skill).toEqual({ name: 'my-local-skill', args: '' })
   })
 
-  // Args are hidden the moment the skill picker goes back to "none", and a
-  // sentinel left in an older store names a slot rather than a model. Neither
-  // may become the sole reason the next sheet claims a carry-over.
-  // A verify command an older sheet stored is another task's, like the rest.
+  // Args are hidden the moment no skill is ticked, and a sentinel left in an
+  // older store names a slot rather than a model. Neither may become the sole
+  // reason the next sheet claims a carry-over. A verify command an older sheet
+  // stored is another task's, like the rest.
   test('an invisible field never carries, and a stored sentinel is refused', async ({ page }) => {
+    await serveSkills(page)
     await gotoTasks(page)
     await capture(page, 'sentinel preset target')
     await page.evaluate(() => localStorage.setItem('regin.tasks.arm.last', JSON.stringify({
       cwd: '', model: '__custom__', permission_mode: '', effort: '',
-      skill: '', skillArgs: '--strict', verify_cmd: 'echo from an older sheet', one_shot: false,
+      skills: [], skillArgs: '--strict', verify_cmd: 'echo from an older sheet', one_shot: false,
     })))
     const row = page.locator('.task-row', { hasText: 'sentinel preset target' }).first()
     await rowAction(row, 'arm')
@@ -574,21 +561,18 @@ test.describe('/tasks — arming', () => {
     await expect(page.getByTestId('task-arm-recalled')).toHaveCount(0)
     await page.getByRole('button', { name: 'Cancel' }).click()
 
-    // Nor may they be written: args typed under a skill that is then cleared
+    // Nor may they be written: args typed under a skill that is then unticked
     // are not part of the selection.
     const again = page.locator('.task-row', { hasText: 'sentinel preset target' }).first()
     await rowAction(again, 'arm')
-    await page.getByTestId('task-arm-skill').click()
-    await page.getByRole('option', { name: 'custom…', exact: true }).click()
-    await page.getByTestId('task-arm-skill-custom').fill('throwaway')
+    await page.getByTestId('task-arm-skill-option-goal-verified').click()
     await page.getByTestId('task-arm-skill-args').fill('--strict')
-    await page.getByTestId('task-arm-skill').click()
-    await page.getByRole('option', { name: /^none/ }).click()
+    await page.getByTestId('task-arm-skill-picked-goal-verified').click()
     await page.getByTestId('task-arm-submit').click()
     await expect(again).toHaveAttribute('data-status', 'armed')
     const stored = await page.evaluate(
       () => JSON.parse(localStorage.getItem('regin.tasks.arm.last')))
-    expect(stored.skill).toBe('')
+    expect(stored.skills).toEqual([])
     expect(stored.skillArgs).toBe('')
   })
 
@@ -600,7 +584,7 @@ test.describe('/tasks — arming', () => {
     await page.evaluate(() => localStorage.setItem('regin.tasks.arm.last', JSON.stringify({
       cwd: '/gone/from/this/install',
       model: '', permission_mode: '', effort: '',
-      skill: '', skillArgs: '', verify_cmd: '', one_shot: false,
+      skills: [], skillArgs: '', verify_cmd: '', one_shot: false,
     })))
     const row = page.locator('.task-row', { hasText: 'stale preset target' }).first()
     await rowAction(row, 'arm')

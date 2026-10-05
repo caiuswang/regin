@@ -19,6 +19,7 @@ from lib.auth import get_current_user, require_editor
 from lib.agent_bridge import launch as terminal_launch
 from lib.agent_sdk import client, resumable, store, supervisor, worktree
 from lib.settings import settings
+from lib.tasks import skill_catalog
 
 agent_runs_bp = Blueprint('agent_runs', __name__)
 
@@ -250,6 +251,17 @@ def api_worktree_options():
         return jsonify(worktree.options(cwd or str(settings.project_root)))
     except worktree.WorktreeRefused as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@agent_runs_bp.route('/api/agent-runs/skill-options', methods=['GET'])
+@require_editor
+def api_skill_options():
+    """The skills a run in `cwd` can open with — per-repo, like the worktree
+    options, because a skill one repo carries is a dead slash command in
+    another. An empty `cwd` is the server working directory, as at launch."""
+    cwd = (request.args.get('cwd') or '').strip()[:_PATH_MAX]
+    cwd = cwd or str(settings.project_root)
+    return jsonify({"cwd": cwd, "skills": skill_catalog.available_skills(cwd)})
 
 
 @agent_runs_bp.route('/api/agent-runs/resumable', methods=['GET'])
