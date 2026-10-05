@@ -5,13 +5,20 @@
 // slot (D11b): present in the layout, empty and collapsed until that feature
 // fills it.
 import { computed } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import FileViewer from '../components/files/FileViewer.vue'
 import { sourceFromQuery } from '../components/files/source'
 
 const route = useRoute()
+const router = useRouter()
 const source = computed(() => sourceFromQuery(route.query))
 const anchor = computed(() => route.hash || '')
+
+// A relative link inside a rendered file is a new URL, so back/forward and a
+// reload follow it (I8).
+function navigate(next, nextAnchor) {
+  router.push({ path: '/files', query: next, hash: nextAnchor || '' })
+}
 </script>
 
 <template>
@@ -19,7 +26,7 @@ const anchor = computed(() => route.hash || '')
     <aside class="files-tree" data-testid="files-tree-pane" data-collapsed="true"
            aria-label="Files" hidden />
     <div class="files-main">
-      <FileViewer v-if="source" :source="source" :anchor="anchor" />
+      <FileViewer v-if="source" :source="source" :anchor="anchor" @navigate="navigate" />
       <p v-else class="files-empty" data-testid="files-empty">
         No file selected. Open one from a file reference, a trace, or search.
       </p>

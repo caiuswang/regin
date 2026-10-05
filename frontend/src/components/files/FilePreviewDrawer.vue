@@ -8,7 +8,7 @@ import FileViewer from './FileViewer.vue'
 import { useFilePreview } from '../../composables/useFilePreview'
 import { sourceQueryString } from './source'
 
-const { open, source, anchor, closeFilePreview } = useFilePreview()
+const { open, source, anchor, openFilePreview, closeFilePreview } = useFilePreview()
 const pageHref = computed(() => (source.value
   ? `/files?${sourceQueryString(source.value)}${anchor.value || ''}`
   : '/files'))
@@ -32,7 +32,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
       <Button variant="ghost" class="fpd-scrim" aria-label="Close file preview" @click="closeFilePreview" />
       <aside class="fpd" role="dialog" aria-modal="true" aria-label="File preview"
              data-testid="file-preview-drawer">
-        <FileViewer :source="source" :anchor="anchor">
+        <FileViewer :source="source" :anchor="anchor" @navigate="openFilePreview">
           <template #actions>
             <router-link :to="pageHref" class="fpd-link" data-testid="file-preview-open-page"
                          @click="closeFilePreview">Open page</router-link>

@@ -7,6 +7,7 @@ import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import api from '../../api'
 import { useTheme } from '../../composables/useTheme'
 import { rawUrl } from './source'
+import { monacoTheme } from './render'
 
 const props = defineProps({
   meta: { type: Object, required: true },
@@ -24,7 +25,6 @@ let monacoApi = null
 let disposed = false
 
 const { theme } = useTheme()
-const monacoTheme = (t) => (t === 'dark' ? 'vs-dark' : 'vs')
 
 function toBufferLine(fileLine) {
   return fileLine - (props.meta.first_line || 1) + 1

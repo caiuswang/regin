@@ -5,6 +5,7 @@
 // the content itself (I7).
 import { computed, ref, watch } from 'vue'
 import api from '../../api'
+import Button from '../ui/Button.vue'
 import { rendererFor } from './registry'
 import { formatBytes, metaUrl, parseLineAnchor, sourceQueryString } from './source'
 
@@ -12,6 +13,7 @@ const props = defineProps({
   source: { type: Object, default: null },
   anchor: { type: String, default: '' },
 })
+const emit = defineEmits(['navigate'])
 
 // Axis A of the spec's lifecycle.
 const STATUS_BY_HTTP = { 403: 'denied', 404: 'missing' }
@@ -28,12 +30,21 @@ const sourceKey = computed(() => (props.source ? sourceQueryString(props.source)
 const lines = computed(() => parseLineAnchor(props.anchor))
 const renderer = computed(() => (meta.value ? rendererFor(meta.value.preview) : null))
 
+// Axis B: a kind with a rendered form opens rendered and can flip to its
+// source. Any source change starts over at rendered.
+const view = ref('rendered')
+const hasSource = computed(() => !!renderer.value?.source)
+const active = computed(() => (view.value === 'source' && hasSource.value
+  ? renderer.value.source
+  : renderer.value?.component))
+
 let requestId = 0
 
 async function load() {
   const id = ++requestId
   meta.value = null
   errorDetail.value = ''
+  view.value = 'rendered'
   if (!props.source) {
     status.value = 'failed'
     errorDetail.value = 'No file selected.'
@@ -60,6 +71,11 @@ function onRendererFailed(detail) {
   errorDetail.value = detail || ''
 }
 
+// A relative link inside a rendered file; the mount decides where it goes.
+function forwardNavigate(next, nextAnchor) {
+  emit('navigate', next, nextAnchor)
+}
+
 watch(sourceKey, load, { immediate: true })
 </script>
 
@@ -69,6 +85,14 @@ watch(sourceKey, load, { immediate: true })
       <span class="fv-name" :title="meta.abs_path || meta.name" data-testid="file-viewer-name">{{ meta.name }}</span>
       <span class="fv-sub">{{ formatBytes(meta.size) }} · {{ meta.mime }}</span>
       <span class="fv-spacer" />
+      <div v-if="status === 'ready' && hasSource" class="fv-modes" role="group" aria-label="View mode">
+        <Button size="sm" :variant="view === 'rendered' ? 'primary' : 'secondary'"
+                :aria-pressed="view === 'rendered' ? 'true' : 'false'" data-testid="file-view-rendered"
+                @click="view = 'rendered'">Rendered</Button>
+        <Button size="sm" :variant="view === 'source' ? 'primary' : 'secondary'"
+                :aria-pressed="view === 'source' ? 'true' : 'false'" data-testid="file-view-source"
+                @click="view = 'source'">Source</Button>
+      </div>
       <slot name="actions" :meta="meta" />
     </header>
 
@@ -80,13 +104,14 @@ watch(sourceKey, load, { immediate: true })
         <p v-if="errorDetail" class="fv-detail">{{ errorDetail }}</p>
       </div>
       <component
-        :is="renderer.component"
-        v-else-if="renderer"
-        :key="sourceKey"
+        :is="active"
+        v-else-if="active"
+        :key="`${sourceKey}|${view}`"
         :meta="meta"
         :source="source"
         :lines="lines"
         @failed="onRendererFailed"
+        @navigate="forwardNavigate"
       />
     </div>
   </section>
@@ -123,6 +148,7 @@ watch(sourceKey, load, { immediate: true })
   color: var(--color-fg-muted);
 }
 .fv-spacer { flex: 1; }
+.fv-modes { display: flex; gap: 0.25rem; flex-shrink: 0; }
 .fv-body {
   flex: 1;
   min-height: 0;
