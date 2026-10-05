@@ -16,6 +16,8 @@ import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
 import FollowUpComposer from '../conversation/FollowUpComposer.vue'
 import { useCopy } from '../../composables/useCopy.js'
+import { openFilePreview } from '../../composables/useFilePreview.js'
+import { readSpanSource } from '../files/source.js'
 
 const props = defineProps({
   span: { type: Object, default: null },
@@ -58,6 +60,8 @@ const vm = computed(() => (props.span
   : null))
 
 const { copyText, isCopied } = useCopy()
+
+const readSource = computed(() => readSpanSource(props.span))
 
 // Display preference, not a content switch: `wide` buys diff and shell room
 // (1320px panel) while the prose measure stays capped independently, so lines
@@ -118,12 +122,13 @@ function toggleReply() { replyOpen.value = !replyOpen.value }
 // Probed through the DOM rather than by importing the search state — the
 // reader should not have to know what is stacked above it, only that
 // something is.
-const SEARCH_PALETTE = '[data-search-palette]'
-const searchPaletteOpen = () => !!document.querySelector(SEARCH_PALETTE)
-const inSearchPalette = el => !!el?.closest?.(SEARCH_PALETTE)
+// The file preview drawer stacks the same way, and needs the same three.
+const STACKED_ABOVE = '[data-search-palette], [data-file-preview]'
+const stackedOpen = () => !!document.querySelector(STACKED_ABOVE)
+const inStacked = el => !!el?.closest?.(STACKED_ABOVE)
 
 function onEscapeKeyDown(e) {
-  if (searchPaletteOpen()) { e.preventDefault(); return }
+  if (stackedOpen()) { e.preventDefault(); return }
   if (!replyOpen.value) return
   e.preventDefault()
   replyOpen.value = false
@@ -134,13 +139,13 @@ function onEscapeKeyDown(e) {
 // search palette is outside for the same reason.
 function onInteractOutside(e) {
   const target = e.detail?.originalEvent?.target
-  if (target?.closest?.('.live-cmd-menu') || inSearchPalette(target)) e.preventDefault()
+  if (target?.closest?.('.live-cmd-menu') || inStacked(target)) e.preventDefault()
 }
 
 // Focus leaving for the palette is legitimate — let it go, or the trap
 // returns the caret and the palette cannot be typed into.
 function onFocusOutside(e) {
-  if (searchPaletteOpen()) e.preventDefault()
+  if (stackedOpen()) e.preventDefault()
 }
 
 const TYPING_TAGS = ['INPUT', 'TEXTAREA', 'SELECT']
@@ -228,6 +233,16 @@ function onKeydown(e) {
               data-testid="present-reply"
               @click="toggleReply"
             ><Icon name="message-square" :size="14" />Reply</Button>
+            <Button
+              v-if="readSource"
+              variant="ghost"
+              size="sm"
+              class="present-ctl"
+              aria-label="View the content this Read captured"
+              title="View in the file viewer"
+              data-testid="present-read-view"
+              @click="openFilePreview(readSource)"
+            ><Icon name="file" :size="14" />View</Button>
             <Button
               variant="ghost"
               size="sm"

@@ -82,6 +82,7 @@ def test_file_search_bodies_come_from_disk_not_from_the_diff(tmp_path, either_ba
     assert hits[0].doc.tag == "+3 −1"
     assert hits[0].doc.href == "/trace/sessions/t1?span=sp1"
     assert hits[0].doc.mono is True
+    assert hits[0].doc.as_json()["source"] == {"session": "t1", "path": str(target)}
 
 
 def test_file_search_skips_a_path_that_no_longer_exists(tmp_path, either_backend):
@@ -95,6 +96,7 @@ def test_file_row_without_a_span_gets_no_href(tmp_path, either_backend):
     target.write_text("redis\n")
     (hit,) = search_file_docs([{"path": str(target)}], "redis", 6)
     assert hit.doc.href == ""
+    assert "source" not in hit.doc.as_json()
 
 
 def test_count_matches_agrees_across_both_backends(tmp_path, monkeypatch):

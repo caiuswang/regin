@@ -3,6 +3,7 @@
 // Its state is the shared `useFilePreview` store; "Open page" hands the same
 // source to /files, where it becomes URL-addressed.
 import { computed, onBeforeUnmount, watch } from 'vue'
+import { FocusScope } from 'reka-ui'
 import Button from '../ui/Button.vue'
 import FileViewer from './FileViewer.vue'
 import { useFilePreview } from '../../composables/useFilePreview'
@@ -30,8 +31,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
   <Teleport to="body">
     <div v-if="open && source" class="fpd-backdrop">
       <Button variant="ghost" class="fpd-scrim" aria-label="Close file preview" @click="closeFilePreview" />
-      <aside class="fpd" role="dialog" aria-modal="true" aria-label="File preview"
-             data-testid="file-preview-drawer">
+      <!-- A trapped FocusScope joins Reka's scope stack, so a drawer opened
+           from the presentation reader pauses the reader's trap and hands it
+           back on close; a plain element would have its focus yanked back. -->
+      <FocusScope as="aside" trapped class="fpd" role="dialog" aria-modal="true"
+                  aria-label="File preview" data-testid="file-preview-drawer" data-file-preview>
         <FileViewer :source="source" :anchor="anchor">
           <template #actions>
             <router-link :to="pageHref" class="fpd-link" data-testid="file-preview-open-page"
@@ -40,7 +44,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
                     @click="closeFilePreview">✕</Button>
           </template>
         </FileViewer>
-      </aside>
+      </FocusScope>
     </div>
   </Teleport>
 </template>
@@ -51,6 +55,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
   inset: 0;
   z-index: var(--z-modal, 50);
   background: rgba(var(--scrim-rgb), 0.35);
+  /* A Reka dialog underneath parks `pointer-events: none` on <body>. */
+  pointer-events: auto;
   display: flex;
   justify-content: flex-end;
 }

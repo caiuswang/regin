@@ -45,6 +45,10 @@ class SearchDoc:
     body: str = ""
     mono: bool = False
     href: str = ""
+    # The /api/files source a viewer opens this document from, in the query
+    # shape the client's `source.js` takes (`session` + `path`); empty when
+    # the document is not a file one.
+    source: dict = field(default_factory=dict)
     # Set by `score_doc`, carried to the client so the row can render its
     # match-count pill without re-scanning the (windowed) body.
     body_hits: int = 0
@@ -57,6 +61,8 @@ class SearchDoc:
         }
         if self.href:
             out["href"] = self.href
+        if self.source:
+            out["source"] = self.source
         return out
 
 

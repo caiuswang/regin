@@ -4,6 +4,9 @@ import {
   denyBadgeLabel, fmtDuration, mcpParts, rowParts, toolRowTextClass,
   taskRowStatus, taskRowIcon, taskRowIconClass,
 } from '../../../utils/traceFormatters.js'
+import Button from '../../ui/Button.vue'
+import { openFilePreview } from '../../../composables/useFilePreview.js'
+import { readSpanSource } from '../../files/source.js'
 
 // Generic inline tool / skill / edit row — the fallback renderer for
 // `tool.*`, `skill.read|invoke`, `file.edit`, `plan.edit`, `harness.api_retry`
@@ -22,6 +25,8 @@ defineEmits(['activate'])
 const parts = computed(() => rowParts(props.span))
 const selected = computed(() =>
   !!(props.selectedSpan && props.selectedSpan.span_id === props.span.span_id))
+// What the Read returned, at its offset — not the file as it is now.
+const readSource = computed(() => readSpanSource(props.span))
 </script>
 
 <template>
@@ -75,6 +80,16 @@ const selected = computed(() =>
       v-else-if="span.attributes?.interrupted || span.attributes?.is_interrupt"
       class="font-sans uppercase tracking-wider text-[10px] bg-amber-100 border border-amber-200 text-amber-800 px-1 rounded shrink-0"
     >Interrupted</span>
+    <Button
+      v-if="readSource"
+      variant="link"
+      size="sm"
+      class="text-[11px] shrink-0 self-center"
+      aria-label="View the content this Read captured"
+      data-testid="read-row-view"
+      @click.stop="openFilePreview(readSource)"
+      @keydown.enter.stop
+    >View</Button>
     <span
       v-if="span.duration_ms"
       class="font-mono text-[10.5px] text-slate-400 shrink-0"

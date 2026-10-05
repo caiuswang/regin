@@ -256,10 +256,15 @@ def memory_items(rows) -> list[dict]:
 def file_item(key: str, path: str, project: Optional[Project],
               tracked: Optional[set] = None) -> dict:
     """`exists` is present only when the project's tree could be read: an
-    unknown answer is not a `false` one."""
+    unknown answer is not a `false` one. The url needs the project, because a
+    file key alone names no file — which is why `file` has no `_ROUTES` row.
+    The key is already percent-encoded per segment, so it is a valid query
+    value as it stands."""
     item = ref_item("file", key, path,
                     project=(project.id, project.name) if project
                     else NO_PROJECT)
+    if project is not None:
+        item["url"] = f"/files?project={project.id}&path={key}"
     if tracked is not None:
         item["exists"] = path in tracked
     return item

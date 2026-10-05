@@ -18,7 +18,7 @@ const props = defineProps({
   hitIndex: { type: Number, default: 0 },
   mode: { type: String, default: 'read' },
 })
-const emit = defineEmits(['open', 'step', 'pick-hit', 'mode'])
+const emit = defineEmits(['open', 'open-file', 'step', 'pick-hit', 'mode'])
 
 const doc = computed(() => props.row?.doc || null)
 const meta = computed(() => KIND_META[doc.value?.kind] || KIND_META.span)
@@ -68,7 +68,9 @@ const OPEN_LABEL = {
   span: 'Open span in trace',
   pattern: 'Open pattern',
   session: 'Open session',
-  file: 'Open file',
+  // The footer follows the row's href, which is the edit span; the file
+  // itself opens from the preview's own Open file.
+  file: 'Open edit in trace',
 }
 const openLabel = computed(() => OPEN_LABEL[doc.value?.kind] || 'Open')
 </script>
@@ -137,7 +139,14 @@ const openLabel = computed(() => OPEN_LABEL[doc.value?.kind] || 'Open')
              highlight directive, so patching one row's render into another's
              would reconcile against nodes the marking moved. -->
         <SearchSpanPreview v-if="renderer === 'span'" :key="doc.id" :doc="doc" :query="query" />
-        <SearchFilePreview v-else-if="renderer === 'file'" :key="doc.id" :doc="doc" :query="query" />
+        <SearchFilePreview
+          v-else-if="renderer === 'file'"
+          :key="doc.id"
+          :doc="doc"
+          :query="query"
+          :hit-line="hits[hitIndex]?.line || 0"
+          @open-file="(source, anchor) => $emit('open-file', source, anchor)"
+        />
         <SearchProsePreview
           v-else-if="renderer === 'prose'"
           :key="doc.id"

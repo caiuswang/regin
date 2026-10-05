@@ -11,6 +11,7 @@ import { useFullTextSearch } from '../../composables/useFullTextSearch.js'
 import { useSessionSwitcher } from '../../composables/useSessionSwitcher.js'
 import { useMediaQuery } from '../../composables/useMediaQuery.js'
 import { useQuickCapture } from '../../composables/useQuickCapture.js'
+import { openFilePreview } from '../../composables/useFilePreview.js'
 import {
   KIND_META, MIN_ID_CHARS, NARROW_MAX_PX, SCOPES, hitLines,
 } from '../../utils/searchDocs.js'
@@ -274,6 +275,15 @@ function openRow(row) {
   if (doc.href) router.push(doc.href)
 }
 
+// The drawer sits at --z-modal, under the palette's --z-search, so the
+// palette has to go first or the file opens out of sight.
+function openFile(source, anchor) {
+  if (!source) return
+  search.rememberQuery(search.trimmed.value)
+  search.closePalette()
+  openFilePreview(source, anchor)
+}
+
 function move(delta) {
   if (switcherMode.value) { moveSwitcher(delta); return }
   search.moveActive(delta)
@@ -532,6 +542,7 @@ function widen() {
               :hit-index="hitIndex"
               :mode="previewMode"
               @open="openRow"
+              @open-file="openFile"
               @step="stepHit"
               @pick-hit="pickHit"
               @mode="m => previewMode = m"
