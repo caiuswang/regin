@@ -12,7 +12,7 @@ from pathlib import Path
 from sqlmodel import select
 
 from lib.activity_log import get_activity_logger
-from lib.files.classify import Classification, classify
+from lib.files.classify import TEXT_KINDS, Classification, classify
 from lib.files.confine import Confined, confine
 from lib.files.errors import FileAccessError
 from lib.files.sources import (
@@ -74,16 +74,21 @@ def _stdout(res: subprocess.CompletedProcess | None) -> str | None:
     return res.stdout.decode().strip() or None
 
 
-def is_diffable(confined: Confined) -> bool:
-    """In HEAD, and the worktree bytes hash differently. Compared by object
-    id rather than `git diff`, which would run the repo's clean filters."""
+def git_state(confined: Confined | None) -> tuple[bool, bool]:
+    """(in_head, diffable): the path is in HEAD, and its worktree bytes hash
+    differently. Compared by object id rather than `git diff`, which would
+    run the repo's clean filters."""
+    if confined is None:
+        return False, False
     head = _stdout(_git(confined.base, "rev-parse", "--verify", "-q",
                         f"HEAD:./{confined.rel}"))
-    if head is None or not confined.abs_path.is_file():
-        return False
+    if head is None:
+        return False, False
+    if not confined.abs_path.is_file():
+        return True, False
     work = _stdout(_git(confined.base, "hash-object", "--no-filters", "--",
                         str(confined.abs_path)))
-    return work is not None and work != head
+    return True, work is not None and work != head
 
 
 def _load_path(source: PathSource) -> Loaded:
@@ -143,7 +148,8 @@ def load(source: FileSource) -> Loaded:
 def read_meta(source: FileSource) -> dict:
     loaded = load(source)
     kind: Classification = classify(loaded.name, loaded.size, loaded.read)
-    diffable = loaded.confined is not None and is_diffable(loaded.confined)
+    in_head, diffable = git_state(loaded.confined)
+    diffable = diffable and kind.preview in TEXT_KINDS
     log.read("file_meta", preview=kind.preview, size=loaded.size)
     return {
         "source": source_to_dict(source),
@@ -154,6 +160,7 @@ def read_meta(source: FileSource) -> dict:
         "preview": kind.preview,
         "language": kind.language,
         "first_line": loaded.first_line,
+        "in_head": in_head,
         "diffable": diffable,
     }
 
