@@ -21,6 +21,11 @@
       "name": "regin-ask",
       "source": "./plugins/regin-ask",
       "description": "Mod: answers AskUserQuestion from an operator's answer source (userConfig answerUrl) instead of the dialog"
+    },
+    {
+      "name": "regin-bridge",
+      "source": "./plugins/regin-bridge",
+      "description": "Mod: submits the prompts regin's agent bridge delivers to this session, in place of tmux keystrokes"
     }
   ]
 }

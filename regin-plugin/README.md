@@ -53,6 +53,7 @@ the two drift apart.
 | Mod | What it adds |
 |---|---|
 | `regin-band` | An `AbovePrompt` band, `regin inbox: N unread`, refreshed on session start and at each turn's end from `regin messages stats`; hidden when nothing is unread |
+| `regin-bridge` | The agent bridge's Mod channel: on session start it spawns `regin bridge listen --session <id>` once and submits each line it prints as a prompt. While that child is connected, `deliver()` sends the session's bridge messages through it (audited `channel=mod`) instead of typing into its tmux pane; needs `regin serve` running and `agent_bridge.token` set |
 
 Install a mod the same way as any plugin in this marketplace:
 
@@ -65,16 +66,16 @@ Check one from the shell before installing it:
 
 ```bash
 claude plugin validate regin-plugin/plugins/regin-band
-claude plugin test regin-plugin/plugins/regin-band     # runs hooks/*.test.tsx
+claude plugin test regin-plugin/plugins/regin-band     # runs hooks/*.test.ts[x]
 ```
 
 Edit mod source here, never under `~/.claude/dev-mods/`: a dev-mod raises a
 hot-reload confirmation in the operator's session, which stalls an unattended
 run.
 
-`regin-band` currently runs regin from a fixed checkout path
-(`REGIN` in `hooks/register.tsx`); change that constant if your checkout lives
-elsewhere.
+`regin-band` and `regin-bridge` currently run regin from a fixed checkout path
+(`REGIN` in each `hooks/register.ts[x]`); change that constant if your checkout
+lives elsewhere.
 
 ## The boundary (read this)
 
