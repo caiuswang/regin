@@ -1,0 +1,1 @@
+{ "name": "regin-band", "version": "0.1.0", "description": "Shows the regin send_to_user inbox's unread count above the prompt", "author": { "name": "regin" }, "types": "./types/index.d.ts" }

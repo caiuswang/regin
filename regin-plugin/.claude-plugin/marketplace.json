@@ -1,14 +1,21 @@
 {
   "name": "regin-local",
-  "owner": { "name": "regin" },
+  "owner": {
+    "name": "regin"
+  },
   "metadata": {
-    "description": "Local marketplace for testing the regin-agents plugin prototype. Add with: /plugin marketplace add ./regin-plugin"
+    "description": "Local marketplace for regin's Claude Code plugins and mods. Add with: /plugin marketplace add ./regin-plugin"
   },
   "plugins": [
     {
       "name": "regin-agents",
       "source": "./plugins/regin-agents",
       "description": "regin goal-verified skills + their subagents + the memory MCP server"
+    },
+    {
+      "name": "regin-band",
+      "source": "./plugins/regin-band",
+      "description": "Mod: shows the regin send_to_user inbox's unread count above the prompt"
     }
   ]
 }

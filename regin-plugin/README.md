@@ -7,8 +7,8 @@ repo** via Claude Code's plugin system, instead of relying on hardcoded paths in
 ## What's in the bundle
 
 `regin-plugin/` is the marketplace root (add THIS path) — its
-`.claude-plugin/marketplace.json` lists the single `plugins/regin-agents`
-plugin. That plugin's own `.claude-plugin/plugin.json` gives it the
+`.claude-plugin/marketplace.json` lists `plugins/regin-agents` and the mods
+(see "Mods" below). The `regin-agents` plugin's own `.claude-plugin/plugin.json` gives it the
 `regin-agents:` namespace; its `skills/` and `agents/` directories are
 auto-discovered by Claude Code (no manifest listing needed), its `.mcp.json`
 wires up the memory + send-to-user + topics MCP servers, and `bin/regin-mcp.sh` is the
@@ -40,6 +40,41 @@ To test in a *different* repo, point the launcher at your regin checkout:
 ```bash
 export REGIN_HOME=/Users/taowang/regin   # default is ~/regin
 ```
+
+## Mods
+
+A mod is a plugin whose `hooks/hooks.json` lists function-hook modules
+(`register(on)`, Claude Code ≥ 2.1.289) instead of — or beside — skills and
+agents. Each one lives in its own `plugins/<mod>/` directory with a
+`.claude-plugin/plugin.json`, and has exactly one entry in
+`.claude-plugin/marketplace.json`; `tests/mods/test_marketplace.py` fails when
+the two drift apart.
+
+| Mod | What it adds |
+|---|---|
+| `regin-band` | An `AbovePrompt` band, `regin inbox: N unread`, refreshed on session start and at each turn's end from `regin messages stats`; hidden when nothing is unread |
+
+Install a mod the same way as any plugin in this marketplace:
+
+```bash
+/plugin marketplace add /Users/taowang/regin/regin-plugin   # once
+/plugin install regin-band@regin-local
+```
+
+Check one from the shell before installing it:
+
+```bash
+claude plugin validate regin-plugin/plugins/regin-band
+claude plugin test regin-plugin/plugins/regin-band     # runs hooks/*.test.tsx
+```
+
+Edit mod source here, never under `~/.claude/dev-mods/`: a dev-mod raises a
+hot-reload confirmation in the operator's session, which stalls an unattended
+run.
+
+`regin-band` currently runs regin from a fixed checkout path
+(`REGIN` in `hooks/register.tsx`); change that constant if your checkout lives
+elsewhere.
 
 ## The boundary (read this)
 
