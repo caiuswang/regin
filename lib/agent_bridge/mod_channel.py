@@ -106,7 +106,7 @@ def _unregister(listener: Listener) -> None:
 
 def ndjson_stream(session_id: str,
                   peer: socket.socket | None) -> Iterator[str]:
-    """The listen response body: a ready line, then one line per prompt."""
+    """The listen response body: a ready line, then one line per frame."""
     listener = Listener(session_id)
     _register(listener)
     try:
@@ -121,17 +121,29 @@ def _line(frame: dict) -> str:
     return json.dumps(frame) + "\n"
 
 
-def offer(session_id: str, text: str) -> bool:
-    """Hand `text` to the session's newest listener; False when none is connected.
+def has_listener(session_id: str) -> bool:
+    with _lock:
+        return bool(_listeners.get(session_id))
 
-    The newest wins so a mod that reconnects before its old stream is noticed
-    gone does not submit the prompt twice.
-    """
+
+def offer(session_id: str, text: str) -> bool:
+    """Hand `text` to the session's newest listener; False when none is connected."""
+    return _offer_newest(session_id, {"type": "prompt", "text": text})
+
+
+def offer_control(session_id: str, op: str) -> bool:
+    """Hand the control frame `op` to the session's newest listener; False when none is connected."""
+    return _offer_newest(session_id, {"type": "control", "op": op})
+
+
+def _offer_newest(session_id: str, frame: dict) -> bool:
+    # The newest wins so a mod that reconnects before its old stream is noticed
+    # gone does not act on the frame twice.
     with _lock:
         held = _listeners.get(session_id)
         listener = held[-1] if held else None
         if listener is None:
             return False
-        listener.offer({"type": "prompt", "id": uuid.uuid4().hex,
-                        "session_id": session_id, "text": text})
+        listener.offer({**frame, "id": uuid.uuid4().hex,
+                        "session_id": session_id})
     return True

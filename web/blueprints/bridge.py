@@ -326,6 +326,23 @@ def api_session_bridge_interrupt(trace_id):
     return jsonify({"delivered": result.delivered, "detail": result.detail})
 
 
+@bridge_bp.route('/api/sessions/<trace_id>/bridge-send-now', methods=['POST'])
+@require_editor
+def api_session_bridge_send_now(trace_id):
+    """Run the queued prompts now: abort the turn in flight, and Claude Code
+    takes the next one off its own queue.
+
+    Only over the session's Mod listener (`delivery.send_now`). Without one
+    this is a 409 rather than `bridge-interrupt`'s Escape, which pulls the
+    queue back into the composer instead of running it.
+    """
+    result = delivery.send_now(trace_id)
+    body = {"delivered": result.delivered, "detail": result.detail}
+    if not result.delivered:
+        return jsonify(body), 409
+    return jsonify({**body, "channel": "mod"})
+
+
 @bridge_bp.route('/api/sessions/<trace_id>/attach', methods=['POST'])
 @require_editor
 def api_session_attach(trace_id):
@@ -358,13 +375,16 @@ def api_session_detach(trace_id):
 def api_session_live_state(trace_id):
     """Which tier — if any — can still end this session.
 
-    Read-only, and the wording behind the trace list's Close/Delete
-    confirmations: settling a row says nothing to the process behind it, so
+    Also whether a Mod listener holds the session (`mod_listener`), which is
+    what makes "send now" possible. Read-only, and the wording behind the
+    trace list's Close/Delete confirmations: settling a row says nothing to the process behind it, so
     the operator is owed the fact that one is still running and that regin
     can stop it first. Editor-gated with the rest of this blueprint even
     though it injects nothing — the answer names a reachable terminal.
     """
-    return jsonify(live_session.manageability(trace_id))
+    return jsonify({**live_session.manageability(trace_id),
+                    "mod_listener": (settings.agent_bridge.enabled
+                                     and mod_channel.has_listener(trace_id))})
 
 
 @bridge_bp.route('/api/sessions/<trace_id>/shutdown', methods=['POST'])

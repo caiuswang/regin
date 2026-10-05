@@ -1,1 +1,1 @@
-{ "name": "regin-bridge", "version": "0.1.0", "description": "Submits the prompts regin's agent bridge delivers to this session, in place of tmux keystrokes", "author": { "name": "regin" } }
+{ "name": "regin-bridge", "version": "0.1.0", "description": "Submits the prompts regin's agent bridge delivers to this session, in place of tmux keystrokes, and aborts the running turn on regin's send-now", "author": { "name": "regin" }, "types": "./types/index.d.ts" }

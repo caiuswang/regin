@@ -23,8 +23,12 @@ const props = defineProps({
   // double-tap fire a second edit or remove against the same entry.
   busyIds: { type: Object, default: () => new Set() },
   notice: { type: String, default: '' },
+  // The session's regin-bridge mod is listening, so its running turn can be
+  // aborted and Claude Code goes straight on to this queue.
+  canSendNow: { type: Boolean, default: false },
+  sending: { type: Boolean, default: false },
 })
-const emit = defineEmits(['edit', 'remove'])
+const emit = defineEmits(['edit', 'remove', 'send-now'])
 
 const editingId = ref('')
 const draft = ref('')
@@ -71,8 +75,20 @@ function save(item) {
   <div v-if="items.length"
        class="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2"
        data-testid="trace-queued">
-    <div class="text-[11px] font-semibold uppercase tracking-wider text-amber-700 mb-1">
-      ⏳ {{ items.length }} queued
+    <div class="mb-1 flex items-center gap-3">
+      <div class="text-[11px] font-semibold uppercase tracking-wider text-amber-700">
+        ⏳ {{ items.length }} queued
+      </div>
+      <Button
+        v-if="canSendNow"
+        variant="link"
+        size="sm"
+        class="text-[11px] text-amber-700"
+        title="Interrupt the running turn so the queued prompts run now"
+        :disabled="sending"
+        data-testid="trace-queued-send-now"
+        @click="emit('send-now')"
+      >send now</Button>
     </div>
     <div v-if="notice"
          class="mb-1 text-[11px] text-red-600"
