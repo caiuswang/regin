@@ -359,6 +359,11 @@ test.describe('/tasks — arming', () => {
     return asked
   }
 
+  async function pickSkill(page, name) {
+    await page.getByTestId('task-arm-skill').click()
+    await page.getByRole('option', { name: new RegExp(`^${name}(\\s|$)`) }).click()
+  }
+
   test('the skill picker offers what the run directory resolves', async ({ page }) => {
     await serveSkills(page)
     await gotoTasks(page)
@@ -366,11 +371,24 @@ test.describe('/tasks — arming', () => {
     const form = page.getByTestId('task-arm-form')
     await expect(form).toBeVisible()
     await expect(form.locator('datalist')).toHaveCount(0)
-    for (const id of SERVED_SKILLS) {
-      await expect(page.getByTestId(`task-arm-skill-option-${id}`)).toBeVisible()
-    }
-    // Nothing ticked: no args field, nothing to be arguments to.
+    // Nothing picked: no args field, nothing to be arguments to.
     await expect(page.getByTestId('task-arm-skill-args')).toHaveCount(0)
+    await page.getByTestId('task-arm-skill').click()
+    for (const id of SERVED_SKILLS) {
+      await expect(page.getByRole('option', { name: new RegExp(`^${id}`) })).toBeVisible()
+    }
+    await page.getByRole('option', { name: /^goal-verified/ }).click()
+    // A picked skill leaves the menu and sits below it; the menu resets.
+    await expect(page.getByTestId('task-arm-skill-picked-goal-verified')).toContainText('opens')
+    await expect(page.getByTestId('task-arm-skill')).toContainText('add another skill')
+    await page.getByTestId('task-arm-skill').click()
+    await expect(page.getByRole('option', { name: /^goal-verified/ })).toHaveCount(0)
+    await expect(page.getByRole('option', { name: /^feature-pipeline/ })).toBeVisible()
+    await page.keyboard.press('Escape')
+    // The menu answers the same pick twice running: a removed skill comes back.
+    await page.getByTestId('task-arm-skill-remove-goal-verified').click()
+    await pickSkill(page, 'goal-verified')
+    await expect(page.getByTestId('task-arm-skill-picked-goal-verified')).toContainText('opens')
   })
 
   test('a directory with no skills says so, and arms a plain prompt', async ({ page }) => {
@@ -395,8 +413,8 @@ test.describe('/tasks — arming', () => {
     await rowAction(row, 'arm')
     await expect(page.getByTestId('task-arm-form')).toBeVisible()
 
-    await page.getByTestId('task-arm-skill-option-goal-verified').click()
-    await page.getByTestId('task-arm-skill-option-feature-pipeline').click()
+    await pickSkill(page, 'goal-verified')
+    await pickSkill(page, 'feature-pipeline')
     await expect(page.getByTestId('task-arm-skill-picked-goal-verified')).toContainText('opens')
     await expect(page.getByTestId('task-arm-skill-picked-feature-pipeline')).toContainText('+1')
     await page.getByTestId('task-arm-skill-args').fill('--strict')
@@ -423,8 +441,8 @@ test.describe('/tasks — arming', () => {
     await expect(page.getByTestId('task-arm-skill-picked-feature-pipeline')).toContainText('+1')
     await expect(page.getByTestId('task-arm-skill-args')).toHaveValue('--strict')
 
-    // Unticking the first promotes the next to the slash command.
-    await page.getByTestId('task-arm-skill-picked-goal-verified').click()
+    // Removing the first promotes the next to the slash command.
+    await page.getByTestId('task-arm-skill-remove-goal-verified').click()
     await expect(page.getByTestId('task-arm-skill-picked-feature-pipeline')).toContainText('opens')
   })
 
@@ -438,9 +456,18 @@ test.describe('/tasks — arming', () => {
 
     await expect(page.getByTestId('task-arm-skill-missing')).toHaveCount(0)
     // The slash is accepted here and stripped, as the server would.
+    await page.getByTestId('task-arm-skill').click()
+    await page.getByRole('option', { name: 'another skill by name…' }).click()
     await page.getByTestId('task-arm-skill-add').fill('/my-local-skill')
     await page.getByTestId('task-arm-skill-add').press('Enter')
     await expect(page.getByTestId('task-arm-skill-missing')).toContainText('my-local-skill')
+    // A second name by hand reopens the field.
+    await page.getByTestId('task-arm-skill').click()
+    await page.getByRole('option', { name: 'another skill by name…' }).click()
+    await page.getByTestId('task-arm-skill-add').fill('other-local')
+    await page.getByTestId('task-arm-skill-add-btn').click()
+    await expect(page.getByTestId('task-arm-skill-picked-other-local')).toContainText('+1')
+    await page.getByTestId('task-arm-skill-remove-other-local').click()
 
     const [armRequest] = await Promise.all([
       page.waitForRequest(r => /\/api\/tasks\/\d+\/arm$/.test(r.url())),
@@ -480,8 +507,8 @@ test.describe('/tasks — arming', () => {
 
     await page.getByTestId('task-arm-model').click()
     await page.getByRole('option', { name: served.models[0], exact: true }).click()
-    await page.getByTestId('task-arm-skill-option-goal-verified').click()
-    await page.getByTestId('task-arm-skill-option-feature-pipeline').click()
+    await pickSkill(page, 'goal-verified')
+    await pickSkill(page, 'feature-pipeline')
     await page.getByTestId('task-arm-skill-args').fill('--strict')
     await page.getByTestId('task-arm-verify').fill('echo remembered')
     await page.getByTestId('task-arm-submit').click()
@@ -561,13 +588,13 @@ test.describe('/tasks — arming', () => {
     await expect(page.getByTestId('task-arm-recalled')).toHaveCount(0)
     await page.getByRole('button', { name: 'Cancel' }).click()
 
-    // Nor may they be written: args typed under a skill that is then unticked
+    // Nor may they be written: args typed under a skill that is then removed
     // are not part of the selection.
     const again = page.locator('.task-row', { hasText: 'sentinel preset target' }).first()
     await rowAction(again, 'arm')
-    await page.getByTestId('task-arm-skill-option-goal-verified').click()
+    await pickSkill(page, 'goal-verified')
     await page.getByTestId('task-arm-skill-args').fill('--strict')
-    await page.getByTestId('task-arm-skill-picked-goal-verified').click()
+    await page.getByTestId('task-arm-skill-remove-goal-verified').click()
     await page.getByTestId('task-arm-submit').click()
     await expect(again).toHaveAttribute('data-status', 'armed')
     const stored = await page.evaluate(
