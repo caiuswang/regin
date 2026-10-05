@@ -4,7 +4,8 @@
 // its box and text metrics, holds the text up to the offset, and measures a
 // marker placed there: the technique of component/textarea-caret-position.
 
-const MIRRORED = [
+/** The computed properties that decide where a textarea's text wraps. */
+export const MIRRORED = [
   'direction', 'boxSizing',
   'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth', 'borderStyle',
   'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',

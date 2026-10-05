@@ -458,3 +458,111 @@ test('test_menu_fits_a_phone_viewport', async ({ page }) => {
   }))
   expect(page_.scroll).toBeLessThanOrEqual(page_.client + 1)
 })
+
+// The Recent screen is never empty, so an Enter armed on it would write
+// whichever reference landed on top — one nobody saw. Unanswered, Enter is
+// the textarea's; answered, it takes the highlighted row as before.
+test('test_enter_on_the_empty_query_before_results_land_inserts_nothing', async ({ page }) => {
+  const s = seed(mark())
+  let release
+  const held = new Promise((done) => { release = done })
+  await page.route(/\/api\/refs\?/, async (route) => {
+    await held
+    await route.continue()
+  })
+  const spec = await openDeclare(page, s)
+  const asked = page.waitForRequest((req) => new URL(req.url()).pathname === '/api/refs')
+  await spec.pressSequentially('@')
+  await asked
+
+  await spec.press('Enter')
+  await expect(spec).toHaveValue('@\n')
+  await expect(menu(page)).toHaveCount(0)
+  const landed = page.waitForResponse((res) => new URL(res.url()).pathname === '/api/refs')
+  release()
+  await landed
+  await expect(spec).toHaveValue('@\n')
+
+  await page.unroute(/\/api\/refs\?/)
+  await spec.pressSequentially('@')
+  await settled(page, '')
+  await spec.press('Enter')
+  await expect(spec).toHaveValue(`@\n[F${s.B} Beta](feature:${s.B}) `)
+})
+
+test('test_references_are_tinted_where_they_sit', async ({ page }) => {
+  const s = seed(mark())
+  const spec = await openDeclare(page, s)
+  const ref = alphaRef(s)
+  const lines = Array.from({ length: 14 }, (_, i) => `line ${i} ${'words '.repeat(i % 3 ? 4 : 30)}`)
+  await spec.fill(`${lines.join('\n')}\nsee ${ref} here\n\n\`${ref}\``)
+
+  const hl = page.getByTestId('ref-highlight')
+  await expect(hl).toBeVisible()
+  // The reference outside code is tinted; the one inside code is not.
+  await expect(hl.locator('.ref-hl-ref')).toHaveText([ref])
+
+  // Same box, same metrics, same text: it wraps where the field wraps.
+  const geometry = () => spec.evaluate((field) => {
+    const mirror = field.parentElement.querySelector('[data-testid="ref-highlight"]')
+    const a = field.getBoundingClientRect()
+    const b = mirror.getBoundingClientRect()
+    const fs = getComputedStyle(field)
+    const ms = getComputedStyle(mirror)
+    const metrics = ['fontFamily', 'fontSize', 'lineHeight', 'letterSpacing', 'paddingLeft',
+      'paddingRight', 'paddingTop', 'overflowWrap', 'whiteSpace'].filter((p) => fs[p] !== ms[p])
+    return {
+      box: [b.left - a.left - field.clientLeft, b.top - a.top - field.clientTop,
+        b.width - field.clientWidth, b.height - field.clientHeight].map(Math.round),
+      scrollHeight: mirror.scrollHeight - field.scrollHeight,
+      scrollTop: mirror.scrollTop - field.scrollTop,
+      metrics,
+      inert: ms.pointerEvents,
+      rootGap: Math.round(field.parentElement.getBoundingClientRect().height - a.height),
+    }
+  })
+  const aligned = { box: [0, 0, 0, 0], scrollHeight: 0, scrollTop: 0, metrics: [], inert: 'none', rootGap: 0 }
+  expect(await geometry()).toEqual(aligned)
+
+  // It follows the field's scroll, and its size when the field is resized.
+  await spec.evaluate((field) => { field.scrollTop = field.scrollHeight })
+  await expect.poll(geometry).toEqual(aligned)
+  await spec.evaluate((field) => { field.style.height = `${field.offsetHeight + 60}px` })
+  await expect.poll(geometry).toEqual(aligned)
+
+  // A click on the tint lands in the field, inside the reference.
+  const tint = await hl.locator('.ref-hl-ref').boundingBox()
+  await page.mouse.click(tint.x + 8, tint.y + tint.height / 2)
+  await expect(spec).toBeFocused()
+  const at = await spec.evaluate((field) => field.selectionStart)
+  const start = (await spec.inputValue()).indexOf(`see ${ref}`) + 4
+  expect(at).toBeGreaterThan(start)
+  expect(at).toBeLessThan(start + ref.length)
+
+  // A body with nothing to tint draws no tint.
+  await spec.fill('no references')
+  await expect(hl).toBeHidden()
+})
+
+test('test_task_composer_carries_its_project_once_the_list_loads', async ({ page }) => {
+  const s = seed(mark())
+  let release
+  const held = new Promise((done) => { release = done })
+  await page.route((url) => url.pathname === '/api/repos', async (route) => {
+    await held
+    await route.continue()
+  })
+  await page.goto(`/tasks?project=${s.project}`)
+  await page.getByTestId('task-new').click()
+  const composerProject = page.getByTestId('task-composer-project')
+  await expect(composerProject).toContainText('No project')
+
+  release()
+  await expect(composerProject).toContainText(s.name)
+  const asked = page.waitForRequest((req) => {
+    const url = new URL(req.url())
+    return url.pathname === '/api/refs' && url.searchParams.get('q') === 'alp'
+  })
+  await page.locator('#task-body').pressSequentially('@alp')
+  expect(new URL((await asked).url()).searchParams.get('project_id')).toBe(String(s.project))
+})

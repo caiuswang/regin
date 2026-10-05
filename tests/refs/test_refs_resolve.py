@@ -45,7 +45,7 @@ def test_resolve_returns_live_item_or_null(flask_client, project, git_repo,
             refs[f"defect:{bug.id}"]["url"]) \
         == ("Delta broke", "p", f"/defects/{bug.id}")
     assert (refs[f"memory:{note}"]["title"], refs[f"memory:{note}"]["url"]) \
-        == ("A lesson title", None)
+        == ("A lesson title", f"/memory?id={note}")
     assert (refs["file:docs/a%20b.md"]["exists"],
             refs["file:gone.md"]["exists"]) == (True, False)
 

@@ -4,11 +4,13 @@ import { CUSTOM_MODEL, CUSTOM_SKILL, armDraft } from './useTaskArm.js'
 // only the fields that describe HOW an operator runs things, never which branch
 // a particular task gets. A branch is named for one task — reusing it would put
 // two tasks on the same checkout — and `LaunchWorktreeFields` already seeds its
-// own base from whichever repo is picked.
+// own base from whichever repo is picked. A verify command is one task's too:
+// it is what proves THAT task done, and carried into the next sheet it is
+// armed unseen and settles an unrelated run.
 const KEY = 'regin.tasks.arm.last'
 const REMEMBERED = [
   'cwd', 'model', 'permission_mode', 'effort',
-  'skill', 'skillArgs', 'verify_cmd', 'one_shot',
+  'skill', 'skillArgs', 'one_shot',
 ]
 
 function read() {
@@ -70,8 +72,8 @@ export function hasRecalledValues(draft) {
 
 // R4b: once the plan (a slice's arm-proposal) or history (the last attempt)
 // has spoken, the remembered prefs may only say HOW to run — skill and model.
-// Everything else they carry was another task's, and a verify command or cwd
-// borrowed from it would silently outrank nothing and aim this one elsewhere.
+// Everything else they carry was another task's, and a cwd borrowed from it
+// would silently outrank nothing and aim this one elsewhere.
 const HOW_ONLY = ['model', 'skill', 'skillArgs']
 
 /** A slice row's proposal (`GET /tasks/<id>/arm-proposal`) as an attempt. */

@@ -36,8 +36,9 @@ MAX_REFS = 100
 #: to pages; the chip and the menu row show one line of it.
 PROMPT_TITLE_MAX = 200
 
-_ROUTES = {"feature": "/features/", "task": "/tasks/",
-           "defect": "/defects/", "session": "/trace/sessions/"}
+_ROUTES = {"feature": "/features/{}", "task": "/tasks/{}",
+           "defect": "/defects/{}", "session": "/trace/sessions/{}",
+           "memory": "/memory?id={}"}
 
 
 @dataclass(frozen=True)
@@ -97,7 +98,7 @@ def ref_item(kind: str, key: str, title: str, *, status=None,
             "label": format_label(kind, key, title), "title": title,
             "status": status, "project_id": project[0],
             "project": project[1], "feature_id": feature_id,
-            "url": f"{route}{key}" if route else None}
+            "url": route.format(key) if route else None}
 
 
 def restricted_session(key: str) -> dict:

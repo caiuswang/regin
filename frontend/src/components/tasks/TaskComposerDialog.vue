@@ -23,7 +23,8 @@ import { imageFilesFrom } from '../../utils/imageFiles'
 import { useAttachedImages } from '../../composables/useAttachedImages.js'
 import { caretTarget, withCaretInsert } from '../../utils/caret'
 import { imageRefBlock } from '../../utils/taskBodyImages'
-import { carriedProject, projectOptions } from '../../composables/useProjects.js'
+import { carriedProject, projectOptions, useProjects }
+  from '../../composables/useProjects.js'
 
 const open = defineModel('open', { type: Boolean, default: false })
 const props = defineProps({
@@ -34,6 +35,7 @@ const props = defineProps({
 const emit = defineEmits(['created'])
 
 const { saving, formError, create } = useTaskMutations()
+const { items: projectList, ensure: ensureProjects } = useProjects()
 const draft = ref(emptyDraft())
 const titleInput = ref(null)
 // Bound to no task: a composer image has no row to hang off until the capture
@@ -51,13 +53,21 @@ watch(open, async (isOpen) => {
     resetImages()
     return
   }
-  // A starting value, and only on a fresh draft: a half-typed idea reopened
-  // keeps the project the operator already picked for it.
-  if (!draft.value.title && !draft.value.body) {
-    draft.value.project_id = carriedProject(props.project, props.projects)
-  }
+  const fresh = !draft.value.title && !draft.value.body
   await nextTick()
   titleInput.value?.focus()
+  // A starting value, and only on a fresh draft: a half-typed idea reopened
+  // keeps the project the operator already picked for it. Read off the list
+  // once it has loaded, as NewFeatureDialog does — a dialog opened before
+  // the repos answered would otherwise carry nothing, and its `@` would
+  // search every project.
+  if (!fresh) return
+  const before = draft.value.project_id
+  await ensureProjects()
+  // A pick made while the list was loading is the operator's, not ours.
+  if (draft.value.project_id === before) {
+    draft.value.project_id = carriedProject(props.project, projectList.value)
+  }
 })
 
 const bodyArea = ref(null)

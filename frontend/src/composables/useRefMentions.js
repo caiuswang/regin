@@ -304,6 +304,13 @@ export function useRefMentions({
       return { handled: true }
     }
     if ((key !== 'Enter' && key !== 'Tab') || modified) return { handled: false }
+    if (stale.value && query.value === '') {
+      // Nothing typed names a row yet. The Recent screen is never empty, so
+      // arming here would write whichever reference lands on top — one the
+      // operator never saw. The key is the textarea's: a newline, or focus.
+      if (key === 'Enter') close()
+      return { handled: false }
+    }
     if (stale.value) {
       // Consumed and armed rather than dropped: at real latency every first
       // Enter lands in this window, and dropping it would cost two presses.

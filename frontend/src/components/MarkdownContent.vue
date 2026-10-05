@@ -5,7 +5,7 @@ import { marked } from 'marked'
 import RefChip from './refs/RefChip.vue'
 import { useRefResolve } from '../composables/useRefResolve.js'
 import { parseRefs } from '../utils/refs.js'
-import { followChip, mountPoints, withSlots } from '../utils/refRender.js'
+import { followChip, mountPoints, slotted } from '../utils/refRender.js'
 
 const props = defineProps({
   markdown: { type: String, default: '' },
@@ -22,7 +22,7 @@ const source = computed(() => props.markdown || '')
 const found = computed(() => (props.refs ? parseRefs(source.value) : []))
 const slotTag = Math.random().toString(36).slice(2, 8)
 const html = computed(() => marked(
-  props.refs ? withSlots(source.value, found.value, slotTag) : source.value,
+  props.refs ? slotted(source.value, found.value, slotTag) : source.value,
   { breaks: false }))
 const container = ref(null)
 const router = useRouter()

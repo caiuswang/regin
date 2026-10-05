@@ -1,6 +1,6 @@
 /**
  * Feature #131 S3 — a reference in a spec renders as a live chip, and a
- * feature lists the features and tasks that cite it.
+ * feature, task, defect or session lists the features and tasks that cite it.
  *
  * Unstubbed, like ref-mentions.spec.js: each test seeds its own rows through
  * the ORM and reads the real `/api/features/<id>` and `/api/refs/resolve`.
@@ -12,6 +12,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { expect, test } from './auth-fixture.js'
 import { API_BASE } from './helpers/api-base.js'
+import { BASELINE_TRACE } from './helpers/fixtures.js'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const PY = resolve(ROOT, '.venv/bin/python')
@@ -22,8 +23,10 @@ function seed(rows) {
   const script = `
 import json, sys
 sys.path.insert(0, ".")
+import lib.memory as memory
 from lib.orm import SessionLocal
 from lib.orm.models.tasks import AgentTask
+from lib.defects import store as defects
 from lib.features import store as features
 ids = {}
 def fill(text):
@@ -40,6 +43,11 @@ for row in json.loads(sys.argv[1]):
     if row["kind"] == "feature":
         ids[row["key"]] = features.create(fill(row["title"]),
                                           body=fill(row.get("body") or "") or None).id
+    elif row["kind"] == "defect":
+        ids[row["key"]] = defects.record(fill(row["title"]),
+                                         feature_id=ids.get(row.get("feature"))).id
+    elif row["kind"] == "memory":
+        ids[row["key"]] = memory.remember(fill(row["body"]), title=fill(row["title"]))
     elif "copies" in row:
         for n in range(row["copies"]):
             task(row["key"] + str(n), row)
@@ -289,4 +297,119 @@ test('test_referenced_by_lists_citing_features_and_tasks', async ({ page }) => {
   await expect(backlinks.getByTestId('ref-chip')).toHaveCount(20)
   await expect(backlinks.getByTestId('feature-backlinks-more')).toHaveText('+2 more')
   expect((await order())[0]).toBe(`task:${s.Z21}`)
+})
+
+test('test_task_defect_and_session_pages_list_who_cites_them', async ({ page }) => {
+  const s = seed([
+    { kind: 'task', key: 'G', title: 'Gamma' },
+    { kind: 'task', key: 'L', title: 'Lonely' },
+    { kind: 'feature', key: 'P', title: 'Parent' },
+    { kind: 'defect', key: 'D', title: 'Delta broke', feature: 'P' },
+    {
+      kind: 'feature', key: 'C', title: 'Citer',
+      body: `[T<<G>> Gamma](task:<<G>>), [D<<D>> Delta](defect:<<D>>) and [S x](session:${BASELINE_TRACE})`,
+    },
+    { kind: 'task', key: 'H', title: 'Helper', body: 'see [T<<G>> Gamma](task:<<G>>), not `[D<<D>> x](defect:<<D>>)`' },
+  ])
+  const order = (scope) => scope.getByTestId('ref-chip').evaluateAll((els) => els.map((el) => el.dataset.ref))
+
+  // Features first, then tasks; a citation inside code is no citation.
+  await page.goto(`/tasks/${s.G}`)
+  const onTask = page.getByTestId('task-backlinks')
+  await expect(onTask).toContainText('Referenced by')
+  await expect(onTask.getByTestId('ref-chip')).toHaveCount(2)
+  expect(await order(onTask)).toEqual([`feature:${s.C}`, `task:${s.H}`])
+  await expect(chip(onTask, `task:${s.H}`)).toHaveText(`T${s.H} Helper`)
+
+  // A body that starts citing the task while its page is open is a write the
+  // page hears, and the list re-reads. Newest first is by creation: P is older.
+  await patchSpec(page, s.P, `slices: [T${s.G} Gamma](task:${s.G})`)
+  await expect(onTask.getByTestId('ref-chip')).toHaveCount(3)
+  expect(await order(onTask)).toEqual([`feature:${s.C}`, `feature:${s.P}`, `task:${s.H}`])
+
+  await page.goto(`/defects/${s.D}`)
+  const onDefect = page.getByTestId('defect-backlinks')
+  await expect(onDefect.getByTestId('ref-chip')).toHaveCount(1)
+  await chip(onDefect, `feature:${s.C}`).click()
+  await expect(page).toHaveURL(new RegExp(`/features/${s.C}$`))
+
+  await page.goto(`/trace/sessions/${BASELINE_TRACE}`)
+  const onSession = page.getByTestId('session-backlinks')
+  await expect(chip(onSession, `feature:${s.C}`)).toHaveText(`F${s.C} Citer`)
+
+  // Nobody cites it, so nothing is drawn.
+  await page.goto(`/tasks/${s.L}`)
+  await expect(page.getByTestId('task-detail-actions')).toBeVisible()
+  await expect(page.getByTestId('task-backlinks')).toHaveCount(0)
+})
+
+test('test_memory_chip_opens_the_memory', async ({ page }) => {
+  const s = seed([
+    { kind: 'memory', key: 'M', title: 'A lesson to open', body: 'what the lesson says' },
+    { kind: 'feature', key: 'C', title: 'Citer', body: 'remember [M lesson](memory:<<M>>)' },
+  ])
+  await page.goto(`/features/${s.C}`)
+  const m = chip(specBody(page), `memory:${s.M}`)
+  await expect(m).toHaveAttribute('data-state', 'live')
+  await expect(m).toHaveAttribute('href', `/memory?id=${s.M}`)
+
+  await m.click()
+  await expect(page).toHaveURL(new RegExp(`/memory\\?id=${s.M}$`))
+  await expect(page.getByRole('heading', { name: 'A lesson to open' })).toBeVisible()
+})
+
+test('test_references_where_no_chip_can_go_keep_their_source', async ({ page }) => {
+  const gif = 'data:image/gif;base64,R0lGODlhAQABAAAAACw='
+  const s = seed([
+    { kind: 'feature', key: 'A', title: 'Alpha' },
+    {
+      kind: 'feature', key: 'C', title: 'Citer',
+      body: [
+        'live [F<<A>> Alpha](feature:<<A>>)',
+        '',
+        '<span title="[F<<A>> Alpha](feature:<<A>>)">hover</span>',
+        '',
+        `![shot of [F<<A>> Alpha](feature:<<A>>) here](${gif})`,
+        '',
+        'glued http://example.com/[F<<A>> Alpha](feature:<<A>>) tail',
+        '',
+        // Put back as its source, the path runs the autolink on into the
+        // reference after it, which then has nowhere to go either.
+        'chained http://chain.example/[x.md](file:x.md)[F<<A>> Alpha](feature:<<A>>) end',
+        '',
+        // A one-space placeholder would end these early, and be read as a link.
+        'short <abbr title=[F<<A>>](feature:<<A>>)>abbr</abbr> form',
+        '',
+        '[doc](/d/[x.md](file:x.md))',
+        '',
+        '![Alt words](feature:<<A>>)',
+      ].join('\n'),
+    },
+  ])
+  await page.goto(`/features/${s.C}`)
+  const body = specBody(page)
+  const source = `[F${s.A} Alpha](feature:${s.A})`
+
+  await expect(chip(body, `feature:${s.A}`)).toHaveAttribute('data-state', 'live')
+  await expect(body.getByTestId('ref-chip')).toHaveCount(1)
+  // No placeholder survives anywhere — not as text, not in an attribute.
+  const leaked = await body.evaluate((root) => {
+    const hits = root.textContent.includes('#regin-ref-') ? ['text'] : []
+    for (const el of root.querySelectorAll('*')) {
+      for (const attr of el.attributes) {
+        if (attr.value.includes('#regin-ref-')) hits.push(`${el.tagName}@${attr.name}`)
+      }
+    }
+    return hits
+  })
+  expect(leaked).toEqual([])
+  // Each keeps what `marked` makes of its own source.
+  await expect(body.getByText('hover', { exact: true })).toHaveAttribute('title', source)
+  await expect(body.locator(`img[src="${gif}"]`)).toHaveAttribute('alt', `shot of F${s.A} Alpha here`)
+  await expect(body.locator('a[href^="http://example.com/"]')).toHaveText(`http://example.com/[F${s.A}`)
+  await expect(body.locator('abbr')).toHaveAttribute('title', `[F${s.A}](feature:${s.A})`)
+  await expect(body.locator('a[href^="/d/"]')).toHaveText('doc')
+  // An image in a reference's scheme is its alt text, never a broken image.
+  await expect(body.locator('img[src^="feature:"]')).toHaveCount(0)
+  await expect(body).toContainText('Alt words')
 })

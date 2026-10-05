@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import api from '../api'
 import { useBreakpoint } from '../composables/useBreakpoint'
 import { useConfirm } from '../composables/useConfirm'
@@ -38,7 +39,6 @@ const SORT_OPTIONS = [
 ]
 const scope = ref('')
 const includeTests = ref(false)
-const selectedId = ref(null)
 
 // Three domain-coherent tabs replace the single long scroll: browse/manage,
 // topic clustering + routing, and recall-ranking tuning.
@@ -52,11 +52,28 @@ const TABS = [
   { value: 'doctor', label: 'Doctor' },
 ]
 
+const route = useRoute()
+const router = useRouter()
+// The open memory is the URL's `?id=`, so a link to `/memory?id=<id>` — a
+// memory reference's chip — opens it, and the address names what is open.
+const MEMORY_ID = /^[\w-]{1,128}$/
+const selectedId = computed(() => {
+  const id = route.query.id
+  return typeof id === 'string' && MEMORY_ID.test(id) ? id : null
+})
+
 // Selecting a memory from any tab (topic member, recall hit) jumps to the
-// Memories tab so its detail pane is visible.
+// Memories tab so its detail pane is visible — in the same navigation as the
+// id, since a second push in the same tick cancels the first. Only the tab
+// change is a history step; picking another memory replaces the entry.
 function selectMemory(id) {
-  selectedId.value = id
-  activeTab.value = 'memories'
+  const switching = Boolean(id) && activeTab.value !== 'memories'
+  if (!switching && (id || null) === selectedId.value) return undefined
+  const query = { ...route.query }
+  if (id) query.id = id
+  else delete query.id
+  if (switching) delete query.tab
+  return switching ? router.push({ query }) : router.replace({ query })
 }
 
 // The page header pins to the top of the scroll area; the list rail pins just
@@ -113,7 +130,7 @@ const stats = computed(() => extras.value.stats || {})
 // A filter change resets to page 0 and re-fetches; the selected memory may
 // no longer be in scope, so drop the detail pane.
 async function applyFilters() {
-  selectedId.value = null
+  selectMemory(null)
   await refresh()
 }
 
@@ -232,7 +249,7 @@ async function onBulk({ action, ids }) {
     if (!ok) return
   }
   await api.post('/memory/bulk', { action, ids })
-  if (ids.includes(selectedId.value)) selectedId.value = null
+  if (ids.includes(selectedId.value)) selectMemory(null)
   await load()
 }
 
@@ -365,8 +382,8 @@ onBeforeUnmount(() => headerObserver?.disconnect())
         class="min-w-0 flex-1 max-md:w-full"
         :memory-id="selectedId"
         @changed="load"
-        @navigate="id => selectedId = id"
-        @close="selectedId = null"
+        @navigate="selectMemory"
+        @close="selectMemory(null)"
       />
     </div>
     </div>

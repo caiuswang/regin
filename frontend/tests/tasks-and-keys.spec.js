@@ -475,12 +475,14 @@ test.describe('/tasks — arming', () => {
     await expect(first).toHaveAttribute('data-status', 'armed')
 
     // What is remembered is exactly the how-to-run fields. A worktree branch is
-    // named for ONE task, so carrying it would aim two tasks at one checkout.
+    // named for ONE task, so carrying it would aim two tasks at one checkout;
+    // a verify command proves ONE task done, so carrying it would settle the
+    // next one by another's test.
     const stored = await page.evaluate(
       () => JSON.parse(localStorage.getItem('regin.tasks.arm.last')))
     expect(Object.keys(stored).sort()).toEqual([
       'cwd', 'effort', 'model', 'one_shot', 'permission_mode',
-      'skill', 'skillArgs', 'verify_cmd',
+      'skill', 'skillArgs',
     ])
 
     // Re-opening the task that WAS armed reads its own attempt, and must not
@@ -493,7 +495,7 @@ test.describe('/tasks — arming', () => {
     const second = page.locator('.task-row', { hasText: 'second quick arm' }).first()
     await rowAction(second, 'arm')
     await expect(page.getByTestId('task-arm-recalled')).toBeVisible()
-    await expect(page.getByTestId('task-arm-verify')).toHaveValue('echo remembered')
+    await expect(page.getByTestId('task-arm-verify')).toHaveValue('')
     await expect(page.getByTestId('task-arm-model')).toContainText(served.models[0])
     await expect(page.getByTestId('task-arm-skill')).toContainText('goal-verified')
     await expect(page.getByTestId('task-arm-skill-args')).toHaveValue('--strict')
@@ -555,18 +557,20 @@ test.describe('/tasks — arming', () => {
   // Args are hidden the moment the skill picker goes back to "none", and a
   // sentinel left in an older store names a slot rather than a model. Neither
   // may become the sole reason the next sheet claims a carry-over.
+  // A verify command an older sheet stored is another task's, like the rest.
   test('an invisible field never carries, and a stored sentinel is refused', async ({ page }) => {
     await gotoTasks(page)
     await capture(page, 'sentinel preset target')
     await page.evaluate(() => localStorage.setItem('regin.tasks.arm.last', JSON.stringify({
       cwd: '', model: '__custom__', permission_mode: '', effort: '',
-      skill: '', skillArgs: '--strict', verify_cmd: '', one_shot: false,
+      skill: '', skillArgs: '--strict', verify_cmd: 'echo from an older sheet', one_shot: false,
     })))
     const row = page.locator('.task-row', { hasText: 'sentinel preset target' }).first()
     await rowAction(row, 'arm')
     await expect(page.getByTestId('task-arm-form')).toBeVisible()
     await expect(page.getByTestId('task-arm-model-custom')).toHaveCount(0)
     await expect(page.getByTestId('task-arm-skill-args')).toHaveCount(0)
+    await expect(page.getByTestId('task-arm-verify')).toHaveValue('')
     await expect(page.getByTestId('task-arm-recalled')).toHaveCount(0)
     await page.getByRole('button', { name: 'Cancel' }).click()
 

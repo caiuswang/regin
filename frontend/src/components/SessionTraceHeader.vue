@@ -25,6 +25,7 @@
 // still owns the data model.
 import { ref, computed } from 'vue'
 import SessionAttribution from './trace/SessionAttribution.vue'
+import RefBacklinks from './refs/RefBacklinks.vue'
 import SessionHeaderFacts from './trace/SessionHeaderFacts.vue'
 import SessionHeaderPivots from './trace/SessionHeaderPivots.vue'
 import { sessionLivenessWithClock } from '../utils/sessionActivity.js'
@@ -341,6 +342,13 @@ function titleSourceTooltip(src) {
         v-if="session.trace_id"
         class="mt-1.5"
         :trace-id="session.trace_id"
+      />
+      <RefBacklinks
+        v-if="session.trace_id"
+        class="mt-1.5"
+        :target="`session:${session.trace_id}`"
+        compact
+        testid="session-backlinks"
       />
       </template>
     </div>

@@ -134,7 +134,7 @@ def _ledger_body(feature_id: int) -> dict:
     body["ship_check"] = next_step_module.ship_check(feature_id)
     body["slice_tasks"] = next_step_module.task_facts(
         [feature_id])[feature_id].slices
-    body["referenced_by"] = backlinks.referenced_by(feature_id)
+    body["referenced_by"] = backlinks.referenced_by(f"feature:{feature_id}")
     return body
 
 

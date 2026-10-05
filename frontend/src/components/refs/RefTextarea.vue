@@ -12,6 +12,7 @@
 // takes an accept back to the typed `@query`.
 import { computed, onBeforeUnmount, ref, useId, watch } from 'vue'
 import api from '../../api'
+import RefHighlight from './RefHighlight.vue'
 import RefMenu from './RefMenu.vue'
 import Textarea from '../ui/Textarea.vue'
 import { refForUrl, useRefMentions } from '../../composables/useRefMentions.js'
@@ -48,12 +49,14 @@ function fieldAttrs(all) {
   return rest
 }
 
-// Unstyled, the root generates no box, and the textarea lays out in the
-// parent's flow exactly as the bare field did: a flex item in a flex column,
-// an inline block in a block. A styled root keeps its box, because a margin
-// the parent put on it has to land on something.
+// The root is positioned: the highlight is laid over the field inside it.
+// Unstyled, it stands in the parent's flow where the bare field stood: a full
+// width inline block whose baseline is its bottom edge, as the field's was,
+// holding the field as a block so no line box adds a gap under it; in a flex
+// column it is blockified like the field was. A styled root is a block of
+// its own, because a margin the parent put on it has to land on something.
 function rootClass(all) {
-  return all.class || all.style ? cn('ref-textarea', all.class) : 'ref-textarea contents'
+  return all.class || all.style ? cn('ref-textarea', all.class) : 'ref-textarea is-bare'
 }
 const activeId = computed(() => (open.value && rows.value.length
   ? `${listId}-opt-${activeIndex.value}` : undefined))
@@ -231,6 +234,7 @@ onBeforeUnmount(() => {
       :aria-activedescendant="activeId"
       @update:model-value="emit('update:modelValue', $event)"
     />
+    <RefHighlight :text="modelValue" :field="textarea" />
     <Teleport to="body">
       <RefMenu
         v-if="open"
@@ -250,3 +254,13 @@ onBeforeUnmount(() => {
     </Teleport>
   </div>
 </template>
+
+<style scoped>
+.ref-textarea { position: relative; }
+.ref-textarea.is-bare {
+    display: inline-block;
+    width: 100%;
+    vertical-align: baseline;
+}
+.ref-textarea.is-bare > textarea { display: block; }
+</style>

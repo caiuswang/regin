@@ -23,6 +23,7 @@ import TaskKindChip from '../components/tasks/TaskKindChip.vue'
 import TaskPriorityIcon from '../components/tasks/TaskPriorityIcon.vue'
 import TaskRefusal from '../components/tasks/TaskRefusal.vue'
 import FeatureDefects from '../components/features/FeatureDefects.vue'
+import RefBacklinks from '../components/refs/RefBacklinks.vue'
 import TaskPrimaryAction from '../components/tasks/TaskPrimaryAction.vue'
 import TaskVerbMenu from '../components/tasks/TaskVerbMenu.vue'
 import TaskRunHistory from '../components/tasks/TaskRunHistory.vue'
@@ -296,6 +297,8 @@ onMounted(() => { ensureProjects(); load() })
         @pick="addImages"
         @remove="removeImage"
       />
+
+      <RefBacklinks :target="`task:${task.id}`" testid="task-backlinks" />
 
       <TaskFeature
         :task-id="task.id" :feature="feature" :can-write="canWrite"

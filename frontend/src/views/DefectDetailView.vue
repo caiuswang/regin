@@ -17,6 +17,7 @@ import { usePipelineLive } from '../composables/usePipelineEvents'
 import { usePipelineCreate } from '../composables/usePipelineCreate'
 import { useTaskShortcuts } from '../composables/useTaskShortcuts'
 import DefectRow from '../components/defects/DefectRow.vue'
+import RefBacklinks from '../components/refs/RefBacklinks.vue'
 import PipelineCreateButton from '../components/pipeline/PipelineCreateButton.vue'
 
 const route = useRoute()
@@ -110,6 +111,8 @@ function onChanged(message, info) {
       <DefectRow :key="defect.id" :defect="defect" :can-write="canWrite"
                  @changed="onChanged" />
     </ul>
+
+    <RefBacklinks v-if="defect" :target="`defect:${defect.id}`" testid="defect-backlinks" />
   </div>
 </template>
 
