@@ -1,0 +1,14 @@
+{
+  "name": "regin-ask",
+  "version": "0.1.0",
+  "description": "Answers AskUserQuestion from an operator's answer source instead of the dialog",
+  "author": { "name": "regin" },
+  "userConfig": {
+    "answerUrl": {
+      "type": "string",
+      "title": "Answer source URL",
+      "description": "POSTed {tool_use_id, questions} for each AskUserQuestion call; replies {answers: {<full question text>: <label>}}. Empty leaves every question to the dialog.",
+      "default": ""
+    }
+  }
+}

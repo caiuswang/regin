@@ -16,6 +16,11 @@
       "name": "regin-band",
       "source": "./plugins/regin-band",
       "description": "Mod: shows the regin send_to_user inbox's unread count above the prompt"
+    },
+    {
+      "name": "regin-ask",
+      "source": "./plugins/regin-ask",
+      "description": "Mod: answers AskUserQuestion from an operator's answer source (userConfig answerUrl) instead of the dialog"
     }
   ]
 }
