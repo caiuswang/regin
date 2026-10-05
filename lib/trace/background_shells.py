@@ -183,11 +183,13 @@ def _entry(row, attrs: dict, task_id: str, end: dict) -> dict:
     }
 
 
-#: A launch with no completion, on a session that is over. Not `running`: a
-#: shell is a child of the process that launched it, so once that process is
-#: gone the shell is too — whether the teardown killed it or it was orphaned.
-#: The harness reports orphans to the NEXT session, which may be a different
-#: trace entirely, so this session's own rows can never say so themselves.
+#: A shell known to have ended with no word on how: a launch with no
+#: completion on a session that is over, or one the harness's `Stop` snapshot
+#: of in-flight tasks no longer lists. Not `running`: a shell is a child of the
+#: process that launched it, so once that process is gone the shell is too —
+#: whether the teardown killed it or it was orphaned. The harness reports
+#: orphans to the NEXT session, which may be a different trace entirely, so
+#: this session's own rows can never say so themselves.
 STOPPED = 'stopped'
 
 

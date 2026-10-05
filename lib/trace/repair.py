@@ -713,33 +713,96 @@ def backfill_killed_shell_notifications(trace_id: str) -> int:
     still calls running are read, and the span id is the one all three writers
     derive, so a real envelope arriving later replaces this row.
     """
-    from lib.hook_plugin import post_span
+    from lib.trace.background_shells import terminal_outcome
+
+    posted = 0
+    for task_id, path in _unreported_shells(trace_id):
+        outcome = terminal_outcome(path) if path else None
+        if outcome and _post_shell_end(trace_id, task_id, path, outcome):
+            posted += 1
+    return posted
+
+
+def settle_shells_out_of_flight(trace_id: str, in_flight: set[str]) -> int:
+    """Settle every shell the harness's own in-flight snapshot no longer lists.
+
+    `Stop` carries `background_tasks`: the session's running/pending
+    backgrounded tasks, straight from the harness's task registry, which
+    subagents share. A shell the roster still calls running that is absent
+    from it has ended — the authoritative answer the output-file marker only
+    approximates. The marker still supplies the REASON when the file is
+    readable; without one the outcome is `stopped`, the harness's own word for
+    a shell that ended without saying how.
+
+    Same guards as the marker backfill: running shells only, the shared span
+    id, so a real envelope arriving later replaces this row.
+
+    Stops at the first post the ingest refuses: this runs inside the Stop
+    hook, and an old session can hold dozens of unsettled shells, each of
+    which would otherwise wait out the full retry budget against a server
+    that is down. Whatever is left settles at the next Stop.
+    """
+    from lib.trace.background_shells import STOPPED, terminal_outcome
+
+    posted = 0
+    for task_id, path in _unreported_shells(trace_id):
+        if task_id in in_flight:
+            continue
+        outcome = (terminal_outcome(path) if path else None) or {
+            'status': STOPPED,
+            'summary': 'Shell ended (no longer in flight at turn end)',
+            'ended_at': datetime.now().isoformat(),
+        }
+        if not _post_shell_end(trace_id, task_id, path, outcome):
+            break
+        posted += 1
+    return posted
+
+
+def record_shell_kill(trace_id: str, task_id: str) -> bool:
+    """Settle a running shell as `killed` the moment `TaskStop` succeeds.
+
+    The harness tells nobody a shell was killed; the `TaskStop` call that did
+    it is the one place the fact is stated outright, with the task id.
+    """
+    path = dict(_unreported_shells(trace_id)).get(task_id)
+    if path is None:
+        return False
+    return _post_shell_end(trace_id, task_id, path, {
+        'status': 'killed',
+        'summary': 'Shell stopped by TaskStop',
+        'ended_at': datetime.now().isoformat(),
+    })
+
+
+def _unreported_shells(trace_id: str) -> list[tuple[str, str]]:
+    """`(task_id, output_path)` for every shell the roster still calls
+    running; the path is '' when this session has not stated one."""
     from lib.orm.engine import get_connection
-    from lib.trace.background_shells import (
-        RUNNING, output_path, shell_roster, terminal_outcome,
-    )
-    from lib.trace.task_notification import notification_span_id
+    from lib.trace.background_shells import RUNNING, output_path, shell_roster
 
     conn = get_connection()
     try:
-        unreported = [(e['task_id'], output_path(conn, [trace_id], e['task_id']))
-                      for e in shell_roster(conn, [trace_id])
-                      if e['status'] == RUNNING]
+        return [(e['task_id'], output_path(conn, [trace_id], e['task_id']))
+                for e in shell_roster(conn, [trace_id])
+                if e['status'] == RUNNING]
     finally:
         conn.close()
-    posted = 0
-    for task_id, path in unreported:
-        outcome = terminal_outcome(path) if path else None
-        if outcome and post_span(
-                trace_id=trace_id, name='task.notification',
-                span_id=notification_span_id(task_id),
-                start_time=outcome['ended_at'],
-                attributes={'task_id': task_id, 'task_ids': [task_id],
-                            'status': outcome['status'],
-                            'summary': outcome['summary'],
-                            'output_file': path}):
-            posted += 1
-    return posted
+
+
+def _post_shell_end(trace_id: str, task_id: str, path: str,
+                    outcome: dict) -> bool:
+    from lib.hook_plugin import post_span
+    from lib.trace.task_notification import notification_span_id
+
+    return post_span(
+        trace_id=trace_id, name='task.notification',
+        span_id=notification_span_id(task_id),
+        start_time=outcome['ended_at'],
+        attributes={'task_id': task_id, 'task_ids': [task_id],
+                    'status': outcome['status'],
+                    'summary': outcome['summary'],
+                    'output_file': path})
 
 
 def has_stuck_pending_tools(trace_id: str, older_than_sec: int = 60) -> bool:

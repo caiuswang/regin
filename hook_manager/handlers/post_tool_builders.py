@@ -462,6 +462,13 @@ def _build_taskoutput_attrs(attrs: dict, tool_input: dict, tool_response: dict, 
         _attach_wrapped_task(attrs, task)
 
 
+def _build_taskstop_attrs(attrs: dict, tool_input: dict, tool_response: dict, payload: HookPayload) -> None:
+    task_id = tool_response.get('task_id') or tool_input.get('task_id')
+    if task_id is not None:
+        attrs['task_id'] = str(task_id)
+    _set_str(attrs, 'task_type', tool_response.get('task_type'))
+
+
 def _attach_wrapped_task(attrs: dict, task: dict) -> None:
     if 'task_id' not in attrs and task.get('task_id') is not None:
         attrs['task_id'] = str(task['task_id'])
@@ -661,6 +668,7 @@ _TOOL_BUILDERS: dict = {
     'TodoList': _build_todolist_attrs,
     'Workflow': _build_workflow_attrs,
     'TaskOutput': _build_taskoutput_attrs,
+    'TaskStop': _build_taskstop_attrs,
     'ScheduleWakeup': _build_schedulewakeup_attrs,
     'Skill': _build_skill_attrs,
     'WebSearch': _build_websearch_attrs,

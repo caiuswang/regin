@@ -130,6 +130,7 @@ post_tool_trace     = _safe_import('post_tool_trace')
 pre_tool_trace      = _safe_import('pre_tool_trace')
 prompt_trace        = _safe_import('prompt_trace')
 session_lifecycle   = _safe_import('session_lifecycle')
+shell_lifecycle     = _safe_import('shell_lifecycle')
 skill_invoke        = _safe_import('skill_invoke')
 skill_experience    = _safe_import('skill_experience')
 skill_launch        = _safe_import('skill_launch')
@@ -417,6 +418,31 @@ REGISTRY: list[Handler] = [
         kind='trace',
         priority=60,
         fn=subagent_lifecycle.handle_sweep,
+    ),
+
+    # ── Background shells ──────────────────────────────────────────────
+    Handler(
+        name='shell_settle_stop',
+        label='Background Shell Settle (Stop)',
+        summary="Settles running background shells absent from Stop's "
+                'in-flight `background_tasks` snapshot.',
+        match_hint='Stop payloads that carry background_tasks (Claude Code)',
+        events=['Stop'],
+        kind='trace',
+        priority=60,
+        fn=shell_lifecycle.handle_stop,
+    ),
+    Handler(
+        name='shell_settle_task_stop',
+        label='Background Shell Kill (TaskStop)',
+        summary='Settles a background shell as killed when TaskStop succeeds.',
+        match_hint='PostToolUse for TaskStop on a local_bash task',
+        events=['PostToolUse'],
+        kind='trace',
+        # After post_tool_trace (110), so the TaskStop span lands first.
+        priority=115,
+        predicate=match_tool('TaskStop'),
+        fn=shell_lifecycle.handle_task_stop,
     ),
 
     # ── Compaction boundaries ──────────────────────────────────────────
