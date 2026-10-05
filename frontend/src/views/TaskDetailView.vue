@@ -158,7 +158,7 @@ onMounted(() => { ensureProjects(); load() })
 
 <template>
   <div class="space-y-4">
-    <header class="page-header">
+    <header class="page-header td-header">
       <div class="page-header-text">
         <div class="page-eyebrow">
           <router-link v-slot="{ href }" :to="back.to.value" custom>
@@ -380,7 +380,18 @@ onMounted(() => { ensureProjects(); load() })
     white-space: nowrap;
 }
 .td-feature:hover { color: var(--color-primary); }
-.td-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.375rem; }
+/* Not .page-header's wrap: that places the actions by title length.
+   Here their column is fixed by viewport width alone. */
+.td-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+}
+.td-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 0.375rem; }
+@media (max-width: 1023.98px) {
+    .td-header { grid-template-columns: minmax(0, 1fr); }
+    .td-actions { justify-content: flex-start; }
+}
 .td-facts {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));

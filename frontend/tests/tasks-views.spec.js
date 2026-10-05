@@ -1039,3 +1039,39 @@ test('test_flat_bulk_names_rejected', async ({ page }) => {
     .toHaveText(`#${ids.running} ${tag} running 3 — ${refusal}`)
   await expect(rejected.getByTestId(`task-bulk-rejected-${a}`)).toHaveCount(0)
 })
+
+function retitle(id, title) {
+  const script = `
+import sys
+sys.path.insert(0, ".")
+from lib.orm import SessionLocal
+from lib.orm.models.tasks import AgentTask
+with SessionLocal() as s:
+    s.get(AgentTask, int(sys.argv[1])).title = sys.argv[2]; s.commit()
+`
+  execFileSync(PY, ['-c', script, String(id), title], { cwd: ROOT, encoding: 'utf8' })
+}
+
+test('test_task_detail_actions_stay_put_across_title_length', async ({ page }) => {
+  const tag = mark()
+  const [short, long] = seedEditing(tag).ideas
+  retitle(long, `${tag} ${'a very long task title that wraps '.repeat(6)}`)
+  const head = page.getByTestId('task-detail-actions')
+
+  async function actionsBox(id) {
+    await page.goto(`/tasks/${id}`)
+    await expect(head).toBeVisible()
+    return head.boundingBox()
+  }
+
+  for (const [width, side] of [[1280, 'right'], [800, 'left'], [390, 'left']]) {
+    await page.setViewportSize({ width, height: 900 })
+    const a = await actionsBox(short)
+    const b = await actionsBox(long)
+    expect(Math.round(b.x + b.width)).toBe(Math.round(a.x + a.width))
+    expect(Math.round(b.x)).toBe(Math.round(a.x))
+    const title = await page.locator('.page-header-text').boundingBox()
+    if (side === 'right') expect(b.x).toBeGreaterThan(title.x + title.width)
+    else expect(b.y).toBeGreaterThan(title.y + title.height)
+  }
+})
