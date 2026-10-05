@@ -36,7 +36,7 @@ from lib.orm.models.tasks import (
     TASK_STATUS_DONE,
     TASK_STATUS_IDEA, TASK_STATUS_QUEUED, TASK_STATUS_RUNNING,
 )
-from lib.tasks import deps, query
+from lib.tasks import deps, query, rows
 
 OPEN_STATUSES = (TASK_STATUS_IDEA, TASK_STATUS_ARMED, TASK_STATUS_QUEUED,
                  TASK_STATUS_RUNNING)
@@ -122,7 +122,8 @@ def _hidden_lanes(scoped: dict[int, AgentTask], ask: LaneQuery) -> int:
 
 def _drawing(kept: list[AgentTask], keep: set[int], edges, unmet) -> dict:
     return {
-        "nodes": [deps.node(t, sorted(unmet.get(t.id, []))) for t in kept],
+        "nodes": rows.live_runs(
+            [deps.node(t, sorted(unmet.get(t.id, []))) for t in kept]),
         "edges": [{"task_id": a, "depends_on_id": b, "kind": kind,
                    "blocking": b in unmet.get(a, [])}
                   for a, b, kind in edges if a in keep and b in keep],

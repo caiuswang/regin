@@ -178,3 +178,18 @@ def test_filtered_graph_never_draws_archived(flask_client, native_task):
                   "lanes=1&open=0&source=cli&status=archived&include_archived=1")
 
     assert [n["id"] for n in body["nodes"]] == [live]
+
+
+def test_a_running_node_carries_its_open_run_for_watch(
+        flask_client, native_task, task_run_row):
+    started = native_task(title="started", status="running")
+    launching = native_task(title="launching", status="running")
+    task_run_row(started, trace_id="sdk-abc", status="running", ended_at=None)
+    task_run_row(launching, status="running", ended_at=None)
+    idle = native_task(title="idle", status="armed")
+
+    live = {n["id"]: n["live"] for n in _lanes(flask_client)["nodes"]}
+
+    assert live[started]["trace_id"] == "sdk-abc"
+    assert live[launching]["trace_id"] is None
+    assert live[idle] is None
