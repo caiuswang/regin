@@ -71,3 +71,24 @@ export function formatBytes(n) {
   while (v >= 1024 && i < units.length - 1) { v /= 1024; i++ }
   return `${v.toFixed(v < 10 ? 1 : 0)} ${units[i]}`
 }
+
+// A span names the trace that stored it, which is not always the trace the
+// feed belongs to (a subagent's rows are served under its own scope), and the
+// server looks a span up by that stored trace.
+export function spanPathSource(span) {
+  const path = span?.attributes?.file_path
+  return span?.trace_id && typeof path === 'string' && path
+    ? { session: span.trace_id, path }
+    : null
+}
+
+// Only a Read whose content was captured: most Reads record none, and the
+// span source then has nothing to serve but a 404 the viewer reads as "this
+// file does not exist". The structural map strips `content` too, so a row
+// whose body has not loaded yet offers nothing rather than a wrong answer.
+export function readSpanSource(span) {
+  return span?.name === 'tool.Read' && span.trace_id && span.span_id
+    && typeof span.attributes?.content === 'string'
+    ? { session: span.trace_id, span: span.span_id }
+    : null
+}

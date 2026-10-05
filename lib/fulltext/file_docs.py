@@ -190,9 +190,9 @@ def search_pattern_docs(query: str, limit: int) -> list[Scored]:
 
 def search_file_docs(touched: list[dict], query: str, limit: int) -> list[Scored]:
     """Rank files an agent touched. `touched` rows come from the span store
-    (`{path, span_id, trace_id, additions, deletions}`), so a hit deep-links
-    to the edit span that produced the state rather than to a file viewer
-    regin does not have.
+    (`{path, span_id, trace_id, additions, deletions}`), so a hit both
+    deep-links to the edit span that produced the state and names the
+    session source the file viewer opens it through.
     """
     by_path = {row["path"]: row for row in touched if row.get("path")}
     existing = [p for p in by_path if os.path.isfile(p)]
@@ -223,10 +223,16 @@ def _diff_tag(row: dict) -> str:
 
 
 def _edit_span_href(row: dict) -> str:
-    """A touched file opens at the edit span that produced its current
-    state — regin has no standalone file viewer to send it to."""
+    """The edit span that produced the file's current state."""
     trace_id, span_id = row.get("trace_id"), row.get("span_id")
     return f"/trace/sessions/{trace_id}?span={span_id}" if trace_id and span_id else ""
+
+
+def _session_source(path: str, row: dict) -> dict:
+    """The touching span's session vouches for the path (R1's span-named
+    grant), so a hit opens through that session even outside its cwd."""
+    trace_id = row.get("trace_id")
+    return {"session": trace_id, "path": path} if trace_id else {}
 
 
 def _file_doc(path: str, row: dict) -> SearchDoc | None:
@@ -243,4 +249,5 @@ def _file_doc(path: str, row: dict) -> SearchDoc | None:
         body=text,
         mono=True,
         href=_edit_span_href(row),
+        source=_session_source(path, row),
     )

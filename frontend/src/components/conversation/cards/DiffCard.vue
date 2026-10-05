@@ -1,20 +1,27 @@
 <script setup>
+import { computed } from 'vue'
 import DiffBlock from '../../DiffBlock.vue'
+import Button from '../../ui/Button.vue'
 import {
   fmtDuration, fmtBytes, diffOpLabel, diffFileName,
 } from '../../../utils/traceFormatters.js'
+import { openFilePreview } from '../../../composables/useFilePreview.js'
+import { spanPathSource } from '../../files/source.js'
 import CopyButton from './CopyButton.vue'
 
 // Edit / Write / MultiEdit diff card. Mirrors the Claude TUI's
 // `Update(path) +N -M` view: a flat header row that expands into a dark
 // terminal-style unified diff.
-defineProps({
+const props = defineProps({
   span: { type: Object, required: true },
   selectedSpan: { type: Object, default: null },
   // useConversationFolding: { diffExpanded, toggleDiffExpanded }
   folding: { type: Object, required: true },
 })
 defineEmits(['activate'])
+
+// The file as it is on disk now, not as this edit left it: a session source.
+const fileSource = computed(() => spanPathSource(props.span))
 </script>
 
 <template>
@@ -42,7 +49,19 @@ defineEmits(['activate'])
       @click="$emit('activate', span); folding.toggleDiffExpanded(span.span_id)"
     >
       <span class="text-[12px] font-semibold text-orange-700 shrink-0">{{ diffOpLabel(span.attributes?.edit_op) }}</span>
+      <Button
+        v-if="fileSource"
+        variant="link"
+        size="sm"
+        class="font-mono font-normal text-[11.5px] flex-1 min-w-0 justify-start"
+        :class="folding.diffExpanded(span.span_id) ? 'text-orange-800 hover:text-orange-900' : 'text-slate-500 hover:text-slate-700'"
+        :title="`Open ${span.attributes.file_path}`"
+        data-testid="diff-card-file"
+        @click.stop="openFilePreview(fileSource)"
+        @keydown.enter.stop
+      ><span class="min-w-0 truncate">{{ diffFileName(span) }}</span></Button>
       <span
+        v-else
         class="font-mono text-[11.5px] flex-1 min-w-0 truncate"
         :class="folding.diffExpanded(span.span_id) ? 'text-orange-800' : 'text-slate-500'"
         :title="span.attributes?.file_path"

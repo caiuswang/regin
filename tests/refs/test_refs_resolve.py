@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from urllib.parse import parse_qs, urlsplit
+
 from lib.features import store as feature_store
+from lib.refs.grammar import encode_file_key
 from tests.refs.conftest import ANON, EDITOR, VIEWER
 
 
@@ -57,6 +60,25 @@ def test_resolve_leaves_file_existence_unknown_without_a_project(
 
     assert (item["title"], item["project"]) == ("docs/a b.md", None)
     assert "exists" not in item
+    assert item["url"] is None
+
+
+def test_a_file_reference_with_a_project_resolves_to_a_viewer_url(
+        flask_client, project, git_repo):
+    """D10: the key is already percent-encoded, so it rides in the query as
+    it stands and the server's decode gives back the path."""
+    odd = "a&b/c#d+e%f g ü.md"
+    repo = project("p", git_repo("p", tracked=["docs/a b.md", odd]))
+    odd_key = encode_file_key(odd)
+
+    refs = _resolve(flask_client, "file:docs/a%20b.md", "file:gone.md",
+                    f"file:{odd_key}", project_id=repo.id)
+
+    assert refs["file:docs/a%20b.md"]["url"] \
+        == f"/files?project={repo.id}&path=docs/a%20b.md"
+    assert refs["file:gone.md"]["url"] == f"/files?project={repo.id}&path=gone.md"
+    query = parse_qs(urlsplit(refs[f"file:{odd_key}"]["url"]).query)
+    assert query == {"project": [str(repo.id)], "path": [odd]}
 
 
 def test_resolve_refuses_malformed_or_too_many_refs(flask_client):
