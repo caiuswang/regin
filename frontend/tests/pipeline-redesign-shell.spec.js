@@ -361,7 +361,14 @@ test('test_overview_panels_and_empty_states', async ({ page }) => {
   await expect(page.getByTestId('loop-note')).toBeVisible()
 })
 
-test('test_overview_quiet_loop_facts_and_links', async ({ page }) => {
+// Feature #139: under the `pixel` project these assertions are skipped because
+// they pin classic's pixels, not behaviour — test_overview_colour_budget whole
+// (pixel's budget is pipeline-theme-overview.spec.js), the text-transform, token
+// colours, bar fills, note colour and button looks in
+// test_overview_quiet_loop_facts_and_links, and the `ol--compact` class in
+// test_pipeline_mobile_overview_features_triage.
+test('test_overview_quiet_loop_facts_and_links', async ({ page, pipelineTheme }) => {
+  const classic = pipelineTheme !== 'pixel'
   const state = await stubPipeline(page)
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto('/overview')
@@ -372,7 +379,7 @@ test('test_overview_quiet_loop_facts_and_links', async ({ page }) => {
   await expect(loop.locator('svg.lucide-arrow-right, dl, dt, .ol-dot')).toHaveCount(0)
   const tops = await loop.locator('article').evaluateAll(els => els.map(e => Math.round(e.getBoundingClientRect().top)))
   expect(new Set(tops).size).toBe(1)
-  await expect(page.getByTestId('loop-tasks').locator('h2')).toHaveCSS('text-transform', 'none')
+  if (classic) await expect(page.getByTestId('loop-tasks').locator('h2')).toHaveCSS('text-transform', 'none')
 
   // Facts: only what moves or asks for a decision; zero facts dropped.
   const facts = stage => page.getByTestId(`loop-${stage}`).locator('[data-testid^="loop-fact-"]')
@@ -388,27 +395,31 @@ test('test_overview_quiet_loop_facts_and_links', async ({ page }) => {
     probe.remove()
     return c
   }, name)
-  expect(await colourOf('loop-fact-failed')).toBe(await token('--color-danger'))
-  expect(await colourOf('loop-fact-escaped')).toBe(await token('--color-warning-strong'))
-  expect(await colourOf('loop-fact-triage')).toBe(await token('--color-warning-strong'))
-  expect(await colourOf('loop-fact-running')).toBe(await token('--color-fg-muted'))
+  if (classic) {
+    expect(await colourOf('loop-fact-failed')).toBe(await token('--color-danger'))
+    expect(await colourOf('loop-fact-escaped')).toBe(await token('--color-warning-strong'))
+    expect(await colourOf('loop-fact-triage')).toBe(await token('--color-warning-strong'))
+    expect(await colourOf('loop-fact-running')).toBe(await token('--color-fg-muted'))
+  }
 
   // I11: every part is still in the bar's accessible name.
   await expect(page.getByTestId('loop-tasks').getByTestId('loop-bar'))
     .toHaveAttribute('aria-label', 'Ideas 42, Armed 9, Running 2, Done 71, Failed 4')
   // Bars are neutral except the parts that need a human or failed.
-  const fills = await page.getByTestId('loop-tasks').locator('[data-part]').evaluateAll(els =>
-    Object.fromEntries(els.map(e => [e.dataset.part, getComputedStyle(e).backgroundColor])))
-  expect(fills.failed).toBe(await page.evaluate(() => {
-    const p = document.createElement('span'); p.style.backgroundColor = 'var(--color-danger)'
-    document.body.appendChild(p); const c = getComputedStyle(p).backgroundColor; p.remove(); return c
-  }))
-  expect(fills.done).not.toBe(fills.failed)
+  if (classic) {
+    const fills = await page.getByTestId('loop-tasks').locator('[data-part]').evaluateAll(els =>
+      Object.fromEntries(els.map(e => [e.dataset.part, getComputedStyle(e).backgroundColor])))
+    expect(fills.failed).toBe(await page.evaluate(() => {
+      const p = document.createElement('span'); p.style.backgroundColor = 'var(--color-danger)'
+      document.body.appendChild(p); const c = getComputedStyle(p).backgroundColor; p.remove(); return c
+    }))
+    expect(fills.done).not.toBe(fills.failed)
 
-  // Loop note: the card's footer row, subtle text, no fill.
-  const note = page.getByTestId('loop-note')
-  expect(await note.evaluate(el => getComputedStyle(el).color)).toBe(await token('--color-fg-subtle'))
-  expect(await note.evaluate(el => getComputedStyle(el).backgroundColor)).toBe('rgba(0, 0, 0, 0)')
+    // Loop note: the card's footer row, subtle text, no fill.
+    const note = page.getByTestId('loop-note')
+    expect(await note.evaluate(el => getComputedStyle(el).color)).toBe(await token('--color-fg-subtle'))
+    expect(await note.evaluate(el => getComputedStyle(el).backgroundColor)).toBe('rgba(0, 0, 0, 0)')
+  }
 
   // No caption sentence under any panel heading.
   await expect(page.getByText('Armed and queued · dependency-clear first')).toHaveCount(0)
@@ -430,25 +441,27 @@ test('test_overview_quiet_loop_facts_and_links', async ({ page }) => {
   const projects = page.getByTestId('projects-panel')
   await expect(projects.locator('input, [role="group"], footer')).toHaveCount(0)
   await expect(page.getByTestId('projects-attention-3')).toHaveText('1 escaped · 6 open defects')
-  expect(await colourOf('projects-attention-3')).toBe(await token('--color-warning-strong'))
+  if (classic) expect(await colourOf('projects-attention-3')).toBe(await token('--color-warning-strong'))
   await page.getByTestId('projects-all').click()
   await expect(page.getByTestId('project-picker')).toBeVisible()
   await page.keyboard.press('Escape')
 
   // Run and Watch are bordered neutral buttons with primary text.
-  const primary = await token('--color-primary')
-  const border = await page.evaluate(() => {
-    const p = document.createElement('span'); p.style.color = 'var(--color-border)'
-    document.body.appendChild(p); const c = getComputedStyle(p).color; p.remove(); return c
-  })
-  for (const id of ['run-next-run-412', 'running-now-watch-414', 'needs-decision-attribute-94']) {
-    const look = await page.getByTestId(id).evaluate(el => {
-      const cs = getComputedStyle(el)
-      return { color: cs.color, width: cs.borderTopWidth, border: cs.borderTopColor }
+  if (classic) {
+    const primary = await token('--color-primary')
+    const border = await page.evaluate(() => {
+      const p = document.createElement('span'); p.style.color = 'var(--color-border)'
+      document.body.appendChild(p); const c = getComputedStyle(p).color; p.remove(); return c
     })
-    if (id !== 'needs-decision-attribute-94') expect(look.color, id).toBe(primary)
-    expect(look.width, id).not.toBe('0px')
-    expect(look.border, id).toBe(border)
+    for (const id of ['run-next-run-412', 'running-now-watch-414', 'needs-decision-attribute-94']) {
+      const look = await page.getByTestId(id).evaluate(el => {
+        const cs = getComputedStyle(el)
+        return { color: cs.color, width: cs.borderTopWidth, border: cs.borderTopColor }
+      })
+      if (id !== 'needs-decision-attribute-94') expect(look.color, id).toBe(primary)
+      expect(look.width, id).not.toBe('0px')
+      expect(look.border, id).toBe(border)
+    }
   }
 
   // "N escaped" opens Features on the Escaped stage; "N to triage" the rail.
@@ -559,7 +572,8 @@ async function colourBudgetViolations(page) {
   })
 }
 
-test('test_overview_colour_budget', async ({ page }) => {
+test('test_overview_colour_budget', async ({ page, pipelineTheme }) => {
+  test.skip(pipelineTheme === 'pixel', 'pins the classic palette')
   await stubPipeline(page)
   const cases = [
     [1440, '/overview', 'projects-panel'],
@@ -728,13 +742,13 @@ test('test_features_triage_rail_folds', async ({ page }) => {
   expect(state.posts).toEqual([])
 })
 
-test('test_pipeline_mobile_overview_features_triage', async ({ page }) => {
+test('test_pipeline_mobile_overview_features_triage', async ({ page, pipelineTheme }) => {
   await stubPipeline(page)
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto('/overview')
 
   // 2a: stacked loop; Running now + Run next show the same rows as desktop (defect #215); one decision card.
-  await expect(page.getByTestId('overview-loop')).toHaveClass(/ol--compact/)
+  if (pipelineTheme !== 'pixel') await expect(page.getByTestId('overview-loop')).toHaveClass(/ol--compact/)
   const runningNow = page.getByTestId('running-now')
   await expect(runningNow.locator('li')).toHaveCount(2)
   await expect(page.getByTestId('running-now-count')).toHaveText('2')

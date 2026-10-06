@@ -1,5 +1,7 @@
 import { h } from 'vue'
 import PixelSprite from './PixelSprite.vue'
+import OverviewLoop from './slots/OverviewLoop.vue'
+import ProjectsPanel from './slots/ProjectsPanel.vue'
 import './tokens.css'
 
 // A glyph is a sprite drawn where <PlGlyph kind="…"> sits; PlGlyph's own
@@ -14,7 +16,10 @@ function glyph(name) {
 }
 
 export default {
-  slots: {},
+  slots: {
+    OverviewLoop,
+    ProjectsPanel,
+  },
   glyphs: {
     portfolio: glyph('grid'),
     project: glyph('bot'),

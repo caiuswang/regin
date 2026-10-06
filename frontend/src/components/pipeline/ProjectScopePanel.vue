@@ -67,7 +67,7 @@ const emit = defineEmits(['all'])
           </td>
           <td>
             <span class="ps-tasks">
-              <span class="ps-track"><span class="ps-fill tone-settled" :style="{ width: `${f.tasks ? (100 * f.tasks_done) / f.tasks : 0}%` }" /></span>
+              <span class="ps-track"><span class="ps-fill tone-settled" data-pl-part="meter-cell" data-tone="settled" :style="{ width: `${f.tasks ? (100 * f.tasks_done) / f.tasks : 0}%` }" /></span>
               {{ f.tasks_done }} / {{ f.tasks }}
             </span>
           </td>

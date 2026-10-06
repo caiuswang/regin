@@ -31,19 +31,20 @@ function watchTo(row) {
       <router-link to="/live" class="pl-panel__link focus-visible:outline-2 focus-visible:outline-blue-500" data-pl-part="panel-link">Open Live →</router-link>
     </header>
     <ul class="rnw-rows" aria-labelledby="rnw-title">
-      <li v-for="row in running.rows" :key="row.id" class="rnw-row" :data-testid="`running-now-row-${row.id}`">
-        <span class="rnw-id">#{{ row.id }}</span>
+      <li v-for="row in running.rows" :key="row.id" class="rnw-row" data-pl-part="row" :data-testid="`running-now-row-${row.id}`">
+        <span class="rnw-id" data-pl-part="row-id">#{{ row.id }}</span>
         <router-link :to="`/tasks/${row.id}`" class="rnw-main focus-visible:outline-2 focus-visible:outline-blue-500">
           <span class="rnw-title">{{ taskTitle(row) }}</span>
           <span class="rnw-sub">{{ runningSub(row) }}</span>
         </router-link>
         <span class="rnw-facts">
-          <span v-if="row.live" class="rnw-live"><i class="rnw-dot" aria-hidden="true" />live · {{ ago(row.live?.started_at) }}</span>
+          <span v-if="row.live" class="rnw-live" data-pl-part="live"><i class="rnw-dot" aria-hidden="true" />live · {{ ago(row.live?.started_at) }}</span>
           <span class="rnw-meta">{{ runningMeta(row) }}</span>
         </span>
         <router-link
           :to="watchTo(row)"
           class="rnw-watch"
+          data-pl-part="key"
           :aria-label="`Watch #${row.id}`"
           :data-testid="`running-now-watch-${row.id}`"
         >Watch</router-link>
@@ -52,6 +53,8 @@ function watchTo(row) {
           variant="secondary"
           size="sm"
           class="rnw-stop"
+          data-pl-part="key"
+          data-tone="danger"
           :disabled="busyId === row.id"
           :aria-label="`Stop #${row.id}`"
           :data-testid="`running-now-stop-${row.id}`"

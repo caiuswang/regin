@@ -25,6 +25,46 @@ export function loopParts(parts) {
   return (parts || []).map(p => ({ ...p, tone: LOOP_FILL[p.key] || 'unstarted' }))
 }
 
+//: The facts a loop stage prints, as `[part key, words, tone]`: only the
+//: counts that move or ask for a decision. `ready` is the run-next count, not
+//: a loop part.
+const LOOP_FACTS = {
+  Tasks: [['running', 'running'], ['ready', 'ready'], ['failed', 'failed', 'danger']],
+  Features: [['building', 'building'], ['spec', 'in spec'], ['escaped', 'escaped', 'warn']],
+  Defects: [['open', 'open'], ['triage', 'to triage', 'warn']],
+}
+
+/** One loop part's count, 0 when the stage or the part is absent. */
+export function loopCount(loop, label, key) {
+  const stage = (loop?.stages || []).find(s => s.label === label)
+  return Number(stage?.parts?.find(p => p.key === key)?.n || 0)
+}
+
+// Every printed fact is a way to exactly its rows: the task groups by the
+// next-step list's own group key, the feature stages by the stage filter.
+// The triage queue is the Features tab's rail, which ignores the scope (D1).
+function loopFactLink(label, key, scope) {
+  if (label === 'Tasks') return { path: '/tasks', query: { ...scope, view: 'list', group: key } }
+  if (label === 'Features') return { path: '/features', query: { ...scope, stage: key } }
+  if (key === 'open') return { path: '/defects', query: { ...scope, status: 'open', queue: 'out' } }
+  return { path: '/features', query: { ...scope } }
+}
+
+/** A loop stage's non-zero facts, each with the link to its rows. */
+export function loopFacts(stage, ready, scope = {}) {
+  const n = key => (key === 'ready' ? ready : stage.parts.find(p => p.key === key)?.n || 0)
+  return (LOOP_FACTS[stage.label] || [])
+    .map(([key, words, tone]) => ({ key, words, tone, n: n(key), to: loopFactLink(stage.label, key, scope) }))
+    .filter(f => f.n > 0)
+}
+
+/** The loop's return edge as a sentence; '' when no fix task carries a defect. */
+export function loopNote(fixTasks) {
+  const n = fixTasks || 0
+  if (!n) return ''
+  return `${n} fix task${n === 1 ? '' : 's'} carr${n === 1 ? 'ies' : 'y'} open defects back into the queue`
+}
+
 export function loopBar(bar) {
   return STAGES.map(key => ({ key, label: key, n: Number(bar?.[key] || 0), tone: LOOP_FILL[key] }))
 }

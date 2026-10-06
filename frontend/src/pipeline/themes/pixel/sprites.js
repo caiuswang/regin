@@ -155,6 +155,46 @@ export const SPRITES = {
     ],
     palette: INK,
   },
+  // The loop scene's three stations.
+  board: {
+    grid: [
+      'kkkkkkkkkkkkk',
+      'kpbbpyypvvppk',
+      'kpppppppppppk',
+      'kpbbpppppggpk',
+      'kpppppppppppk',
+      'kkkkkkkkkkkkk',
+      '..k.......k..',
+      '..k.......k..',
+    ],
+    palette: { ...INK, b: 'blue', y: 'yellow', v: 'violet', g: 'green' },
+  },
+  anvil: {
+    grid: [
+      'kkkkkkkkkkk',
+      'ksssssssssk',
+      '.kkkkkkkkk.',
+      '...ksssk...',
+      '...ksssk...',
+      '..kkkkkkk..',
+      '.ksssssssk.',
+      'kkkkkkkkkkk',
+    ],
+    palette: { ...INK, s: 'gray' },
+  },
+  den: {
+    grid: [
+      '....kkkkk....',
+      '..kkssssskk..',
+      '.ksskkkkkssk.',
+      '.ksk.....ksk.',
+      'ksk.......ksk',
+      'ksk.......ksk',
+      'ksk.......ksk',
+      'kkk.......kkk',
+    ],
+    palette: { ...INK, s: 'gray' },
+  },
 }
 
 // One <rect> per horizontal run of a single colour, so a 12×12 sprite is a

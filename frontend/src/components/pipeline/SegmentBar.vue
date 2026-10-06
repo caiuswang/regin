@@ -16,6 +16,7 @@ const drawn = computed(() => props.parts.filter(p => p.n > 0))
 <template>
   <div
     class="sb"
+    data-pl-part="meter"
     :style="{ height: `${height}px` }"
     role="img"
     :aria-label="label || parts.map(p => `${p.label || p.key} ${p.n}`).join(', ')"
@@ -25,6 +26,8 @@ const drawn = computed(() => props.parts.filter(p => p.n > 0))
       :key="p.key"
       class="sb-seg"
       :class="`tone-${p.tone}`"
+      data-pl-part="meter-cell"
+      :data-tone="p.tone"
       :style="{ flexGrow: p.n }"
       :data-part="p.key"
     />
