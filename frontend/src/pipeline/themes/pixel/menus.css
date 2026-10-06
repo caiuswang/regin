@@ -14,11 +14,11 @@ html[data-pl-theme="pixel"] [data-pl-part="menu-key"] {
     min-height: 2.125rem;
     max-width: 100%;
     padding: 0 0.625rem;
-    border: 1px solid var(--pl-ink);
+    border: 1px solid var(--pl-frame);
     border-radius: 0;
     background: var(--pl-paper);
-    color: var(--pl-ink);
-    box-shadow: 2px 2px 0 var(--pl-ink);
+    color: var(--pl-text);
+    box-shadow: 2px 2px 0 var(--pl-drop);
     font-family: var(--pl-font);
     font-size: 10px;
     letter-spacing: 0.1em;
@@ -30,7 +30,7 @@ html[data-pl-theme="pixel"] [data-pl-part="menu-key"] {
 
 html[data-pl-theme="pixel"] [data-pl-part="menu-key"]:hover,
 html[data-pl-theme="pixel"] [data-pl-part="menu-key"][data-state="open"] {
-    background: var(--pl-paper-2);
+    background: var(--pl-paper-3);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="menu-key"]:active {
@@ -39,7 +39,7 @@ html[data-pl-theme="pixel"] [data-pl-part="menu-key"]:active {
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="menu-key"]:focus-visible {
-    outline: 2px solid var(--pl-action);
+    outline: 2px solid var(--pl-focus);
     outline-offset: 3px;
 }
 
@@ -65,11 +65,11 @@ html[data-pl-theme="pixel"] [data-pl-part="menu-key"] [data-pl-part="menu-caret"
 html[data-pl-theme="pixel"] [data-pl-part="listbox"],
 html[data-pl-theme="pixel"] [data-pl-part="menu"],
 html[data-pl-theme="pixel"] [data-pl-part="popover"] {
-    border: 1px solid var(--pl-ink);
+    border: 1px solid var(--pl-frame);
     border-radius: 0;
     background: var(--pl-paper);
-    color: var(--pl-ink);
-    box-shadow: 0 0 0 1px var(--pl-ink), 4px 4px 0 1px var(--pl-ink);
+    color: var(--pl-text);
+    box-shadow: 0 0 0 1px var(--pl-frame), 4px 4px 0 1px var(--pl-drop);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="listbox"],
@@ -110,7 +110,7 @@ html[data-pl-theme="pixel"] [data-pl-part="listbox"] [data-pl-part="listbox-item
 html[data-pl-theme="pixel"] [data-pl-part="menu"] [data-pl-part="menu-item"] {
     position: relative;
     border-radius: 0;
-    color: var(--pl-ink);
+    color: var(--pl-text);
     cursor: pointer;
     outline: none;
     user-select: none;
@@ -118,7 +118,7 @@ html[data-pl-theme="pixel"] [data-pl-part="menu"] [data-pl-part="menu-item"] {
 
 html[data-pl-theme="pixel"] [data-pl-part="listbox"] [data-pl-part="listbox-item"][data-highlighted],
 html[data-pl-theme="pixel"] [data-pl-part="menu"] [data-pl-part="menu-item"][data-highlighted] {
-    background: var(--pl-paper-2);
+    background: var(--pl-paper-3);
 }
 
 /* A MenuField's options are labels, so Silkscreen (R8), with the ▶ cursor on
@@ -160,7 +160,7 @@ html[data-pl-theme="pixel"] [data-pl-part="popover"] [data-pl-part="popover-arro
 html[data-pl-theme="pixel"] [data-pl-part="key"][data-pl-on] {
     border-color: var(--pl-action);
     color: var(--pl-action-text);
-    box-shadow: inset 0 0 0 1px var(--pl-action), 2px 2px 0 var(--pl-ink);
+    box-shadow: inset 0 0 0 1px var(--pl-action), 2px 2px 0 var(--pl-drop);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="popover"]:has([data-pl-part="filter"]) {
@@ -178,7 +178,7 @@ html[data-pl-theme="pixel"] [data-pl-part="filter"] [data-pl-part="filter-head"]
     display: flex;
     justify-content: space-between;
     padding: 0.6rem 0.9rem;
-    border-bottom: 2px solid var(--pl-ink);
+    border-bottom: 2px solid var(--pl-frame);
     font-family: var(--pl-font);
     font-size: 10px;
     font-weight: 700;
@@ -226,7 +226,7 @@ html[data-pl-theme="pixel"] [data-pl-part="filter"] [data-pl-part="toggle"] {
     padding: 0.35rem 0.6rem;
     border: 1px solid var(--pl-rule);
     background: var(--pl-paper);
-    color: var(--pl-ink);
+    color: var(--pl-text);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="filter"] [data-pl-part="toggle"]:hover {
@@ -242,13 +242,13 @@ html[data-pl-theme="pixel"] [data-pl-part="filter"] [data-pl-part="toggle"] inpu
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="filter"] [data-pl-part="toggle"]:has(input:checked) {
-    border-color: var(--pl-ink);
-    background: var(--pl-paper-2);
-    box-shadow: inset 0 0 0 1px var(--pl-ink);
+    border-color: var(--pl-frame);
+    background: var(--pl-paper-3);
+    box-shadow: inset 0 0 0 1px var(--pl-frame);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="filter"] [data-pl-part="toggle"]:has(input:focus-visible) {
-    outline: 2px solid var(--pl-action);
+    outline: 2px solid var(--pl-focus);
     outline-offset: 2px;
 }
 
@@ -264,18 +264,18 @@ html[data-pl-theme="pixel"] [data-pl-part="filter"] [data-pl-part="check"] input
     width: 14px;
     height: 14px;
     margin: 0;
-    border: 1px solid var(--pl-ink);
+    border: 1px solid var(--pl-frame);
     border-radius: 0;
     background: var(--pl-paper);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="filter"] [data-pl-part="check"] input[type="checkbox"]:checked {
-    background: var(--pl-ink);
+    background: var(--pl-frame);
     box-shadow: inset 0 0 0 2px var(--pl-paper);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="filter"] [data-pl-part="check"] input[type="checkbox"]:focus-visible {
-    outline: 2px solid var(--pl-action);
+    outline: 2px solid var(--pl-focus);
     outline-offset: 2px;
 }
 
@@ -283,7 +283,7 @@ html[data-pl-theme="pixel"] [data-pl-part="filter"] [data-pl-part="filter-foot"]
     align-items: center;
     justify-content: space-between;
     padding: 0.6rem 0.9rem;
-    border-top: 2px solid var(--pl-ink);
+    border-top: 2px solid var(--pl-frame);
     background: var(--pl-paper-2);
 }
 

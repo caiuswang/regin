@@ -132,7 +132,7 @@ function contrastAudit() {
     }
   }
 
-  for (const rect of within('svg[data-sprite] rect[data-px="ink"]')) {
+  for (const rect of within('svg[data-sprite] rect[data-px="k"]')) {
     sprites++
     const r = ratio(rgba(getComputedStyle(rect).fill), backdrop(rect.closest('svg').parentElement))
     if (r < 3) failures.push(`sprite ink ${describe(rect)} ${r.toFixed(2)}:1 < 3`)
@@ -199,7 +199,7 @@ test.describe('pixel theme', () => {
 
       const totals = { labels: 0, edges: 0, sprites: 0 }
       const failures = []
-      for (const path of ['/overview', '/tasks', '/features']) {
+      for (const path of ['/overview', '/tasks', '/features', '/defects']) {
         await page.goto(path)
         await expect(page.getByTestId('pipeline-tabs')).toBeVisible()
         await pixelReady(page)

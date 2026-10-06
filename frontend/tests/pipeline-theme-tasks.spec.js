@@ -350,7 +350,9 @@ function colourAudit() {
   // The neutrals a surface may be: the pixel inks and papers, and the app's
   // own (slightly blue) surface and border ramp that classic chrome keeps.
   const root = getComputedStyle(document.documentElement)
-  const NEUTRALS = ['--pl-ink', '--pl-paper', '--pl-paper-2', '--pl-shade', '--pl-rule', '--pl-muted',
+  const NEUTRALS = ['--pl-page', '--pl-page-top', '--pl-paper', '--pl-paper-2', '--pl-paper-3', '--pl-sunk', '--pl-text', '--pl-text-2',
+    '--pl-text-3', '--pl-muted', '--pl-faint', '--pl-frame', '--pl-hair', '--pl-rule', '--pl-bevel', '--pl-drop',
+    '--pl-cell-off', '--pl-cell-flight', '--pl-cell-settled',
     '--color-surface', '--color-surface-2', '--color-surface-3', '--color-border',
     '--color-border-subtle', '--color-border-strong']
   const neutral = new Set(NEUTRALS.map(t => rgba(root.getPropertyValue(t).trim()).slice(0, 3).join()))

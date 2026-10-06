@@ -1,8 +1,10 @@
 // The pixel theme's sprite sheet. A sprite is a string grid ('.' = empty) and
 // a palette mapping each grid letter to a palette KEY, never a hex: PixelSprite
-// paints key `blue` with var(--pl-px-blue), so light/dark live in tokens.css.
+// paints key `b` with var(--pl-px-b), so light/dark live in tokens.css. The keys
+// are the design's sprite palette: k outline, w face, s steel, l light steel,
+// b bot blue, n wood, and the status hues a y r g v.
 
-const INK = { k: 'ink', p: 'paper' }
+const INK = { k: 'k', p: 'w' }
 
 const BOT = [
   '.....k.....',
@@ -62,14 +64,14 @@ const FLAG = [
 ]
 
 export const SPRITES = {
-  bot: { grid: BOT, palette: { ...INK, b: 'blue' } },
-  'bot.running': { grid: BOT, palette: { ...INK, b: 'violet' } },
-  'bot.failed': { grid: BOT_KO, palette: { ...INK, b: 'red' } },
-  bug: { grid: BUG, palette: { ...INK, a: 'amber' } },
-  'bug.cold': { grid: BUG, palette: { ...INK, a: 'gray' } },
-  flag: { grid: FLAG, palette: { ...INK, c: 'green' } },
-  'flag.escaped': { grid: FLAG, palette: { ...INK, c: 'amber' } },
-  'flag.cold': { grid: FLAG, palette: { ...INK, c: 'gray' } },
+  bot: { grid: BOT, palette: { ...INK, b: 'b' } },
+  'bot.running': { grid: BOT, palette: { ...INK, b: 'v' } },
+  'bot.failed': { grid: BOT_KO, palette: { ...INK, b: 'r' } },
+  bug: { grid: BUG, palette: { ...INK, a: 'a' } },
+  'bug.cold': { grid: BUG, palette: { ...INK, a: 's' } },
+  flag: { grid: FLAG, palette: { ...INK, c: 'g' } },
+  'flag.escaped': { grid: FLAG, palette: { ...INK, c: 'a' } },
+  'flag.cold': { grid: FLAG, palette: { ...INK, c: 's' } },
   bulb: {
     grid: [
       '..kkkkk..',
@@ -84,7 +86,7 @@ export const SPRITES = {
       '..kkkkk..',
       '...kkk...',
     ],
-    palette: { ...INK, y: 'yellow', s: 'gray' },
+    palette: { ...INK, y: 'y', s: 's' },
   },
   lock: {
     grid: [
@@ -99,7 +101,7 @@ export const SPRITES = {
       'kaaaaaaak',
       'kkkkkkkkk',
     ],
-    palette: { ...INK, a: 'amber' },
+    palette: { ...INK, a: 'a' },
   },
   hammer: {
     grid: [
@@ -114,7 +116,7 @@ export const SPRITES = {
       '...kak...',
       '...kkk...',
     ],
-    palette: { ...INK, s: 'gray', a: 'amber' },
+    palette: { ...INK, s: 's', a: 'a' },
   },
   scroll: {
     grid: [
@@ -143,7 +145,7 @@ export const SPRITES = {
       '..kggk.....',
       '...kk......',
     ],
-    palette: { ...INK, g: 'green' },
+    palette: { ...INK, g: 'g' },
   },
   grid: {
     grid: [
@@ -181,7 +183,7 @@ export const SPRITES = {
       '..k.......k..',
       '..k.......k..',
     ],
-    palette: { ...INK, b: 'blue', y: 'yellow', v: 'violet', g: 'green' },
+    palette: { ...INK, b: 'b', y: 'y', v: 'v', g: 'g' },
   },
   anvil: {
     grid: [
@@ -194,7 +196,7 @@ export const SPRITES = {
       '.ksssssssk.',
       'kkkkkkkkkkk',
     ],
-    palette: { ...INK, s: 'gray' },
+    palette: { ...INK, s: 's' },
   },
   den: {
     grid: [
@@ -207,17 +209,17 @@ export const SPRITES = {
       'ksk.......ksk',
       'kkk.......kkk',
     ],
-    palette: { ...INK, s: 'gray' },
+    palette: { ...INK, s: 's' },
   },
 }
 
 // Priority as four rising bars, the lit ones in the priority's hue (the same
 // count TaskPriorityIcon draws): urgent 4, high 3, medium 2, low 1, none 0.
-const BAR_HUE = { 4: 'red', 3: 'amber', 2: 'blue', 1: 'ink', 0: 'gray' }
+const BAR_HUE = { 4: 'r', 3: 'a', 2: 'b', 1: 'k', 0: 's' }
 function bars(lit) {
   const grid = [3, 2, 1, 0].map(row => [1, 2, 3, 4]
     .map(bar => (bar > row ? (bar <= lit ? 'o' : 's') : '.')).join('.'))
-  return { grid, palette: { o: BAR_HUE[lit], s: 'gray' } }
+  return { grid, palette: { o: BAR_HUE[lit], s: 's' } }
 }
 for (const lit of [0, 1, 2, 3, 4]) SPRITES[`bars.${lit}`] = bars(lit)
 
@@ -231,7 +233,7 @@ SPRITES.coin = {
     '.kyyyk.',
     '..kkk..',
   ],
-  palette: { ...INK, y: 'yellow' },
+  palette: { ...INK, y: 'y' },
 }
 
 // One <rect> per horizontal run of a single colour, so a 12×12 sprite is a

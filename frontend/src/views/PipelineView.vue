@@ -181,7 +181,7 @@ usePipelineLive(() => loadCounts(carried.value))
 </script>
 
 <template>
-  <div class="pl-shell">
+  <div class="pl-shell" data-pl-part="shell">
     <header class="pl-head" data-testid="pipeline-header" data-pl-part="head">
       <div class="pl-head__row">
         <div class="pl-head__title">

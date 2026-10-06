@@ -117,9 +117,14 @@ function colourBudget() {
     ...['info', 'success', 'warning', 'danger', 'agent', 'orange', 'primary'].map(t => `--color-${t}-soft`),
     ...RAMPS.flatMap(r => [50, 100, 200, 300].map(n => `--color-${r}-${n}`)),
   ].map(resolve).filter(c => c !== 'rgba(0, 0, 0, 0)').map(c => rgba(c).join()))
+  // The pixel neutrals are blue-grey by design (the dark frame is #6f7f9c): a
+  // role token is never a status hue, whatever its chroma.
+  const neutrals = new Set(['--pl-page', '--pl-page-top', '--pl-paper', '--pl-paper-2', '--pl-paper-3', '--pl-sunk',
+    '--pl-text', '--pl-text-2', '--pl-text-3', '--pl-muted', '--pl-faint', '--pl-frame', '--pl-hair', '--pl-rule',
+    '--pl-bevel', '--pl-drop', '--pl-cell-off', '--pl-cell-flight', '--pl-cell-settled'].map(t => rgba(resolve(t)).join()))
   const chromatic = (color) => {
     const c = rgba(color)
-    if (c[3] < 26) return false
+    if (c[3] < 26 || neutrals.has(c.join())) return false
     return Math.max(c[0], c[1], c[2]) - Math.min(c[0], c[1], c[2]) > 40 || tints.has(c.join())
   }
   const visible = (el) => {

@@ -26,57 +26,153 @@
     src: url("./fonts/silkscreen-latin-700-normal.woff2") format("woff2");
 }
 
-/* Literal hexes per mode rather than var(--color-blue-*): the app's dark mode
-   inverts the accent ramps, which would turn a filled key pale under white
-   text. Paper follows the app surface, so a panel sits where a card would. */
+/* The palette, by role: the only colour literals in the pixel theme (R15).
+   Light keeps the values the theme shipped with; dark is the design's
+   "Pipeline Level Dark", whose swap is by role, not by hex — one light ink
+   becomes text, frame and drop, so each is its own token even where light
+   gives them one value. Literals rather than var(--color-*): the app's dark
+   mode inverts its accent ramps, and the theme owns its paper. */
 html[data-pl-theme="pixel"] {
     --pl-font: "Silkscreen", ui-monospace, monospace;
-    --pl-ink: #10131a;
-    --pl-paper: var(--color-surface);
+    --pl-page: transparent;
+    --pl-page-top: transparent;
+    --pl-page-clip: none;
+    --pl-paper: #ffffff;
     --pl-paper-2: #f1f3f7;
-    --pl-shade: #d5dae3;
+    --pl-paper-3: #f1f3f7;
+    --pl-sunk: #ffffff;
+    --pl-text: #10131a;
+    --pl-text-2: #10131a;
+    --pl-text-3: #475569;
     --pl-muted: #4f586a;
+    --pl-faint: #aeb6c4;
+    --pl-frame: #10131a;
+    --pl-hair: #d5dae3;
     --pl-rule: #aeb6c4;
+    --pl-bevel: #d5dae3;
+    --pl-bevel-in: #cbd5e1;
+    --pl-drop: #10131a;
+    --pl-soft: rgba(15, 23, 42, 0.1);
+    --pl-scrim: rgba(15, 23, 42, 0.45);
+    --pl-focus: #1d4ed8;
     --pl-action: #1d4ed8;
     --pl-action-hover: #1e40af;
+    --pl-action-bevel: #1e40af;
     --pl-action-ink: #ffffff;
     --pl-action-text: #1d4ed8;
+    --pl-action-text-hover: #1d4ed8;
+    --pl-action-tint: #eff6ff;
+    --pl-action-tint-2: #dbeafe;
     --pl-run: #6d28d9;
+    --pl-run-line: #6d28d9;
+    --pl-run-tint: #ede9fe;
+    --pl-run-fill: #6d28d9;
     --pl-fail: #c81e1e;
+    --pl-fail-line: #c81e1e;
+    --pl-fail-tint: #fef2f2;
     --pl-warn: #b45309;
+    --pl-warn-line: #b45309;
+    --pl-warn-tint: #fffbeb;
     --pl-ship: #15803d;
-    --pl-px-ink: var(--pl-ink);
-    --pl-px-paper: var(--pl-paper);
-    --pl-px-blue: #2563eb;
-    --pl-px-violet: #7c3aed;
-    --pl-px-red: #dc2626;
-    --pl-px-amber: #d97706;
-    --pl-px-green: #16a34a;
-    --pl-px-yellow: #facc15;
-    --pl-px-gray: #8b95a7;
+    --pl-ship-tint: #a7f3d0;
+    --pl-cell-off: #d5dae3;
+    --pl-cell-flight: #aeb6c4;
+    --pl-cell-settled: #4f586a;
+    --pl-cell-done: #10131a;
+    --pl-cell-human: #b45309;
+    --pl-cell-danger: #c81e1e;
+    --pl-px-k: #10131a;
+    --pl-px-w: #ffffff;
+    --pl-px-s: #8b95a7;
+    --pl-px-l: #cbd5e1;
+    --pl-px-b: #2563eb;
+    --pl-px-n: #92400e;
+    --pl-px-a: #d97706;
+    --pl-px-y: #facc15;
+    --pl-px-r: #dc2626;
+    --pl-px-g: #16a34a;
+    --pl-px-v: #7c3aed;
 }
 
+/* Solid status fills (primary keys, the LIVE square, human/danger cells and
+   sprite status hues) keep their hue; only text, outline and tint lighten. */
 html[data-pl-theme="pixel"][data-theme="dark"] {
-    --pl-ink: #e6e9f0;
-    --pl-paper-2: #222833;
-    --pl-shade: #0c0f14;
-    --pl-muted: #a7b0c0;
-    --pl-rule: #5d6678;
+    --pl-page: #0b0e16;
+    --pl-page-top: #0d111a;
+    --pl-page-clip: inset(0 -100vmax -100vmax);
+    --pl-paper: #151b27;
+    --pl-paper-2: #1a2231;
+    --pl-paper-3: #222b3c;
+    --pl-sunk: #171d2a;
+    --pl-text: #e6ecf5;
+    --pl-text-2: #cdd6e4;
+    --pl-text-3: #b3bfd2;
+    --pl-muted: #97a4ba;
+    --pl-faint: #808ea6;
+    --pl-frame: #6f7f9c;
+    --pl-hair: #2b3548;
+    --pl-rule: #3a4760;
+    --pl-bevel: #0b0f18;
+    --pl-bevel-in: #080b12;
+    --pl-drop: #03050a;
+    --pl-soft: rgba(0, 0, 0, 0.4);
+    --pl-scrim: rgba(2, 4, 8, 0.72);
+    --pl-focus: #2c4a85;
     --pl-action: #2563eb;
-    --pl-action-hover: #3b74f0;
+    --pl-action-hover: #1e40af;
+    --pl-action-bevel: #1e40af;
     --pl-action-ink: #ffffff;
-    --pl-action-text: #8fb0ff;
-    --pl-run: #a78bfa;
-    --pl-fail: #f87171;
-    --pl-warn: #fbbf24;
-    --pl-ship: #4ade80;
-    --pl-px-blue: #4f86f7;
-    --pl-px-violet: #a78bfa;
-    --pl-px-red: #f87171;
-    --pl-px-amber: #f59e0b;
-    --pl-px-green: #34d399;
-    --pl-px-yellow: #fde047;
-    --pl-px-gray: #8b95a7;
+    --pl-action-text: #7aa9ff;
+    --pl-action-text-hover: #a3c3ff;
+    --pl-action-tint: #17253f;
+    --pl-action-tint-2: #1c2c4a;
+    --pl-run: #b8a2fc;
+    --pl-run-line: #9b7bf5;
+    --pl-run-tint: #2b2448;
+    --pl-run-fill: #7c3aed;
+    --pl-fail: #ff8080;
+    --pl-fail-line: #ef6b6b;
+    --pl-fail-tint: #2d1719;
+    --pl-warn: #f7b84a;
+    --pl-warn-line: #d99a2b;
+    --pl-warn-tint: #2b2414;
+    --pl-ship: #3ed9a0;
+    --pl-ship-tint: #226e52;
+    --pl-cell-off: #2a3448;
+    --pl-cell-flight: #8593ab;
+    --pl-cell-settled: #38445c;
+    --pl-cell-done: #8593ab;
+    --pl-cell-human: #d97706;
+    --pl-cell-danger: #dc2626;
+    --pl-px-k: #d3dbe8;
+    --pl-px-w: #1c2433;
+    --pl-px-s: #7d8aa3;
+    --pl-px-l: #3d4a63;
+    --pl-px-b: #4f86f7;
+    --pl-px-n: #d18b2c;
+    --pl-px-a: #d97706;
+    --pl-px-y: #fbbf24;
+    --pl-px-r: #dc2626;
+    --pl-px-g: #059669;
+    --pl-px-v: #7c3aed;
+}
+
+/* ── Ground ──────────────────────────────────────────────────────────── */
+/* The shell paints the page ground; the spread fills the scroller around it
+   without taking layout, and is clipped at the scroller's edge. Transparent
+   in light, where the app's own ground shows through as before.
+   A box-shadow paints over the boxes of earlier in-flow siblings — the flash
+   and the blocker banner sit above the shell in the scroller — so the spread
+   is clipped at the shell's top edge unless the shell comes first. */
+html[data-pl-theme="pixel"] [data-pl-part="shell"] {
+    background-color: var(--pl-page);
+    background-image: linear-gradient(var(--pl-page-top), var(--pl-page) 240px);
+    box-shadow: 0 0 0 100vmax var(--pl-page);
+    clip-path: var(--pl-page-clip);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="shell"]:first-child {
+    clip-path: none;
 }
 
 /* ── Sprites ─────────────────────────────────────────────────────────── */
@@ -95,8 +191,8 @@ html[data-pl-theme="pixel"] [data-pl-part] button:not([data-pl-part]) {
 
 /* ── Header ──────────────────────────────────────────────────────────── */
 html[data-pl-theme="pixel"] [data-pl-part="head"] {
-    border-bottom-color: var(--pl-ink);
-    box-shadow: 0 1px 0 var(--pl-ink);
+    border-bottom-color: var(--pl-frame);
+    box-shadow: 0 1px 0 var(--pl-frame);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="meta-label"] {
@@ -108,11 +204,11 @@ html[data-pl-theme="pixel"] [data-pl-part="meta-label"] {
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="head"] [data-pl-part="chip"] {
-    border-color: var(--pl-ink);
+    border-color: var(--pl-frame);
     border-radius: 0;
     background: var(--pl-paper);
-    color: var(--pl-ink);
-    box-shadow: 2px 2px 0 var(--pl-ink);
+    color: var(--pl-text);
+    box-shadow: 2px 2px 0 var(--pl-drop);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="head"] [data-pl-part="chip"] button {
@@ -124,7 +220,7 @@ html[data-pl-theme="pixel"] [data-pl-part="head"] [data-pl-part="chip"] button {
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="head"] [data-pl-part="chip"] button:not(:first-child) {
-    border-left-color: var(--pl-ink);
+    border-left-color: var(--pl-frame);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="head"] [data-pl-part="theme-switch"] {
@@ -149,19 +245,19 @@ html[data-pl-theme="pixel"] [data-pl-part="tab"] {
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="tab"]:hover {
-    color: var(--pl-ink);
+    color: var(--pl-text);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="tab"][aria-current="page"] {
-    color: var(--pl-ink);
-    border-bottom-color: var(--pl-ink);
+    color: var(--pl-text);
+    border-bottom-color: var(--pl-frame);
 }
 
 /* The ▶ cursor, drawn as a border triangle so it is as crisp as the font. */
 html[data-pl-theme="pixel"] [data-pl-part="tab"][aria-current="page"]::before {
     content: "";
     flex: none;
-    border-left: 6px solid var(--pl-action);
+    border-left: 6px solid var(--pl-action-text);
     border-top: 5px solid transparent;
     border-bottom: 5px solid transparent;
 }
@@ -179,7 +275,7 @@ html[data-pl-theme="pixel"] [data-pl-part="tab"] [data-pl-part="count"] {
     html[data-pl-theme="pixel"] [data-pl-part="tabs"] {
         border-radius: 0;
         background: var(--pl-paper-2);
-        box-shadow: inset 0 0 0 1px var(--pl-ink);
+        box-shadow: inset 0 0 0 1px var(--pl-frame);
     }
 
     html[data-pl-theme="pixel"] [data-pl-part="tab"] {
@@ -188,7 +284,7 @@ html[data-pl-theme="pixel"] [data-pl-part="tab"] [data-pl-part="count"] {
 
     html[data-pl-theme="pixel"] [data-pl-part="tab"][aria-current="page"] {
         background: var(--pl-paper);
-        box-shadow: inset 0 0 0 2px var(--pl-ink);
+        box-shadow: inset 0 0 0 2px var(--pl-frame);
     }
 }
 
@@ -196,17 +292,17 @@ html[data-pl-theme="pixel"] [data-pl-part="tab"] [data-pl-part="count"] {
 /* border-color, not border: a panel that draws no border classic draws none
    here either, so a layout wrapper never grows a frame. */
 html[data-pl-theme="pixel"] [data-pl-part="panel"] {
-    border-color: var(--pl-ink);
+    border-color: var(--pl-frame);
     border-radius: 0;
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="panel"]:is(section) {
     background: var(--pl-paper);
-    box-shadow: 0 0 0 1px var(--pl-ink);
+    box-shadow: 0 0 0 1px var(--pl-frame);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="panel-head"] {
-    border-bottom: 1px solid var(--pl-ink);
+    border-bottom: 1px solid var(--pl-frame);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="panel-title"] {
@@ -215,7 +311,7 @@ html[data-pl-theme="pixel"] [data-pl-part="panel-title"] {
     font-weight: 700;
     letter-spacing: 0.1em;
     text-transform: uppercase;
-    color: var(--pl-ink);
+    color: var(--pl-text);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="panel-meta"] {
@@ -262,11 +358,11 @@ html[data-pl-theme="pixel"] [data-pl-part="key--primary"] {
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="key"] {
-    border-color: var(--pl-ink);
+    border-color: var(--pl-frame);
     background: var(--pl-paper);
     background-image: none;
-    color: var(--pl-ink);
-    box-shadow: 2px 2px 0 var(--pl-ink);
+    color: var(--pl-text-2);
+    box-shadow: 2px 2px 0 var(--pl-drop);
 }
 
 /* Outranks the shell's phone rule that rounds the floating create key. */
@@ -276,20 +372,20 @@ html[data-pl-theme="pixel"] [data-pl-part="head"] [data-pl-part="key"] {
 
 html[data-pl-theme="pixel"] [data-pl-part="key"]:hover {
     background: var(--pl-paper-2);
-    box-shadow: 2px 2px 0 var(--pl-ink);
+    box-shadow: 2px 2px 0 var(--pl-drop);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="key--primary"] {
-    border-color: var(--pl-ink);
+    border-color: var(--pl-frame);
     background: var(--pl-action);
     background-image: none;
     color: var(--pl-action-ink);
-    box-shadow: 2px 2px 0 var(--pl-ink);
+    box-shadow: 2px 2px 0 var(--pl-drop);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="key--primary"]:hover {
     background: var(--pl-action-hover);
-    box-shadow: 2px 2px 0 var(--pl-ink);
+    box-shadow: 2px 2px 0 var(--pl-drop);
 }
 
 /* A press moves the key into its own shadow; transform takes no layout, so
@@ -302,7 +398,7 @@ html[data-pl-theme="pixel"] [data-pl-part="key--primary"]:active {
 
 html[data-pl-theme="pixel"] [data-pl-part="key"]:focus-visible,
 html[data-pl-theme="pixel"] [data-pl-part="key--primary"]:focus-visible {
-    outline: 2px solid var(--pl-action);
+    outline: 2px solid var(--pl-focus);
     outline-offset: 3px;
 }
 
@@ -314,14 +410,14 @@ html[data-pl-theme="pixel"] [data-pl-part="key--primary"] kbd {
 
 /* ── Inputs ──────────────────────────────────────────────────────────── */
 html[data-pl-theme="pixel"] [data-pl-part="input"] {
-    border-color: var(--pl-ink);
+    border-color: var(--pl-frame);
     border-radius: 0;
-    background: var(--pl-paper);
-    box-shadow: inset 2px 2px 0 var(--pl-shade);
+    background: var(--pl-sunk);
+    box-shadow: inset 2px 2px 0 var(--pl-bevel);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="input"]:focus-within {
-    outline: 2px solid var(--pl-action);
+    outline: 2px solid var(--pl-focus);
     outline-offset: 1px;
 }
 
@@ -341,21 +437,21 @@ html[data-pl-theme="pixel"] [data-pl-part="picker"] [data-pl-part="input"]:focus
 
 /* ── Picker ──────────────────────────────────────────────────────────── */
 html[data-pl-theme="pixel"] [data-pl-part="picker"] {
-    border-color: var(--pl-ink);
+    border-color: var(--pl-frame);
     border-radius: 0;
     background: var(--pl-paper);
-    box-shadow: 0 0 0 1px var(--pl-ink), 4px 4px 0 1px var(--pl-ink);
+    box-shadow: 0 0 0 1px var(--pl-frame), 4px 4px 0 1px var(--pl-drop);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="picker"] label {
-    border-bottom-color: var(--pl-ink);
+    border-bottom-color: var(--pl-frame);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="picker"] kbd {
-    border-color: var(--pl-ink);
+    border-color: var(--pl-frame);
     border-radius: 0;
     font-family: var(--pl-font);
-    color: var(--pl-ink);
+    color: var(--pl-text);
 }
 
 /* Paper, not classic's tinted "selected" fill: the check mark says which
@@ -386,21 +482,21 @@ html[data-pl-theme="pixel"] [data-pl-part="picker"] [data-pl-part="picker-group"
 /* Paper with the status hue on the 2px outline only: colour is a mark here,
    never a fill (R7). */
 html[data-pl-theme="pixel"] [data-pl-part="toast"] {
-    border-color: var(--pl-ink);
+    border-color: var(--pl-frame);
     border-radius: 0;
     background: var(--pl-paper);
-    color: var(--pl-ink);
-    box-shadow: 0 0 0 1px var(--pl-ink), 4px 4px 0 1px var(--pl-ink);
+    color: var(--pl-text);
+    box-shadow: 0 0 0 1px var(--pl-frame), 4px 4px 0 1px var(--pl-drop);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="toast"][data-tone="error"] {
-    border-color: var(--pl-fail);
-    box-shadow: 0 0 0 1px var(--pl-fail), 4px 4px 0 1px var(--pl-ink);
+    border-color: var(--pl-fail-line);
+    box-shadow: 0 0 0 1px var(--pl-fail-line), 4px 4px 0 1px var(--pl-drop);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="toast"][data-tone="success"] {
     border-color: var(--pl-ship);
-    box-shadow: 0 0 0 1px var(--pl-ship), 4px 4px 0 1px var(--pl-ink);
+    box-shadow: 0 0 0 1px var(--pl-ship), 4px 4px 0 1px var(--pl-drop);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="toast"] button {
@@ -428,23 +524,23 @@ html[data-pl-theme="pixel"] [data-pl-part="meter-bar"] {
 
 html[data-pl-theme="pixel"] [data-pl-part="meter-cell"] {
     border-radius: 0;
-    background: var(--pl-shade);
+    background: var(--pl-cell-off);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="meter-cell"]:is([data-tone="flight"], [data-tone="info"]) {
-    background: var(--pl-rule);
+    background: var(--pl-cell-flight);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="meter-cell"]:is([data-tone="settled"], [data-tone="success"]) {
-    background: var(--pl-muted);
+    background: var(--pl-cell-settled);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="meter-cell"]:is([data-tone="human"], [data-tone="warning"]) {
-    background: var(--pl-warn);
+    background: var(--pl-cell-human);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="meter-cell"][data-tone="danger"] {
-    background: var(--pl-fail);
+    background: var(--pl-cell-danger);
 }
 
 /* ── Rows ────────────────────────────────────────────────────────────── */
@@ -469,10 +565,10 @@ html[data-pl-theme="pixel"] [data-pl-part="row"] [data-pl-part="key--primary"] {
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="row"] [data-pl-part="key"] {
-    border-color: var(--pl-ink);
+    border-color: var(--pl-frame);
     border-radius: 0;
     background: var(--pl-paper);
-    color: var(--pl-ink);
+    color: var(--pl-text-2);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="row"] [data-pl-part="key"]:hover {
@@ -481,17 +577,17 @@ html[data-pl-theme="pixel"] [data-pl-part="row"] [data-pl-part="key"]:hover {
 
 html[data-pl-theme="pixel"] [data-pl-part="key"][data-tone="danger"],
 html[data-pl-theme="pixel"] [data-pl-part="row"] [data-pl-part="key"][data-tone="danger"] {
-    border-color: var(--pl-fail);
+    border-color: var(--pl-fail-line);
     color: var(--pl-fail);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="key"][data-tone="warn"] {
-    border-color: var(--pl-warn);
+    border-color: var(--pl-warn-line);
     color: var(--pl-warn);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="row"] [data-pl-part="key--primary"] {
-    border-color: var(--pl-ink);
+    border-color: var(--pl-frame);
     border-radius: 0;
     background: var(--pl-action);
     color: var(--pl-action-ink);
@@ -515,7 +611,7 @@ html[data-pl-theme="pixel"] [data-pl-part="live"] i {
     height: 8px;
     border-radius: 0;
     background: none;
-    box-shadow: inset 0 0 0 2px var(--pl-run);
+    box-shadow: inset 0 0 0 2px var(--pl-run-fill);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="wait"] {

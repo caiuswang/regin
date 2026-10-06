@@ -10,11 +10,11 @@
 
 /* ── Box ─────────────────────────────────────────────────────────────── */
 html[data-pl-theme="pixel"] [data-pl-part="dialog"] {
-    border-color: var(--pl-ink);
+    border-color: var(--pl-frame);
     border-radius: 0;
     background: var(--pl-paper);
-    color: var(--pl-ink);
-    box-shadow: 0 0 0 1px var(--pl-ink), 6px 6px 0 1px var(--pl-ink);
+    color: var(--pl-text);
+    box-shadow: 0 0 0 1px var(--pl-frame), 6px 6px 0 1px var(--pl-drop);
     clip-path: inset(-12px);
     transition: clip-path 160ms steps(4, end);
 }
@@ -33,7 +33,7 @@ html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="dialog-head"]
     gap: 12px;
     margin: -1.25rem -1.25rem 0;
     padding: 0.875rem 3.5rem 0.875rem 1.25rem;
-    border-bottom: 1px solid var(--pl-ink);
+    border-bottom: 1px solid var(--pl-frame);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="dialog-title"] {
@@ -42,7 +42,7 @@ html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="dialog-title"
     font-weight: 700;
     letter-spacing: 0.14em;
     text-transform: uppercase;
-    color: var(--pl-ink);
+    color: var(--pl-text);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="dialog-title"][data-pl-kicker]::before {
@@ -68,7 +68,7 @@ html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="dialog-title-
 html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="dialog-lead"] {
     margin-top: 0.875rem;
     font-size: 0.8125rem;
-    color: var(--pl-ink);
+    color: var(--pl-text);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="dialog-close"] {
@@ -77,12 +77,12 @@ html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="dialog-close"
     width: 26px;
     height: 26px;
     top: 0.875rem;
-    border: 1px solid var(--pl-ink);
+    border: 1px solid var(--pl-frame);
     border-radius: 0;
     background: var(--pl-paper);
-    color: var(--pl-ink);
+    color: var(--pl-text);
     font-size: 11px;
-    box-shadow: 2px 2px 0 var(--pl-ink);
+    box-shadow: 2px 2px 0 var(--pl-drop);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="dialog-close"]:hover {
@@ -98,7 +98,7 @@ html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="dialog-foot"]
     align-items: center;
     margin: 1.25rem -1.25rem -1.25rem;
     padding: 0.75rem 1.25rem;
-    border-top: 1px solid var(--pl-ink);
+    border-top: 1px solid var(--pl-frame);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="dialog-foot"][data-pl-hint]::before {
@@ -128,7 +128,7 @@ html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="field-label"]
     font-weight: 400;
     letter-spacing: 0.14em;
     text-transform: uppercase;
-    color: var(--pl-ink);
+    color: var(--pl-text);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="field-label"] span {
@@ -185,26 +185,26 @@ html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="check"] input
     width: 14px;
     height: 14px;
     margin: 0;
-    border: 1px solid var(--pl-ink);
+    border: 1px solid var(--pl-frame);
     border-radius: 0;
     background: var(--pl-paper);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="check"] input[type="checkbox"]:checked {
-    background: var(--pl-ink);
+    background: var(--pl-frame);
     box-shadow: inset 0 0 0 2px var(--pl-paper);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="check"] input[type="checkbox"]:focus-visible {
-    outline: 2px solid var(--pl-action);
+    outline: 2px solid var(--pl-focus);
     outline-offset: 2px;
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="dialog-note"] {
-    border: 1px dashed var(--pl-ink);
+    border: 1px dashed var(--pl-frame);
     border-radius: 0;
     background: var(--pl-paper-2);
-    color: var(--pl-ink);
+    color: var(--pl-text);
 }
 
 /* ── Keys of a choice (ChoiceField) ──────────────────────────────────── */
@@ -223,11 +223,11 @@ html[data-pl-theme="pixel"] [data-pl-part="choice"] [data-pl-part="choice-key"] 
     height: auto;
     min-height: 32px;
     padding: 4px 10px;
-    border: 1px solid var(--pl-ink);
+    border: 1px solid var(--pl-frame);
     border-radius: 0;
     background: var(--pl-paper);
-    color: var(--pl-ink);
-    box-shadow: 2px 2px 0 var(--pl-ink);
+    color: var(--pl-text);
+    box-shadow: 2px 2px 0 var(--pl-drop);
     font-family: var(--pl-font);
     font-size: 10px;
     font-weight: 400;
@@ -241,8 +241,8 @@ html[data-pl-theme="pixel"] [data-pl-part="choice"] [data-pl-part="choice-key"]:
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="choice"] [data-pl-part="choice-key"][aria-checked="true"] {
-    background: var(--pl-paper-2);
-    box-shadow: inset 0 0 0 1px var(--pl-ink), 2px 2px 0 var(--pl-ink);
+    background: var(--pl-paper-3);
+    box-shadow: inset 0 0 0 1px var(--pl-frame), 2px 2px 0 var(--pl-drop);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="choice"] [data-pl-part="choice-key"]:active {
@@ -282,13 +282,13 @@ html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="key"][aria-pr
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="key"][aria-pressed="true"] {
-    box-shadow: inset 0 0 0 1px var(--pl-ink), 2px 2px 0 var(--pl-ink);
+    box-shadow: inset 0 0 0 1px var(--pl-frame), 2px 2px 0 var(--pl-drop);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="key"][aria-pressed="true"]::before {
     content: "";
     flex: none;
-    border-left: 6px solid var(--pl-action);
+    border-left: 6px solid var(--pl-action-text);
     border-top: 4px solid transparent;
     border-bottom: 4px solid transparent;
 }
@@ -364,10 +364,10 @@ html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="skills"] > [d
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="skill"] {
-    border-color: var(--pl-ink);
+    border-color: var(--pl-frame);
     border-radius: 0;
     background: var(--pl-paper);
-    box-shadow: inset 2px 2px 0 var(--pl-shade);
+    box-shadow: inset 2px 2px 0 var(--pl-bevel);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="skill-order"] {
@@ -400,13 +400,13 @@ html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="menu-item"] {
     font-weight: 700;
     letter-spacing: 0.16em;
     text-transform: uppercase;
-    color: var(--pl-ink);
+    color: var(--pl-text);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="menu-item"]:focus-visible,
 html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="menu-item"]:focus {
     outline: none;
-    background: var(--pl-paper-2);
+    background: var(--pl-paper-3);
     box-shadow: none;
 }
 
@@ -414,7 +414,7 @@ html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="menu-item"]:f
 html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="menu-item"]:focus::before {
     content: "";
     margin-left: -1.25rem;
-    border-left: 7px solid var(--pl-action);
+    border-left: 7px solid var(--pl-action-text);
     border-top: 5px solid transparent;
     border-bottom: 5px solid transparent;
 }
@@ -422,7 +422,7 @@ html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="menu-item"]:f
 html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="score"] {
     margin-bottom: 12px;
     padding: 10px 12px;
-    border: 1px solid var(--pl-ink);
+    border: 1px solid var(--pl-frame);
     background: var(--pl-paper-2);
 }
 

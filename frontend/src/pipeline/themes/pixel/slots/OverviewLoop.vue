@@ -136,13 +136,13 @@ const index = i => String(i + 1).padStart(2, '0')
 
 /* The strip scrolls inside its own box below its natural width (R9), so the
    page never does. */
-.px-scene-box { overflow-x: auto; border-bottom: 1px solid var(--pl-ink); }
+.px-scene-box { overflow-x: auto; border-bottom: 1px solid var(--pl-frame); }
 .px-scene { display: grid; grid-template-columns: repeat(3, minmax(13rem, 1fr)); min-width: 39rem; }
 .px-zone { display: flex; flex-direction: column; min-width: 0; padding: 1.25rem 0.9rem 0.4rem; }
 .px-zone + .px-zone { border-left: 1px dashed var(--pl-rule); }
 .px-zone__floor {
     display: flex; align-items: flex-end; gap: 0.9rem; min-height: 3.25rem;
-    padding-bottom: 2px; border-bottom: 2px solid var(--pl-ink);
+    padding-bottom: 2px; border-bottom: 2px solid var(--pl-frame);
 }
 .px-group { display: flex; flex-direction: column; gap: 0.3rem; }
 .px-group__actors { display: flex; align-items: flex-end; gap: 0.3rem; }
@@ -163,10 +163,10 @@ const index = i => String(i + 1).padStart(2, '0')
     font-family: var(--pl-font); font-size: 12px; font-weight: 400; letter-spacing: 0.1em; text-transform: uppercase;
 }
 .px-stage__index { color: var(--pl-muted); }
-.px-stage__label { color: var(--pl-ink); }
+.px-stage__label { color: var(--pl-text); }
 .px-stage__total {
     margin-left: auto; font-family: var(--pl-font); font-size: 32px; font-weight: 700; line-height: 1;
-    color: var(--pl-ink); font-variant-numeric: tabular-nums;
+    color: var(--pl-text); font-variant-numeric: tabular-nums;
 }
 
 .px-meter { display: grid; grid-template-columns: repeat(24, minmax(0, 1fr)); gap: 2px; }
