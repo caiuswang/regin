@@ -15,8 +15,8 @@ import { rowAction } from './helpers/rowAction.js'
 
 test.describe.configure({ mode: 'serial' })
 
-// Per `--repeat-each` copy (set in beforeEach): the copies run side by side in
-// one DB, and this file archives its own rows part-way through.
+// Per project and per `--repeat-each` copy (set in beforeEach): the copies run
+// side by side in one DB, and this file archives its own rows part-way through.
 let SFX = 'lin'
 // Every seeded row carries it, so a test that looks for one of them reads a
 // list scoped to this file's rows: an unscoped page 1 is whatever other
@@ -91,7 +91,8 @@ async function ensureTask(page, title, fields) {
 }
 
 test.beforeEach(async ({ page }, info) => {
-  SFX = `lin${info.repeatEachIndex || ''}`
+  const lane = info.project.name === 'chromium' ? '' : info.project.name
+  SFX = `lin${lane}${info.repeatEachIndex || ''}`
   FIXTURE_TAG = `${SFX}-fixture`
   OWN_ROWS = `/tasks?group=none&tag=${FIXTURE_TAG}`
   await page.goto('/tasks')
@@ -265,10 +266,12 @@ test('the archived chip counts what asking for archived returns',
       `/tasks?q=${SFX}-beta`)).body.items[0]
     await api(page, 'PATCH', `/tasks/${target.id}`, { status: 'archived' })
 
-    const counted = (await api(page, 'GET', '/tasks/counts'))
+    // Scoped to this copy's rows: the other projects' copies archive and
+    // restore their own rows between these two reads.
+    const counted = (await api(page, 'GET', `/tasks/counts?tag=${FIXTURE_TAG}`))
       .body.by_status.archived
-    const listed = (await api(page, 'GET', '/tasks?status=archived'))
-      .body.items.length
+    const listed = (await api(page, 'GET',
+      `/tasks?status=archived&tag=${FIXTURE_TAG}`)).body.items.length
     // A chip reading 0 over a group that has rows is how the archive becomes
     // unreachable — the group is then hidden for being "empty".
     expect(counted).toBe(listed)
