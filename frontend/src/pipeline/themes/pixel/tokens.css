@@ -407,16 +407,9 @@ html[data-pl-theme="pixel"] [data-pl-part="toast"] button {
     border-radius: 0;
 }
 
-/* ── Chapters and labelled counts ────────────────────────────────────── */
-/* A panel's chapter number (R10) and a count's unit word are attributes,
-   drawn only here, so classic's DOM text does not change. */
-html[data-pl-theme="pixel"] [data-pl-part="panel-title"][data-pl-chapter]::before {
-    content: attr(data-pl-chapter);
-    margin-right: 1em;
-    font-weight: 400;
-    color: var(--pl-muted);
-}
-
+/* ── Labelled counts ─────────────────────────────────────────────────── */
+/* A count's unit word is an attribute, drawn only here, so classic's DOM
+   text does not change. Chapters (R10) are features.css's panel-head rule. */
 html[data-pl-theme="pixel"] [data-pl-part="panel-meta"][data-pl-label]::after {
     content: " " attr(data-pl-label);
 }
