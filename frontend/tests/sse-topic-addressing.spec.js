@@ -95,13 +95,16 @@ async function ingest(traceId) {
 test('the open trace is declared as a topic on the stream', async ({ browser }) => {
   const { context, declared } = await openTrace(browser, BASELINE_TRACE)
   try {
-    await expect.poll(() => declared.length, { timeout: 15000 })
-      .toBeGreaterThan(0)
+    // `pipeline` is the header's backlinks panel, which re-reads on task /
+    // feature / defect writes. It mounts only once the session has loaded, so
+    // an earlier declaration may still be the URL's trace alone.
+    await expect.poll(() => declared.at(-1)?.topics ?? [], { timeout: 15000 })
+      .toContain('pipeline')
     const last = declared[declared.length - 1]
     expect(last.stream).toBeTruthy()
     expect(last.topics).toContain(`trace:${BASELINE_TRACE}`)
     // The declaration is a whitelist, not a hint: nothing else may ride it.
-    expect(last.topics.every((t) => t.startsWith('trace:'))).toBe(true)
+    expect(last.topics.filter((t) => !t.startsWith('trace:'))).toEqual(['pipeline'])
   } finally {
     await context.close()
   }

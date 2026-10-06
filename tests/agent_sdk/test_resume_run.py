@@ -902,20 +902,32 @@ def test_a_resumed_launch_revives_the_row_before_the_route_answers(
     keeps polling at all."""
     _put_trace_session(_TRACE)
     _put_trace_session(_CHILD)
-    seen = {}
+    # Held open across the reads: a stub that returns at once finishes a run
+    # that never started, and its done-callback restores the ended markers —
+    # under load, before these asserts run.
+    import threading
+    release = threading.Event()
 
     async def _run_session(trace_id, prompt, **kwargs):
-        seen["ran"] = True
+        await asyncio.get_running_loop().run_in_executor(None, release.wait)
 
     monkeypatch.setattr(settings.agent_sdk, "enabled", True)
     monkeypatch.setattr(supervisor, "run_session", _run_session)
 
-    supervisor.launch_run("", trace_id=_TRACE, resume=_CHILD)
+    handle = supervisor.launch_run("", trace_id=_TRACE, resume=_CHILD)
+    # Registered after the launch's own `_finish`, and futures run callbacks in
+    # order — so this fires only once the undo has written, not when `wait()`
+    # returns. Otherwise that undo lands in the next test's database.
+    torn_down = threading.Event()
+    handle.add_done_callback(lambda _outcome: torn_down.set())
+    try:
+        trace, child = _trace_session(_TRACE), _trace_session(_CHILD)
+    finally:
+        release.set()
+        assert torn_down.wait(timeout=10)
 
-    assert (_trace_session(_TRACE).status, _trace_session(_TRACE).ended_at) \
-        == ("active", None)
-    assert (_trace_session(_CHILD).status, _trace_session(_CHILD).ended_at) \
-        == ("active", None)
+    assert (trace.status, trace.ended_at) == ("active", None)
+    assert (child.status, child.ended_at) == ("active", None)
 
 
 def test_a_launch_that_dies_before_connecting_puts_the_end_marker_back(
