@@ -90,10 +90,19 @@ function surface() {
   const panel = document.querySelector('[data-testid="task-toolbar"]').closest('[data-pl-part="panel"]')
   // Text nodes only, not an <svg><title>: a sprite stands where a status
   // icon stood, and the icon's name is compared through `images` instead.
+  // A MenuField words its pick per theme ("Group: Next step" / "GROUP · Next
+  // step ▼"), so it reads as the value it holds.
+  const MENU = '[role="combobox"][data-value]'
   const text = (el) => {
-    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+    if (el.matches(MENU)) return `@${el.dataset.value}`
     let out = ''
-    for (let n = walker.nextNode(); n; n = walker.nextNode()) if (!n.parentElement.closest('svg')) out += n.textContent
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, (n) => {
+      if (n.nodeType === Node.TEXT_NODE) return NodeFilter.FILTER_ACCEPT
+      if (n.matches('svg')) return NodeFilter.FILTER_REJECT
+      if (n.matches(MENU)) { out += ` @${n.dataset.value} `; return NodeFilter.FILTER_REJECT }
+      return NodeFilter.FILTER_SKIP
+    })
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) out += n.textContent
     return out.replace(/\s+/g, ' ').trim()
   }
   const ids = [...panel.querySelectorAll('[data-testid]')].map(el => `${el.getAttribute('data-testid')}=${text(el)}`)

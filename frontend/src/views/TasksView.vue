@@ -8,7 +8,6 @@ import { computed, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'v
 import { useRoute } from 'vue-router'
 import Button from '../components/ui/Button.vue'
 import Icon from '../components/ui/Icon.vue'
-import Select from '../components/ui/Select.vue'
 import DropdownMenu from '../components/ui/DropdownMenu.vue'
 import NextStepList from '../components/tasks/NextStepList.vue'
 import TaskBoard from '../components/tasks/TaskBoard.vue'
@@ -18,6 +17,7 @@ import TaskListPanel from '../components/tasks/TaskListPanel.vue'
 import TaskToolbar from '../components/tasks/TaskToolbar.vue'
 import TasksScopeBanner from '../components/tasks/TasksScopeBanner.vue'
 import PipelineCreateButton from '../components/pipeline/PipelineCreateButton.vue'
+import PlSlot from '../components/pipeline/PlSlot.vue'
 import { usePipelineCreate } from '../composables/usePipelineCreate'
 import { usePipelineTabActive } from '../composables/usePipelineHeader'
 import { invalidatePipelineCounts } from '../composables/usePipelineCounts.js'
@@ -65,7 +65,7 @@ const toolbar = ref(null)
 const { openCreate } = usePipelineCreate()
 
 const groupOptions = GROUPS.map(g => ({
-  value: g.value, label: g.value === 'none' ? g.label : `Group: ${g.label}` }))
+  value: g.value, label: g.value === 'none' ? g.label : `Group: ${g.label}`, short: g.label }))
 // Phones get the same two axes as the desktop toolbar, as menus: what the list
 // is grouped by, and — where the rows are ordered by it — what it is sorted by.
 const groupItems = computed(() => GROUPS.map(g => ({
@@ -162,11 +162,14 @@ onBeforeUnmount(() => window.removeEventListener(TASK_CAPTURED_EVENT, afterWrite
         <template v-else>
           <span v-if="count" class="tv-count" data-pl-part="panel-meta" data-testid="list-count">{{ count }}</span>
           <span v-if="mode === 'flat'" class="tv-sort-group">
-            <Select
+            <PlSlot
+              name="MenuField"
               :model-value="sortKey"
               :options="SORT_KEYS"
+              field="SORT"
+              head="Sort tasks by"
               aria-label="Sort by"
-              data-testid="list-sort"
+              testid="list-sort"
               @update:model-value="v => query.patch({ sort: `${v}:${sortDir}` })"
             />
             <Button
@@ -179,12 +182,15 @@ onBeforeUnmount(() => window.removeEventListener(TASK_CAPTURED_EVENT, afterWrite
               <Icon :name="sortDir === 'asc' ? 'arrow-up' : 'arrow-down'" :size="12" />
             </Button>
           </span>
-          <Select
+          <PlSlot
             v-if="view === 'list'"
+            name="MenuField"
             :model-value="query.state.value.group"
             :options="groupOptions"
+            field="GROUP"
+            head="Group tasks by"
             aria-label="Group by"
-            data-testid="task-group"
+            testid="task-group"
             class="tv-group"
             @update:model-value="v => query.patch({ group: v })"
           />

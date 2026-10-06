@@ -11,8 +11,8 @@ import { useRoute } from 'vue-router'
 import Button from './ui/Button.vue'
 import Icon from './ui/Icon.vue'
 import Input from './ui/Input.vue'
-import Select from './ui/Select.vue'
 import Tabs from './ui/Tabs.vue'
+import PlSlot from './pipeline/PlSlot.vue'
 
 const props = defineProps({
   //: [{ value, label }] — a segmented switcher at the toolbar's left.
@@ -103,13 +103,15 @@ defineExpose({ focusSearch: () => search.value?.focus() })
         />
       </div>
 
-      <Select
+      <PlSlot
         v-for="facet in facets"
         :key="facet.key"
+        name="MenuField"
         :model-value="facet.value"
         :options="facet.options"
+        :head="facet.label"
         :aria-label="facet.label"
-        :data-testid="`list-facet-${facet.key}`"
+        :testid="`list-facet-${facet.key}`"
         @update:model-value="v => emit('patch', { [facet.key]: v })"
       />
     </template>
@@ -118,11 +120,14 @@ defineExpose({ focusSearch: () => search.value?.focus() })
 
     <template v-if="!bare">
       <span v-if="sortOptions.length" class="plt-sort">
-        <Select
+        <PlSlot
+          name="MenuField"
           :model-value="sortKey"
           :options="sortOptions"
+          field="SORT"
+          :head="`Sort ${noun}s by`"
           aria-label="Sort by"
-          data-testid="list-sort"
+          testid="list-sort"
           @update:model-value="v => emit('patch', { sort: `${v}:${sortDir}` })"
         />
         <Button

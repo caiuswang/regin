@@ -7,6 +7,7 @@ import FeatureStageTabs from '../../../components/pipeline/FeatureStageTabs.vue'
 import ProjectsPanel from '../../../components/pipeline/ProjectsPanel.vue'
 import ProjectScopePanel from '../../../components/pipeline/ProjectScopePanel.vue'
 import ChoiceSelect from '../../../components/pipeline/ChoiceSelect.vue'
+import MenuSelect from '../../../components/pipeline/MenuSelect.vue'
 
 export default {
   slots: {
@@ -16,6 +17,7 @@ export default {
     ProjectsPanel,
     ProjectScopePanel,
     ChoiceField: ChoiceSelect,
+    MenuField: MenuSelect,
     SecretStage: null,
   },
   // Empty on purpose: a classic glyph is whatever icon its call site already

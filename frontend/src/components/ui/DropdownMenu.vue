@@ -3,11 +3,13 @@
 // Escape, and proper role=menu/menuitem semantics for free. Pass `items`
 // as { label, onSelect, danger, disabled, title, testid } or { separator: true }.
 import { DropdownMenuRoot, DropdownMenuTrigger, DropdownMenuPortal, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from 'reka-ui'
+import { usePlScope } from '../../composables/usePipelineTheme'
 
 defineProps({
   items: { type: Array, default: () => [] },
   align: { type: String, default: 'end' },
 })
+const plScope = usePlScope()
 </script>
 
 <template>
@@ -16,7 +18,12 @@ defineProps({
       <slot name="trigger" />
     </DropdownMenuTrigger>
     <DropdownMenuPortal>
-      <DropdownMenuContent :align="align" :side-offset="6" class="ds-menu">
+      <DropdownMenuContent
+        :align="align"
+        :side-offset="6"
+        class="ds-menu"
+        :data-pl-part="plScope ? 'menu' : undefined"
+      >
         <template v-for="(item, i) in items" :key="i">
           <DropdownMenuSeparator v-if="item.separator" class="ds-menu-sep" />
           <DropdownMenuItem
@@ -26,6 +33,7 @@ defineProps({
             :disabled="item.disabled"
             :title="item.title || undefined"
             :data-testid="item.testid"
+            :data-pl-part="plScope ? 'menu-item' : undefined"
             @select="item.onSelect && item.onSelect()"
           >
             {{ item.label }}

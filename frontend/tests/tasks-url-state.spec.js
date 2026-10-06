@@ -7,6 +7,7 @@
  * costs.
  */
 import { test, expect } from './auth-fixture.js'
+import { menuValue } from './helpers/choice.js'
 
 const COUNTS = { tasks: 7, features: 3, defects: 5 }
 
@@ -72,7 +73,7 @@ async function choose(page, testId, label) {
 }
 
 function value(page, testId) {
-  return page.getByTestId(testId).locator('.ds-select-value')
+  return menuValue(page, testId)
 }
 
 // Status, priority and the free-text axes live behind the one Filter button;

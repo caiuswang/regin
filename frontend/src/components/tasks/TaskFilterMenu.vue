@@ -7,6 +7,8 @@
 //
 // Toggles and priority apply on click; the free-text fields apply on submit,
 // because each is a URL write and a history entry per keystroke is noise.
+// A pipeline theme reads the same split off the hooks: its head counts what
+// is on (one per chip the toolbar shows) and its foot says toggles apply now.
 import { computed, ref, watch } from 'vue'
 import Button from '../ui/Button.vue'
 import Checkbox from '../ui/Checkbox.vue'
@@ -14,7 +16,9 @@ import Icon from '../ui/Icon.vue'
 import Input from '../ui/Input.vue'
 import Popover from '../ui/Popover.vue'
 import Select from '../ui/Select.vue'
+import PlGlyph from '../pipeline/PlGlyph.vue'
 import { PRIORITIES, STATUS_FILTERS } from '../../utils/taskMeta.js'
+import { taskChips } from '../../utils/taskChips.js'
 
 const props = defineProps({
   state: { type: Object, required: true },
@@ -27,6 +31,8 @@ const emit = defineEmits(['patch'])
 
 const open = ref(false)
 const draft = ref({ tag: '', source: '', feature_id: '', assignee: '' })
+
+const onCount = computed(() => taskChips(props.state, { mode: props.mode }).length)
 
 const priorities = computed(() => String(props.state.priority || '').split(',').filter(Boolean))
 const statusOptions = STATUS_FILTERS.map(s => ({ value: s.key, label: s.key ? s.label : 'Any status' }))
@@ -65,6 +71,7 @@ function apply() {
         :class="{ 'is-mobile': mobile }"
         :aria-expanded="open"
         data-pl-part="key"
+        :data-pl-on="onCount ? '' : undefined"
         data-testid="task-filter-button"
       >
         <Icon name="plus" :size="13" />
@@ -72,43 +79,52 @@ function apply() {
       </Button>
     </template>
 
-    <form class="tfm" @submit.prevent="apply()">
-      <fieldset class="tfm-field">
-        <legend class="tfm-label">Priority</legend>
-        <span class="tfm-row">
+    <form class="tfm" data-pl-part="filter" @submit.prevent="apply()">
+      <div class="tfm-head" data-pl-part="filter-head">
+        <span>Filter</span>
+        <span data-pl-part="count" data-testid="task-filter-on">{{ onCount ? `${onCount} on` : 'None on' }}</span>
+      </div>
+      <fieldset class="tfm-field" data-pl-part="field">
+        <legend class="tfm-label" data-pl-part="field-label">Priority</legend>
+        <span class="tfm-row" data-pl-part="toggles">
           <Checkbox
             v-for="p in PRIORITIES"
             :key="p.value"
             :model-value="priorities.includes(p.value)"
-            :label="p.label"
+            data-pl-part="toggle"
             :data-testid="`task-filter-priority-${p.value}`"
             @update:model-value="v => togglePriority(p.value, v)"
-          />
+          >
+            <PlGlyph :kind="`priority.${p.value}`" />{{ p.label }}
+          </Checkbox>
         </span>
       </fieldset>
-      <label v-if="mode === 'flat'" class="tfm-field">
-        <span class="tfm-label">Status</span>
+      <label v-if="mode === 'flat'" class="tfm-field" data-pl-part="field">
+        <span class="tfm-label" data-pl-part="field-label">Status</span>
         <Select
           :model-value="state.status"
           :options="statusOptions"
           aria-label="Filter by status"
+          data-pl-part="input"
           data-testid="list-facet-status"
           @update:model-value="v => emit('patch', { status: v })"
         />
       </label>
-      <div class="tfm-field">
-        <span class="tfm-label">Show</span>
-        <span class="tfm-row">
+      <div class="tfm-field" data-pl-part="field">
+        <span class="tfm-label" data-pl-part="field-label">Show</span>
+        <span class="tfm-row" data-pl-part="checks">
           <Checkbox
             v-if="mode === 'graph'"
             :model-value="state.open !== '0'"
             label="Open chains only"
+            data-pl-part="check"
             data-testid="task-filter-open"
             @update:model-value="v => emit('patch', { open: v ? '' : '0' })"
           />
           <Checkbox
             :model-value="state.unfeatured !== '1'"
             label="Feature steps"
+            data-pl-part="check"
             data-testid="task-steps-toggle"
             @update:model-value="v => emit('patch', { unfeatured: v ? '' : '1' })"
           />
@@ -116,33 +132,34 @@ function apply() {
             v-if="mode === 'flat'"
             :model-value="state.archived === '1'"
             label="Archived tasks"
+            data-pl-part="check"
             data-testid="task-archived-toggle"
             @update:model-value="v => emit('patch', { archived: v ? '1' : '' })"
           />
         </span>
       </div>
       <div class="tfm-pair">
-        <label class="tfm-field">
-          <span class="tfm-label">Tag</span>
-          <Input v-model="draft.tag" placeholder="release" data-testid="task-filter-tag" />
+        <label class="tfm-field" data-pl-part="field">
+          <span class="tfm-label" data-pl-part="field-label">Tag</span>
+          <Input v-model="draft.tag" placeholder="release" data-pl-part="input" data-testid="task-filter-tag" />
         </label>
-        <label class="tfm-field">
-          <span class="tfm-label">Source</span>
-          <Input v-model="draft.source" placeholder="cli, linear…" data-testid="task-filter-source" />
+        <label class="tfm-field" data-pl-part="field">
+          <span class="tfm-label" data-pl-part="field-label">Source</span>
+          <Input v-model="draft.source" placeholder="cli, linear…" data-pl-part="input" data-testid="task-filter-source" />
         </label>
       </div>
       <div class="tfm-pair">
-        <label class="tfm-field">
-          <span class="tfm-label">Feature</span>
-          <Input v-model="draft.feature_id" type="number" placeholder="73" data-testid="task-filter-feature" />
+        <label class="tfm-field" data-pl-part="field">
+          <span class="tfm-label" data-pl-part="field-label">Feature</span>
+          <Input v-model="draft.feature_id" type="number" placeholder="73" data-pl-part="input" data-testid="task-filter-feature" />
         </label>
-        <label class="tfm-field">
-          <span class="tfm-label">Assignee</span>
-          <Select v-model="draft.assignee" :options="userOptions" data-testid="task-filter-assignee" />
+        <label class="tfm-field" data-pl-part="field">
+          <span class="tfm-label" data-pl-part="field-label">Assignee</span>
+          <Select v-model="draft.assignee" :options="userOptions" data-pl-part="input" data-testid="task-filter-assignee" />
         </label>
       </div>
-      <div class="tfm-acts">
-        <Button variant="primary" size="sm" type="submit" data-testid="task-more-apply">Apply</Button>
+      <div class="tfm-acts" data-pl-part="filter-foot" data-pl-hint="Toggles apply now">
+        <Button variant="primary" size="sm" type="submit" data-pl-part="key--primary" data-testid="task-more-apply">Apply</Button>
       </div>
     </form>
   </Popover>
@@ -157,6 +174,7 @@ function apply() {
     max-height: min(70vh, 30rem);
     overflow-y: auto;
 }
+.tfm-head { display: none; }
 .tfm-row {
     display: flex;
     flex-wrap: wrap;
