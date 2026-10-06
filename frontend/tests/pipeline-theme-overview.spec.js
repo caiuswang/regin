@@ -159,7 +159,7 @@ test.describe('pixel overview', () => {
       }
       return out
     })
-    expect(gaps.checked).toEqual(expect.arrayContaining(['OverviewLoop', 'ProjectsPanel']))
+    expect(gaps.checked).toEqual(expect.arrayContaining(['OverviewLoop', 'ProjectsPanel', 'ProjectScopePanel']))
     expect(gaps.missing).toEqual([])
   })
 
