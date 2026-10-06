@@ -1,4 +1,4 @@
-"""S7 — the integration check: every build slice of feature 139 merged back.
+"""S7, S13 — the integration check: every build slice of feature 139 merged back.
 
 Each slice merges its branch into `f139/integration` as the precondition of
 reporting finished. So integrate is a *check*, not a merge: a slice that
@@ -21,9 +21,9 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 INTEGRATION = "f139/integration"
 
-#: S1–S6 build; S7 (this check) and the tail (migrate, verify) may rightly
-#: land nothing, so they are not counted.
-BUILD_SLICES = (1, 2, 3, 4, 5, 6)
+#: S1–S6 and S10–S12, S15 build; the integrate checks (S7, S13) and the tails
+#: (migrate S8, verify S9 / S14) may rightly land nothing, so they are not counted.
+BUILD_SLICES = (1, 2, 3, 4, 5, 6, 10, 11, 12, 15)
 
 #: `feat(pipeline): … (feature #139, S2)` — the slice's own commit. Counted
 #: only over `--no-merges`, so a `Merge f139/s2` subject never stands in for work.
