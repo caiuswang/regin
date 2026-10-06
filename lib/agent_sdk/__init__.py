@@ -16,6 +16,7 @@ from .registry import (
     is_driving,
     is_sdk_owned,
     live_session_ids,
+    owned_run_phases,
     is_starting,
     live_child,
     queued_prompts,
@@ -29,7 +30,7 @@ from .registry import (
 )
 
 __all__ = ['cancel_queued', 'edit_queued', 'interrupt_run', 'is_driving', 'is_sdk_owned',
-           'is_starting', 'live_child', 'live_session_ids',
+           'is_starting', 'live_child', 'live_session_ids', 'owned_run_phases',
            'queued_prompts', 'resolve_ask',
            'resolve_permission', 'run_live_state', 'run_live_states',
            'run_phase', 'stop_run', 'submit_prompt']

@@ -44,7 +44,20 @@ function tabCount(tab) {
         <div class="page-eyebrow">Observability · Trace</div>
         <h1 class="page-title">
           Trace
-          <span v-if="header?.activeCount" class="live-pill">
+          <Button
+            v-if="header?.activeCount && header.onActivePill"
+            variant="ghost"
+            size="sm"
+            class="live-pill live-pill--button focus-visible:outline-2 focus-visible:outline-blue-500"
+            :class="{ 'live-pill--on': header.activePillOn }"
+            :aria-pressed="Boolean(header.activePillOn)"
+            :title="header.activePillOn ? 'Show every status again' : 'Show only the active sessions'"
+            @click="header.onActivePill()"
+          >
+            <span class="live-pill__dot" aria-hidden="true"></span>
+            {{ header.activeCount }} active now
+          </Button>
+          <span v-else-if="header?.activeCount" class="live-pill">
             <span class="live-pill__dot" aria-hidden="true"></span>
             {{ header.activeCount }} active now
           </span>
@@ -129,6 +142,14 @@ function tabCount(tab) {
   letter-spacing: 0;
   padding: 0.125rem 0.5625rem;
 }
+.live-pill--button { height: auto; min-height: 0; line-height: inherit; }
+.live-pill--button:hover { border-color: var(--color-emerald-500); }
+.live-pill--on {
+  background: var(--color-emerald-700);
+  border-color: var(--color-emerald-700);
+  color: var(--color-emerald-50);
+}
+.live-pill--on .live-pill__dot { background: var(--color-emerald-50); }
 .live-pill__dot {
   background: var(--color-emerald-500);
   border-radius: 9999px;

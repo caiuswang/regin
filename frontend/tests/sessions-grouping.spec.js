@@ -65,7 +65,7 @@ async function seed(page, group = 'active') {
     localStorage.setItem('regin_sessions_group', g)
     localStorage.setItem('regin_sessions_range', 'all')
     localStorage.setItem('regin_sessions_kind', 'real')
-    localStorage.setItem('regin_sessions_active', 'all')
+    localStorage.setItem('regin_sessions_status', '[]')
     localStorage.setItem('regin_sessions_tag', '')
     localStorage.setItem('regin_sessions_repo', 'all')
   }, group)
@@ -163,6 +163,7 @@ test('a truncated list says which rows its group counts cover', async ({ page })
     json: envelope(rows, {
       total_count: 2186,
       active_count: 92,
+      status_counts: { working: 92 },
       pagination: { next_cursor: 'more', size: 50, has_next: true },
     }),
   }))
@@ -198,7 +199,7 @@ test('Reset all restores every facet in exactly one request', async ({ page }) =
   // Dirty three facets so the reset genuinely changes more than one ref.
   const panel = page.locator('.filters-panel')
   await page.getByRole('button', { name: /Filters/ }).click()
-  await panel.locator('.facet', { hasText: 'Status' }).locator('.chip', { hasText: 'Active', hasNotText: 'Not active' }).click()
+  await panel.locator('.facet', { hasText: 'Status' }).locator('.chip[data-value="working"]').click()
   await expect(page.locator('.filters-trigger__count')).toBeVisible()
   await panel.locator('.facet', { hasText: 'Kind' }).locator('.chip', { hasText: 'Tests' }).click()
   await expect(page.locator('.filters-trigger__count')).toHaveText('3')  // status + kind + range(all)
@@ -209,10 +210,10 @@ test('Reset all restores every facet in exactly one request', async ({ page }) =
 
   await expect(page.locator('.filters-trigger__count')).toBeHidden()
   await expect.poll(async () => page.evaluate(() => ({
-    active: localStorage.getItem('regin_sessions_active'),
+    status: localStorage.getItem('regin_sessions_status'),
     kind: localStorage.getItem('regin_sessions_kind'),
     range: localStorage.getItem('regin_sessions_range'),
-  }))).toEqual({ active: 'all', kind: 'real', range: 'today' })
+  }))).toEqual({ status: '[]', kind: 'real', range: 'today' })
 
   // The list refetched — once.
   await expect(page.locator('.srow')).toHaveCount(2)

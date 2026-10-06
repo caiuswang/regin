@@ -504,6 +504,30 @@ def live_session_ids() -> set[str]:
         return set(_runs) | {sid for sid, run in _aliases.items() if run in _runs}
 
 
+def owned_run_phases() -> dict[str, str]:
+    """`run_phase` for every session id it would answer non-None for.
+
+    The session list classifies thousands of rows in SQL and cannot call
+    `run_phase` per row, so it takes this map instead. It must name exactly the
+    ids `run_phase` answers for — live runs, reservations, their in-process
+    aliases, and the children only `agent_run_sessions` remembers (a run
+    resumed after a restart) — or a row's chip and the facet that filters it
+    disagree.
+    """
+    with _lock:
+        held = set(_runs) | set(_reserved)
+        if not held:
+            return {}
+        ids = held | {sid for sid, run in _aliases.items() if run in held}
+    try:
+        from lib.agent_sdk import store
+        ids |= store.child_session_ids_of(held)
+    except Exception:  # noqa: BLE001 - a list read must never fail on this lookup
+        log.error("sdk_owned_children_failed", exc_info=True)
+    phases = {sid: run_phase(sid) for sid in ids}
+    return {sid: phase for sid, phase in phases.items() if phase}
+
+
 def active_run_count(exclude: str = "") -> int:
     """Live runners plus the ids reserved for runs still starting.
 

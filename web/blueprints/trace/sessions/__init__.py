@@ -38,7 +38,8 @@ from web.blueprints.trace.sessions.tasks import (  # noqa: F401
     _fetch_session_task_list,
 )
 from web.blueprints.trace.sessions.admin import (  # noqa: F401
-    _SESSION_DELETE_TARGETS, api_session_batch_delete, api_session_close,
+    _SESSION_DELETE_TARGETS, api_session_batch_close, api_session_batch_delete,
+    api_session_close,
     api_session_delete, api_session_features, api_session_materialize,
     api_session_repair_spans, api_session_tag_add, api_session_tag_remove,
     api_session_tags,

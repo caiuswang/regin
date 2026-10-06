@@ -395,7 +395,7 @@ test('R2-N1: liveness comes from the blocker feed, never re-derived here',
     // Paging `/api/sessions` to age rows against a local window was a second,
     // divergent copy of it — and the copy the server has since repudiated.
     expect(urls.join(' ')).toContain('/api/agent-messages/blockers')
-    expect(urls.join(' ')).not.toContain('/api/sessions?active=active')
+    expect(urls.join(' ')).not.toMatch(/\/api\/sessions\?(.*&)?status=/)
   })
 
 test('R2: the row preview strips tables, rules, strike and raw HTML', async ({ page }) => {

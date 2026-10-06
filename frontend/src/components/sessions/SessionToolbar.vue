@@ -24,10 +24,14 @@ defineProps({
   filterCount: { type: Number, default: 0 },
   selectionCount: { type: Number, default: 0 },
   batchDeleting: { type: Boolean, default: false },
+  batchClosing: { type: Boolean, default: false },
+  // Selected rows that are not already ended — Close has nothing to do to
+  // the rest, so it is offered only when this is above zero.
+  closableCount: { type: Number, default: 0 },
 })
 
 const emit = defineEmits([
-  'search', 'reset', 'batch-delete', 'clear-selection',
+  'search', 'reset', 'batch-delete', 'batch-close', 'clear-selection',
   'range-preset', 'range-pick', 'range-clear',
 ])
 
@@ -36,7 +40,7 @@ const scope = defineModel('scope', { type: String, default: 'title' })
 const group = defineModel('group', { type: String, default: 'active' })
 const range = defineModel('range', { type: String, default: 'today' })
 const kind = defineModel('kind', { type: String, default: 'real' })
-const status = defineModel('status', { type: String, default: 'all' })
+const status = defineModel('status', { type: Array, default: () => [] })
 const tag = defineModel('tag', { type: String, default: '' })
 const repo = defineModel('repo', { type: String, default: 'all' })
 const traceId = defineModel('traceId', { type: String, default: '' })
@@ -114,13 +118,22 @@ const traceId = defineModel('traceId', { type: String, default: '' })
         variant="ghost"
         size="sm"
         class="stoolbar__clearsel focus-visible:outline-2 focus-visible:outline-blue-500"
-        :disabled="batchDeleting"
+        :disabled="batchDeleting || batchClosing"
         @click="emit('clear-selection')"
       >Clear</Button>
       <Button
+        v-if="closableCount || batchClosing"
+        variant="secondary"
+        size="sm"
+        class="stoolbar__close"
+        :disabled="batchDeleting || batchClosing"
+        :title="`Mark the ${closableCount} selected session(s) that have not ended as closed`"
+        @click="emit('batch-close')"
+      >{{ batchClosing ? 'Closing…' : `Close ${closableCount}` }}</Button>
+      <Button
         variant="danger"
         size="sm"
-        :disabled="batchDeleting"
+        :disabled="batchDeleting || batchClosing"
         @click="emit('batch-delete')"
       >{{ batchDeleting ? 'Deleting…' : 'Delete selected' }}</Button>
     </div>

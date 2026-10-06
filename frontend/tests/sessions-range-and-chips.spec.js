@@ -54,7 +54,7 @@ async function seed(page, overrides = {}) {
     localStorage.setItem('regin_sessions_group', 'flat')
     localStorage.setItem('regin_sessions_range', o.range || 'all')
     localStorage.setItem('regin_sessions_kind', o.kind || 'real')
-    localStorage.setItem('regin_sessions_active', o.active || 'all')
+    localStorage.setItem('regin_sessions_status', JSON.stringify(o.status || []))
     localStorage.setItem('regin_sessions_tag', o.tag || '')
     localStorage.setItem('regin_sessions_repo', o.repo || 'all')
     localStorage.setItem('regin_sessions_custom_span', o.span || '')
@@ -212,7 +212,7 @@ test('future days are not selectable and the next-month arrow stops at the curre
 })
 
 test('the chip row names every active filter and each × clears only its own axis', async ({ page }) => {
-  await seed(page, { kind: 'all', active: 'active', repo: 'regin' })
+  await seed(page, { kind: 'all', status: ['working'], repo: 'regin' })
   const seen = await trackRequests(page, [row({ status: 'active' })], {
     repo_counts: { regin: 1 },
   })
@@ -220,17 +220,17 @@ test('the chip row names every active filter and each × clears only its own axi
   await page.goto('/trace/sessions')
   await expect(page.locator('.srow')).toHaveCount(1)
 
-  // range(all) + kind(all) + status(active) + repo(regin) = 4 axes.
+  // range(all) + kind(all) + status(working) + repo(regin) = 4 axes.
   await expect(page.locator('.filters-trigger__count')).toHaveText('4')
-  expect(await chipTexts(page)).toEqual(['All time', 'Real + tests', 'Active', 'Repo: regin'])
+  expect(await chipTexts(page)).toEqual(['All time', 'Real + tests', 'Status: working', 'Repo: regin'])
 
   const before = seen.length
-  await page.getByLabel('Clear filter: Active').click()
+  await page.getByLabel('Clear filter: Status: working').click()
   await expect(page.locator('.filters-trigger__count')).toHaveText('3')
   expect(await chipTexts(page)).toEqual(['All time', 'Real + tests', 'Repo: regin'])
   // Exactly one refetch — clearing one axis must not fan out into several.
   expect(seen.length).toBe(before + 1)
-  expect(seen.at(-1).has('active')).toBe(false)
+  expect(seen.at(-1).has('status')).toBe(false)
   expect(seen.at(-1).get('repo')).toBe('regin')
 
   await page.getByRole('button', { name: 'Clear all' }).click()

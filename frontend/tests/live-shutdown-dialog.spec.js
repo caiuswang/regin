@@ -105,7 +105,7 @@ test('an unreachable session falls back, and cancel stops everything', async ({ 
   await page.addInitScript(() => {
     localStorage.setItem('regin_sessions_range', 'all')
     localStorage.setItem('regin_sessions_kind', 'all')
-    localStorage.setItem('regin_sessions_active', 'all')
+    localStorage.setItem('regin_sessions_status', '[]')
     localStorage.setItem('regin_sessions_tag', '')
     localStorage.setItem('regin_sessions_repo', 'all')
   })

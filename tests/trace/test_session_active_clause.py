@@ -1,7 +1,7 @@
 """`_session_active_clause` — the ONE definition of "active" on the server.
 
-The `active=` filter, the `active_count` facet and the green badge all share
-it, so a row that falls into neither branch disappears from both filtered
+The `status=` filter, the `active_count` facet and the green badge all share
+it (via `_row_status_expr`), so a row that falls into neither branch disappears from both filtered
 pages and is counted by nothing. That partition is the property worth pinning:
 the two branches were rewritten from an explicit `last_seen < cutoff` into
 `not_(alive)` when live SDK runs were folded in, and a complement is easy to
@@ -27,7 +27,8 @@ def _split(monkeypatch, live_ids):
     from lib.orm.engine import SessionLocal
     from lib.orm.models import Session as SessionModel
     from web.blueprints.trace.sessions import listing as S
-    monkeypatch.setattr(S, '_live_sdk_session_ids', lambda: live_ids)
+    monkeypatch.setattr(S, '_owned_run_phases',
+                        lambda: {tid: 'idle' for tid in live_ids})
     with SessionLocal() as db:
         def ids(want):
             return {r[0] for r in db.query(SessionModel.trace_id)
@@ -75,3 +76,69 @@ def test_the_clause_is_unchanged_without_a_live_runner(tmp_db, monkeypatch):
     active, inactive = _split(monkeypatch, set())
     assert active == {'p_fresh'}
     assert inactive == {'p_stale'}
+
+
+def _statuses(monkeypatch, phases):
+    from lib.orm.engine import SessionLocal
+    from lib.orm.models import Session as SessionModel
+    from web.blueprints.trace.sessions import listing as S
+    monkeypatch.setattr(S, '_owned_run_phases', lambda: phases)
+    with SessionLocal() as db:
+        return dict(db.query(SessionModel.trace_id, S._row_status_expr()).all())
+
+
+def test_row_status_mirrors_status_of_row(tmp_db, monkeypatch):
+    """One row per branch of `statusOfRow` (sessionStatus.js)."""
+    from lib.orm.engine import SessionLocal
+    from lib.orm.models import Session as SessionModel
+    now = datetime.now()
+    fresh = (now - timedelta(minutes=1)).strftime('%Y-%m-%dT%H:%M:%S')
+    stale = (now - timedelta(hours=5)).strftime('%Y-%m-%dT%H:%M:%S')
+    with SessionLocal() as db:
+        for tid, status, reason, seen in [
+            ('closed', 'ended', 'manual', fresh),
+            ('ended', 'ended', None, fresh),
+            ('ended_owned', 'ended', None, stale),
+            ('fresh', 'active', None, fresh),
+            ('stale', 'active', None, stale),
+            ('unset_fresh', None, None, fresh),
+            ('owned_starting', 'active', None, fresh),
+            ('owned_parked', 'active', None, stale),
+            ('owned_retry', 'active', None, stale),
+            ('owned_stopping', 'active', None, stale),
+            ('owned_stale', 'active', None, fresh),
+            ('owned_unknown', 'active', None, fresh),
+        ]:
+            db.add(SessionModel(trace_id=tid, status=status, ended_reason=reason,
+                                last_seen=seen, started_at=stale))
+        db.commit()
+    got = _statuses(monkeypatch, {
+        'ended_owned': 'working', 'owned_starting': 'starting',
+        'owned_parked': 'waiting-input', 'owned_retry': 'retrying',
+        'owned_stopping': 'stopping', 'owned_stale': 'inactive-stale',
+        'owned_unknown': 'some-future-phase',
+    })
+    assert got == {
+        'closed': 'closed', 'ended': 'ended', 'ended_owned': 'ended',
+        'fresh': 'working', 'stale': 'inactive',
+        'unset_fresh': 'working',
+        'owned_starting': 'starting', 'owned_parked': 'awaiting',
+        'owned_retry': 'retrying', 'owned_stopping': 'working',
+        'owned_stale': 'inactive', 'owned_unknown': 'inactive',
+    }
+
+
+def test_a_starting_runner_is_not_active(tmp_db, monkeypatch):
+    """The drift this facet removed: a reserved run reads `starting` on its
+    chip, so it must not sit inside `active_count`."""
+    now = datetime.now()
+    fresh = (now - timedelta(minutes=1)).strftime('%Y-%m-%dT%H:%M:%S')
+    _seed(tmp_db, [('p_start', 'active', fresh, fresh)])
+    from web.blueprints.trace.sessions import listing as S
+    monkeypatch.setattr(S, '_owned_run_phases', lambda: {'p_start': 'starting'})
+    from lib.orm.engine import SessionLocal
+    from lib.orm.models import Session as SessionModel
+    with SessionLocal() as db:
+        active = {r[0] for r in db.query(SessionModel.trace_id)
+                  .filter(S._session_active_clause(True)).all()}
+    assert active == set()

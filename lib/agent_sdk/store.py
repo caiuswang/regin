@@ -212,6 +212,25 @@ def _children_by_run(session) -> dict[str, list[str]]:
     return groups
 
 
+def child_session_ids_of(run_ids) -> set[str]:
+    """Every recorded child session id of the runs named, or empty.
+
+    Best-effort: an unmigrated or locked DB degrades to no durable children
+    rather than failing the caller's read.
+    """
+    run_ids = [r for r in run_ids if r]
+    if not run_ids:
+        return set()
+    try:
+        with SessionLocal() as session:
+            rows = session.exec(
+                select(AgentRunSession.cli_session_id)
+                .where(AgentRunSession.trace_id.in_(run_ids))).all()
+    except OperationalError:
+        return set()
+    return {child for child in rows if child}
+
+
 def _run_ids(rows, children: dict[str, list[str]]) -> set[str]:
     """Every id these run rows name, blanks dropped."""
     return {t for r in rows

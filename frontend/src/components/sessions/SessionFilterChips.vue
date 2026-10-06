@@ -3,13 +3,17 @@
 // option, each carrying its count for the current filter set. Long facets
 // (repos, tags) fold behind a "+N more" toggle so the popover keeps a stable
 // height until the user asks for the tail.
+//
+// An ARRAY model makes the row multi-select: each chip toggles its value in
+// and out, OR-ed, and the All chip is pressed exactly when nothing is. Still
+// buttons with aria-pressed, not a checkbox list.
 import { computed, ref } from 'vue'
 import Button from '../ui/Button.vue'
 import Input from '../ui/Input.vue'
 
 const props = defineProps({
   label: { type: String, required: true },
-  // [{ value, label, count }] — `value` '' / 'all' is supplied by the caller.
+  // [{ value, label, count, glyph? }] — `value` '' / 'all' is supplied by the caller.
   options: { type: Array, default: () => [] },
   allValue: { type: String, default: '' },
   allLabel: { type: String, default: 'All' },
@@ -19,16 +23,33 @@ const props = defineProps({
   searchPlaceholder: { type: String, default: '' },
 })
 
-const model = defineModel({ type: String, default: '' })
+const model = defineModel({ type: [String, Array], default: '' })
 const expanded = ref(false)
 const term = ref('')
 
+const multiple = computed(() => Array.isArray(model.value))
+const isOn = (value) => (multiple.value ? model.value.includes(value) : model.value === value)
+const allOn = computed(() => (multiple.value ? !model.value.length : model.value === props.allValue))
+
+function pick(value) {
+  if (!multiple.value) { model.value = value; return }
+  model.value = isOn(value) ? model.value.filter(v => v !== value) : [...model.value, value]
+}
+
+function pickAll() {
+  model.value = multiple.value ? [] : props.allValue
+}
+
 // The caller orders by count, but the selected chip has to stay reachable —
 // otherwise picking a 0-count repo, then reopening the popover, hides the
-// very filter that is narrowing the list behind "+N more".
-const rest = computed(() => props.options
-  .filter(o => o.value !== props.allValue)
-  .sort((a, b) => (b.value === model.value) - (a.value === model.value)))
+// very filter that is narrowing the list behind "+N more". A multi-select row
+// keeps the caller's order: re-sorting on every toggle would move the chip
+// out from under the pointer that just pressed it.
+const rest = computed(() => {
+  const opts = props.options.filter(o => o.value !== props.allValue)
+  if (multiple.value) return opts
+  return opts.sort((a, b) => isOn(b.value) - isOn(a.value))
+})
 
 const matching = computed(() => {
   const q = term.value.trim().toLowerCase()
@@ -64,9 +85,9 @@ function toggleExpanded() {
         variant="ghost"
         size="sm"
         class="chip focus-visible:outline-2 focus-visible:outline-blue-500"
-        :class="{ 'chip--on': model === allValue }"
-        :aria-pressed="model === allValue"
-        @click="model = allValue"
+        :class="{ 'chip--on': allOn }"
+        :aria-pressed="allOn"
+        @click="pickAll"
       >{{ allLabel }}</Button>
       <Button
         v-for="opt in shown"
@@ -74,10 +95,12 @@ function toggleExpanded() {
         variant="ghost"
         size="sm"
         class="chip focus-visible:outline-2 focus-visible:outline-blue-500"
-        :class="{ 'chip--on': model === opt.value }"
-        :aria-pressed="model === opt.value"
-        @click="model = opt.value"
+        :class="{ 'chip--on': isOn(opt.value), 'chip--zero': opt.count === 0 && !isOn(opt.value) }"
+        :aria-pressed="isOn(opt.value)"
+        :data-value="opt.value"
+        @click="pick(opt.value)"
       >
+        <span v-if="opt.glyph" class="chip__glyph" aria-hidden="true">{{ opt.glyph }}</span>
         {{ opt.label }}
         <span v-if="opt.count != null" class="chip__count">· {{ opt.count }}</span>
       </Button>
@@ -154,5 +177,8 @@ function toggleExpanded() {
 }
 .chip--on:hover { color: var(--color-primary-fg); }
 .chip__count { font-variant-numeric: tabular-nums; opacity: 0.7; }
+.chip__glyph { margin-right: 0.1875rem; }
+/* Dimmed, never hidden: a 0-count chip still says the state exists. */
+.chip--zero { opacity: 0.55; }
 .chip--more { border-style: dashed; color: var(--color-fg-subtle); }
 </style>

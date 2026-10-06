@@ -6,7 +6,7 @@
 import Button from '../ui/Button.vue'
 
 defineProps({
-  // [{ key, label }] — one entry per axis off its default.
+  // [{ key, label, title? }] — one entry per axis off its default.
   filters: { type: Array, default: () => [] },
 })
 
@@ -17,7 +17,7 @@ const emit = defineEmits(['clear', 'clear-all'])
   <div v-if="filters.length" class="afilters" role="group" aria-label="Active filters">
     <span class="afilters__label">Filtered by</span>
     <span v-for="f in filters" :key="f.key" class="afilter">
-      <span class="afilter__text">{{ f.label }}</span>
+      <span class="afilter__text" :title="f.title || f.label">{{ f.label }}</span>
       <Button
         variant="ghost"
         size="sm"

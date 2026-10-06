@@ -1,5 +1,5 @@
 """Characterization of `/api/sessions` query params and derived row fields
-not covered elsewhere: `q`/`scope`, `active`, `kind`, `trace_id`, the
+not covered elsewhere: `q`/`scope`, `status`, `kind`, `trace_id`, the
 `workflow=only` date hint, and the per-row context/activity derivations."""
 
 from __future__ import annotations
@@ -77,9 +77,13 @@ _QUERIES = [
     ('kind=test', ['beta-1']),
     ('kind=all', ['alpha-1', 'alpha-2', 'beta-1', 'run-1', 'run-2']),
     ('kind=bogus&include_tests=1', ['alpha-1', 'alpha-2', 'beta-1', 'run-1', 'run-2']),
-    ('active=active', []),
-    ('active=inactive', ['alpha-1', 'alpha-2', 'run-1', 'run-2']),
-    ('active=nonsense', ['alpha-1', 'alpha-2', 'run-1', 'run-2']),
+    ('status=working,retrying,awaiting,idle', []),
+    ('status=inactive', ['alpha-1']),
+    ('status=ended', ['alpha-2', 'run-1', 'run-2']),
+    ('status=inactive,ended', ['alpha-1', 'alpha-2', 'run-1', 'run-2']),
+    ('status=inactive,bogus', ['alpha-1']),
+    ('status=bogus', ['alpha-1', 'alpha-2', 'run-1', 'run-2']),
+    ('status=INACTIVE', ['alpha-1']),
     ('trace_id=ALPHA', ['alpha-1', 'alpha-2']),
     ('q=parser', ['alpha-1']),
     ('q=parser&scope=title&kind=all', ['alpha-1', 'beta-1']),
@@ -136,3 +140,56 @@ def test_sessions_list_row_derivations(client, trace_db):
         'run-2': (None, None, None, None, None, None, 'workflow', 'system',
                   True, True, None),
     }
+
+
+_NO_COUNTS = {'awaiting': 0, 'retrying': 0, 'working': 0, 'idle': 0,
+              'starting': 0, 'inactive': 0, 'ended': 0, 'closed': 0}
+
+
+@pytest.mark.parametrize('qs', ['', 'status=inactive', 'status=ended,closed'])
+def test_status_counts_ignore_the_status_selection(client, trace_db, qs):
+    """`status_counts` drops the status facet itself (what toggling a chip
+    would give); `total_count` is the selection's own sum."""
+    _seed(trace_db)
+    conn = sqlite3.connect(str(trace_db))
+    conn.execute("UPDATE sessions SET ended_reason='manual' WHERE trace_id='run-2'")
+    conn.commit()
+    conn.close()
+    body = client.get(f'/api/sessions?{qs}').get_json()
+    assert body['status_counts'] == {**_NO_COUNTS, 'inactive': 1, 'ended': 2, 'closed': 1}
+    picked = [w for w in qs.removeprefix('status=').split(',') if w] or list(_NO_COUNTS)
+    assert body['total_count'] == sum(body['status_counts'][w] for w in picked)
+    assert body['total_count'] == len(body['items'])
+    assert body['active_count'] == 0
+
+
+def test_unknown_status_equals_the_known_part(client, trace_db):
+    _seed(trace_db)
+    a = client.get('/api/sessions?status=inactive,bogus')
+    b = client.get('/api/sessions?status=inactive')
+    assert a.status_code == 200
+    strip = ('server_now', 'server_now_utc')
+    assert ({k: v for k, v in a.get_json().items() if k not in strip}
+            == {k: v for k, v in b.get_json().items() if k not in strip})
+
+
+def test_active_count_sums_the_active_statuses(client, trace_db, monkeypatch):
+    """A runner in `starting` with a recent last_seen counts under starting,
+    not active — the chip says starting, so the pill must not count it."""
+    from datetime import datetime, timedelta
+    from web.blueprints.trace.sessions import listing as S
+    _seed(trace_db)
+    fresh = (datetime.now() - timedelta(minutes=1)).strftime('%Y-%m-%dT%H:%M:%S')
+    conn = sqlite3.connect(str(trace_db))
+    for tid in ('live-1', 'live-2', 'boot-1'):
+        conn.execute("INSERT INTO sessions (trace_id, status, started_at, last_seen, "
+                     "is_test, origin) VALUES (?, 'active', ?, ?, 0, 'session')",
+                     (tid, fresh, fresh))
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(S, '_owned_run_phases',
+                        lambda: {'boot-1': 'starting', 'live-2': 'waiting-input'})
+    body = client.get('/api/sessions').get_json()
+    c = body['status_counts']
+    assert (c['starting'], c['working'], c['awaiting']) == (1, 1, 1)
+    assert body['active_count'] == c['working'] + c['retrying'] + c['awaiting'] + c['idle'] == 2

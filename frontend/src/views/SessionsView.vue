@@ -15,15 +15,18 @@ import { useConfirm } from '../composables/useConfirm'
 import { useFlash } from '../composables/useFlash'
 import { useLiveShutdown } from '../composables/useLiveShutdown'
 import { useSessionGrouping } from '../composables/useSessionGrouping'
+import { useSessionSelection } from '../composables/useSessionSelection'
 import { useSessionTags } from '../composables/useSessionTags'
 import {
   useSessionListQuery,
-  ACTIVE_OPTIONS, KIND_OPTIONS, RANGE_OPTIONS, SCOPE_OPTIONS,
+  KIND_OPTIONS, RANGE_OPTIONS, SCOPE_OPTIONS,
 } from '../composables/useSessionListQuery'
 import { useStickyHeader } from '../composables/useStickyHeader'
 import { useTraceHeaderPublisher } from '../composables/useTraceHeader'
 import { sessionLivenessWithClock } from '../utils/sessionActivity.js'
-import { isActiveRowStatus } from '../utils/sessionStatus.js'
+import {
+  ACTIVE_STATUSES, STATUS_ORDER, isActiveRowStatus, statusMeta,
+} from '../utils/sessionStatus.js'
 import { titlePreview } from '../utils/sessionRowFormat.js'
 import { shortTraceId } from '../utils/traceFormatters.js'
 
@@ -37,7 +40,7 @@ const {
   items: sessions, loading, loadingMore, hasNext, load, loadMore,
   serverClock, tagCounts, repoCounts, totalCount, activeCount, builtinTags,
   filterCount, searchInput, activeSearch, traceIdInput, searchScope,
-  kind, activeFilter, range, tagFilter, repoFilter,
+  kind, statusFilter, range, tagFilter, repoFilter, statusCounts, activeStatusesOn,
   customStart, customEnd, rangeLabel, activeFilters, hiddenRunCount, runsShown,
   hiddenEmptyCount, emptyShown,
 } = query
@@ -59,6 +62,28 @@ function onLaunched(launched) {
 // facet count cannot disagree with the word beside them.
 const isActive = (s) => isActiveRowStatus(s, sessionLivenessWithClock(s, serverClock.value))
 const { mode: groupMode, groups } = useSessionGrouping(sessions, isActive)
+const visibleIds = computed(() => groups.value.flatMap(g => g.rows.map(s => s.trace_id)))
+const {
+  selectedIds, selectionCount, allSelected, selectedRows,
+  toggleOne, toggleSelectAll, clearSelection, pruneSelection,
+} = useSessionSelection(sessions, visibleIds)
+
+// Every status chip carries its word and glyph from STATES and its count from
+// the server's facet — no status word is spelled here.
+const statusOptions = computed(() => STATUS_ORDER.map(key => ({
+  value: key,
+  label: statusMeta(key).label,
+  glyph: statusMeta(key).glyph,
+  count: statusCounts.value[key] ?? 0,
+})))
+
+// The server total of the active rows the CURRENT status set lets through —
+// `active_count` alone ignores the status facet, so a list narrowed to
+// `working` would otherwise read "3 of 8" against a group that can never
+// reach 8.
+const activeInView = computed(() => STATUS_ORDER
+  .filter(k => ACTIVE_STATUSES.has(k) && (!statusFilter.value.length || statusFilter.value.includes(k)))
+  .reduce((n, k) => n + (statusCounts.value[k] ?? 0), 0))
 
 // Grouping partitions the rows ALREADY LOADED, while the header pill and the
 // footer total come from the server over the whole filter set. Once the list
@@ -67,8 +92,8 @@ const { mode: groupMode, groups } = useSessionGrouping(sessions, isActive)
 // group whose server-side total we actually know is the active one, so name
 // it; the rest are disclosed by the footer note below.
 function groupCount(group) {
-  if (group.key === 'active' && activeCount.value > group.rows.length) {
-    return `${group.rows.length} of ${activeCount.value}`
+  if (group.key === 'active' && activeInView.value > group.rows.length) {
+    return `${group.rows.length} of ${activeInView.value}`
   }
   return String(group.rows.length)
 }
@@ -122,23 +147,22 @@ const rangeNarrowed = computed(() => activeFilters.value.some(f => f.key === 'ra
 
 const deleting = ref(null)   // trace_id currently being deleted
 const closing = ref(null)    // trace_id currently being manually closed
-const selectedIds = ref(new Set())
 const batchDeleting = ref(false)
+const batchClosing = ref(false)
 const refreshing = ref(false)
 
-const selectionCount = computed(() => selectedIds.value.size)
-const allSelected = computed(() =>
-  sessions.value.length > 0 && sessions.value.every(s => selectedIds.value.has(s.trace_id)))
+// Close has nothing to do to a row that has already ended (naturally or by
+// hand), so the batch only ever sends the rest.
+const closableSelected = computed(() => selectedRows.value.filter(s => s.status !== 'ended'))
+const selectAllTitle = computed(() => (hasNext.value
+  ? `Select the ${sessions.value.length} loaded sessions (more match; load them to include them)`
+  : 'Select all'))
 
 const { stickyHeaderEl, stickyHeaderHeight } = useStickyHeader(loading)
 
 async function reload() {
   await load()
-  // Selection was computed against the previous page set; drop entries that
-  // are no longer visible so a later batch-delete can't target rows the user
-  // can't currently see.
-  const visible = new Set(sessions.value.map(s => s.trace_id))
-  selectedIds.value = new Set([...selectedIds.value].filter(id => visible.has(id)))
+  pruneSelection()
 }
 
 async function refresh() {
@@ -149,21 +173,6 @@ async function refresh() {
 function runSearch() {
   query.commitSearch()
   reload()
-}
-
-function toggleOne(traceId, checked) {
-  const next = new Set(selectedIds.value)
-  if (checked) next.add(traceId)
-  else next.delete(traceId)
-  selectedIds.value = next
-}
-
-function toggleSelectAll(checked) {
-  selectedIds.value = checked ? new Set(sessions.value.map(s => s.trace_id)) : new Set()
-}
-
-function clearSelection() {
-  selectedIds.value = new Set()
 }
 
 // Escape is the universal "never mind". An open popover owns it first — Reka
@@ -264,11 +273,59 @@ async function batchDelete() {
       flash(`Batch delete failed: ${res.msg || 'unknown error'}`, 'error')
       return
     }
-    selectedIds.value = new Set()
+    clearSelection()
     flash(`Deleted ${res.processed || ids.length} ${noun}`)
     await reload()
   } finally {
     batchDeleting.value = false
+  }
+}
+
+const plural = (n) => `session${n === 1 ? '' : 's'}`
+
+// The batch is "in flight" from the first probe to the reload: the probe and
+// the shutdown are both awaits the operator could otherwise click through.
+async function confirmBatchClose(targets) {
+  const ended = selectionCount.value - targets.length
+  const live = await probeAll(targets.filter(isActive).map(s => s.trace_id))
+  batchClosing.value = false
+  const ok = await confirm(`Close ${targets.length} ${plural(targets.length)}`,
+    `${batchWarning(live)}Mark ${targets.length} ${plural(targets.length)} as closed?`
+    + (ended ? ` ${ended} already ended will be skipped.` : '')
+    + ' Trace data is kept; only the status changes to ended.', live.length > 0)
+  batchClosing.value = ok
+  return ok ? { live, ended } : null
+}
+
+async function sendBatchClose(targets, ended) {
+  let res
+  try {
+    res = await api.post('/sessions/batch-close', { trace_ids: targets.map(s => s.trace_id) })
+  } catch (e) {
+    res = { ok: false, msg: e?.message }
+  }
+  if (res.ok === false) {
+    flash(`Batch close failed: ${res.msg || res.error || 'unknown error'}`, 'error')
+    return
+  }
+  clearSelection()
+  const closed = res.closed?.length ?? targets.length
+  const already = ended + (res.skipped?.length || 0)
+  flash(`Closed ${closed} ${plural(closed)}${already ? `, ${already} already ended` : ''}`)
+  await reload()
+}
+
+async function batchClose() {
+  const targets = closableSelected.value
+  if (!targets.length) return
+  batchClosing.value = true
+  try {
+    const plan = await confirmBatchClose(targets)
+    if (!plan) return
+    await stopFirst(plan.live)
+    await sendBatchClose(targets, plan.ended)
+  } finally {
+    batchClosing.value = false
   }
 }
 
@@ -298,12 +355,14 @@ async function loadRepoOptions() {
 query.persistAndReload(reload)
 
 const publishHeader = useTraceHeaderPublisher()
-watch([activeCount, totalCount, refreshing], () => {
+watch([activeCount, totalCount, refreshing, activeStatusesOn], () => {
   publishHeader({
     activeCount: activeCount.value,
     tabCount: totalCount.value,
     refreshing: refreshing.value,
     onRefresh: refresh,
+    activePillOn: activeStatusesOn.value,
+    onActivePill: query.toggleActiveStatuses,
   })
 }, { immediate: true })
 
@@ -334,7 +393,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape))
         v-model:group="groupMode"
         v-model:range="range"
         v-model:kind="kind"
-        v-model:status="activeFilter"
+        v-model:status="statusFilter"
         v-model:tag="tagFilter"
         v-model:repo="repoFilter"
         v-model:trace-id="traceIdInput"
@@ -345,16 +404,19 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape))
         :range-start="customStart"
         :range-end="customEnd"
         :kind-options="KIND_OPTIONS"
-        :status-options="ACTIVE_OPTIONS"
+        :status-options="statusOptions"
         :tag-options="tagOptions"
         :repo-options="repoOptions"
         :repo-counts="repoCounts"
         :filter-count="filterCount"
         :selection-count="selectionCount"
         :batch-deleting="batchDeleting"
+        :batch-closing="batchClosing"
+        :closable-count="closableSelected.length"
         @search="runSearch"
         @reset="query.resetFilters(reload)"
         @batch-delete="batchDelete"
+        @batch-close="batchClose"
         @clear-selection="clearSelection"
         @range-preset="(v) => query.selectRangePreset(v)"
         @range-pick="(d) => query.pickRangeDay(d)"
@@ -404,7 +466,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape))
             <Checkbox
               :model-value="allSelected"
               :indeterminate="selectionCount > 0 && !allSelected"
-              title="Select all"
+              :title="selectAllTitle"
               aria-label="Select all sessions"
               @update:model-value="toggleSelectAll"
             />
@@ -434,7 +496,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape))
             :selected="selectedIds.has(s.trace_id)"
             :is-deleting="deleting === s.trace_id"
             :is-closing="closing === s.trace_id"
-            @toggle="(checked) => toggleOne(s.trace_id, checked)"
+            @toggle="(checked, shift) => toggleOne(s.trace_id, checked, shift)"
             @delete="deleteSession"
             @close="closeSession"
             @add-tag="(slug) => onTagChange(s.trace_id, slug, 'add')"
@@ -457,7 +519,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape))
             :selected="selectedIds.has(s.trace_id)"
             :is-deleting="deleting === s.trace_id"
             :is-closing="closing === s.trace_id"
-            @toggle="(checked) => toggleOne(s.trace_id, checked)"
+            @toggle="(checked, shift) => toggleOne(s.trace_id, checked, shift)"
             @delete="deleteSession"
             @close="closeSession"
             @add-tag="(slug) => onTagChange(s.trace_id, slug, 'add')"

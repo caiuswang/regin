@@ -285,6 +285,59 @@ def api_session_close(trace_id):
     })
 
 
+def _close_session_batch(trace_ids) -> dict:
+    """Settle every not-ended row in one transaction; report what each id was.
+
+    An already-ended row is skipped, never rewritten: overwriting a natural
+    `ended_reason` would relabel a lifecycle end as an operator's close.
+    """
+    out = {'closed': [], 'skipped': [], 'missing': []}
+    now = datetime.now().isoformat()
+    with SessionLocal() as session:
+        for trace_id in dict.fromkeys(trace_ids):
+            row = session.get(SessionModel, trace_id)
+            if row is None:
+                out['missing'].append(trace_id)
+                continue
+            if row.status == 'ended':
+                out['skipped'].append(trace_id)
+                continue
+            # Same write as the single close, ended_at included: it is what
+            # keeps the upsert from flipping the row back on a late span.
+            row.status = 'ended'
+            row.ended_reason = 'manual'
+            if row.ended_at is None:
+                row.ended_at = now
+            session.flush()
+            out['closed'].append(trace_id)
+        session.commit()
+    return out
+
+
+@trace_bp.route('/api/sessions/batch-close', methods=['POST'])
+def api_session_batch_close():
+    """Manually close several sessions at once — `api_session_close` per row,
+    in a single transaction.
+
+    Body: `{"trace_ids": ["id1", ...]}`. Unknown ids are reported as
+    `missing` and already-ended rows as `skipped`, neither an error, so a
+    retried batch is idempotent. Any failure rolls the whole batch back.
+    """
+    body = request.get_json(silent=True) or {}
+    trace_ids = body.get('trace_ids') or []
+    error = _batch_trace_ids_error(trace_ids)
+    if error:
+        return jsonify({'ok': False, 'error': error}), 400
+    try:
+        result = _close_session_batch(trace_ids)
+    except Exception as exc:
+        return jsonify({
+            'ok': False,
+            'error': f'{type(exc).__name__}: {exc}',
+        }), 500
+    return jsonify({'ok': True, 'processed': len(trace_ids), **result})
+
+
 @trace_bp.route('/api/sessions/<trace_id>/materialize', methods=['POST'])
 def api_session_materialize(trace_id):
     """Persist the orphan-graft + envelope-widen projection back to the DB.

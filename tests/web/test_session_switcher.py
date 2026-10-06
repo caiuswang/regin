@@ -395,10 +395,10 @@ def _js_set(path: str, name: str) -> set:
 
 
 def test_every_live_run_phase_folds_to_an_active_status():
-    """`live_session_ids()` feeds `_session_active_clause`, so every phase a
-    session in that set can report must fold to a status the CLIENT also calls
-    active — otherwise the `active_count` facet, the group header and the row's
-    own chip disagree for exactly the sessions this feature exists to serve.
+    """Every phase a session in `live_session_ids()` can report must fold to a
+    status the CLIENT also calls active — otherwise a "live" run is not
+    counted where the row's own chip says it is. (The list's `active_count`
+    itself classifies through `owned_run_phases` + `_row_status_expr`.)
 
     This is what `_reserved` broke: it made a launching session server-active
     while `run_phase` reported it `starting`, which the client does not count.

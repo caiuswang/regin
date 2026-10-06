@@ -58,12 +58,12 @@ test('changing a facet filter does not unmount the filter form (no blink)', asyn
 
   await page.route('**/api/sessions?*', async (route, request) => {
     const url = new URL(request.url())
-    const active = url.searchParams.get('active')
-    if (active === 'active') {
+    const status = url.searchParams.get('status')
+    if (status === 'working') {
       await reloadGate                                   // hold the reload
       return route.fulfill({ json: envelope([row(idA)]) })
     }
-    if (active === 'inactive') {
+    if (status === 'inactive') {
       return route.fulfill({ json: envelope([]) })       // 0-result branch
     }
     return route.fulfill({ json: envelope([row(idA), row(idB)]) })
@@ -76,12 +76,12 @@ test('changing a facet filter does not unmount the filter form (no blink)', asyn
   const toolbar = page.locator('.stoolbar')
   await expect(toolbar).toBeVisible()
 
-  // Open Filters and pick Status = Active → triggers a reload. Arm the
+  // Open Filters and pick Status = working → triggers a reload. Arm the
   // request wait BEFORE the click so we don't miss the in-flight event.
-  const reloadReq = page.waitForRequest((r) => r.url().includes('active=active'))
+  const reloadReq = page.waitForRequest((r) => r.url().includes('status=working'))
   await page.getByRole('button', { name: /Filters/ }).click()
   await page.locator('.filters-panel .facet', { hasText: 'Status' })
-    .locator('.chip', { hasText: 'Active', hasNotText: 'Not active' }).click()
+    .locator('.chip[data-value="working"]').click()
   await reloadReq                                        // held open by the gate
 
   // THE ASSERTION: during the in-flight reload the filter form is STILL
@@ -101,8 +101,8 @@ test('changing a facet filter does not unmount the filter form (no blink)', asyn
 test('a facet filter yielding zero rows shows the empty message, not a stuck loader', async ({ page }) => {
   const idA = randomUUID()
   await page.route('**/api/sessions?*', async (route, request) => {
-    const active = new URL(request.url()).searchParams.get('active')
-    return route.fulfill({ json: envelope(active === 'inactive' ? [] : [row(idA)]) })
+    const status = new URL(request.url()).searchParams.get('status')
+    return route.fulfill({ json: envelope(status === 'inactive' ? [] : [row(idA)]) })
   })
 
   await page.goto('/trace/sessions')
@@ -110,7 +110,7 @@ test('a facet filter yielding zero rows shows the empty message, not a stuck loa
 
   await page.getByRole('button', { name: /Filters/ }).click()
   await page.locator('.filters-panel .facet', { hasText: 'Status' })
-    .locator('.chip', { hasText: 'Not active' }).click()
+    .locator('.chip[data-value="inactive"]').click()
 
   await expect(page.getByText('No session traces yet.')).toBeVisible()
   await expect(page.getByText('Loading sessions…')).toBeHidden()

@@ -2,6 +2,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { dayFromIso, dayToIso, daySerial, formatSpan } from '../utils/dateRange.js'
 import { useCursor } from './useCursor'
 import { useServerClock } from './useServerClock'
+import { ACTIVE_STATUSES, STATUS_ORDER, statusLabel } from '../utils/sessionStatus.js'
 
 // Every narrowing axis of the sessions list — its persisted values, its
 // options, the request it builds and the envelope facets it reads back.
@@ -10,7 +11,7 @@ import { useServerClock } from './useServerClock'
 
 const TEST_TOGGLE_KEY = 'regin_sessions_show_tests'  // legacy; migrates into KIND_KEY on first read
 const KIND_KEY = 'regin_sessions_kind'
-const ACTIVE_KEY = 'regin_sessions_active'
+const STATUS_KEY = 'regin_sessions_status'
 const RANGE_KEY = 'regin_sessions_range'
 const CUSTOM_KEY = 'regin_sessions_custom_span'
 const SCOPE_KEY = 'regin_sessions_search_scope'
@@ -31,12 +32,6 @@ export const KIND_OPTIONS = [
   { value: 'all', label: 'All' },
 ]
 
-export const ACTIVE_OPTIONS = [
-  { value: 'all', label: 'Any' },
-  { value: 'active', label: 'Active' },
-  { value: 'inactive', label: 'Not active' },
-]
-
 export const RANGE_OPTIONS = [
   { value: 'all', label: 'All time' },
   { value: 'today', label: 'Today' },
@@ -49,11 +44,39 @@ export const RANGE_OPTIONS = [
 // calendar's `customStart`/`customEnd` instead of a rolling window.
 export const CUSTOM_RANGE = 'custom'
 
-const DEFAULTS = { kind: 'real', active: 'all', range: 'today', tag: '', repo: 'all' }
+const DEFAULTS = { kind: 'real', range: 'today', tag: '', repo: 'all' }
 
 function stored(key, options, fallback) {
   const v = localStorage.getItem(key)
   return options.some(o => o.value === v) ? v : fallback
+}
+
+// A status set is kept in STATUS_ORDER so the request, the chip row and the
+// stored value read the same however the chips were clicked.
+export function canonicalStatuses(list) {
+  const want = new Set(list || [])
+  return STATUS_ORDER.filter(k => want.has(k))
+}
+
+function storedStatuses() {
+  try {
+    const v = JSON.parse(localStorage.getItem(STATUS_KEY) || '[]')
+    return Array.isArray(v) ? canonicalStatuses(v) : []
+  } catch {
+    return []
+  }
+}
+
+const ACTIVE_LIST = canonicalStatuses([...ACTIVE_STATUSES])
+
+function isActiveSet(list) {
+  return list.length === ACTIVE_LIST.length && list.every(k => ACTIVE_STATUSES.has(k))
+}
+
+function statusChip(list) {
+  const words = list.map(statusLabel)
+  if (words.length <= 2) return { key: 'status', label: `Status: ${words.join(', ')}` }
+  return { key: 'status', label: `Status: ${words.length} states`, title: words.join(', ') }
 }
 
 function pad(n) { return String(n).padStart(2, '0') }
@@ -113,7 +136,9 @@ export function useSessionListQuery() {
   // lose that preference on upgrade.
   const kind = ref(stored(KIND_KEY, KIND_OPTIONS,
     localStorage.getItem(TEST_TOGGLE_KEY) === '1' ? 'all' : 'real'))
-  const activeFilter = ref(stored(ACTIVE_KEY, ACTIVE_OPTIONS, 'all'))
+  // Empty = any status. Always replaced, never mutated in place, so the
+  // persisting watcher below fires.
+  const statusFilter = ref(storedStatuses())
   const span = storedSpan()
   const customStart = ref(span.start)
   const customEnd = ref(span.end)
@@ -167,7 +192,7 @@ export function useSessionListQuery() {
         // 'show' is the server default; only send when narrowing.
         workflow: hideRuns.value ? 'hide' : undefined,
         empty: hideEmpty.value ? 'hide' : undefined,
-        active: activeFilter.value !== 'all' ? activeFilter.value : undefined,
+        status: statusFilter.value.length ? statusFilter.value.join(',') : undefined,
         trace_id: activeTraceId.value || undefined,
         q: activeSearch.value || undefined,
         // Only send `scope` when a search term is active — keeps the URL tidy
@@ -186,6 +211,8 @@ export function useSessionListQuery() {
   const repoCounts = computed(() => extras.value?.repo_counts || {})
   const totalCount = computed(() => extras.value?.total_count ?? null)
   const activeCount = computed(() => extras.value?.active_count ?? 0)
+  const statusCounts = computed(() => extras.value?.status_counts || {})
+  const activeStatusesOn = computed(() => isActiveSet(statusFilter.value))
   const builtinTags = computed(() => extras.value?.builtin_tags || [])
   // Run rows the SAME other filters would have matched — served only while
   // `workflow=hide` is in force, which is what makes it the chip's guard.
@@ -198,7 +225,7 @@ export function useSessionListQuery() {
       range.value !== DEFAULTS.range,
       kind.value !== DEFAULTS.kind,
       tagFilter.value !== DEFAULTS.tag,
-      activeFilter.value !== DEFAULTS.active,
+      statusFilter.value.length > 0,
       repoFilter.value !== DEFAULTS.repo,
       Boolean(activeTraceId.value),
     ]
@@ -219,7 +246,6 @@ export function useSessionListQuery() {
 
   const FILTER_LABELS = {
     kind: { test: 'Tests only', all: 'Real + tests' },
-    status: { active: 'Active', inactive: 'Not active' },
   }
 
   // One entry per narrowing axis that is off its default — same six axes
@@ -229,9 +255,7 @@ export function useSessionListQuery() {
     const out = []
     if (range.value !== DEFAULTS.range) out.push({ key: 'range', label: rangeLabel.value })
     if (kind.value !== DEFAULTS.kind) out.push({ key: 'kind', label: FILTER_LABELS.kind[kind.value] })
-    if (activeFilter.value !== DEFAULTS.active) {
-      out.push({ key: 'status', label: FILTER_LABELS.status[activeFilter.value] })
-    }
+    if (statusFilter.value.length) out.push(statusChip(statusFilter.value))
     if (tagFilter.value !== DEFAULTS.tag) {
       out.push({ key: 'tag', label: `Tag: ${tagLabels.value[tagFilter.value] || tagFilter.value}` })
     }
@@ -263,9 +287,13 @@ export function useSessionListQuery() {
   function persistAndReload(reload) {
     reloadFn = reload
     const bindings = [
-      [kind, KIND_KEY], [activeFilter, ACTIVE_KEY], [range, RANGE_KEY],
+      [kind, KIND_KEY], [range, RANGE_KEY],
       [tagFilter, TAG_KEY], [repoFilter, REPO_KEY],
     ]
+    watch(statusFilter, (v) => {
+      localStorage.setItem(STATUS_KEY, JSON.stringify(v))
+      if (!batching) reload()
+    })
     watch(runsShown, (v) => {
       localStorage.setItem(RUNS_KEY, v ? '1' : '0')
       if (!batching) reload()
@@ -333,10 +361,19 @@ export function useSessionListQuery() {
     return batched(() => { emptyShown.value = !emptyShown.value }, reload ?? reloadFn)
   }
 
+  function setStatuses(list) {
+    statusFilter.value = canonicalStatuses(list)
+  }
+
+  // The header's "N active now" pill: a toggle onto exactly the active set.
+  function toggleActiveStatuses() {
+    setStatuses(activeStatusesOn.value ? [] : ACTIVE_LIST)
+  }
+
   const CLEARERS = {
     range: () => { clearSpan(); range.value = DEFAULTS.range },
     kind: () => { kind.value = DEFAULTS.kind },
-    status: () => { activeFilter.value = DEFAULTS.active },
+    status: () => { statusFilter.value = [] },
     tag: () => { tagFilter.value = DEFAULTS.tag },
     repo: () => { repoFilter.value = DEFAULTS.repo },
     trace: () => { traceIdInput.value = ''; activeTraceId.value = '' },
@@ -355,7 +392,7 @@ export function useSessionListQuery() {
       traceIdInput.value = ''
       activeTraceId.value = ''
       kind.value = DEFAULTS.kind
-      activeFilter.value = DEFAULTS.active
+      statusFilter.value = []
       range.value = DEFAULTS.range
       clearSpan()
       tagFilter.value = DEFAULTS.tag
@@ -368,11 +405,12 @@ export function useSessionListQuery() {
   return {
     ...cursor,
     searchInput, activeSearch, traceIdInput, activeTraceId, searchScope,
-    kind, activeFilter, range, tagFilter, repoFilter,
+    kind, statusFilter, range, tagFilter, repoFilter, statusCounts, activeStatusesOn,
     customStart, customEnd, rangeLabel, tagLabels, activeFilters,
     serverClock, tagCounts, repoCounts, totalCount, activeCount, builtinTags,
     hiddenRunCount, runsShown, hiddenEmptyCount, emptyShown,
     filterCount, persistAndReload, commitSearch, resetFilters,
     selectRangePreset, pickRangeDay, clearFilter, toggleRuns, toggleEmpty,
+    setStatuses, toggleActiveStatuses,
   }
 }

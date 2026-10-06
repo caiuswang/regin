@@ -9,6 +9,7 @@ import Icon from '../ui/Icon.vue'
 import Input from '../ui/Input.vue'
 import Popover from '../ui/Popover.vue'
 import SessionFilterChips from './SessionFilterChips.vue'
+import { canonicalStatuses } from '../../composables/useSessionListQuery.js'
 
 const props = defineProps({
   kindOptions: { type: Array, required: true },
@@ -22,12 +23,17 @@ const props = defineProps({
 const emit = defineEmits(['reset', 'commit-trace-id'])
 
 const kind = defineModel('kind', { type: String, default: 'real' })
-const status = defineModel('status', { type: String, default: 'all' })
+const status = defineModel('status', { type: Array, default: () => [] })
 const tag = defineModel('tag', { type: String, default: '' })
 const repo = defineModel('repo', { type: String, default: 'all' })
 const traceId = defineModel('traceId', { type: String, default: '' })
 
 const open = ref(false)
+
+const statusModel = computed({
+  get: () => status.value,
+  set: (list) => { status.value = canonicalStatuses(list) },
+})
 
 // Every registered repo is offerable, but `repo_counts` only mentions the ones
 // present in the current filter set — so an absent repo means 0, not unknown.
@@ -66,12 +72,11 @@ const tagChips = computed(() => props.tagOptions
         :visible="4"
       />
       <SessionFilterChips
-        v-model="status"
+        v-model="statusModel"
         label="Status"
-        all-value="all"
         all-label="Any"
-        :options="statusOptions.filter(o => o.value !== 'all')"
-        :visible="4"
+        :options="statusOptions"
+        :visible="statusOptions.length"
       />
       <SessionFilterChips
         v-model="repo"

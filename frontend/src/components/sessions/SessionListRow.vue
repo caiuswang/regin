@@ -84,7 +84,7 @@ const statusTitle = computed(() => {
     <div class="srow__cell srow__check">
       <Checkbox
         :model-value="selected"
-        @update:model-value="(v) => emit('toggle', v)"
+        @update:model-value="(v, mods) => emit('toggle', v, Boolean(mods?.shiftKey))"
         :aria-label="`Select session ${shortTraceId(s.trace_id)}`"
       />
     </div>

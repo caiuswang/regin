@@ -239,12 +239,18 @@ export function statusOfRow(row, liveness) {
     : statusFromLiveness(liveness)
 }
 
+// The list's status facet offers every key of STATES in attention order — the
+// chips the operator can filter on are exactly the words a row can wear.
+// Mirrors `ROW_STATUSES` in web/blueprints/trace/sessions/listing.py.
+export const STATUS_ORDER = ['awaiting', 'retrying', 'working', 'idle', 'starting',
+  'inactive', 'ended', 'closed']
+
 // "Active now" for a LIST row, resolved the same way its chip is — so the
 // group header, the facet count and the badge cannot disagree with the word
-// beside them. Mirrors `_session_active_clause` in
-// web/blueprints/trace/sessions.py, which the `active=` filter and the
+// beside them. Mirrors `ACTIVE_STATUSES` in
+// web/blueprints/trace/sessions/listing.py, which the `status=` filter and the
 // `active_count` facet share; the two must move together.
-const ACTIVE_STATUSES = new Set(['working', 'retrying', 'idle', 'awaiting'])
+export const ACTIVE_STATUSES = new Set(['working', 'retrying', 'idle', 'awaiting'])
 
 export function isActiveRowStatus(row, liveness) {
   return ACTIVE_STATUSES.has(statusOfRow(row, liveness))

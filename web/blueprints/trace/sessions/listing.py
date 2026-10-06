@@ -38,8 +38,8 @@ def _filter_sessions_by_repo(stmt, repo_name):
     ))
 
 
-def _live_sdk_session_ids() -> set:
-    """Session ids this process holds a live runner for, or empty.
+def _owned_run_phases() -> dict:
+    """`{session id: runner phase}` for every run this process owns, or empty.
 
     Best-effort like every other SDK read on this path: the tier is optional
     and gated off by default, and the session list must not depend on it
@@ -47,40 +47,79 @@ def _live_sdk_session_ids() -> set:
     """
     try:
         from lib import agent_sdk
-        return agent_sdk.live_session_ids()
+        return agent_sdk.owned_run_phases()
     except Exception:
-        return set()
+        return {}
 
 
-def _session_active_clause(want_active: bool):
-    """The server's mirror of the frontend `sessionLiveness(row)` rule as SQL.
+# Mirror of `PHASE_STATUS` in frontend/src/utils/sessionStatus.js; the two
+# must move together. An unmapped phase falls to `inactive` there too.
+_PHASE_STATUS = {
+    'working': 'working',
+    'retrying': 'retrying',
+    'idle': 'idle',
+    'stopping': 'working',
+    'starting': 'starting',
+    'waiting-permission': 'awaiting',
+    'waiting-input': 'awaiting',
+    'inactive-stale': 'inactive',
+    'ended': 'ended',
+}
 
-    'ended' is always inactive. Every other marker — 'active', unset, an
-    unknown future value — is subject to the last-seen recency check: a
-    session whose SessionEnd hook never fired (crash, SIGKILL, a worktree
-    deleted under it) keeps status='active' forever, and nothing on the
-    server corrects it. One definition so the `active=` filter, the
-    `active_count` facet, and the green badge can never drift apart; the
-    frontend half lives in frontend/src/utils/sessionStatus.js
-    (`isActiveRowStatus`).
+# The keys of `STATES` (sessionStatus.js), in its attention order.
+ROW_STATUSES = ('awaiting', 'retrying', 'working', 'idle', 'starting',
+                'inactive', 'ended', 'closed')
+ACTIVE_STATUSES = ('working', 'retrying', 'awaiting', 'idle')
 
-    Recency is the fallback, not the rule. For a run regin LAUNCHED the
-    registry knows: an agent parked at the prompt emits no spans, so recency
-    alone ages it out while the runner is still holding it. Those ids are
-    live regardless of `last_seen` — but still subject to `not_ended`, since
-    `_aliases` outlives a child that `/clear` retired.
+
+def _row_status_expr(phases=None, now=None):
+    """A row's list status as one SQL CASE — the server's `statusOfRow`.
+
+    The client resolves each chip with `statusOfRow(row, sessionLiveness(row))`
+    (frontend/src/utils/sessionStatus.js); this is the same decision in the
+    same order, so the `status=` filter, `status_counts` and `active_count`
+    can never disagree with the word on a row:
+
+      ended outranks the runner — `_aliases` outlives a child `/clear`
+      retired, so the runner still answers for an ended row;
+      a run regin owns is its runner's verdict, never recency — an agent
+      parked at the prompt emits no spans;
+      everything else is recency: seen in the last 10 minutes is `working`.
+      A session whose SessionEnd never fired keeps status='active' forever,
+      which is why the marker alone is not trusted.
     """
-    from sqlalchemy import or_ as _or, and_ as _and, not_ as _not
-    cutoff_iso = (datetime.now() - timedelta(minutes=10)).strftime('%Y-%m-%dT%H:%M:%S')
-    status_col = SessionModel.status
-    not_ended = _or(status_col.is_(None), status_col != 'ended')
-    alive = SessionModel.last_seen >= cutoff_iso
-    live_ids = _live_sdk_session_ids()
-    if live_ids:
-        alive = _or(alive, SessionModel.trace_id.in_(live_ids))
+    from sqlalchemy import and_ as _and, case as _case
+    phases = _owned_run_phases() if phases is None else phases
+    cutoff_iso = ((now or datetime.now()) - timedelta(minutes=10)).strftime('%Y-%m-%dT%H:%M:%S')
+    by_status: dict[str, list[str]] = {}
+    for trace_id, phase in phases.items():
+        by_status.setdefault(_PHASE_STATUS.get(phase, 'inactive'), []).append(trace_id)
+    ended = SessionModel.status == 'ended'
+    whens = [(_and(ended, SessionModel.ended_reason == 'manual'), 'closed'),
+             (ended, 'ended')]
+    whens += [(SessionModel.trace_id.in_(ids), status)
+              for status, ids in sorted(by_status.items())]
+    whens.append((SessionModel.last_seen >= cutoff_iso, 'working'))
+    return _case(*whens, else_='inactive')
+
+
+def _session_active_clause(want_active: bool, status_expr=None):
+    """Active (or not) by the row's own status — `ACTIVE_STATUSES`, exactly
+    what `isActiveRowStatus` in sessionStatus.js calls active. The CASE never
+    yields NULL, so the two branches partition every row."""
+    expr = _row_status_expr() if status_expr is None else status_expr
     if want_active:
-        return _and(not_ended, alive)
-    return _or(status_col == 'ended', _and(not_ended, _not(alive)))
+        return expr.in_(ACTIVE_STATUSES)
+    return expr.not_in(ACTIVE_STATUSES)
+
+
+def _parse_status_filter() -> tuple:
+    """Validated statuses from `status=` (comma list, repeatable). Unknown
+    words are dropped; nothing valid left means no status filter."""
+    wanted = set()
+    for raw in request.args.getlist('status'):
+        wanted.update(w.strip().lower() for w in (raw or '').split(','))
+    return tuple(st for st in ROW_STATUSES if st in wanted)
 
 
 def _repo_counts(session, narrow):
@@ -103,25 +142,31 @@ def _repo_counts(session, narrow):
     return {name: n for name, n in rows}
 
 
-def _list_facet_counts(session, narrow):
-    """`total_count` / `active_count` for the list envelope.
+def _list_facet_counts(session, q):
+    """`total_count` / `status_counts` / `active_count` for the list envelope.
 
-    `narrow` applies the request's COMPLETE filter set (shared WHERE + origin
-    + tag), so both numbers describe the same population the page paginates
-    over — the footer total and the header "N active now" pill stay consistent
-    with the rows on screen.
+    `total_count` is over the request's COMPLETE filter set, so the footer
+    total describes the population the page paginates over. `status_counts`
+    drops the status facet itself (the count a chip would give if toggled,
+    the same sibling rule as `repo_counts`), and `active_count` sums its
+    active statuses — so the "N active now" pill still offers the active set
+    while another status is selected.
     """
     from sqlalchemy import func as _func
     from sqlmodel import select as _select
-
-    def _count(*where):
-        return session.exec(
-            narrow(_select(_func.count()).select_from(SessionModel)).where(*where)
-        ).one()
-
+    total = session.exec(q.narrow(_select(_func.count()).select_from(SessionModel))).one()
+    rows = session.exec(
+        q.narrow(_select(q.status_expr, _func.count()).select_from(SessionModel),
+                 skip_status=True)
+        .group_by(q.status_expr)
+    ).all()
+    status_counts = {st: 0 for st in ROW_STATUSES}
+    for st, n in rows:
+        status_counts[st] = status_counts.get(st, 0) + n
     return {
-        'total_count': _count(),
-        'active_count': _count(_session_active_clause(True)),
+        'total_count': total,
+        'status_counts': status_counts,
+        'active_count': sum(status_counts[st] for st in ACTIVE_STATUSES),
     }
 
 
@@ -496,7 +541,8 @@ class _SessionListQuery:
 
     def __init__(self):
         self.kind = _session_list_kind()
-        self.active_filter = _choice('active', 'all', ('all', 'active', 'inactive'))
+        self.statuses = _parse_status_filter()
+        self._status_expr = None
         self.trace_id_q = (request.args.get('trace_id') or '').strip()
         self.search = (request.args.get('q') or '').strip()
         self.scope = _choice('scope', 'title', ('title', 'prompt', 'both'))
@@ -509,6 +555,15 @@ class _SessionListQuery:
             self.empty = 'show'
         self.tag_slugs = _parse_tag_filter()
         self.hidden_alias_ids = ()
+
+    @property
+    def status_expr(self):
+        # Built once per request: one runner snapshot and one clock instant
+        # for the page and every count, or a row could cross the 10-minute
+        # line between two queries and the counts stop summing.
+        if self._status_expr is None:
+            self._status_expr = _row_status_expr()
+        return self._status_expr
 
     @property
     def date_filtered(self):
@@ -535,8 +590,8 @@ class _SessionListQuery:
             s = s.where(SessionModel.last_seen < self.until)
         return s
 
-    def apply_filters(self, s, skip_date=False, skip_repo=False):
-        """Apply the shared WHERE set (kind/is_test, trace_id, active,
+    def apply_filters(self, s, skip_date=False, skip_repo=False, skip_status=False):
+        """Apply the shared WHERE set (kind/is_test, trace_id, status,
         title/prompt search, since/until, repo) to a statement and return it.
 
         Shared so the page query and the workflow_hidden_count query run an
@@ -545,13 +600,14 @@ class _SessionListQuery:
         workflow/origin clause is applied by the caller, NOT here.
         `skip_date=True` omits the since/until bounds so callers can count
         rows outside the current date window; `skip_repo=True` omits the repo
-        narrowing so a facet can still show its sibling repos' counts.
+        narrowing so a facet can still show its sibling repos' counts, and
+        `skip_status=True` does the same for the status facet.
         """
         if self.kind in _KIND_IS_TEST:
             s = s.where(SessionModel.is_test == _KIND_IS_TEST[self.kind])
         s = self._apply_trace_id(s)
-        if self.active_filter != 'all':
-            s = s.where(_session_active_clause(self.active_filter == 'active'))
+        if self.statuses and not skip_status:
+            s = s.where(self.status_expr.in_(self.statuses))
         if self.search:
             s = s.where(search_clause(self.search, self.scope))
         if not skip_date:
@@ -576,10 +632,11 @@ class _SessionListQuery:
                                SessionModel.origin.not_in(_RUN_ORIGINS)))
         return s
 
-    def narrow(self, s, skip_repo=False):
+    def narrow(self, s, skip_repo=False, skip_status=False):
         """The request's COMPLETE filter set: shared WHERE + origin + work + tag."""
         return _apply_tag_filter(
-            _apply_empty(self.apply_origin(self.apply_filters(s, skip_repo=skip_repo)),
+            _apply_empty(self.apply_origin(self.apply_filters(
+                s, skip_repo=skip_repo, skip_status=skip_status)),
                          self.empty),
             self.tag_slugs)
 
@@ -639,10 +696,10 @@ def _session_list_envelope_extras(session, q):
         # tag selection itself (so a selected facet still shows sibling counts).
         'tag_counts': _tag_counts(session, q.apply_filters),
     }
-    # Envelope facets: total/active over the SAME population the page
-    # paginates, and repo counts over everything but the repo selection
+    # Envelope facets: total over the SAME population the page paginates,
+    # status counts over everything but the status selection, and repo counts over everything but the repo selection
     # (same sibling-counts rule as tag_counts).
-    facets = _list_facet_counts(session, q.narrow)
+    facets = _list_facet_counts(session, q)
     facets['repo_counts'] = _repo_counts(
         session, lambda s: q.narrow(s, skip_repo=True))
     return extras, facets
@@ -675,10 +732,10 @@ def api_sessions():
                            real → only is_test=0 (default, matches legacy)
                            test → only is_test=1
                            all  → both
-      active=active|inactive|all
-                         — match the same rule the table uses for the
-                           green "active" badge: status='active' OR
-                           (status unset AND last_seen within 10 minutes).
+      status=<s>[,<s>…]  — OR of row statuses (`ROW_STATUSES`, the keys of
+                           STATES in sessionStatus.js), classified by
+                           `_row_status_expr` exactly as each row's chip is.
+                           Unknown words are dropped; none left = any.
       trace_id=<prefix>  — case-insensitive prefix match on trace_id.
       q=<text>           — case-insensitive substring search term
       scope=title|prompt|both — where `q` matches:

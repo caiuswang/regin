@@ -10,7 +10,15 @@ defineProps({
   // set as a DOM property (`.prop`) — there is no `indeterminate` attribute.
   indeterminate: { type: Boolean, default: false },
 })
-defineEmits(['update:modelValue'])
+const emit = defineEmits(['update:modelValue'])
+
+// `change` is a plain Event with no modifier keys, so the shift state is read
+// off the click that precedes it — a list uses it for range selection.
+let shiftKey = false
+function onChange(e) {
+  emit('update:modelValue', e.target.checked, { shiftKey })
+  shiftKey = false
+}
 </script>
 
 <template>
@@ -21,7 +29,8 @@ defineEmits(['update:modelValue'])
       :checked="modelValue"
       :indeterminate.prop="indeterminate"
       :disabled="disabled"
-      @change="$emit('update:modelValue', $event.target.checked)"
+      @click="shiftKey = $event.shiftKey"
+      @change="onChange"
     />
     <span v-if="label || $slots.default" class="ds-check-label">
       <slot>{{ label }}</slot>

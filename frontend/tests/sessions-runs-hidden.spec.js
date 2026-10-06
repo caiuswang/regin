@@ -62,7 +62,7 @@ async function seed(page, tag = '') {
     localStorage.setItem('regin_sessions_group', 'flat')
     localStorage.setItem('regin_sessions_range', 'all')
     localStorage.setItem('regin_sessions_kind', 'real')
-    localStorage.setItem('regin_sessions_active', 'all')
+    localStorage.setItem('regin_sessions_status', '[]')
     localStorage.setItem('regin_sessions_tag', t)
     localStorage.setItem('regin_sessions_repo', 'all')
     localStorage.setItem('regin_sessions_runs', '0')

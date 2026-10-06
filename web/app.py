@@ -355,6 +355,7 @@ ADMIN_API_ENDPOINTS = frozenset({
     "trace.api_session_workflow_runs",
     "trace.api_span_ancestors",
     "trace.api_session_batch_delete",
+    "trace.api_session_batch_close",
     "trace.api_session_delete",
     "trace.api_session_tags",
     "trace.api_session_tag_add",
