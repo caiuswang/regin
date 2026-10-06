@@ -115,7 +115,7 @@ onBeforeUnmount(() => window.removeEventListener(TASK_CAPTURED_EVENT, afterWrite
 </script>
 
 <template>
-  <div class="tv space-y-3" data-pl-part="panel" data-pl-chapter="2-1" data-pl-title="Quest log">
+  <div class="tv space-y-3" data-pl-part="panel">
     <Teleport v-if="isCurrentTab" defer to="#pipeline-actions">
       <PipelineCreateButton kind="task" testid="task-new" />
     </Teleport>
@@ -123,6 +123,8 @@ onBeforeUnmount(() => window.removeEventListener(TASK_CAPTURED_EVENT, afterWrite
     <TaskToolbar
       ref="toolbar"
       data-pl-part="panel-head"
+      data-pl-chapter="2-1"
+      data-pl-title="Quest log"
       :view="view"
       :mobile="mobile"
       :q="view === 'graph' ? find : query.state.value.q"

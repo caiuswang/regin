@@ -136,7 +136,7 @@ useTaskShortcuts({
 
     <div class="fv-layout" :class="{ 'fv-layout--folded': isMdUp && railFolded }">
       <div class="fv-main" data-pl-part="panel">
-        <div class="fv-toolbar" data-pl-part="panel-head">
+        <div class="fv-toolbar" data-pl-part="panel-head" data-pl-chapter="3-1" data-pl-title="Features">
           <PlSlot
             name="FeatureStageTabs"
             :counts="extras.stage_counts || null"
@@ -220,9 +220,9 @@ useTaskShortcuts({
           @changed="reload"
         />
       </aside>
-      <section v-else class="fv-triage-card" data-testid="features-triage-card">
+      <section v-else class="fv-triage-card" data-testid="features-triage-card" data-pl-part="panel">
         <span>Reports nobody has routed</span>
-        <Button variant="secondary" class="fv-triage-go" data-testid="features-triage-open" @click="triaging = true">
+        <Button variant="secondary" class="fv-triage-go" data-testid="features-triage-open" data-pl-part="key" @click="triaging = true">
           Triage
         </Button>
       </section>

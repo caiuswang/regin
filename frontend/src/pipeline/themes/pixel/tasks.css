@@ -4,37 +4,10 @@
  * selector starts at a [data-pl-part] / [data-pl-glyph] hook under
  * html[data-pl-theme="pixel"], and only --pl-* properties are declared.
  *
- * Chapter numbers and lane prefixes are the hook's own data-pl-chapter drawn
+ * Group chapters and lane prefixes are the hook's own data-pl-chapter drawn
  * by ::before, so classic, which never draws them, keeps an unchanged DOM.
+ * The quest log's own 2-1 line is features.css's panel-head chapter rule.
  */
-
-/* ── Quest log frame ─────────────────────────────────────────────────── */
-/* Desktop only: below 768 px the tab keeps classic's mobile layout (R9). */
-@media (min-width: 768px) {
-    html[data-pl-theme="pixel"] [data-pl-part="panel"][data-pl-chapter] {
-        padding: 0 1rem 1rem;
-        background: var(--pl-paper);
-        box-shadow: 0 0 0 1px var(--pl-ink), 3px 3px 0 1px var(--pl-ink);
-    }
-
-    html[data-pl-theme="pixel"] [data-pl-part="panel"][data-pl-chapter]::before {
-        content: attr(data-pl-chapter) "\00a0\00a0\00a0" attr(data-pl-title);
-        display: block;
-        margin: 0 -1rem;
-        padding: 0.625rem 1rem;
-        border-bottom: 2px solid var(--pl-ink);
-        font-family: var(--pl-font);
-        font-size: 11px;
-        font-weight: 700;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-        color: var(--pl-ink);
-    }
-
-    html[data-pl-theme="pixel"] [data-pl-part="panel"][data-pl-chapter] [data-pl-part="panel-head"] {
-        padding-bottom: 0.75rem;
-    }
-}
 
 html[data-pl-theme="pixel"] [data-pl-part="kbd"] {
     border-color: var(--pl-ink);

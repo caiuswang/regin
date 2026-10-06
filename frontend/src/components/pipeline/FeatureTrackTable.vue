@@ -5,6 +5,7 @@ import { ref } from 'vue'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
 import StageSegments from './StageSegments.vue'
+import PlSlot from './PlSlot.vue'
 import FeatureExpansion from './FeatureExpansion.vue'
 import FeatureNextStep from '../features/FeatureNextStep.vue'
 import { ago, defectTally } from '../../utils/pipelineFormat'
@@ -33,8 +34,8 @@ function cost(row) {
 </script>
 
 <template>
-  <div class="ftt" data-testid="feature-table" role="table" aria-label="Features">
-    <div class="ftt-head" role="row">
+  <div class="ftt" data-testid="feature-table" data-pl-part="table" role="table" aria-label="Features">
+    <div class="ftt-head" data-pl-part="table-head" role="row">
       <span role="columnheader">Feature</span>
       <span role="columnheader">Stage</span>
       <span role="columnheader">Tasks</span>
@@ -42,12 +43,14 @@ function cost(row) {
       <span role="columnheader" class="num">Defects</span>
       <span role="columnheader" class="num">Active</span>
     </div>
-    <div class="ftt-body">
+    <div class="ftt-body" data-pl-part="rows">
       <div
         v-for="row in rows"
         :key="row.id"
         class="ftt-group"
         :class="{ 'is-expanded': expanded.has(row.id) }"
+        data-pl-part="row"
+        :data-expanded="expanded.has(row.id) ? '' : undefined"
         role="rowgroup"
       >
         <div class="ftt-row" role="row" :data-testid="`feature-row-${row.id}`">
@@ -56,6 +59,7 @@ function cost(row) {
               variant="ghost"
               size="icon"
               class="ftt-toggle"
+              data-pl-part="row-toggle"
               :aria-expanded="expanded.has(row.id)"
               :aria-label="`${expanded.has(row.id) ? 'Collapse' : 'Expand'} feature #${row.id}`"
               :data-testid="`feature-toggle-${row.id}`"
@@ -63,15 +67,19 @@ function cost(row) {
             >
               <Icon :name="expanded.has(row.id) ? 'chevron-down' : 'chevron-right'" :size="13" />
             </Button>
-            <span class="ftt-id" data-testid="feature-id">#{{ row.id }}</span>
+            <span class="ftt-id" data-testid="feature-id" data-pl-part="row-id">#{{ row.id }}</span>
             <span class="ftt-name">
               <router-link :to="`/features/${row.id}`" class="ftt-title focus-visible:outline-2 focus-visible:outline-blue-500">{{ row.title }}</router-link>
               <span class="ftt-meta">{{ row.external_ref || 'no ref' }} · {{ cost(row) }}</span>
               <FeatureNextStep :step="row.next_step" />
             </span>
           </span>
-          <span role="cell"><StageSegments :stage="row.stage" /></span>
-          <span role="cell" class="ftt-tasks">
+          <span role="cell">
+            <PlSlot name="StageTrack" :stage="row.stage" :live="row.next_step?.kind === 'watch'" :open-defects="row.defects.open">
+              <StageSegments :stage="row.stage" />
+            </PlSlot>
+          </span>
+          <span role="cell" class="ftt-tasks" data-pl-part="stat">
             <router-link
               v-if="row.tasks"
               :to="tasksLink(row.id)"
@@ -79,12 +87,12 @@ function cost(row) {
               :data-testid="`feature-tasks-link-${row.id}`"
             >{{ row.tasks_done }} / {{ row.tasks }}</router-link>
             <span v-else>0 / 0</span>
-            <span class="ftt-track"><span class="ftt-fill tone-success" :style="{ width: `${row.tasks ? (100 * row.tasks_done) / row.tasks : 0}%` }" /></span>
+            <span class="ftt-track" data-pl-part="meter"><span class="ftt-fill tone-success" data-pl-part="meter-fill" :style="{ width: `${row.tasks ? (100 * row.tasks_done) / row.tasks : 0}%` }" /></span>
           </span>
-          <span role="cell" class="ftt-pips" data-testid="feature-rounds" :aria-label="`${row.rounds} rounds`">
-            <span v-for="i in pips(row)" :key="i" class="ftt-pip" />
+          <span role="cell" class="ftt-pips" data-testid="feature-rounds" data-pl-part="pips" :aria-label="`${row.rounds} rounds`">
+            <span v-for="i in pips(row)" :key="i" class="ftt-pip" data-pl-part="pip" />
           </span>
-          <span role="cell" class="num" :class="{ 'is-warn': row.defects.open }">
+          <span role="cell" class="num" :class="{ 'is-warn': row.defects.open }" data-pl-part="stat" :data-warn="row.defects.open ? '' : undefined">
             <router-link
               v-if="row.defects.total"
               :to="defectsLink(row.id)"
@@ -93,7 +101,7 @@ function cost(row) {
             >{{ defectTally(row.defects) }}</router-link>
             <span v-else>{{ defectTally(row.defects) }}</span>
           </span>
-          <span role="cell" class="num muted">{{ ago(row.last_activity) }}</span>
+          <span role="cell" class="num muted" data-pl-part="stat">{{ ago(row.last_activity) }}</span>
         </div>
         <div v-if="expanded.has(row.id)" class="ftt-expansion">
           <FeatureExpansion :feature="row" />

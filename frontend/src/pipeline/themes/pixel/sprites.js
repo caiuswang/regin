@@ -69,6 +69,7 @@ export const SPRITES = {
   'bug.cold': { grid: BUG, palette: { ...INK, a: 'gray' } },
   flag: { grid: FLAG, palette: { ...INK, c: 'green' } },
   'flag.escaped': { grid: FLAG, palette: { ...INK, c: 'amber' } },
+  'flag.cold': { grid: FLAG, palette: { ...INK, c: 'gray' } },
   bulb: {
     grid: [
       '..kkkkk..',
@@ -167,6 +168,46 @@ export const SPRITES = {
       'kkkkkkkkkkkkk',
     ],
     palette: INK,
+  },
+  // The loop scene's three stations.
+  board: {
+    grid: [
+      'kkkkkkkkkkkkk',
+      'kpbbpyypvvppk',
+      'kpppppppppppk',
+      'kpbbpppppggpk',
+      'kpppppppppppk',
+      'kkkkkkkkkkkkk',
+      '..k.......k..',
+      '..k.......k..',
+    ],
+    palette: { ...INK, b: 'blue', y: 'yellow', v: 'violet', g: 'green' },
+  },
+  anvil: {
+    grid: [
+      'kkkkkkkkkkk',
+      'ksssssssssk',
+      '.kkkkkkkkk.',
+      '...ksssk...',
+      '...ksssk...',
+      '..kkkkkkk..',
+      '.ksssssssk.',
+      'kkkkkkkkkkk',
+    ],
+    palette: { ...INK, s: 'gray' },
+  },
+  den: {
+    grid: [
+      '....kkkkk....',
+      '..kkssssskk..',
+      '.ksskkkkkssk.',
+      '.ksk.....ksk.',
+      'ksk.......ksk',
+      'ksk.......ksk',
+      'ksk.......ksk',
+      'kkk.......kkk',
+    ],
+    palette: { ...INK, s: 'gray' },
   },
 }
 

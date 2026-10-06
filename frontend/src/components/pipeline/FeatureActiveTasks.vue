@@ -5,6 +5,7 @@
 import { computed, onMounted, ref } from 'vue'
 import api from '../../api'
 import TaskStatusIcon from '../tasks/TaskStatusIcon.vue'
+import PlGlyph from './PlGlyph.vue'
 import { ago } from '../../utils/pipelineFormat'
 import { slicesLink, tasksLink } from '../../utils/featureLinks'
 import { taskTitle } from '../../utils/taskTitle.js'
@@ -52,6 +53,11 @@ const heading = computed(() => HEAD
 const rows = computed(() => groups.value.flatMap(g => g.rows || []))
 const more = computed(() => groups.value.reduce((n, g) => n + (g.more || 0), 0))
 
+function glyph(t) {
+  if (t.status === 'running') return 'task.running'
+  return t.waits_on || t.status === 'blocked' ? 'task.blocked' : 'task.ready'
+}
+
 function label(t) {
   if (t.status === 'running') return t.live?.started_at ? `running · ${ago(t.live.started_at)}` : 'running'
   if (t.waits_on) return `${t.status} · waits #${t.waits_on.id}`
@@ -61,7 +67,7 @@ function label(t) {
 
 <template>
   <section class="fa" :data-testid="`feature-active-${featureId}`">
-    <h3 class="fa-label" data-testid="feature-active-heading">Active tasks<template v-if="heading"> · {{ heading }}</template></h3>
+    <h3 class="fa-label" data-testid="feature-active-heading" data-pl-part="section-label"><PlGlyph kind="feature.building" />Active tasks<template v-if="heading"> · {{ heading }}</template></h3>
     <p v-if="notArmed" class="fa-ideas" data-testid="feature-active-ideas">
       {{ notArmed }} not armed ·
       <router-link
@@ -70,15 +76,15 @@ function label(t) {
         data-testid="feature-active-arm"
       >Arm →</router-link>
     </p>
-    <p v-if="!loaded" class="fa-muted">Loading…</p>
-    <p v-else-if="error" class="fa-muted" role="alert">{{ error }}</p>
-    <p v-else-if="!rows.length" class="fa-muted">Nothing is running or armed.</p>
+    <p v-if="!loaded" class="fa-muted" data-pl-part="note">Loading…</p>
+    <p v-else-if="error" class="fa-muted" role="alert" data-pl-part="note">{{ error }}</p>
+    <p v-else-if="!rows.length" class="fa-muted" data-pl-part="note">Nothing is running or armed.</p>
     <ul v-else class="fa-list">
-      <li v-for="t in rows" :key="t.id" class="fa-item" :data-testid="`feature-active-task-${t.id}`">
-        <TaskStatusIcon :status="t.status" :size="13" />
-        <span class="fa-id">#{{ t.id }}</span>
+      <li v-for="t in rows" :key="t.id" class="fa-item" :data-testid="`feature-active-task-${t.id}`" data-pl-part="sub-row" :data-status="t.status">
+        <PlGlyph :kind="glyph(t)"><TaskStatusIcon :status="t.status" :size="13" /></PlGlyph>
+        <span class="fa-id" data-pl-part="row-id">#{{ t.id }}</span>
         <router-link :to="`/tasks/${t.id}`" class="fa-title focus-visible:outline-2 focus-visible:outline-blue-500">{{ taskTitle(t) }}</router-link>
-        <span class="fa-state" :class="`fa-state--${t.status}`">{{ label(t) }}</span>
+        <span class="fa-state" :class="`fa-state--${t.status}`" data-pl-part="state" :data-status="t.status">{{ label(t) }}</span>
       </li>
     </ul>
     <router-link

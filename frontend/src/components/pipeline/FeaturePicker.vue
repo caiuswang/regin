@@ -112,7 +112,7 @@ defineExpose({ focus: () => field.value?.focus() })
 
 <template>
   <div class="fp">
-    <div v-if="chosen && model" class="fp-chosen" :data-testid="`${testid}-chosen`">
+    <div v-if="chosen && model" class="fp-chosen" :data-testid="`${testid}-chosen`" data-pl-part="input">
       <span class="fp-chosen__label">#{{ chosen.id }} {{ chosen.title }}</span>
       <Button
         variant="ghost" size="icon" class="fp-clear" :disabled="disabled"
@@ -135,6 +135,7 @@ defineExpose({ focus: () => field.value?.focus() })
         :placeholder="placeholder"
         :disabled="disabled"
         :data-testid="testid"
+        data-pl-part="input"
         @focus="reveal"
         @click="reveal"
         @input="onInput"
@@ -147,6 +148,7 @@ defineExpose({ focus: () => field.value?.focus() })
         role="listbox"
         :aria-label="label"
         :data-testid="`${testid}-list`"
+        data-pl-part="picker"
       >
         <li v-if="error" class="fp-note fp-note--error" role="alert">{{ error }}</li>
         <li v-else-if="!rows.length" class="fp-note">
@@ -161,6 +163,7 @@ defineExpose({ focus: () => field.value?.focus() })
           :class="{ 'is-active': i === active }"
           :aria-selected="i === active"
           :data-testid="`${testid}-option-${row.id}`"
+          data-pl-part="picker-row"
           @mousedown.prevent
           @click.stop="choose(row)"
         >#{{ row.id }} {{ row.title }}</li>

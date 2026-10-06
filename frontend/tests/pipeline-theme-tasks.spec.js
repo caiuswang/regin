@@ -87,7 +87,7 @@ async function viewLoaded(page, view, ids) {
 // Everything a spec or a reader can address in the tab: test ids with their
 // text, and every control's accessible name and state.
 function surface() {
-  const panel = document.querySelector('[data-pl-part="panel"][data-pl-chapter]')
+  const panel = document.querySelector('[data-testid="task-toolbar"]').closest('[data-pl-part="panel"]')
   // Text nodes only, not an <svg><title>: a sprite stands where a status
   // icon stood, and the icon's name is compared through `images` instead.
   const text = (el) => {
@@ -168,9 +168,9 @@ test.describe('pixel theme — tasks', () => {
     await viewLoaded(page, 'list', ids)
     await pixelReady(page)
 
-    const panelTitle = await page.locator('[data-pl-part="panel"][data-pl-chapter]')
+    const panelTitle = await page.getByTestId('task-toolbar')
       .evaluate(el => getComputedStyle(el, '::before').content)
-    expect(panelTitle).toMatch(/^"2-1\s+Quest log"$/)
+    expect(panelTitle).toMatch(/^"2-1\s+Quest log"/)
 
     // Chapters follow the groups on screen, in order: 2-01 … 2-05.
     const heads = await page.locator('[data-testid^="next-step-group-"]').evaluateAll(groups => groups.map(g => {
@@ -192,7 +192,7 @@ test.describe('pixel theme — tasks', () => {
     }
 
     // RUN ALL is the panel's only primary key; row verbs are ink outlines.
-    await expect(page.locator('[data-pl-part="panel"][data-pl-chapter] [data-pl-part="key--primary"]')).toHaveCount(1)
+    await expect(page.locator('[data-pl-part="panel"]:has([data-testid="task-toolbar"]) [data-pl-part="key--primary"]')).toHaveCount(1)
     await expect(page.getByTestId('next-step-run-all')).toHaveAttribute('data-pl-part', 'key--primary')
     const fixes = page.getByTestId(`next-step-row-${ids.ready}`).getByTestId('task-fixes')
     await expect(fixes).toHaveText(`fixes D-${ids.defect}`)

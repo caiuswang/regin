@@ -5,7 +5,7 @@
 import { computed } from 'vue'
 import Icon from '../ui/Icon.vue'
 import SegmentBar from './SegmentBar.vue'
-import { loopParts } from '../../utils/pipelineFormat'
+import { loopFacts, loopNote, loopParts } from '../../utils/pipelineFormat'
 
 const props = defineProps({
   loop: { type: Object, required: true },
@@ -15,39 +15,11 @@ const props = defineProps({
   scope: { type: Object, default: () => ({}) },
 })
 
-const FACTS = {
-  Tasks: [['running', 'running'], ['ready', 'ready'], ['failed', 'failed', 'danger']],
-  Features: [['building', 'building'], ['spec', 'in spec'], ['escaped', 'escaped', 'warn']],
-  Defects: [['open', 'open'], ['triage', 'to triage', 'warn']],
-}
-
-// Every printed fact is a way to exactly its rows: the task groups by the
-// next-step list's own group key, the feature stages by the stage filter.
-// The triage queue is the Features tab's rail, which ignores the scope (D1).
-function linkOf(stage, key) {
-  const scope = props.scope
-  if (stage === 'Tasks') return { path: '/tasks', query: { ...scope, view: 'list', group: key } }
-  if (stage === 'Features') return { path: '/features', query: { ...scope, stage: key } }
-  if (key === 'open') return { path: '/defects', query: { ...scope, status: 'open', queue: 'out' } }
-  return { path: '/features', query: { ...scope } }
-}
-
-function factsOf(stage) {
-  const n = key => (key === 'ready' ? props.ready : stage.parts.find(p => p.key === key)?.n || 0)
-  return (FACTS[stage.label] || [])
-    .map(([key, words, tone]) => ({ key, words, tone, n: n(key), to: linkOf(stage.label, key) }))
-    .filter(f => f.n > 0)
-}
-
 const stages = computed(() => (props.loop.stages || []).map(stage => ({
-  ...stage, parts: loopParts(stage.parts), facts: factsOf(stage),
+  ...stage, parts: loopParts(stage.parts), facts: loopFacts(stage, props.ready, props.scope),
 })))
 
-const note = computed(() => {
-  const n = props.loop.fix_tasks || 0
-  if (!n) return ''
-  return `${n} fix task${n === 1 ? '' : 's'} carr${n === 1 ? 'ies' : 'y'} open defects back into the queue`
-})
+const note = computed(() => loopNote(props.loop.fix_tasks))
 </script>
 
 <template>

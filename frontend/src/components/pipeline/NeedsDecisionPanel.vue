@@ -20,20 +20,23 @@ const newest = computed(() => props.decision.rows[0] || null)
 </script>
 
 <template>
-  <section v-if="compact" class="nd-card" data-testid="needs-decision">
+  <section v-if="compact" class="nd-card" data-pl-part="panel" data-testid="needs-decision">
     <div class="nd-card__text">
       <strong>{{ decision.waiting }} defect{{ decision.waiting === 1 ? '' : 's' }} need{{ decision.waiting === 1 ? 's' : '' }} a decision<template v-if="decision.all_projects"> · all projects</template></strong>
       <span v-if="newest">Newest: {{ defectRef(newest.id) }} · {{ monthDay(newest.opened_at) }}</span>
     </div>
-    <Button v-if="decision.waiting" variant="secondary" class="nd-card__go" data-testid="needs-decision-triage"
+    <Button v-if="decision.waiting" variant="secondary" class="nd-card__go" data-pl-part="key" data-testid="needs-decision-triage"
             @click="emit('triage')"
     >Triage</Button>
   </section>
 
   <section v-else class="pl-panel nd" data-pl-part="panel" data-testid="needs-decision" aria-labelledby="nd-title">
-    <header class="pl-panel__head" data-pl-part="panel-head">
+    <header class="pl-panel__head" data-pl-part="panel-head" data-pl-chapter="1-3">
       <h2 id="nd-title" class="pl-panel__title" data-pl-part="panel-title">Needs a decision</h2>
-      <span class="pl-panel__sub" data-pl-part="panel-meta" data-testid="needs-decision-count">{{ decision.waiting }}</span>
+      <span
+        class="pl-panel__sub" data-pl-part="panel-meta" data-pl-label="waiting"
+        :data-tone="decision.waiting ? 'warn' : undefined" data-testid="needs-decision-count"
+      >{{ decision.waiting }}</span>
       <span v-if="decision.all_projects" class="pl-panel__sub" data-pl-part="panel-meta" data-testid="needs-decision-all-projects">· all projects</span>
       <router-link :to="featuresTo()" class="pl-panel__link focus-visible:outline-2 focus-visible:outline-blue-500" data-pl-part="panel-link"
                    data-testid="needs-decision-triage"
@@ -43,13 +46,13 @@ const newest = computed(() => props.decision.rows[0] || null)
       Nothing waiting.
     </p>
     <ul v-else>
-      <li v-for="row in decision.rows" :key="row.id" class="nd-row" :data-testid="`needs-decision-row-${row.id}`">
-        <router-link :to="`/defects/${row.id}`" class="nd-id focus-visible:outline-2 focus-visible:outline-blue-500">
+      <li v-for="row in decision.rows" :key="row.id" class="nd-row" data-pl-part="row" :data-testid="`needs-decision-row-${row.id}`">
+        <router-link :to="`/defects/${row.id}`" class="nd-id focus-visible:outline-2 focus-visible:outline-blue-500" data-pl-part="row-id">
           {{ defectRef(row.id) }}
         </router-link>
         <p class="nd-symptom" :title="row.symptom" data-testid="needs-decision-symptom">{{ row.symptom }}</p>
         <span class="nd-meta">{{ [reopenedLabel(row.round), monthDay(row.opened_at)].filter(Boolean).join(' · ') }}</span>
-        <Button v-if="canWrite" size="sm" variant="secondary" class="nd-act"
+        <Button v-if="canWrite" size="sm" variant="secondary" class="nd-act" data-pl-part="key"
                 :data-testid="`needs-decision-attribute-${row.id}`"
                 @click="$router.push(featuresTo(row.id))"
         >Attribute</Button>

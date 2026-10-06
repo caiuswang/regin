@@ -1,6 +1,11 @@
 import { h } from 'vue'
 import PixelSprite from './PixelSprite.vue'
+import FeatureStageTabs from './slots/FeatureStageTabs.vue'
+import StageTrack from './slots/StageTrack.vue'
+import OverviewLoop from './slots/OverviewLoop.vue'
+import ProjectsPanel from './slots/ProjectsPanel.vue'
 import './tokens.css'
+import './features.css'
 import './tasks.css'
 
 // A glyph is a sprite drawn where <PlGlyph kind="…"> sits; PlGlyph's own
@@ -15,7 +20,12 @@ function glyph(name) {
 }
 
 export default {
-  slots: {},
+  slots: {
+    FeatureStageTabs,
+    StageTrack,
+    OverviewLoop,
+    ProjectsPanel,
+  },
   glyphs: {
     portfolio: glyph('grid'),
     project: glyph('bot'),
@@ -26,5 +36,7 @@ export default {
     'task.failed': glyph('bot.failed'),
     'task.idea': glyph('bulb'),
     'task.done': glyph('check'),
+    'feature.building': glyph('bot'),
+    'defect.wild': glyph('bug'),
   },
 }
