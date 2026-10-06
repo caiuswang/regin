@@ -6,10 +6,9 @@ import { computed, onActivated, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import api from '../api'
 import Button from '../components/ui/Button.vue'
-import OverviewLoop from '../components/pipeline/OverviewLoop.vue'
+import PlSlot from '../components/pipeline/PlSlot.vue'
 import RunNextPanel from '../components/pipeline/RunNextPanel.vue'
 import NeedsDecisionPanel from '../components/pipeline/NeedsDecisionPanel.vue'
-import ProjectsPanel from '../components/pipeline/ProjectsPanel.vue'
 import ProjectScopePanel from '../components/pipeline/ProjectScopePanel.vue'
 import TriageSheet from '../components/pipeline/TriageSheet.vue'
 import PipelineCreateButton from '../components/pipeline/PipelineCreateButton.vue'
@@ -109,7 +108,7 @@ onActivated(() => { if (arrived) load(); arrived = true })
 
     <template v-else>
       <p v-if="error" class="ov-stale" role="status">Showing the last good read — {{ error }}</p>
-      <OverviewLoop :loop="data.loop" :ready="data.run_next.ready" :compact="!isMdUp" :scope="scopeQuery(scope)" />
+      <PlSlot name="OverviewLoop" :loop="data.loop" :ready="data.run_next.ready" :compact="!isMdUp" :scope="scopeQuery(scope)" />
 
       <ProjectScopePanel
         v-if="data.project_head && isMdUp"
@@ -129,7 +128,8 @@ onActivated(() => { if (arrived) load(); arrived = true })
         />
       </div>
 
-      <ProjectsPanel
+      <PlSlot
+        name="ProjectsPanel"
         v-if="data.projects"
         :panel="data.projects"
         :compact="!isMdUp"

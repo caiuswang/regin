@@ -20,6 +20,8 @@ import { invalidatePipelineCounts } from '../composables/usePipelineCounts'
 import { usePipelineLive } from '../composables/usePipelineEvents'
 import { TASK_CAPTURED_EVENT } from '../composables/useQuickCapture.js'
 import { useFlash } from '../composables/useFlash'
+import { usePipelineTheme, useShellTheme } from '../composables/usePipelineTheme'
+import PipelineThemeSwitch from '../components/pipeline/PipelineThemeSwitch.vue'
 import api from '../api'
 import TaskComposerDialog from '../components/tasks/TaskComposerDialog.vue'
 import NewFeatureDialog from '../components/features/NewFeatureDialog.vue'
@@ -42,6 +44,8 @@ function isActive(tab) {
 }
 
 const onTab = computed(() => TABS.some(t => t.path === route.path))
+useShellTheme(() => onTab.value)
+const { ready: themeReady } = usePipelineTheme()
 // A detail route is a page of its own, not a tab: it keeps the strip above it
 // but must never be cached, or two ids would share one mount.
 const CACHED_TABS = ['OverviewView', 'TasksView', 'FeaturesView']
@@ -175,10 +179,10 @@ usePipelineLive(() => loadCounts(carried.value))
 
 <template>
   <div class="pl-shell">
-    <header class="pl-head" data-testid="pipeline-header">
+    <header class="pl-head" data-testid="pipeline-header" data-pl-part="head">
       <div class="pl-head__row">
         <div class="pl-head__title">
-          <h1 class="page-title">Pipeline</h1>
+          <h1 class="page-title" data-pl-part="title">Pipeline</h1>
           <ProjectPicker
             ref="picker"
             :scope="carried"
@@ -187,16 +191,18 @@ usePipelineLive(() => loadCounts(carried.value))
             @select="pickScope"
           />
         </div>
-        <span v-if="subline && isMdUp" class="pl-subline" data-testid="pipeline-subline">{{ subline }}</span>
+        <span v-if="subline && isMdUp" class="pl-subline" data-testid="pipeline-subline" data-pl-part="meta-label">{{ subline }}</span>
         <span class="pl-spacer" />
-        <span v-if="updatedLabel && isMdUp" class="pl-updated" data-testid="pipeline-updated">{{ updatedLabel }}</span>
+        <PipelineThemeSwitch v-if="onTab && !isMdUp" />
+        <span v-if="updatedLabel && isMdUp" class="pl-updated" data-testid="pipeline-updated" data-pl-part="meta-label">{{ updatedLabel }}</span>
         <!-- The tabs are siblings of this header, so a tab's create action
              teleports in here. Below 768px the same slot is the floating
              create button. -->
         <div id="pipeline-actions" class="pl-actions" />
       </div>
 
-      <nav class="pl-tabs" aria-label="Pipeline sections" data-testid="pipeline-tabs">
+      <div class="pl-tabs-row">
+      <nav class="pl-tabs" aria-label="Pipeline sections" data-testid="pipeline-tabs" data-pl-part="tabs">
         <router-link
           v-for="tab in TABS"
           :key="tab.path"
@@ -205,15 +211,19 @@ usePipelineLive(() => loadCounts(carried.value))
           :class="{ 'is-active': isActive(tab) }"
           :aria-current="isActive(tab) ? 'page' : undefined"
           :data-testid="`pipeline-tab-${tab.key}`"
+          data-pl-part="tab"
         >
           {{ tab.label }}
           <span
             v-if="tabCount(tab) != null"
             class="pl-tab__count"
             :data-testid="`pipeline-count-${tab.key}`"
+            data-pl-part="count"
           >{{ tabCount(tab) }}</span>
         </router-link>
       </nav>
+      <PipelineThemeSwitch v-if="onTab && isMdUp" />
+      </div>
     </header>
 
     <!-- A count nobody could fetch costs the header its numbers, never the
@@ -226,11 +236,15 @@ usePipelineLive(() => loadCounts(carried.value))
          selection and scroll across a switch. `include` rather than a `v-if`
          on the child: a KeepAlive whose single slot is conditionally empty
          corrupts Vue's activate/deactivate bookkeeping. -->
-    <router-view v-slot="{ Component }">
-      <KeepAlive :include="CACHED_TABS">
-        <component :is="Component" :key="route.path" />
-      </KeepAlive>
-    </router-view>
+    <!-- Hidden, not unmounted, while a theme module loads: a theme never
+         flashes in over classic, and the kept-alive tabs keep their state. -->
+    <div v-show="themeReady || !onTab" class="pl-body">
+      <router-view v-slot="{ Component }">
+        <KeepAlive :include="CACHED_TABS">
+          <component :is="Component" :key="route.path" />
+        </KeepAlive>
+      </router-view>
+    </div>
 
     <template v-if="canWrite">
       <TaskComposerDialog
@@ -265,6 +279,10 @@ usePipelineLive(() => loadCounts(carried.value))
 .pl-updated { font-size: 12px; color: var(--color-fg-faint); white-space: nowrap; }
 .pl-actions { display: flex; align-items: center; gap: 0.5rem; flex: none; }
 
+.pl-tabs-row { display: flex; align-items: center; gap: 0.75rem; }
+.pl-tabs-row :deep(.pl-theme-switch) { margin-left: auto; }
+.pl-head :deep(.pl-theme-switch) { height: 28px; padding: 0 0.5rem; font-size: 12px; color: var(--color-fg-muted); }
+.pl-body { display: contents; }
 .pl-tabs { display: flex; gap: 1.25rem; margin-bottom: -1px; }
 .pl-tab {
     display: inline-flex; align-items: center; gap: 0.4rem;
@@ -284,6 +302,7 @@ usePipelineLive(() => loadCounts(carried.value))
 @media (max-width: 767.98px) {
     .pl-head { border-bottom: 0; }
     .pl-head__title { flex-direction: column; align-items: flex-start; gap: 0; }
+    .pl-tabs-row > .pl-tabs { flex: 1; }
     .pl-tabs {
         gap: 0; margin: 0; padding: 3px; border-radius: var(--radius-xl);
         background: var(--color-surface-3);

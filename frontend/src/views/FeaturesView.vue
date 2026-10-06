@@ -25,7 +25,7 @@ import PipelineCreateButton from '../components/pipeline/PipelineCreateButton.vu
 import { usePipelineCreate } from '../composables/usePipelineCreate'
 import { usePipelineCounts } from '../composables/usePipelineCounts'
 import { usePipelineLive } from '../composables/usePipelineEvents'
-import FeatureStageTabs from '../components/pipeline/FeatureStageTabs.vue'
+import PlSlot from '../components/pipeline/PlSlot.vue'
 import FeatureTrackTable from '../components/pipeline/FeatureTrackTable.vue'
 import FeatureCard from '../components/pipeline/FeatureCard.vue'
 import TriageRail from '../components/pipeline/TriageRail.vue'
@@ -135,9 +135,10 @@ useTaskShortcuts({
     </Teleport>
 
     <div class="fv-layout" :class="{ 'fv-layout--folded': isMdUp && railFolded }">
-      <div class="fv-main">
-        <div class="fv-toolbar">
-          <FeatureStageTabs
+      <div class="fv-main" data-pl-part="panel">
+        <div class="fv-toolbar" data-pl-part="panel-head">
+          <PlSlot
+            name="FeatureStageTabs"
             :counts="extras.stage_counts || null"
             :stage="state.stage"
             :compact="!isMdUp"
@@ -152,6 +153,7 @@ useTaskShortcuts({
                 v-model="draft"
                 type="search"
                 class="fv-search__input"
+                data-pl-part="input"
                 placeholder="Search features"
                 aria-label="Search features by title, spec or tracker reference"
                 data-testid="list-search"
@@ -210,7 +212,7 @@ useTaskShortcuts({
         />
       </div>
 
-      <aside v-if="isMdUp" class="fv-rail">
+      <aside v-if="isMdUp" class="fv-rail" data-pl-part="panel">
         <TriageRail
           ref="rail"
           v-model:folded="railFolded"

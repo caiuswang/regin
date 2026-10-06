@@ -15,7 +15,7 @@ const emit = defineEmits(['all'])
 </script>
 
 <template>
-  <section class="pl-panel ps" data-testid="project-scope" aria-labelledby="ps-title">
+  <section class="pl-panel ps" data-pl-part="panel" data-testid="project-scope" aria-labelledby="ps-title">
     <header class="ps-head" data-testid="project-head">
       <div class="ps-crumb">
         <nav class="ps-trail" aria-label="Breadcrumb">
@@ -76,9 +76,9 @@ const emit = defineEmits(['all'])
         </tr>
       </tbody>
     </table>
-    <footer class="pl-panel__foot">
+    <footer class="pl-panel__foot" data-pl-part="panel-foot">
       <span>Showing {{ features.rows.length }} of {{ features.total }}</span>
-      <router-link :to="featuresTo" class="pl-panel__link focus-visible:outline-2 focus-visible:outline-blue-500"
+      <router-link :to="featuresTo" class="pl-panel__link focus-visible:outline-2 focus-visible:outline-blue-500" data-pl-part="panel-link"
                    data-testid="project-features-all"
       >All {{ features.total }} in Features →</router-link>
     </footer>

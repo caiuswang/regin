@@ -9,7 +9,7 @@
  * baselines must be recaptured from a pre-seam checkout, or the test proves
  * nothing.
  */
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { test, expect } from './auth-fixture.js'
 import { TEST_USER } from '../e2e-env.js'
@@ -55,6 +55,14 @@ function recordedAt() {
   return Date.parse(entries[0].startedDateTime)
 }
 
+// The HAR keeps the origin it was recorded on; replay it on this run's port.
+function harForThisPort(testInfo, baseURL) {
+  const origin = new URL(baseURL).origin
+  const path = testInfo.outputPath('classic.har')
+  writeFileSync(path, readFileSync(HAR, 'utf8').replace(/http:\/\/localhost:\d+/g, origin))
+  return path
+}
+
 async function visitAll(page, vp, onScreen) {
   await page.setViewportSize({ width: vp.width, height: vp.height })
   for (const path of SCREENS) {
@@ -76,17 +84,135 @@ test('record the classic fixture', async ({ page, request }) => {
 })
 
 for (const vp of VIEWPORTS) {
-  test(`test_classic_is_unchanged at ${vp.name}`, async ({ page }) => {
+  test(`test_classic_is_unchanged at ${vp.name}`, async ({ page, baseURL }, testInfo) => {
     test.skip(RECORD, 'recording')
-    await page.routeFromHAR(HAR, { url: '**/api/**', notFound: 'abort' })
+    await page.routeFromHAR(harForThisPort(testInfo, baseURL), { url: '**/api/**', notFound: 'abort' })
     await page.clock.setFixedTime(recordedAt())
     await visitAll(page, vp, async (path) => {
+      // The switch is new chrome in space that was empty before the seam.
+      await page.getByTestId('pipeline-theme-switch').evaluate((el) => { el.style.visibility = 'hidden' })
       await expect(page).toHaveScreenshot(`classic${path.replace('/', '-')}-${vp.name}.png`, {
         fullPage: true,
         animations: 'disabled',
-        // The switch is new chrome in space that was empty before the seam.
-        style: '[data-testid="pipeline-theme-switch"] { visibility: hidden !important; }',
       })
     })
   })
 }
+
+const PIXEL_BYTES = /\/themes\/pixel\/|pixel-[\w-]+\.js|silkscreen/i
+
+async function plTheme(page) {
+  return page.evaluate(() => document.documentElement.getAttribute('data-pl-theme'))
+}
+
+async function storeTheme(page, id) {
+  await page.addInitScript((value) => {
+    // Once per test, so a reload reads what the page itself last stored.
+    if (!sessionStorage.getItem('pl-theme-seeded')) {
+      localStorage.setItem('regin_pipeline_theme', value)
+      sessionStorage.setItem('pl-theme-seeded', '1')
+    }
+  }, id)
+}
+
+async function pickTheme(page, label) {
+  await page.getByTestId('pipeline-theme-switch').click()
+  await page.getByRole('option', { name: label }).click()
+}
+
+async function create(request, path, data) {
+  const { token } = await (await request.post(`${API_BASE}/api/auth/login`, { data: TEST_USER })).json()
+  const res = await request.post(`${API_BASE}${path}`, { headers: { Authorization: `Bearer ${token}` }, data })
+  expect(res.ok()).toBeTruthy()
+  return res.json()
+}
+
+test.describe('theme seam', () => {
+  test.skip(RECORD, 'recording')
+
+  test('test_default_is_classic', async ({ page }) => {
+    const requests = []
+    page.on('request', r => requests.push(r.url()))
+    await page.goto('/overview')
+    await expect(page.getByTestId('overview')).toBeVisible()
+    await expect.poll(() => plTheme(page)).toBe('classic')
+    expect(requests.filter(u => PIXEL_BYTES.test(u))).toEqual([])
+  })
+
+  test('test_unknown_stored_value', async ({ page }) => {
+    await storeTheme(page, 'neon')
+    await page.goto('/overview')
+    await expect(page.getByTestId('overview')).toBeVisible()
+    await expect.poll(() => plTheme(page)).toBe('classic')
+    await expect(page.getByTestId('pipeline-theme-switch')).toHaveText(/Classic/)
+  })
+
+  test('test_switching_keeps_place', async ({ page, request }) => {
+    const feature = await create(request, '/api/features', { title: `Seam switch ${Date.now()}` })
+    const url = `/features?stage=spec&q=${encodeURIComponent(feature.title)}`
+    await page.goto(url)
+    const toggle = page.getByTestId(`feature-toggle-${feature.id}`)
+    await toggle.click()
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    const before = page.url()
+    const dataReads = []
+    page.on('request', (r) => {
+      if (/\/api\/(features|tasks|defects|pipeline)\b/.test(r.url())) dataReads.push(r.url())
+    })
+
+    await pickTheme(page, 'Pixel')
+
+    await expect.poll(() => plTheme(page)).toBe('pixel')
+    expect(page.url()).toBe(before)
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(dataReads).toEqual([])
+    expect(await page.evaluate(() => localStorage.getItem('regin_pipeline_theme'))).toBe('pixel')
+
+    await page.reload()
+    await expect(page.getByTestId(`feature-toggle-${feature.id}`)).toBeVisible()
+    await expect.poll(() => plTheme(page)).toBe('pixel')
+  })
+
+  test('test_theme_attribute_is_scoped_to_the_shell', async ({ page, request }) => {
+    const { task } = await create(request, '/api/tasks', { title: `Seam scope ${Date.now()}`, priority: 'urgent' })
+    const feature = await create(request, '/api/features', { title: `Seam scope ${Date.now()}` })
+    await storeTheme(page, 'pixel')
+
+    await page.goto(`/features?q=${encodeURIComponent(feature.title)}`)
+    await expect.poll(() => plTheme(page)).toBe('pixel')
+    await page.locator(`a[href="/features/${feature.id}"]`).first().click()
+    await expect(page).toHaveURL(new RegExp(`/features/${feature.id}$`))
+    await expect.poll(() => plTheme(page)).toBeNull()
+
+    await page.getByTestId('pipeline-tab-tasks').click()
+    await expect.poll(() => plTheme(page)).toBe('pixel')
+    await page.locator(`a[href="/tasks/${task.id}"]`).first().click()
+    await expect(page).toHaveURL(new RegExp(`/tasks/${task.id}$`))
+    await expect.poll(() => plTheme(page)).toBeNull()
+  })
+
+  test('test_a_theme_chunk_that_fails_to_load', async ({ page }) => {
+    await page.route(PIXEL_BYTES, r => r.abort())
+    await storeTheme(page, 'pixel')
+    await page.goto('/overview')
+    await expect(page.getByTestId('overview')).toBeVisible()
+    await expect.poll(() => plTheme(page)).toBe('classic')
+    await expect(page.getByTestId('flash')).toContainText('Pixel theme failed to load — showing Classic')
+    expect(await page.evaluate(() => localStorage.getItem('regin_pipeline_theme'))).toBe('pixel')
+    // The switch names what is on screen, not the preference that failed.
+    await expect(page.getByTestId('pipeline-theme-switch')).toHaveText(/Classic/)
+  })
+})
+
+test.describe('the pixel project stores the pixel theme', () => {
+  test.skip(RECORD, 'recording')
+  test.use({ pipelineTheme: 'pixel' })
+
+  // The behaviour suites themselves run under the `pixel` Playwright project
+  // (playwright.config.js); this pins that its option actually lands.
+  test('test_behaviour_is_theme_independent', async ({ page }) => {
+    await page.goto('/overview')
+    await expect(page.getByTestId('overview')).toBeVisible()
+    await expect.poll(() => plTheme(page)).toBe('pixel')
+  })
+})

@@ -54,5 +54,12 @@ export default defineConfig({
     { name: 'chromium', use: { browserName: 'chromium' } },
     { name: 'mobile', testMatch: /responsive\.spec\.js$/, use: { ...devices['iPhone SE'] } },
     { name: 'tablet', testMatch: /responsive\.spec\.js$/, use: { ...devices['iPad (gen 7)'] } },
+    // A pipeline theme may change how the shell looks, never what it does, so
+    // the shell's behaviour suites run again with the pixel theme stored.
+    {
+      name: 'pixel',
+      testMatch: /(pipeline-(?!theme-)[\w-]+|tasks-[\w-]+|responsive)\.spec\.js$/,
+      use: { browserName: 'chromium', pipelineTheme: 'pixel' },
+    },
   ],
 })

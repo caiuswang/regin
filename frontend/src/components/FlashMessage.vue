@@ -13,6 +13,7 @@ const { state, clear } = useFlash()
     :class="['alert', state.type === 'success' ? 'alert-success' : state.type === 'error' ? 'alert-error' : 'alert-info']"
     class="flex items-center justify-between"
     data-testid="flash"
+    data-pl-part="toast"
   >
     <span>
       {{ state.message }}<template v-if="state.link">

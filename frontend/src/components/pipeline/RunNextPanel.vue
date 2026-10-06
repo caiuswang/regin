@@ -37,21 +37,21 @@ const subOf = row => runNextSub({ ...row, feature_id: null })
 </script>
 
 <template>
-  <section class="pl-panel rn" data-testid="run-next" aria-labelledby="rn-title">
+  <section class="pl-panel rn" data-pl-part="panel" data-testid="run-next" aria-labelledby="rn-title">
     <RunningNow v-if="running?.total" :running="running" :compact="compact" @stopped="emit('ran')" />
-    <header class="pl-panel__head" :class="{ 'rn-head--after': running?.total }">
-      <h2 id="rn-title" class="pl-panel__title">Run next</h2>
-      <span class="pl-panel__sub" data-testid="run-next-count">{{ runNext.ready }}</span>
+    <header class="pl-panel__head" data-pl-part="panel-head" :class="{ 'rn-head--after': running?.total }">
+      <h2 id="rn-title" class="pl-panel__title" data-pl-part="panel-title">Run next</h2>
+      <span class="pl-panel__sub" data-pl-part="panel-meta" data-testid="run-next-count">{{ runNext.ready }}</span>
       <router-link
         v-if="runNext.blocked" :to="groupTo('blocked')"
-        class="pl-panel__sub rn-link focus-visible:outline-2 focus-visible:outline-blue-500"
+        class="pl-panel__sub rn-link focus-visible:outline-2 focus-visible:outline-blue-500" data-pl-part="panel-meta"
         data-testid="run-next-blocked"
       >· {{ runNext.blocked }} blocked</router-link>
-      <router-link :to="groupTo('ready')" class="pl-panel__link focus-visible:outline-2 focus-visible:outline-blue-500"
+      <router-link :to="groupTo('ready')" class="pl-panel__link focus-visible:outline-2 focus-visible:outline-blue-500" data-pl-part="panel-link"
                    data-testid="run-next-all"
       >All in Tasks →</router-link>
     </header>
-    <p v-if="!runNext.rows.length" class="pl-panel__empty" data-testid="run-next-empty">
+    <p v-if="!runNext.rows.length" class="pl-panel__empty" data-pl-part="panel-empty" data-testid="run-next-empty">
       Nothing armed —
       <router-link :to="groupTo('ideas')" class="rn-link" data-testid="run-next-ideas">arm an idea</router-link>
       to see it here.

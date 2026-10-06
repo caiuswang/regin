@@ -25,10 +25,10 @@ function watchTo(row) {
 
 <template>
   <div class="rnw" :class="{ 'rnw--compact': compact }" data-testid="running-now">
-    <header class="pl-panel__head">
-      <h2 id="rnw-title" class="pl-panel__title">Running now</h2>
-      <span class="pl-panel__sub" data-testid="running-now-count">{{ running.total }}</span>
-      <router-link to="/live" class="pl-panel__link focus-visible:outline-2 focus-visible:outline-blue-500">Open Live →</router-link>
+    <header class="pl-panel__head" data-pl-part="panel-head">
+      <h2 id="rnw-title" class="pl-panel__title" data-pl-part="panel-title">Running now</h2>
+      <span class="pl-panel__sub" data-pl-part="panel-meta" data-testid="running-now-count">{{ running.total }}</span>
+      <router-link to="/live" class="pl-panel__link focus-visible:outline-2 focus-visible:outline-blue-500" data-pl-part="panel-link">Open Live →</router-link>
     </header>
     <ul class="rnw-rows" aria-labelledby="rnw-title">
       <li v-for="row in running.rows" :key="row.id" class="rnw-row" :data-testid="`running-now-row-${row.id}`">
