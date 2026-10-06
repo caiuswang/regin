@@ -25,6 +25,7 @@ import PageControls from '../components/PageControls.vue'
 import PipelineListToolbar from '../components/PipelineListToolbar.vue'
 import DefectRow from '../components/defects/DefectRow.vue'
 import PipelineCreateButton from '../components/pipeline/PipelineCreateButton.vue'
+import PlSlot from '../components/pipeline/PlSlot.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -83,6 +84,7 @@ const sortDir = computed(() => (appliedSort.value.split(':')[1] === 'asc' ? 'asc
 const canWrite = computed(() => api.getStoredUser()?.role !== 'viewer')
 const featureId = computed(() => route.query.feature_id || '')
 const queueOut = computed(() => route.query.queue === 'out')
+const featuresTo = computed(() => ({ path: '/features', query: route.query.project ? { project: route.query.project } : {} }))
 const status = computed(() => listStatusState({
   loaded: loaded.value, error: error.value, items: items.value,
   total: total.value, population: population.value,
@@ -129,10 +131,12 @@ function onChanged(message, info) {
 </script>
 
 <template>
-  <div class="dv" data-testid="defects-list-page">
+  <div class="dv" data-testid="defects-list-page" data-pl-part="sheet">
     <Teleport v-if="canWrite" defer to="#pipeline-actions">
       <PipelineCreateButton kind="defect" testid="defect-new" />
     </Teleport>
+
+    <PlSlot name="DefectsHead" :total="loaded && !error ? total : null" :back-to="featuresTo" />
 
     <PipelineListToolbar
       :q="state.q"
@@ -150,14 +154,14 @@ function onChanged(message, info) {
       @reset="list.reset"
     >
       <template #controls>
-        <span v-if="featureId" class="dv-chip" data-testid="defects-feature-chip">
+        <span v-if="featureId" class="dv-chip" data-testid="defects-feature-chip" data-pl-part="tag">
           <router-link :to="`/features/${featureId}`">feature #{{ featureId }}</router-link>
           <Button variant="ghost" size="icon" class="dv-chip__x"
                   :aria-label="`Show defects of every feature, not only #${featureId}`"
                   data-testid="defects-feature-clear" @click="clearKept('feature_id')"
           ><Icon name="x" :size="12" /></Button>
         </span>
-        <span v-if="queueOut" class="dv-chip" data-testid="defects-queue-chip">
+        <span v-if="queueOut" class="dv-chip" data-testid="defects-queue-chip" data-pl-part="tag">
           out of the triage queue
           <Button variant="ghost" size="icon" class="dv-chip__x"
                   aria-label="Include defects still in the triage queue"

@@ -26,6 +26,10 @@ const MENUS = [
   { name: 'tasks SORT', path: '/tasks?view=list&group=none&sort=created:desc', testid: 'list-sort', param: 'sort',
     key: v => v.split(':')[0], url: v => `${v}:desc` },
   { name: 'features SORT', path: '/features?sort=activity:desc', testid: 'features-sort', param: 'sort' },
+  { name: 'defects status', path: '/defects', testid: 'list-facet-status', param: 'status' },
+  { name: 'defects triage', path: '/defects', testid: 'list-facet-triage', param: 'triage' },
+  { name: 'defects SORT', path: '/defects?sort=opened:desc', testid: 'list-sort', param: 'sort',
+    key: v => v.split(':')[0], url: v => `${v}:desc` },
 ]
 
 function param(page, key) {

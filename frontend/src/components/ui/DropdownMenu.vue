@@ -8,6 +8,8 @@ import { usePlScope } from '../../composables/usePipelineTheme'
 defineProps({
   items: { type: Array, default: () => [] },
   align: { type: String, default: 'end' },
+  // What the menu acts on; a themed shell draws it as the menu's head line.
+  head: { type: String, default: '' },
 })
 const plScope = usePlScope()
 </script>
@@ -23,6 +25,7 @@ const plScope = usePlScope()
         :side-offset="6"
         class="ds-menu"
         :data-pl-part="plScope ? 'menu' : undefined"
+        :data-pl-head="plScope && head ? head : undefined"
       >
         <template v-for="(item, i) in items" :key="i">
           <DropdownMenuSeparator v-if="item.separator" class="ds-menu-sep" />
