@@ -9,7 +9,6 @@ import Button from '../components/ui/Button.vue'
 import PlSlot from '../components/pipeline/PlSlot.vue'
 import RunNextPanel from '../components/pipeline/RunNextPanel.vue'
 import NeedsDecisionPanel from '../components/pipeline/NeedsDecisionPanel.vue'
-import ProjectScopePanel from '../components/pipeline/ProjectScopePanel.vue'
 import TriageSheet from '../components/pipeline/TriageSheet.vue'
 import PipelineCreateButton from '../components/pipeline/PipelineCreateButton.vue'
 import { usePipelineCreate } from '../composables/usePipelineCreate'
@@ -110,7 +109,8 @@ onActivated(() => { if (arrived) load(); arrived = true })
       <p v-if="error" class="ov-stale" role="status">Showing the last good read — {{ error }}</p>
       <PlSlot name="OverviewLoop" :loop="data.loop" :ready="data.run_next.ready" :compact="!isMdUp" :scope="scopeQuery(scope)" />
 
-      <ProjectScopePanel
+      <PlSlot
+        name="ProjectScopePanel"
         v-if="data.project_head && isMdUp"
         :head="data.project_head"
         :features="data.project_features"

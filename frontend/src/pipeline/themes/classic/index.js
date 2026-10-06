@@ -5,6 +5,7 @@ import OverviewLoop from '../../../components/pipeline/OverviewLoop.vue'
 import StageTrack from '../../../components/pipeline/StageTrack.vue'
 import FeatureStageTabs from '../../../components/pipeline/FeatureStageTabs.vue'
 import ProjectsPanel from '../../../components/pipeline/ProjectsPanel.vue'
+import ProjectScopePanel from '../../../components/pipeline/ProjectScopePanel.vue'
 import ChoiceSelect from '../../../components/pipeline/ChoiceSelect.vue'
 
 export default {
@@ -13,6 +14,7 @@ export default {
     StageTrack,
     FeatureStageTabs,
     ProjectsPanel,
+    ProjectScopePanel,
     ChoiceField: ChoiceSelect,
     SecretStage: null,
   },
