@@ -2,6 +2,8 @@ import { h } from 'vue'
 import PixelSprite from './PixelSprite.vue'
 import FeatureStageTabs from './slots/FeatureStageTabs.vue'
 import StageTrack from './slots/StageTrack.vue'
+import OverviewLoop from './slots/OverviewLoop.vue'
+import ProjectsPanel from './slots/ProjectsPanel.vue'
 import './tokens.css'
 import './features.css'
 
@@ -20,6 +22,8 @@ export default {
   slots: {
     FeatureStageTabs,
     StageTrack,
+    OverviewLoop,
+    ProjectsPanel,
   },
   glyphs: {
     portfolio: glyph('grid'),

@@ -20,7 +20,7 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`
 <template>
   <section class="pl-panel pj" data-pl-part="panel" :class="{ 'pj--compact': compact }" data-testid="projects-panel" aria-labelledby="pj-title">
     <header class="pl-panel__head" data-pl-part="panel-head">
-      <h2 id="pj-title" class="pl-panel__title" data-pl-part="panel-title">Projects</h2>
+      <h2 id="pj-title" class="pl-panel__title" data-pl-part="panel-title" data-pl-chapter="1-4">Projects</h2>
       <span class="pl-panel__sub" data-pl-part="panel-meta" data-testid="projects-counts">{{ panel.active }} active · {{ panel.quiet }} quiet</span>
       <Button variant="link" size="sm" class="pj-all" data-testid="projects-all" @click="emit('all')">
         All {{ panel.total }} projects →

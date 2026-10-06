@@ -34,14 +34,18 @@ const groupTo = group => ({ path: props.tasksTo.path,
 // into the text `runNextSub` prints.
 const subOf = row => runNextSub({ ...row, feature_id: null })
   .replace(/^No feature$/, '')
+
+// The first row is the one to run when its dependencies are clear; a theme
+// may lift it into an "up next" hero with the panel's one primary key.
+const isHero = (row, i) => i === 0 && row.action.kind === 'run'
 </script>
 
 <template>
   <section class="pl-panel rn" data-pl-part="panel" data-testid="run-next" aria-labelledby="rn-title">
     <RunningNow v-if="running?.total" :running="running" :compact="compact" @stopped="emit('ran')" />
     <header class="pl-panel__head" data-pl-part="panel-head" :class="{ 'rn-head--after': running?.total }">
-      <h2 id="rn-title" class="pl-panel__title" data-pl-part="panel-title">Run next</h2>
-      <span class="pl-panel__sub" data-pl-part="panel-meta" data-testid="run-next-count">{{ runNext.ready }}</span>
+      <h2 id="rn-title" class="pl-panel__title" data-pl-part="panel-title" data-pl-chapter="1-2">Run next</h2>
+      <span class="pl-panel__sub" data-pl-part="panel-meta" data-pl-label="ready" data-testid="run-next-count">{{ runNext.ready }}</span>
       <router-link
         v-if="runNext.blocked" :to="groupTo('blocked')"
         class="pl-panel__sub rn-link focus-visible:outline-2 focus-visible:outline-blue-500" data-pl-part="panel-meta"
@@ -58,15 +62,17 @@ const subOf = row => runNextSub({ ...row, feature_id: null })
     </p>
     <ul v-else class="rn-rows">
       <li
-        v-for="row in runNext.rows"
+        v-for="(row, i) in runNext.rows"
         :key="row.id"
         class="rn-row"
+        data-pl-part="row"
+        :data-pl-hero="isHero(row, i) || undefined"
         :class="{ 'is-waiting': row.action.kind === 'wait' }"
         :data-testid="`run-next-row-${row.id}`"
       >
-        <span v-if="!compact" class="rn-id">#{{ row.id }}</span>
+        <span v-if="!compact" class="rn-id" data-pl-part="row-id">#{{ row.id }}</span>
         <span class="rn-main">
-          <router-link :to="`/tasks/${row.id}`" class="rn-title focus-visible:outline-2 focus-visible:outline-blue-500">
+          <router-link :to="`/tasks/${row.id}`" class="rn-title focus-visible:outline-2 focus-visible:outline-blue-500" data-pl-part="row-title">
             {{ taskTitle(row) }}
           </router-link>
           <span class="rn-sub">
@@ -80,7 +86,7 @@ const subOf = row => runNextSub({ ...row, feature_id: null })
         </span>
         <router-link
           v-if="row.action.kind === 'wait'" :to="`/tasks/${row.action.on}`"
-          class="rn-wait focus-visible:outline-2 focus-visible:outline-blue-500" :data-testid="`run-next-wait-${row.id}`"
+          class="rn-wait focus-visible:outline-2 focus-visible:outline-blue-500" data-pl-part="wait" :data-testid="`run-next-wait-${row.id}`"
         >
           <Icon name="dependency-tree" :size="12" />
           waits on #{{ row.action.on }}{{ row.action.on_status === 'running' ? ' (running)' : '' }}
@@ -91,6 +97,7 @@ const subOf = row => runNextSub({ ...row, feature_id: null })
           variant="secondary"
           class="rn-run"
           :class="{ 'rn-run--compact': compact }"
+          :data-pl-part="isHero(row, i) ? 'key--primary' : 'key'"
           :disabled="busyId === row.id"
           :aria-label="`Run #${row.id}`"
           :data-testid="`run-next-run-${row.id}`"

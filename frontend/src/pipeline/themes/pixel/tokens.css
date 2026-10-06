@@ -407,6 +407,168 @@ html[data-pl-theme="pixel"] [data-pl-part="toast"] button {
     border-radius: 0;
 }
 
+/* ── Chapters and labelled counts ────────────────────────────────────── */
+/* A panel's chapter number (R10) and a count's unit word are attributes,
+   drawn only here, so classic's DOM text does not change. */
+html[data-pl-theme="pixel"] [data-pl-part="panel-title"][data-pl-chapter]::before {
+    content: attr(data-pl-chapter);
+    margin-right: 1em;
+    font-weight: 400;
+    color: var(--pl-muted);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="panel-meta"][data-pl-label]::after {
+    content: " " attr(data-pl-label);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="panel-meta"][data-tone="warn"] {
+    color: var(--pl-warn);
+}
+
+/* ── Meters ────────────────────────────────────────────────────────── */
+/* A meter is the one place a status hue may fill (R7): grey by how far a part
+   has got, amber where a human must act, red where it failed. Covers both the
+   loop's tones and a stage bar's. */
+html[data-pl-theme="pixel"] [data-pl-part="meter-bar"] {
+    border-radius: 0;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="meter-cell"] {
+    border-radius: 0;
+    background: var(--pl-shade);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="meter-cell"]:is([data-tone="flight"], [data-tone="info"]) {
+    background: var(--pl-rule);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="meter-cell"]:is([data-tone="settled"], [data-tone="success"]) {
+    background: var(--pl-muted);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="meter-cell"]:is([data-tone="human"], [data-tone="warning"]) {
+    background: var(--pl-warn);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="meter-cell"][data-tone="danger"] {
+    background: var(--pl-fail);
+}
+
+/* ── Rows ────────────────────────────────────────────────────────────── */
+/* Row-scoped so these outrank the panels' own scoped row rules, which sit
+   at the same specificity as a bare [data-pl-part="key"]. */
+html[data-pl-theme="pixel"] [data-pl-part="row"] {
+    border-top-color: var(--pl-rule);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="row-id"] {
+    font-family: var(--pl-font);
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    color: var(--pl-muted);
+}
+
+/* Silkscreen sets wider than the sans, so a row's keys drop to 10px to leave
+   the row title the width classic gave it; heights stay classic's (R8). */
+html[data-pl-theme="pixel"] [data-pl-part="row"] [data-pl-part="key"],
+html[data-pl-theme="pixel"] [data-pl-part="row"] [data-pl-part="key--primary"] {
+    font-size: 10px;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="row"] [data-pl-part="key"] {
+    border-color: var(--pl-ink);
+    border-radius: 0;
+    background: var(--pl-paper);
+    color: var(--pl-ink);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="row"] [data-pl-part="key"]:hover {
+    background: var(--pl-paper-2);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="key"][data-tone="danger"],
+html[data-pl-theme="pixel"] [data-pl-part="row"] [data-pl-part="key"][data-tone="danger"] {
+    border-color: var(--pl-fail);
+    color: var(--pl-fail);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="key"][data-tone="warn"] {
+    border-color: var(--pl-warn);
+    color: var(--pl-warn);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="row"] [data-pl-part="key--primary"] {
+    border-color: var(--pl-ink);
+    border-radius: 0;
+    background: var(--pl-action);
+    color: var(--pl-action-ink);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="row"] [data-pl-part="key--primary"]:hover {
+    background: var(--pl-action-hover);
+}
+
+/* A live run's mark: a violet outlined square, never a filled dot (R7). */
+html[data-pl-theme="pixel"] [data-pl-part="live"] {
+    font-family: var(--pl-font);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--pl-run);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="live"] i {
+    width: 8px;
+    height: 8px;
+    border-radius: 0;
+    background: none;
+    box-shadow: inset 0 0 0 2px var(--pl-run);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="wait"] {
+    font-family: var(--pl-font);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--pl-muted);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="wait"]::before {
+    content: "Locked ·";
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="wait"] svg {
+    display: none;
+}
+
+/* The up-next hero (Overview 1-2): the first dependency-clear row, its Run
+   the panel's one primary key, labelled with the task it runs. Phones keep
+   the compact row. */
+@media (min-width: 768px) {
+    html[data-pl-theme="pixel"] [data-pl-part="row"][data-pl-hero]::before {
+        content: "▶ Up next · dependencies clear";
+        flex: 1 0 100%;
+        font-family: var(--pl-font);
+        font-size: 10px;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--pl-action-text);
+    }
+
+    html[data-pl-theme="pixel"] [data-pl-part="row"][data-pl-hero] [data-pl-part="row-title"] {
+        font-size: 16px;
+        font-weight: 600;
+    }
+
+    html[data-pl-theme="pixel"] [data-pl-part="row"][data-pl-hero] [data-pl-part="key--primary"] span {
+        display: none;
+    }
+
+    html[data-pl-theme="pixel"] [data-pl-part="row"][data-pl-hero] [data-pl-part="key--primary"]::after {
+        content: attr(aria-label);
+    }
+}
+
 /* ── Motion ──────────────────────────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
     html[data-pl-theme="pixel"] [data-pl-part="key"],
