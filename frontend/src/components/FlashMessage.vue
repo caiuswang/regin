@@ -14,6 +14,7 @@ const { state, clear } = useFlash()
     class="flex items-center justify-between"
     data-testid="flash"
     data-pl-part="toast"
+    :data-tone="state.type"
   >
     <span>
       {{ state.message }}<template v-if="state.link">
