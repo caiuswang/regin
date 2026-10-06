@@ -261,7 +261,8 @@ const runCount = computed(() => props.task.run_count || 0)
 /* Always drawn: an action reachable only on hover is one a touch screen or a
    scanning eye never finds (feature #119 I2). The primary slot is a fixed
    width so the date column lines up whether a row offers Arm, Run, Watch and
-   Stop, or nothing. */
+   Stop, or nothing — a minimum, not a width: a label wider than the slot
+   pushes the date aside instead of drawing over it. */
 .task-actions {
     display: flex;
     align-items: center;
@@ -271,7 +272,7 @@ const runCount = computed(() => props.task.run_count || 0)
 .task-primary {
     display: flex;
     justify-content: flex-end;
-    width: 8.5rem;
+    min-width: var(--pl-task-action-w, 8.5rem);
 }
 
 .task-stale {
