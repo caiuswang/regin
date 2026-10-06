@@ -38,6 +38,7 @@ import { useTaskMutations } from '../composables/useTasks.js'
 import { rememberedQuery } from '../composables/usePipelineTabState'
 import { useDetailBack } from '../composables/useDetailBack'
 import { usePipelineLive } from '../composables/usePipelineEvents'
+import { taskTitle } from '../utils/taskTitle.js'
 
 const router = useRouter()
 const route = useRoute()
@@ -145,7 +146,7 @@ async function load({ quiet = false } = {}) {
 async function deleteTask() {
   const ok = await confirm(
     'Delete task',
-    `Delete “${task.value.title}” and its run history, images and links? `
+    `Delete “${taskTitle(task.value, featureTitle.value)}” and its run history, images and links? `
     + 'This cannot be undone — archive it instead to keep it.', true)
   if (!ok) return
   if (await remove(task.value)) back.leave()
@@ -170,7 +171,7 @@ onMounted(() => { ensureProjects(); load() })
         </div>
         <h1 class="page-title">
           <span class="td-ref">{{ taskRef({ id }) }}</span>
-          {{ task?.title || '…' }}
+          {{ task ? taskTitle(task, featureTitle) : '…' }}
         </h1>
         <div v-if="task && (task.feature_id || deliverable)" class="td-kind">
           <TaskKindChip :kind="task.kind" />

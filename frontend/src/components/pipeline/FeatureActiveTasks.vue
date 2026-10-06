@@ -7,6 +7,7 @@ import api from '../../api'
 import TaskStatusIcon from '../tasks/TaskStatusIcon.vue'
 import { ago } from '../../utils/pipelineFormat'
 import { slicesLink, tasksLink } from '../../utils/featureLinks'
+import { taskTitle } from '../../utils/taskTitle.js'
 
 const props = defineProps({
   featureId: { type: Number, required: true },
@@ -76,7 +77,7 @@ function label(t) {
       <li v-for="t in rows" :key="t.id" class="fa-item" :data-testid="`feature-active-task-${t.id}`">
         <TaskStatusIcon :status="t.status" :size="13" />
         <span class="fa-id">#{{ t.id }}</span>
-        <router-link :to="`/tasks/${t.id}`" class="fa-title focus-visible:outline-2 focus-visible:outline-blue-500">{{ t.title }}</router-link>
+        <router-link :to="`/tasks/${t.id}`" class="fa-title focus-visible:outline-2 focus-visible:outline-blue-500">{{ taskTitle(t) }}</router-link>
         <span class="fa-state" :class="`fa-state--${t.status}`">{{ label(t) }}</span>
       </li>
     </ul>

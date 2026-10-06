@@ -14,6 +14,7 @@ import TaskRefusal from './TaskRefusal.vue'
 import TaskStatusIcon from './TaskStatusIcon.vue'
 import TaskVerbMenu from './TaskVerbMenu.vue'
 import { taskDay, taskSub } from '../../utils/taskMeta.js'
+import { taskTitle } from '../../utils/taskTitle.js'
 
 const props = defineProps({
   task: { type: Object, required: true },
@@ -45,7 +46,7 @@ const waiting = computed(() => !!props.task.waits_on)
     <TaskPriorityIcon class="nsr-prio" :value="task.priority" />
     <TaskStatusIcon class="nsr-status" :status="task.status" />
     <div class="nsr-main">
-      <router-link :to="`/tasks/${task.id}`" class="nsr-title">{{ task.title }}</router-link>
+      <router-link :to="`/tasks/${task.id}`" class="nsr-title">{{ taskTitle(task) }}</router-link>
       <span class="nsr-sub">{{ taskSub(task) }}</span>
     </div>
     <div class="nsr-meta">

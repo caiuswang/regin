@@ -2,6 +2,7 @@ import api from '../api'
 import { useConfirm } from './useConfirm.js'
 import { useFlash } from './useFlash.js'
 import { useTaskExec } from './useTaskExec.js'
+import { taskTitle } from '../utils/taskTitle.js'
 
 /**
  * useTaskVerbs — every R4a task verb behind one `act(verb, task)`.
@@ -33,7 +34,7 @@ const RUNS = { run: 'run', retry: 'run', interrupt: 'interrupt' }
 const STATUS_MOVES = { reopen: 'idea', archive: 'archived', restore: 'idea' }
 
 function name(task) {
-  return `#${task.id} “${task.title}”`
+  return `#${task.id} “${taskTitle(task)}”`
 }
 
 export function useTaskVerbs(reload, { openSheet = () => {} } = {}) {

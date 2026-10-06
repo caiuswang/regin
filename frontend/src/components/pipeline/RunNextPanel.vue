@@ -12,6 +12,7 @@ import RunningNow from './RunningNow.vue'
 import TaskRefusal from '../tasks/TaskRefusal.vue'
 import { useTaskVerbs } from '../../composables/useTaskVerbs.js'
 import { runNextSub } from '../../utils/pipelineFormat'
+import { taskTitle } from '../../utils/taskTitle.js'
 
 const props = defineProps({
   runNext: { type: Object, required: true },
@@ -66,7 +67,7 @@ const subOf = row => runNextSub({ ...row, feature_id: null })
         <span v-if="!compact" class="rn-id">#{{ row.id }}</span>
         <span class="rn-main">
           <router-link :to="`/tasks/${row.id}`" class="rn-title focus-visible:outline-2 focus-visible:outline-blue-500">
-            {{ row.title }}
+            {{ taskTitle(row) }}
           </router-link>
           <span class="rn-sub">
             {{ compact ? `#${row.id} · ` : '' }}{{ subOf(row) }}<template v-if="row.feature_id">{{ subOf(row) ? ' · ' : '' }}<router-link

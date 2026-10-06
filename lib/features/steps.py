@@ -5,9 +5,10 @@ The same shape as a defect's fix task (`lib/defects/fix_items.py`): the key
 click, a second tab or the CLI after the browser all resolve to the first row.
 A second attempt is another run of that row, never another row.
 
-The title is a derived label — the feature's title has one home, `features` —
-and the spec is never copied into the body: the body is only the operator's
-optional instruction for this step.
+The title cites the feature as an `@` reference rather than copying its name
+— the feature's title has one home, `features` — so a rename reads through on
+every surface that draws task titles. The spec is never copied into the body:
+the body is only the operator's optional instruction for this step.
 """
 
 from __future__ import annotations
@@ -15,7 +16,8 @@ from __future__ import annotations
 from typing import Optional
 
 from lib.features import store as feature_store
-from lib.orm.models.tasks import TASK_KIND_BUILD, TASK_KIND_SPEC, TITLE_MAX
+from lib.orm.models.tasks import TASK_KIND_BUILD, TASK_KIND_SPEC
+from lib.refs.grammar import format_ref
 
 SOURCE = "feature"
 VERB_KINDS: tuple[str, ...] = (TASK_KIND_SPEC, TASK_KIND_BUILD)
@@ -45,7 +47,7 @@ def open_step(feature_id: int, kind: str,
         raise StepRejected(
             f"kind must be one of {', '.join(VERB_KINDS)}")
     feature = feature_store.require(feature_id)
-    title = f"{_LABEL[kind]} · {feature.title}"[:TITLE_MAX]
+    title = f"{_LABEL[kind]} · {format_ref('feature', str(feature.id), feature.title)}"
     return task_store.capture_task(
         title=title, body=(body or "").strip() or None, source=SOURCE,
         external_id=external_id(feature_id, kind), feature_id=feature_id,

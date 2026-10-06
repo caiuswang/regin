@@ -4,6 +4,7 @@
 // title's link is stretched over it, with the action above.
 import TaskPrimaryAction from './TaskPrimaryAction.vue'
 import TaskStatusIcon from './TaskStatusIcon.vue'
+import { taskTitle } from '../../utils/taskTitle.js'
 
 defineProps({
   node: { type: Object, required: true },
@@ -38,7 +39,7 @@ const emit = defineEmits(['verb', 'hover'])
         @verb="v => emit('verb', v, node)"
       />
     </span>
-    <router-link :to="`/tasks/${node.id}`" class="tln-title" :title="node.title">{{ node.title }}</router-link>
+    <router-link :to="`/tasks/${node.id}`" class="tln-title" :title="taskTitle(node)">{{ taskTitle(node) }}</router-link>
   </div>
 </template>
 

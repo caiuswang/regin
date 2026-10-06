@@ -10,6 +10,7 @@ import Badge from '../Badge.vue'
 import Dialog from '../ui/Dialog.vue'
 import { useTaskRuns } from '../../composables/useTaskRuns.js'
 import { localStamp, utcTitle } from '../../utils/time.js'
+import { taskTitle } from '../../utils/taskTitle.js'
 
 const props = defineProps({
   task: { type: Object, required: true },
@@ -38,7 +39,7 @@ onMounted(() => load(props.task.id))
   <Dialog
     :open="true"
     title="Run history"
-    :description="task.title"
+    :description="taskTitle(task)"
     @update:open="v => !v && emit('close')"
   >
     <div v-if="loading" class="task-runs-note">reading attempts…</div>

@@ -14,6 +14,7 @@ import Input from '../ui/Input.vue'
 import Select from '../ui/Select.vue'
 import { useTaskDeps } from '../../composables/useTaskDeps.js'
 import { useTaskGraph } from '../../composables/useTaskGraph.js'
+import { taskTitle } from '../../utils/taskTitle.js'
 
 const props = defineProps({
   task: { type: Object, required: true },
@@ -83,7 +84,7 @@ async function submit() {
   <Dialog
     :open="true"
     title="Dependencies"
-    :description="`${task.title} waits for whatever is ticked below — for its result, or just for it to stop.`"
+    :description="`${taskTitle(task)} waits for whatever is ticked below — for its result, or just for it to stop.`"
     @update:open="v => !v && emit('close')"
   >
     <div v-if="loading" class="task-deps-note">reading the task graph…</div>
@@ -121,7 +122,7 @@ async function submit() {
               @update:model-value="on => toggle(node.id, on)"
             />
             <span class="task-deps-id">#{{ node.id }}</span>
-            <span class="task-deps-title">{{ node.title }}</span>
+            <span class="task-deps-title">{{ taskTitle(node) }}</span>
           </label>
           <Select
             v-if="pickedIds.includes(node.id)"

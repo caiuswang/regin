@@ -13,6 +13,7 @@ import TaskRefusal from './TaskRefusal.vue'
 import TaskStatusIcon from './TaskStatusIcon.vue'
 import TaskVerbMenu from './TaskVerbMenu.vue'
 import { liveFor } from '../../utils/taskMeta.js'
+import { taskTitle } from '../../utils/taskTitle.js'
 
 const props = defineProps({
   task: { type: Object, required: true },
@@ -51,7 +52,7 @@ const hasControls = computed(() => !!props.task.action || !!props.task.waits_on
         <span v-if="task.live" class="tbc-dot" aria-hidden="true" />{{ corner }}
       </span>
     </span>
-    <router-link :to="`/tasks/${task.id}`" class="tbc-title">{{ task.title }}</router-link>
+    <router-link :to="`/tasks/${task.id}`" class="tbc-title">{{ taskTitle(task) }}</router-link>
     <span v-if="task.feature_id != null" class="tbc-feature">
       <Icon name="flag" :size="11" />#{{ task.feature_id }} {{ task.feature_title }}
     </span>

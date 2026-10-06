@@ -22,6 +22,7 @@ import { useTaskShortcuts } from '../../composables/useTaskShortcuts.js'
 import { useNextStep } from '../../composables/useTaskViews.js'
 import { useTaskVerbs } from '../../composables/useTaskVerbs.js'
 import { invalidatePipelineCounts } from '../../composables/usePipelineCounts.js'
+import { taskTitle } from '../../utils/taskTitle.js'
 
 const props = defineProps({
   params: { type: Object, required: true },
@@ -121,7 +122,7 @@ async function runAll(group) {
 function titleOf(id) {
   for (const group of feed.body.value?.groups || []) {
     const row = group.rows.find(r => r.id === id)
-    if (row) return row.title
+    if (row) return taskTitle(row)
   }
   return ''
 }

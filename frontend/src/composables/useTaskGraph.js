@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
 import api from '../api'
 import { layoutGraph } from '../utils/taskGraphLayout.js'
+import { taskTitle } from '../utils/taskTitle.js'
 
 export const DEPTH_MIN = 1
 export const DEPTH_MAX = 6
@@ -101,7 +102,8 @@ export function useTaskGraph({ cap = null } = {}) {
   }
 
   function titleOf(taskId) {
-    return nodes.value.find(n => n.id === taskId)?.title || `task ${taskId}`
+    const node = nodes.value.find(n => n.id === taskId)
+    return (node && taskTitle(node)) || `task ${taskId}`
   }
 
   return {

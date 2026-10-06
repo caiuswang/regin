@@ -86,7 +86,7 @@ def test_the_verb_is_idempotent(flask_client):
         rows = session.exec(select(AgentTask).where(
             AgentTask.external_id == f"feature:{feature.id}:spec")).all()
     assert len(rows) == 1
-    assert rows[0].title == "Spec · once only"
+    assert rows[0].title == f"Spec · [F{feature.id} once only](feature:{feature.id})"
     assert rows[0].kind == "spec"
     assert rows[0].body == "focus on X"
     assert first.get_json()["task"]["feature_title"] == "once only"
@@ -203,3 +203,40 @@ def test_machine_capture_cannot_declare_a_stage():
     with pytest.raises(capture.CaptureRejected) as exc:
         capture.parse_capture({"title": "t", "source": "cli", "kind": "spec"})
     assert exc.value.field == "kind"
+
+
+def test_a_step_title_cites_its_feature_and_reads_the_rename(flask_client):
+    """The title stamps a reference, not the name: a rename reads through
+    where titles are drawn as words, and a bodyless step's run is handed the
+    feature's current title in its references block."""
+    from lib.tasks.run_prompt import _prompt  # noqa: PLC0415
+
+    feature = feature_store.create("old name")
+    task_id = _post_step(flask_client, feature.id,
+                         "build").get_json()["task"]["id"]
+
+    feature_store.rename(feature.id, "new name")
+
+    assert feature_store.task_titles([task_id]) == {
+        task_id: f"Build · F{feature.id} new name"}
+    with SessionLocal() as session:
+        task = session.get(AgentTask, task_id).model_dump()
+    assert f"- F{feature.id} 「new name」 — feature" in _prompt(task, run_id=1)
+
+
+def test_an_announce_card_names_a_step_in_words(flask_client, monkeypatch):
+    """A card title is plain text, so the step's stamped reference is read as
+    words there rather than cut mid-link at 80 characters."""
+    from lib.agent_messages import events as message_events  # noqa: PLC0415
+    from lib.tasks import run_announce  # noqa: PLC0415
+
+    sent = []
+    monkeypatch.setattr(message_events, "emit",
+                        lambda kind, **kw: sent.append(kw["title"]))
+    feature = feature_store.create("x" * 60)
+    task = _post_step(flask_client, feature.id, "spec").get_json()["task"]
+    feature_store.rename(feature.id, "renamed")
+
+    run_announce._announce_stuck(task, "no slot")
+
+    assert sent == [f"Task ready: Spec · F{feature.id} renamed"]

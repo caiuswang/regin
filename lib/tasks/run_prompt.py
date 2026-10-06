@@ -291,16 +291,17 @@ def _spec_block(task: dict) -> str:
 
 
 def _cited_refs(task: dict, feature) -> list[str]:
-    """Every reference the task body cites, then each one its feature's spec
-    adds, once, in order of first appearance.
+    """Every reference the task's text cites — its body, or its title when it
+    has none and the title is what the run is told — then each one its
+    feature's spec adds, once, in order of first appearance.
 
     The whole body is read, not its `PROMPT_MAX` cut: a reference past the cut
     is the one whose text the run never sees, so its line is the only trace of
     it the run gets.
     """
     spec = feature.body if feature is not None else None
-    cited = (ref.ref for text in (task.get("body"), spec)
-             for ref in parse_refs(text))
+    own = (task.get("body") or "").strip() or task.get("title")
+    cited = (ref.ref for text in (own, spec) for ref in parse_refs(text))
     return list(dict.fromkeys(cited))
 
 

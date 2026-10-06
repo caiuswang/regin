@@ -34,6 +34,7 @@ import { useTaskQuery } from '../../composables/useTaskQuery.js'
 import { useTaskSelection } from '../../composables/useTaskSelection.js'
 import { useTaskShortcuts } from '../../composables/useTaskShortcuts.js'
 import { useTaskVerbs } from '../../composables/useTaskVerbs.js'
+import { taskTitle } from '../../utils/taskTitle.js'
 
 const FLAT = 'flat'
 
@@ -101,7 +102,7 @@ const dateField = computed(() => (query.state.value.sort.startsWith('updated')
   ? 'updated_at' : 'created_at'))
 
 function remember(rows) {
-  for (const row of rows) titles.set(row.id, row.title)
+  for (const row of rows) titles.set(row.id, taskTitle(row))
 }
 
 async function reload() {

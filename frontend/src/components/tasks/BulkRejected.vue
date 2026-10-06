@@ -3,6 +3,7 @@
 // A count ("2 could not be") leaves the operator hunting for which two.
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
+import { taskTitle } from '../../utils/taskTitle.js'
 
 defineProps({
   rows: { type: Array, required: true },
@@ -20,7 +21,7 @@ const emit = defineEmits(['dismiss'])
     </div>
     <ul class="br-rows">
       <li v-for="row in rows" :key="row.id" :data-testid="`task-bulk-rejected-${row.id}`">
-        <router-link :to="`/tasks/${row.id}`" class="br-ref">#{{ row.id }}</router-link> <span class="br-title">{{ row.title }}</span> <span class="br-reason">— {{ row.reason }}</span>
+        <router-link :to="`/tasks/${row.id}`" class="br-ref">#{{ row.id }}</router-link> <span class="br-title">{{ taskTitle(row) }}</span> <span class="br-reason">— {{ row.reason }}</span>
       </li>
     </ul>
   </div>

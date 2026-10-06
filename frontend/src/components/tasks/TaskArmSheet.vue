@@ -19,6 +19,7 @@ import {
 } from '../../composables/useArmPrefs.js'
 import { useProjects } from '../../composables/useProjects.js'
 import { useFlash } from '../../composables/useFlash.js'
+import { taskTitle } from '../../utils/taskTitle.js'
 
 const props = defineProps({
   task: { type: Object, required: true },
@@ -160,7 +161,7 @@ async function submit() {
   <Dialog
     :open="true"
     title="Arm this task"
-    :description="task.title"
+    :description="taskTitle(task)"
     @update:open="v => !v && emit('close')"
   >
     <div v-if="loading || prefilling" class="task-arm-note">reading launch options…</div>

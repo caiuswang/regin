@@ -4,6 +4,7 @@
 // loaded, so the report names and links it rather than relying on its row.
 import Button from '../ui/Button.vue'
 import TaskRefusal from './TaskRefusal.vue'
+import { taskTitle } from '../../utils/taskTitle.js'
 
 defineProps({
   report: { type: Object, required: true },
@@ -24,7 +25,7 @@ defineEmits(['dismiss'])
         class="rar-row"
         :data-testid="`run-all-refused-${row.id}`"
       >
-        <router-link :to="`/tasks/${row.id}`" class="rar-task">#{{ row.id }} {{ row.title }}</router-link>
+        <router-link :to="`/tasks/${row.id}`" class="rar-task">#{{ row.id }} {{ taskTitle(row) }}</router-link>
         <TaskRefusal class="rar-reason" :refusal="row" />
       </li>
     </ul>

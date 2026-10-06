@@ -17,6 +17,16 @@ log = get_activity_logger("tasks")
 TASK_READY_TRACE = "agent-tasks"
 
 
+def _words(task: dict) -> str:
+    """The title as plain words: a card title is not rendered as markdown, and
+    an 80-char cut through a stamped `[F<id> …](feature:<id>)` would leave
+    half a link."""
+    from lib.features import store as feature_store  # noqa: PLC0415
+
+    return feature_store.task_titles([task["id"]]).get(task["id"],
+                                                        task["title"])
+
+
 def _announce_stuck(task: dict, why: str) -> None:
     """Tell the operator about a task that came due and could not start.
 
@@ -28,7 +38,7 @@ def _announce_stuck(task: dict, why: str) -> None:
 
     events.emit(
         "task.ready", trace_id=TASK_READY_TRACE,
-        title=f"Task ready: {task['title'][:80]}",
+        title=f"Task ready: {_words(task)[:80]}",
         body=(f"Every dependency of task {task['id']} — **{task['title']}** — "
               f"is done, but it could not start: {why}. It is still armed."),
         key=f"task-ready:{task['id']}",
@@ -54,7 +64,7 @@ def _announce_chain_stopped(blocker: dict, parked: list[int]) -> None:
     waiting = ", ".join(str(task_id) for task_id in parked)
     events.emit(
         "task.chain_stopped", trace_id=TASK_READY_TRACE,
-        title=f"Chain stopped at: {blocker['title'][:80]}",
+        title=f"Chain stopped at: {_words(blocker)[:80]}",
         body=(f"Task {blocker['id']} — **{blocker['title']}** — failed, and "
               f"{len(parked)} task(s) still wait on it: {waiting}. They stay "
               f"armed, but nothing will release them until "

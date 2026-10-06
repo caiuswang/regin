@@ -24,6 +24,7 @@ import TaskVerbMenu from './TaskVerbMenu.vue'
 import { shortDate } from '../../utils/ledgerFormat'
 import { utcTitle } from '../../utils/time.js'
 import { taskRef } from '../../utils/taskMeta.js'
+import { taskTitle } from '../../utils/taskTitle.js'
 
 const props = defineProps({
   task: { type: Object, required: true },
@@ -104,10 +105,10 @@ const runCount = computed(() => props.task.run_count || 0)
       <span class="task-feature-line" data-testid="task-feature-line"
       >#{{ task.feature_id }} {{ task.feature_title }}</span>
       <span class="task-title-secondary" data-testid="task-title-secondary"
-      >{{ task.title }}</span>
+      >{{ taskTitle(task) }}</span>
     </router-link>
     <router-link v-else class="task-title" :to="`/tasks/${task.id}`">
-      {{ task.title }}
+      {{ taskTitle(task) }}
     </router-link>
 
     <div class="task-facts">

@@ -205,3 +205,26 @@ test('+ task declares its stage, and fix is not offered', async ({ page }) => {
   expect(posted[0]).toMatchObject({ title: 'draft the API', kind: 'spec',
                                     feature_id: 242 })
 })
+
+// A step's title cites its feature as an @-reference, so a rename reads
+// through: the stamped label says "Old name", the row says the live title.
+test('a step title cites its feature and reads as the current title',
+  async ({ page }) => {
+    const cited = 'Spec · [F242 Old name](feature:242)'
+    await page.route('**/api/tasks?**', (route) =>
+      route.request().method() === 'GET'
+        ? route.fulfill({ json: { items: [
+            task({ id: 71, kind: 'spec', title: cited }),
+            task({ id: 73, kind: 'spec', title: cited, feature_title: null }),
+          ], next_cursor: null, counts: {} } })
+        : route.fallback())
+    await page.route('**/api/tasks/counts?**', (route) =>
+      route.fulfill({ json: { total: 2, by_status: { idea: 2 },
+                                     by_priority: {}, by_project: {} } }))
+    await page.goto('/tasks?group=none')
+
+    await expect(page.locator('#task-71').getByTestId('task-title-secondary'))
+      .toHaveText('Spec · F242 Feature workbench')
+    await expect(page.locator('#task-73').getByTestId('task-title-secondary'))
+      .toHaveText('Spec · F242 Old name')
+  })

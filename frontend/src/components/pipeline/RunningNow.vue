@@ -7,6 +7,7 @@ import Button from '../ui/Button.vue'
 import TaskRefusal from '../tasks/TaskRefusal.vue'
 import { ago, runningMeta, runningSub } from '../../utils/pipelineFormat'
 import { useTaskVerbs } from '../../composables/useTaskVerbs.js'
+import { taskTitle } from '../../utils/taskTitle.js'
 
 defineProps({
   running: { type: Object, required: true },
@@ -33,7 +34,7 @@ function watchTo(row) {
       <li v-for="row in running.rows" :key="row.id" class="rnw-row" :data-testid="`running-now-row-${row.id}`">
         <span class="rnw-id">#{{ row.id }}</span>
         <router-link :to="`/tasks/${row.id}`" class="rnw-main focus-visible:outline-2 focus-visible:outline-blue-500">
-          <span class="rnw-title">{{ row.title }}</span>
+          <span class="rnw-title">{{ taskTitle(row) }}</span>
           <span class="rnw-sub">{{ runningSub(row) }}</span>
         </router-link>
         <span class="rnw-facts">

@@ -32,6 +32,7 @@ from lib.orm.models.features import (
 )
 from lib.orm.models.sync import Repo
 from lib.orm.models.tasks import AgentTask
+from lib.refs.grammar import parse_refs
 from lib.tasks.integrations.base import DESCRIPTION_MAX
 
 log = get_activity_logger("defects")
@@ -210,14 +211,35 @@ def project_name(project_id: Optional[int]) -> Optional[str]:
 
 
 def task_titles(task_ids) -> dict[int, str]:
-    """`{task id: title}` for the ids that still exist."""
+    """`{task id: title}` for the ids that still exist, each reference in a
+    title read as words (`title_words`)."""
     wanted = {tid for tid in task_ids if tid is not None}
     if not wanted:
         return {}
     with SessionLocal() as session:
-        rows = session.exec(select(AgentTask.id, AgentTask.title)
-                            .where(AgentTask.id.in_(wanted))).all()
-    return {row[0]: row[1] for row in rows}
+        rows = session.exec(
+            select(AgentTask.id, AgentTask.title, AgentTask.feature_id,
+                   Feature.title)
+            .join(Feature, Feature.id == AgentTask.feature_id, isouter=True)
+            .where(AgentTask.id.in_(wanted))).all()
+    return {tid: title_words(title, fid, ftitle)
+            for tid, title, fid, ftitle in rows}
+
+
+def title_words(title: str, feature_id: Optional[int],
+                feature_title: Optional[str]) -> str:
+    """A task title as a person reads it. A step's title cites its feature
+    (`Spec · [F7 …](feature:7)`); that reference reads as the feature's
+    current title, and any other as the label stamped when it was written.
+    `frontend/src/utils/taskTitle.js` is the same rule for the browser."""
+    out, at = [], 0
+    for ref in parse_refs(title):
+        live = (ref.kind == "feature" and feature_title
+                and ref.key == str(feature_id))
+        out += [title[at:ref.start],
+                f"F{ref.key} {feature_title}" if live else ref.label]
+        at = ref.end
+    return "".join(out) + title[at:]
 
 
 # ── the operator's three declarations ─────────────────────────

@@ -29,6 +29,7 @@ import { TASKS_ANCHOR } from '../../utils/featureLinks'
 import { sessionsByTask } from '../../utils/ledgerFormat'
 import { carriedProject, projectOptions, useProjects }
   from '../../composables/useProjects.js'
+import { taskTitle } from '../../utils/taskTitle.js'
 
 const props = defineProps({
   featureId: { type: Number, required: true },
@@ -258,7 +259,7 @@ async function submit() {
           <TaskStatusIcon :status="task.status" :size="13" />
           <TaskKindChip :kind="task.kind" />
           <span class="ledger-id">#{{ task.id }}</span>
-          <span class="ft-name">{{ task.title }}</span>
+          <span class="ft-name">{{ taskTitle(task) }}</span>
         </router-link>
         <router-link
           v-for="d in task.fixes_defects || []" :key="d"
