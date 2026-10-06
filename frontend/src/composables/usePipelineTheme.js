@@ -1,4 +1,4 @@
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, inject, onBeforeUnmount, provide, ref, watch } from 'vue'
 import { DEFAULT_THEME, THEMES, THEME_LIST, classicTheme, isThemeId } from '../pipeline/themes/registry'
 import { useFlash } from './useFlash'
 
@@ -22,6 +22,13 @@ const status = ref('resolving')
 // What `<html>` carries — null whenever no shell tab is mounted.
 const applied = ref(null)
 let request = 0
+
+// Shared primitives that teleport (Select's listbox, DropdownMenu, Popover,
+// Dialog) land in <body>, where `html[data-pl-theme]` reaches them wherever
+// they were opened from. Injection follows the component tree instead of the
+// DOM, so a primitive hooks itself only when the shell that owns it is themed.
+const PL_SCOPE = Symbol('plScope')
+const UNSCOPED = computed(() => false)
 
 async function resolve(id) {
   const token = ++request
@@ -79,6 +86,11 @@ export function useShellTheme(onTab) {
     { immediate: true },
   )
   onBeforeUnmount(() => apply(null))
+  provide(PL_SCOPE, computed(() => applied.value != null))
+}
+
+export function usePlScope() {
+  return inject(PL_SCOPE, UNSCOPED)
 }
 
 // The module slots and glyphs resolve against: classic wherever the shell

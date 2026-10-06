@@ -18,7 +18,6 @@ import api from '../api'
 import Button from '../components/ui/Button.vue'
 import Icon from '../components/ui/Icon.vue'
 import Input from '../components/ui/Input.vue'
-import Select from '../components/ui/Select.vue'
 import ListStatus from '../components/ListStatus.vue'
 import PageControls from '../components/PageControls.vue'
 import PipelineCreateButton from '../components/pipeline/PipelineCreateButton.vue'
@@ -183,12 +182,15 @@ useTaskShortcuts({
                 @keydown.esc.prevent="draft = state.q"
               />
             </label>
-            <Select
+            <PlSlot
+              name="MenuField"
               :model-value="appliedSort"
               :options="SORT_OPTIONS"
+              field="SORT"
+              head="Sort features by"
               bare
               aria-label="Sort features"
-              data-testid="features-sort"
+              testid="features-sort"
               @update:model-value="v => list.patch({ sort: v })"
             />
           </template>

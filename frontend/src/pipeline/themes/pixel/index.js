@@ -5,11 +5,13 @@ import StageTrack from './slots/StageTrack.vue'
 import OverviewLoop from './slots/OverviewLoop.vue'
 import ProjectsPanel from './slots/ProjectsPanel.vue'
 import ChoiceField from './slots/ChoiceField.vue'
+import MenuField from './slots/MenuField.vue'
 import SecretStage from './slots/SecretStage.vue'
 import './tokens.css'
 import './features.css'
 import './tasks.css'
 import './dialogs.css'
+import './menus.css'
 
 // A glyph is a sprite drawn where <PlGlyph kind="…"> sits; PlGlyph's own
 // `kind` prop is dropped so it does not land on the <svg> as an attribute.
@@ -29,6 +31,7 @@ export default {
     OverviewLoop,
     ProjectsPanel,
     ChoiceField,
+    MenuField,
     SecretStage,
   },
   glyphs: {
@@ -46,5 +49,10 @@ export default {
     'dialog.feature': glyph('flag'),
     'dialog.task': glyph('bulb'),
     'dialog.arm': glyph('bot'),
+    'priority.urgent': glyph('bars.4'),
+    'priority.high': glyph('bars.3'),
+    'priority.medium': glyph('bars.2'),
+    'priority.low': glyph('bars.1'),
+    'priority.none': glyph('bars.0'),
   },
 }

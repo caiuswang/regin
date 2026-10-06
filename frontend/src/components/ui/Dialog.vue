@@ -4,7 +4,9 @@
 // by the primitive — the gaps the audit found in all 4 hand-rolled modals.
 // Usage: <Dialog v-model:open="x" title="…"> body </Dialog> with optional
 // #trigger and #footer slots.
+import { useAttrs } from 'vue'
 import { DialogRoot, DialogTrigger, DialogPortal, DialogOverlay, DialogContent, DialogTitle, DialogDescription, DialogClose } from 'reka-ui'
+import { usePlScope } from '../../composables/usePipelineTheme'
 
 // Attributes belong on the dialog box: DialogRoot renders nothing of its own.
 defineOptions({ inheritAttrs: false })
@@ -30,6 +32,16 @@ defineProps({
 // A `[data-ref-menu]` popup is teleported to <body> from a field inside this
 // dialog, so reka reads a click on it as a click outside and dismisses the
 // dialog, and the draft with it.
+// A call site opts its box into a pipeline theme with data-pl-* attrs; off
+// the shell those are dropped with the dialog's own hooks (R13).
+const attrs = useAttrs()
+const plScope = usePlScope()
+const part = name => (plScope.value ? name : undefined)
+function boxAttrs() {
+  if (plScope.value) return attrs
+  return Object.fromEntries(Object.entries(attrs).filter(([k]) => !k.startsWith('data-pl-')))
+}
+
 function keepForRefMenu(event) {
   const target = event.detail?.originalEvent?.target ?? event.target
   if (target instanceof Element && target.closest('[data-ref-menu]')) event.preventDefault()
@@ -44,7 +56,7 @@ function keepForRefMenu(event) {
     <DialogPortal>
       <DialogOverlay class="ds-dialog-overlay" />
       <DialogContent
-        v-bind="$attrs"
+        v-bind="boxAttrs()"
         class="ds-dialog"
         :class="{ 'ds-dialog-wide': wide }"
         @open-auto-focus.prevent="$emit('open-auto-focus', $event)"
@@ -52,24 +64,24 @@ function keepForRefMenu(event) {
         @focus-outside="keepForRefMenu"
         @interact-outside="keepForRefMenu"
       >
-        <div v-if="title" data-pl-part="dialog-head">
+        <div v-if="title" :data-pl-part="part('dialog-head')">
           <slot name="mark" />
-          <DialogTitle class="ds-dialog-title" data-pl-part="dialog-title" :data-pl-kicker="kicker || undefined">
+          <DialogTitle class="ds-dialog-title" :data-pl-part="part('dialog-title')" :data-pl-kicker="(plScope && kicker) || undefined">
             <template v-if="shortTitle">
-              <span data-pl-part="dialog-title-long">{{ title }}</span>
-              <span class="ds-dialog-title-short" data-pl-part="dialog-title-short">{{ shortTitle }}</span>
+              <span :data-pl-part="part('dialog-title-long')">{{ title }}</span>
+              <span class="ds-dialog-title-short" :data-pl-part="part('dialog-title-short')">{{ shortTitle }}</span>
             </template>
             <template v-else>{{ title }}</template>
           </DialogTitle>
         </div>
-        <DialogDescription v-if="description" class="ds-dialog-desc" data-pl-part="dialog-lead">
+        <DialogDescription v-if="description" class="ds-dialog-desc" :data-pl-part="part('dialog-lead')">
           {{ description }}
         </DialogDescription>
-        <div class="ds-dialog-body" data-pl-part="dialog-body"><slot /></div>
-        <div v-if="$slots.footer" class="ds-dialog-footer" data-pl-part="dialog-foot" :data-pl-hint="hint || undefined">
+        <div class="ds-dialog-body" :data-pl-part="part('dialog-body')"><slot /></div>
+        <div v-if="$slots.footer" class="ds-dialog-footer" :data-pl-part="part('dialog-foot')" :data-pl-hint="(plScope && hint) || undefined">
           <slot name="footer" />
         </div>
-        <DialogClose class="ds-dialog-x" data-pl-part="dialog-close" aria-label="Close">✕</DialogClose>
+        <DialogClose class="ds-dialog-x" :data-pl-part="part('dialog-close')" aria-label="Close">✕</DialogClose>
       </DialogContent>
     </DialogPortal>
   </DialogRoot>

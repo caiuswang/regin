@@ -2,12 +2,14 @@
 // Generic popover (click-outside + Escape + focus management + positioning
 // from Reka). #trigger slot is the anchor; default slot is the panel body.
 import { PopoverRoot, PopoverTrigger, PopoverPortal, PopoverContent, PopoverArrow } from 'reka-ui'
+import { usePlScope } from '../../composables/usePipelineTheme'
 
 const open = defineModel('open', { type: Boolean, default: false })
 defineProps({
   side: { type: String, default: 'bottom' },
   align: { type: String, default: 'center' },
 })
+const plScope = usePlScope()
 </script>
 
 <template>
@@ -16,9 +18,20 @@ defineProps({
       <slot name="trigger" />
     </PopoverTrigger>
     <PopoverPortal>
-      <PopoverContent :side="side" :align="align" :side-offset="6" class="ds-popover">
+      <PopoverContent
+        :side="side"
+        :align="align"
+        :side-offset="6"
+        class="ds-popover"
+        :data-pl-part="plScope ? 'popover' : undefined"
+      >
         <slot />
-        <PopoverArrow class="ds-popover-arrow" :width="10" :height="5" />
+        <PopoverArrow
+          class="ds-popover-arrow"
+          :width="10"
+          :height="5"
+          :data-pl-part="plScope ? 'popover-arrow' : undefined"
+        />
       </PopoverContent>
     </PopoverPortal>
   </PopoverRoot>

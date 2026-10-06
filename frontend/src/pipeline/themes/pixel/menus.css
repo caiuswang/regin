@@ -1,0 +1,284 @@
+/*
+ * Pixel menus: the MenuField key + listbox, the listboxes, dropdown menus
+ * and popovers that shared primitives open from inside the shell (they carry
+ * hooks only there, R13), and the Tasks filter popover. Same discipline as
+ * tokens.css: html[data-pl-theme="pixel"] + hooks, --pl-* only.
+ */
+
+/* ── MenuField key ───────────────────────────────────────────────────── */
+/* Classic's select height, so the toolbar row does not move (R8). */
+html[data-pl-theme="pixel"] [data-pl-part="menu-key"] {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 2.125rem;
+    max-width: 100%;
+    padding: 0 0.625rem;
+    border: 1px solid var(--pl-ink);
+    border-radius: 0;
+    background: var(--pl-paper);
+    color: var(--pl-ink);
+    box-shadow: 2px 2px 0 var(--pl-ink);
+    font-family: var(--pl-font);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: transform 80ms steps(2, end);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="menu-key"]:hover,
+html[data-pl-theme="pixel"] [data-pl-part="menu-key"][data-state="open"] {
+    background: var(--pl-paper-2);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="menu-key"]:active {
+    transform: translate(2px, 2px);
+    box-shadow: none;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="menu-key"]:focus-visible {
+    outline: 2px solid var(--pl-action);
+    outline-offset: 3px;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="menu-key"] [data-pl-part="menu-field"] {
+    color: var(--pl-muted);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="menu-key"] [data-pl-part="menu-field"]::after {
+    content: "·";
+    margin-left: 0.5rem;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="menu-key"] [data-pl-part="menu-value"] {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="menu-key"] [data-pl-part="menu-caret"] {
+    font-size: 8px;
+}
+
+/* ── Listboxes and menus ─────────────────────────────────────────────── */
+html[data-pl-theme="pixel"] [data-pl-part="listbox"],
+html[data-pl-theme="pixel"] [data-pl-part="menu"],
+html[data-pl-theme="pixel"] [data-pl-part="popover"] {
+    border: 1px solid var(--pl-ink);
+    border-radius: 0;
+    background: var(--pl-paper);
+    color: var(--pl-ink);
+    box-shadow: 0 0 0 1px var(--pl-ink), 4px 4px 0 1px var(--pl-ink);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="listbox"],
+html[data-pl-theme="pixel"] [data-pl-part="menu"] {
+    padding: 0;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="listbox"][data-pl-menu] {
+    min-width: max(12rem, var(--reka-select-trigger-width));
+    max-height: min(20rem, var(--reka-select-content-available-height, 20rem));
+    overflow: hidden;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="listbox"] [data-pl-part="listbox-head"] {
+    padding: 0.55rem 0.9rem 0.45rem 1.75rem;
+    border-bottom: 1px dashed var(--pl-rule);
+    font-family: var(--pl-font);
+    font-size: 9px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--pl-muted);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="listbox"] [data-pl-part="listbox-item"],
+html[data-pl-theme="pixel"] [data-pl-part="menu"] [data-pl-part="menu-item"] {
+    position: relative;
+    border-radius: 0;
+    color: var(--pl-ink);
+    cursor: pointer;
+    outline: none;
+    user-select: none;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="listbox"] [data-pl-part="listbox-item"][data-highlighted],
+html[data-pl-theme="pixel"] [data-pl-part="menu"] [data-pl-part="menu-item"][data-highlighted] {
+    background: var(--pl-paper-2);
+}
+
+/* A MenuField's options are labels, so Silkscreen (R8), with the ▶ cursor on
+   the highlighted one — Reka highlights the current pick on opening. */
+html[data-pl-theme="pixel"] [data-pl-part="listbox"][data-pl-menu] [data-pl-part="listbox-item"] {
+    display: flex;
+    align-items: center;
+    padding: 0.6rem 0.9rem 0.6rem 1.75rem;
+    font-family: var(--pl-font);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="listbox"][data-pl-menu] [data-pl-part="listbox-item"][data-state="checked"] {
+    font-weight: 700;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="listbox"] [data-pl-part="listbox-item"][data-highlighted]::before,
+html[data-pl-theme="pixel"] [data-pl-part="menu"] [data-pl-part="menu-item"][data-highlighted]::before {
+    content: "▶";
+    position: absolute;
+    left: 0.6rem;
+    font-size: 8px;
+    color: var(--pl-action-text);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="menu"] [data-pl-part="menu-item"] {
+    padding-left: 1.75rem;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="popover"] [data-pl-part="popover-arrow"] {
+    display: none;
+}
+
+/* ── Tasks filter popover ────────────────────────────────────────────── */
+/* "Something is on" is an action-coloured outline, a mark — the action
+   colour fills only primary keys (R7). */
+html[data-pl-theme="pixel"] [data-pl-part="key"][data-pl-on] {
+    border-color: var(--pl-action);
+    color: var(--pl-action-text);
+    box-shadow: inset 0 0 0 1px var(--pl-action), 2px 2px 0 var(--pl-ink);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="popover"]:has([data-pl-part="filter"]) {
+    padding: 0;
+    max-width: calc(100vw - 2rem);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="filter"] {
+    width: 22rem;
+    max-width: 100%;
+    gap: 0.9rem;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="filter"] [data-pl-part="filter-head"] {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.6rem 0.9rem;
+    border-bottom: 2px solid var(--pl-ink);
+    font-family: var(--pl-font);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="filter"] [data-pl-part="filter-head"] [data-pl-part="count"] {
+    font-weight: 400;
+    color: var(--pl-muted);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="filter"] > [data-pl-part="field"],
+html[data-pl-theme="pixel"] [data-pl-part="filter"] > div > [data-pl-part="field"] {
+    padding: 0 0.9rem;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="filter"] > div:has(> [data-pl-part="field"]) {
+    gap: 0;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="filter"] [data-pl-part="field-label"] {
+    font-family: var(--pl-font);
+    font-size: 9px;
+    font-weight: 400;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--pl-muted);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="filter"] [data-pl-part="input"] {
+    border-radius: 0;
+}
+
+/* Priority toggles are keys: the checkbox stays the control (keyboard, the
+   label's click) but is drawn as the key's latched state. */
+html[data-pl-theme="pixel"] [data-pl-part="filter"] [data-pl-part="toggles"] {
+    gap: 0.4rem;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="filter"] [data-pl-part="toggle"] {
+    position: relative;
+    gap: 0.4rem;
+    margin: 0;
+    padding: 0.35rem 0.6rem;
+    border: 1px solid var(--pl-rule);
+    background: var(--pl-paper);
+    color: var(--pl-ink);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="filter"] [data-pl-part="toggle"]:hover {
+    background: var(--pl-paper-2);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="filter"] [data-pl-part="toggle"] input[type="checkbox"] {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="filter"] [data-pl-part="toggle"]:has(input:checked) {
+    border-color: var(--pl-ink);
+    background: var(--pl-paper-2);
+    box-shadow: inset 0 0 0 1px var(--pl-ink);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="filter"] [data-pl-part="toggle"]:has(input:focus-visible) {
+    outline: 2px solid var(--pl-action);
+    outline-offset: 2px;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="filter"] [data-pl-part="toggle"] span {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="filter"] [data-pl-part="check"] input[type="checkbox"] {
+    appearance: none;
+    flex: none;
+    width: 14px;
+    height: 14px;
+    margin: 0;
+    border: 1px solid var(--pl-ink);
+    border-radius: 0;
+    background: var(--pl-paper);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="filter"] [data-pl-part="check"] input[type="checkbox"]:checked {
+    background: var(--pl-ink);
+    box-shadow: inset 0 0 0 2px var(--pl-paper);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="filter"] [data-pl-part="check"] input[type="checkbox"]:focus-visible {
+    outline: 2px solid var(--pl-action);
+    outline-offset: 2px;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="filter"] [data-pl-part="filter-foot"] {
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.6rem 0.9rem;
+    border-top: 2px solid var(--pl-ink);
+    background: var(--pl-paper-2);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="filter"] [data-pl-part="filter-foot"]::before {
+    content: attr(data-pl-hint);
+    font-family: var(--pl-font);
+    font-size: 9px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--pl-muted);
+}

@@ -13,6 +13,7 @@ import {
   SelectSeparator,
 } from 'reka-ui'
 import { cn } from '../../utils/cn'
+import { usePlScope } from '../../composables/usePipelineTheme'
 
 // Fallthrough attrs (aria-label, id, name, …) belong on the trigger, not the root.
 defineOptions({ inheritAttrs: false })
@@ -31,6 +32,7 @@ const props = defineProps({
   class: { type: null, default: '' },
 })
 const emit = defineEmits(['update:modelValue'])
+const plScope = usePlScope()
 
 // Reka forbids an empty-string SelectItem value (it reserves "" as its own
 // "clear the selection" sentinel and throws on it), yet many call sites use
@@ -83,7 +85,12 @@ const displayLabel = computed(() => (selectedItem.value ? selectedItem.value.lab
       </SelectIcon>
     </SelectTrigger>
     <SelectPortal>
-      <SelectContent class="ds-select-content" position="popper" :side-offset="6">
+      <SelectContent
+        class="ds-select-content"
+        position="popper"
+        :side-offset="6"
+        :data-pl-part="plScope ? 'listbox' : undefined"
+      >
         <SelectViewport class="ds-select-viewport">
           <template v-for="(opt, i) in items" :key="opt.separator ? `sep-${i}` : String(opt.value)">
             <SelectSeparator v-if="opt.separator" class="ds-select-sep" />
@@ -92,6 +99,7 @@ const displayLabel = computed(() => (selectedItem.value ? selectedItem.value.lab
               class="ds-select-item"
               :value="toReka(opt.value)"
               :data-value="String(opt.value)"
+              :data-pl-part="plScope ? 'listbox-item' : undefined"
               :disabled="opt.disabled"
             >
               <span class="ds-select-check">
