@@ -66,8 +66,8 @@ const index = i => String(i + 1).padStart(2, '0')
     data-testid="overview-loop"
     aria-label="The loop"
   >
-    <header class="pl-panel__head" data-pl-part="panel-head">
-      <h2 class="pl-panel__title" data-pl-part="panel-title" data-pl-chapter="1-1">The loop</h2>
+    <header class="pl-panel__head" data-pl-part="panel-head" data-pl-chapter="1-1">
+      <h2 class="pl-panel__title" data-pl-part="panel-title">The loop</h2>
       <span class="pl-panel__sub px-loop__path" data-pl-part="panel-meta">Tasks → Features → Defects</span>
     </header>
 
