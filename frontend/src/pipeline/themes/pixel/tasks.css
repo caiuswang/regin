@@ -10,10 +10,10 @@
  */
 
 html[data-pl-theme="pixel"] [data-pl-part="kbd"] {
-    border-color: var(--pl-ink);
+    border-color: var(--pl-frame);
     border-radius: 0;
     font-family: var(--pl-font);
-    color: var(--pl-ink);
+    color: var(--pl-text);
 }
 
 /* ── Tags: filter chips, FIXES D-n, waits, a card's feature ──────────── */
@@ -30,12 +30,12 @@ html[data-pl-theme="pixel"] [data-pl-part="tag"] {
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="tag"][data-tone="fail"] {
-    box-shadow: inset 0 0 0 1px var(--pl-fail);
+    box-shadow: inset 0 0 0 1px var(--pl-fail-line);
     color: var(--pl-fail);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="tag"][data-tone="warn"] {
-    box-shadow: inset 0 0 0 1px var(--pl-warn);
+    box-shadow: inset 0 0 0 1px var(--pl-warn-line);
     color: var(--pl-warn);
 }
 
@@ -58,13 +58,13 @@ html[data-pl-theme="pixel"] [data-pl-part="live"] > span {
     height: 0.5rem;
     border-radius: 0;
     background: none;
-    box-shadow: inset 0 0 0 2px var(--pl-run);
+    box-shadow: inset 0 0 0 2px var(--pl-run-line);
 }
 
 /* ── Keys inside rows, cards and nodes ───────────────────────────────── */
 /* Watch is a link drawn as a key; it has no border of its own to recolour. */
 html[data-pl-theme="pixel"] [data-pl-part="key"]:is(a, span) {
-    border: 1px solid var(--pl-ink);
+    border: 1px solid var(--pl-frame);
     font-size: 10px;
 }
 
@@ -75,7 +75,7 @@ html[data-pl-theme="pixel"] [data-pl-part="row"] [data-pl-part="key"],
 html[data-pl-theme="pixel"] [data-pl-part="card"] [data-pl-part="key"],
 html[data-pl-theme="pixel"] [data-pl-part="node"] [data-pl-part="key"] {
     background: var(--pl-paper);
-    color: var(--pl-ink);
+    color: var(--pl-text-2);
     font-size: 10px;
 }
 
@@ -92,7 +92,7 @@ html[data-pl-theme="pixel"] [data-pl-part="group-label"] {
     font-weight: 700;
     letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: var(--pl-ink);
+    color: var(--pl-text);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="group-label"][data-pl-chapter]::before {
@@ -184,29 +184,29 @@ html[data-pl-theme="pixel"] [data-pl-part="column"] [data-pl-part="group-head"] 
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="card"] {
-    border-color: var(--pl-ink);
+    border-color: var(--pl-frame);
     border-radius: 0;
     background: var(--pl-paper);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="card"]:hover {
-    box-shadow: 2px 2px 0 var(--pl-ink);
+    box-shadow: 2px 2px 0 var(--pl-drop);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="card"][data-live] {
-    border-color: var(--pl-run);
-    box-shadow: 0 0 0 1px var(--pl-run);
+    border-color: var(--pl-run-line);
+    box-shadow: 0 0 0 1px var(--pl-run-line);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="notice"] {
-    border-color: var(--pl-ink);
+    border-color: var(--pl-frame);
     border-radius: 0;
     background: var(--pl-paper);
 }
 
 /* ── Graph ───────────────────────────────────────────────────────────── */
 html[data-pl-theme="pixel"] [data-pl-part="canvas"] {
-    border-color: var(--pl-ink);
+    border-color: var(--pl-frame);
     border-radius: 0;
 }
 
@@ -227,11 +227,11 @@ html[data-pl-theme="pixel"] [data-pl-part="meta-label"][data-pl-chapter]::before
 html[data-pl-theme="pixel"] [data-pl-part="meter"] {
     height: 6px;
     border-radius: 0;
-    background: repeating-linear-gradient(90deg, var(--pl-shade) 0 6px, transparent 6px 8px);
+    background: repeating-linear-gradient(90deg, var(--pl-cell-off) 0 6px, transparent 6px 8px);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="meter"] [data-pl-part="meter-cell"] {
-    background: repeating-linear-gradient(90deg, var(--pl-ink) 0 6px, transparent 6px 8px);
+    background: repeating-linear-gradient(90deg, var(--pl-cell-done) 0 6px, transparent 6px 8px);
 }
 
 /* The status stripe is a 2px edge (R7), drawn as a shadow so it is an
@@ -250,21 +250,21 @@ html[data-pl-theme="pixel"] [data-pl-part="node"]::before {
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="node"]:hover {
-    border-color: var(--pl-ink);
+    border-color: var(--pl-frame);
     box-shadow: inset var(--pl-node-edge) 0 0 var(--pl-node-hue);
 }
 
-html[data-pl-theme="pixel"] [data-pl-part="node"][data-pl-tag="armed"] { --pl-node-hue: var(--pl-ink); }
-html[data-pl-theme="pixel"] [data-pl-part="node"][data-pl-tag="blocked"] { --pl-node-hue: var(--pl-warn); }
-html[data-pl-theme="pixel"] [data-pl-part="node"][data-pl-tag="failed"] { --pl-node-hue: var(--pl-fail); }
+html[data-pl-theme="pixel"] [data-pl-part="node"][data-pl-tag="armed"] { --pl-node-hue: var(--pl-frame); }
+html[data-pl-theme="pixel"] [data-pl-part="node"][data-pl-tag="blocked"] { --pl-node-hue: var(--pl-warn-line); }
+html[data-pl-theme="pixel"] [data-pl-part="node"][data-pl-tag="failed"] { --pl-node-hue: var(--pl-fail-line); }
 html[data-pl-theme="pixel"] [data-pl-part="node"][data-pl-tag="done"] { --pl-node-hue: var(--pl-ship); }
 
 /* The run-hue border already draws 1px of the leading edge, so the stripe
    adds one more: 2px in all (R7). */
 html[data-pl-theme="pixel"] [data-pl-part="node"][data-pl-tag="running"] {
-    --pl-node-hue: var(--pl-run);
+    --pl-node-hue: var(--pl-run-line);
     --pl-node-edge: 1px;
-    border-color: var(--pl-run);
+    border-color: var(--pl-run-line);
     box-shadow: inset var(--pl-node-edge) 0 0 var(--pl-node-hue);
 }
 
@@ -291,13 +291,13 @@ html[data-pl-theme="pixel"] [data-pl-part="view-switch"] [role="tablist"] button
 
 html[data-pl-theme="pixel"] [data-pl-part="view-switch"] [role="tablist"] button[role="tab"][data-state="active"] {
     background: var(--pl-paper);
-    color: var(--pl-ink);
-    box-shadow: inset 0 0 0 1px var(--pl-ink);
+    color: var(--pl-text);
+    box-shadow: inset 0 0 0 1px var(--pl-frame);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="view-switch"] [role="tablist"] button[role="tab"][data-state="active"]::before {
     content: "";
-    border-left: 6px solid var(--pl-action);
+    border-left: 6px solid var(--pl-action-text);
     border-top: 4px solid transparent;
     border-bottom: 4px solid transparent;
 }

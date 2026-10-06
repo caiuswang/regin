@@ -100,18 +100,18 @@ function seen(row) {
 }
 .px-slot {
     display: flex; flex-direction: column; min-width: 0;
-    border: 1px solid var(--pl-ink); box-shadow: 2px 2px 0 var(--pl-ink); background: var(--pl-paper);
+    border: 1px solid var(--pl-frame); box-shadow: 2px 2px 0 var(--pl-drop); background: var(--pl-paper);
 }
 .px-slot__head, .px-slot__figs, .px-slot__attention {
     font-family: var(--pl-font); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
 }
 .px-slot__head {
     display: flex; justify-content: space-between; gap: 0.5rem;
-    padding: 0.35rem 0.6rem; border-bottom: 1px solid var(--pl-ink); color: var(--pl-ink);
+    padding: 0.35rem 0.6rem; border-bottom: 1px solid var(--pl-frame); color: var(--pl-text);
 }
 .px-slot .px-slot__pick {
     justify-content: flex-start; gap: 0.6rem; min-width: 0; height: auto;
-    padding: 0.6rem 0.6rem 0.2rem; border-radius: 0; text-align: left; color: var(--pl-ink); background: none;
+    padding: 0.6rem 0.6rem 0.2rem; border-radius: 0; text-align: left; color: var(--pl-text); background: none;
 }
 .px-slot__name { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .px-slot__pick:hover .px-slot__name { text-decoration: underline; }

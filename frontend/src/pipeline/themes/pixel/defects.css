@@ -12,7 +12,7 @@
 html[data-pl-theme="pixel"] [data-pl-part="sheet"] {
     padding: 0 0.9rem 0.9rem;
     background: var(--pl-paper);
-    box-shadow: 0 0 0 2px var(--pl-ink);
+    box-shadow: 0 0 0 2px var(--pl-frame);
 }
 
 /* ── Head (slot DefectsHead) ─────────────────────────────────────────── */
@@ -23,7 +23,7 @@ html[data-pl-theme="pixel"] [data-pl-part="sheet"] > [data-pl-part="panel-head"]
     gap: 0.35rem 0.9rem;
     margin: 0 -0.9rem;
     padding: 0.7rem 0.9rem 0.6rem;
-    border-bottom: 2px solid var(--pl-ink);
+    border-bottom: 2px solid var(--pl-frame);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="panel-head"] [data-pl-part="panel-link"][data-pl-back] {
@@ -57,14 +57,14 @@ html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="panel-head"] [
 
 html[data-pl-theme="pixel"] [data-pl-part="panel-head"] [data-pl-part="panel-meta"][data-pl-end] {
     margin-left: auto;
-    color: var(--pl-ink);
+    color: var(--pl-text);
 }
 
 /* ── Toolbar ─────────────────────────────────────────────────────────── */
 html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="toolbar"] {
     margin: 0 -0.9rem;
     padding: 0.75rem 0.9rem;
-    border-bottom: 1px solid var(--pl-shade);
+    border-bottom: 1px solid var(--pl-hair);
 }
 
 /* The head carries the count, as the server's total. */
@@ -81,7 +81,7 @@ html[data-pl-theme="pixel"] [data-pl-part="toolbar"] [data-pl-part="key"]:disabl
     border-color: transparent;
     background: none;
     box-shadow: none;
-    color: var(--pl-rule);
+    color: var(--pl-faint);
     opacity: 1;
 }
 
@@ -97,13 +97,13 @@ html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="card"] {
 
 /* An open report nobody has blamed: a 2px ink frame, the list's call to act. */
 html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="card"][data-pl-unblamed] {
-    border-color: var(--pl-ink);
-    box-shadow: 0 0 0 1px var(--pl-ink);
+    border-color: var(--pl-frame);
+    box-shadow: 0 0 0 1px var(--pl-frame);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="card"][data-expanded] {
-    border-color: var(--pl-ink);
-    box-shadow: 0 0 0 1px var(--pl-ink), 3px 3px 0 1px var(--pl-ink);
+    border-color: var(--pl-frame);
+    box-shadow: 0 0 0 1px var(--pl-frame), 3px 3px 0 1px var(--pl-drop);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="card"] [data-pl-part="card-head"] [data-pl-glyph] {
@@ -126,7 +126,7 @@ html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="tag"] {
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="tag"][data-tone="warn"] {
-    box-shadow: inset 0 0 0 1px var(--pl-warn);
+    box-shadow: inset 0 0 0 1px var(--pl-warn-line);
     color: var(--pl-warn);
 }
 
@@ -162,13 +162,13 @@ html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="card-head"] [d
 
 /* ── Body ────────────────────────────────────────────────────────────── */
 html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="card"] [data-pl-part="symptom"] {
-    color: var(--pl-ink);
+    color: var(--pl-text);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="card"] [data-pl-part="facts"] {
     padding: 0.55rem 0.75rem;
     background: var(--pl-paper-2);
-    box-shadow: inset 0 0 0 1px var(--pl-shade);
+    box-shadow: inset 0 0 0 1px var(--pl-hair);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="card"] [data-pl-part="facts"] dt {
@@ -179,12 +179,12 @@ html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="card"] [data-p
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="card"] [data-pl-part="facts"] dd {
-    color: var(--pl-ink);
+    color: var(--pl-text);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="card"] [data-pl-part="verbs"] {
     padding-top: 0.5rem;
-    border-top: 1px dashed var(--pl-shade);
+    border-top: 1px dashed var(--pl-hair);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="verbs"] [data-pl-part="key"],

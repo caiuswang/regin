@@ -29,6 +29,15 @@ const READY = {
   '/defects': 'text=Ledger double-counts a resumed run',
 }
 
+// Each screen's framed paper surface. The quest log has no panel box, so on
+// /tasks a secondary key stands in: the same paper face and frame.
+const FRAMED = {
+  '/overview': 'section[data-pl-part="panel"]',
+  '/tasks': '[data-pl-part="row"] [data-pl-part="key"]',
+  '/features': '[data-pl-part="rows"]',
+  '/defects': '[data-pl-part="sheet"]',
+}
+
 async function seed(request) {
   const { token } = await (await request.post(`${API_BASE}/api/auth/login`, { data: TEST_USER })).json()
   const headers = { Authorization: `Bearer ${token}` }
@@ -161,9 +170,12 @@ test.describe('pixel dark palette', () => {
       await open(page, path)
       expect(await page.evaluate(() => document.documentElement.getAttribute('data-theme'))).toBe('dark')
       expect(await hex('[data-pl-part="shell"]', 'backgroundColor'), path).toBe('#0b0e16')
-      const panel = path === '/defects' ? '[data-pl-part="sheet"]' : 'section[data-pl-part="panel"]'
+      const panel = FRAMED[path]
       expect(await hex(panel, 'backgroundColor'), path).toBe('#151b27')
-      expect(await hex(panel, 'borderTopColor'), path).toBe('#6f7f9c')
+      // A frame is the border, or a zero-offset box-shadow ring where the panel draws no border.
+      const ring = await page.locator(panel).first().evaluate(el => getComputedStyle(el).borderTopWidth === '0px')
+      if (ring) expect(await page.locator(panel).first().evaluate(el => getComputedStyle(el).boxShadow), path).toContain('rgb(111, 127, 156)')
+      else expect(await hex(panel, 'borderTopColor'), path).toBe('#6f7f9c')
       expect(await hex('[data-pl-part="tab"][aria-current="page"]', 'color'), path).toBe('#e6ecf5')
       expect(await hex('[data-pl-part="meta-label"]', 'color'), path).toBe('#97a4ba')
     }
@@ -182,7 +194,7 @@ test.describe('pixel dark palette', () => {
 
     // The design's dark file draws these near-white with pale labels; R15 does not copy it.
     await open(page, '/features')
-    const ratio = await page.getByTestId('triage-verb-dup').evaluate((el) => {
+    const ratio = await page.getByTestId('triage-verb-duplicate').evaluate((el) => {
       const c = document.createElement('canvas')
       c.width = c.height = 1
       const ctx = c.getContext('2d')
@@ -194,10 +206,38 @@ test.describe('pixel dark palette', () => {
       return (hi + 0.05) / (lo + 0.05)
     })
     expect(ratio).toBeGreaterThanOrEqual(4.5)
-    for (const verb of ['dup', 'decline', 'snooze']) {
+    for (const verb of ['duplicate', 'decline', 'snooze']) {
       expect(await hex(`[data-testid="triage-verb-${verb}"]`, 'backgroundColor'), verb).toBe('#151b27')
       expect(await hex(`[data-testid="triage-verb-${verb}"]`, 'color'), verb).toBe('#cdd6e4')
     }
+  })
+
+  // The ground is the shell's box-shadow spread, and a box-shadow paints over
+  // the boxes of earlier in-flow siblings — the blocker strip sits above the
+  // shell in the scroller, unpositioned. Read back what was painted, not what
+  // was computed.
+  test('a block above the shell keeps its own box in dark', async ({ page, baseURL }, testInfo) => {
+    await replay(page, testInfo, baseURL, 'dark')
+    await open(page, '/tasks')
+    await page.locator('[data-pl-part="shell"]').evaluate((shell) => {
+      const strip = document.createElement('div')
+      strip.dataset.testid = 'stand-in-strip'
+      strip.style.cssText = 'height: 40px; margin-bottom: 1rem; background: rgb(254, 226, 226)'
+      shell.before(strip)
+    })
+    const box = await page.getByTestId('stand-in-strip').boundingBox()
+    const png = await page.screenshot({ clip: { x: box.x + 6, y: box.y + box.height / 2, width: 1, height: 1 } })
+    const painted = await page.evaluate(async (b64) => {
+      const img = new Image()
+      img.src = `data:image/png;base64,${b64}`
+      await img.decode()
+      const c = document.createElement('canvas')
+      c.width = c.height = 1
+      const ctx = c.getContext('2d')
+      ctx.drawImage(img, 0, 0)
+      return '#' + [...ctx.getImageData(0, 0, 1, 1).data.slice(0, 3)].map(v => v.toString(16).padStart(2, '0')).join('')
+    }, png.toString('base64'))
+    expect(painted).toBe('#fee2e2')
   })
 })
 
