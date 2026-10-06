@@ -171,15 +171,28 @@ def release(trace_id: str) -> bool:
 def release_session(name: str, trace_id: str) -> bool:
     """Kill regin's tmux session `name` and retire `trace_id`'s pane row."""
     killed = _tmux("kill-session", "-t", name).returncode == 0
+    _retire(trace_id)
+    log.write("bridge_attach_released", trace_id=trace_id, session=name,
+              killed=killed)
+    return killed
+
+
+def release_own_session(name: str, trace_id: str) -> bool:
+    """`release_session` for a caller running inside the session it kills — a
+    hook of the pane's own `claude`. The kill hangs up this process too, so
+    everything that must be written is written before it."""
+    _retire(trace_id)
+    log.write("bridge_attach_releasing_own", trace_id=trace_id, session=name)
+    return _tmux("kill-session", "-t", name).returncode == 0
+
+
+def _retire(trace_id: str) -> None:
     conn = get_connection()
     try:
         conn.execute(_RETIRE_SQL, (trace_id,))
         conn.commit()
     finally:
         conn.close()
-    log.write("bridge_attach_released", trace_id=trace_id, session=name,
-              killed=killed)
-    return killed
 
 
 def _record(trace_id: str, pane_id: str, server_pid: int,

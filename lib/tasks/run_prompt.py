@@ -29,8 +29,10 @@ FOLLOWUP_MAX = 8000
 REFERENCES_MAX = 20
 
 
+# `one_shot` is absent on purpose: a task run is always launched steerable, and
+# an armed `one_shot` ends it on the agent's report instead (`run_ending`).
 _LAUNCH_DEFAULTS: dict = {"cwd": None, "model": "", "effort": "",
-                          "permission_mode": "", "one_shot": False, "env": {}}
+                          "permission_mode": "", "env": {}}
 
 
 def _finish_command(run_id: int) -> str:
@@ -487,7 +489,6 @@ def _launch_kwargs(params: dict) -> dict:
     """
     kwargs = {name: params.get(name) or default
               for name, default in _LAUNCH_DEFAULTS.items()}
-    kwargs["one_shot"] = bool(kwargs["one_shot"])
     kwargs["env"] = dict(kwargs["env"])
     spec = params.get("worktree") or {}
     if spec.get("branch"):

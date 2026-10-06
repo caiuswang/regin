@@ -55,7 +55,7 @@ from lib.orm.models.tasks import (
     TASK_STATUS_RUNNING,
 )
 from lib.settings import settings
-from lib.tasks import deps, store, tmux_runs, verify
+from lib.tasks import deps, run_ending, store, tmux_runs, verify
 from lib.tasks.run_announce import (
     TASK_READY_TRACE, _announce_broken_chains, _announce_stuck)
 from lib.tasks.run_prompt import (
@@ -83,7 +83,7 @@ _SETTLED = (TASK_STATUS_DONE, TASK_STATUS_FAILED)
 # claimed by a CLI that runs it to the end itself.
 _DEFERRED = "fire_deferred"
 _VERIFY_OWNER = "verify_owner"
-_INTERNAL_PARAMS = (_DEFERRED, _VERIFY_OWNER)
+_INTERNAL_PARAMS = (_DEFERRED, _VERIFY_OWNER, run_ending.END_REQUESTED)
 _OWNER_CLI = "cli"
 
 
@@ -1106,6 +1106,8 @@ def finish_run(run_id: int, *, status: str = RUN_STATUS_DONE,
     launched steerable (`one_shot` off), so its session does not end when the
     agent stops working — it parks on an empty prompt queue until someone stops
     it, and `handle_completion` with it. Nothing downstream could ever fire.
+    An armed `one_shot` is honoured here rather than at launch: the report is
+    what ends the session, after the turn that made it (`run_ending`).
 
     So the run reports for itself, and the session it reports from stays open:
     settling the attempt is a statement about the work, not about the
@@ -1135,7 +1137,11 @@ def finish_run(run_id: int, *, status: str = RUN_STATUS_DONE,
         _post_agent_report(task_id, run_id, status, reason.strip())
     reason = reason or "agent signalled finish"
     reopen_for_agent_report(run_id)
-    return _settle_report(task_id, run_id, status, reason, in_server)
+    # After the settle: an idle SDK session ends the moment it is closed, and
+    # its completion callback must find the report already written.
+    result = _settle_report(task_id, run_id, status, reason, in_server)
+    run_ending.request_end(run_id)
+    return result
 
 
 def _settle_report(task_id: int, run_id: int, status: str, reason: str,

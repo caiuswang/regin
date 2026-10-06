@@ -327,9 +327,9 @@ class AgentRunner(_StreamMixin, _ParkMixin, _QueueMixin):
         at launch and which therefore *finished* rather than being stopped."""
         return self._stopping.is_set()
 
-    def close(self) -> None:
+    def close(self, reason: str = "stopped") -> None:
         """End the session once everything already queued has run."""
-        self._stop_reason = "stopped"
+        self._stop_reason = reason
         self._queue_closed = True
         self._prompts.put_nowait(_CLOSE)
 

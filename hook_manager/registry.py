@@ -137,6 +137,7 @@ skill_launch        = _safe_import('skill_launch')
 skill_read          = _safe_import('skill_read')
 subagent_lifecycle  = _safe_import('subagent_lifecycle')
 task_lifecycle      = _safe_import('task_lifecycle')
+task_run_end        = _safe_import('task_run_end')
 wiki_read_sync      = _safe_import('wiki_read_sync')
 trace_payload       = _safe_import('trace_payload')
 turn_trace          = _safe_import('turn_trace')
@@ -645,6 +646,22 @@ REGISTRY: list[Handler] = [
     #     priority=50,
     #     fn=misc_events.worktree_remove,
     # ),
+
+    # ── Task runs ──────────────────────────────────────────────────────
+    Handler(
+        name='task_run_end_on_stop',
+        label='One-shot Task Run End (Stop)',
+        summary="Ends a one-shot tmux task run's session at the end of the "
+                'turn in which its agent reported `task finish`.',
+        match_hint='Stop for a session that is a reported one-shot tmux '
+                   'task attempt',
+        events=['Stop'],
+        kind='notify',
+        # After every other Stop handler, the catch-all included: it hangs
+        # up this hook's own pane, so nothing scheduled behind it would run.
+        priority=1000,
+        fn=task_run_end.handle_stop,
+    ),
 
     # ── Catch-all trace (runs last) ────────────────────────────────────
     Handler(

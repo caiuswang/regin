@@ -353,6 +353,26 @@ def launch(prompt: str, *, cwd: str | None = None,
                       resume=resume, trace_id=trace_id).trace_id
 
 
+def end_after_turn(trace_id: str) -> tuple[bool, str]:
+    """End a run once the turn now running has finished. Any thread.
+
+    Unlike `registry.stop_run` nothing is interrupted: the queue is closed, so
+    the pump stops at the next turn boundary and the teardown still waits out
+    delegated work (`_settle_stream`). A run that is idle ends at once.
+    """
+    runner, refusal = registry._live_runner(trace_id)
+    if runner is None:
+        return False, refusal
+    if runner.is_stopping:
+        return True, "already ending"
+    try:
+        runner.loop.call_soon_threadsafe(runner.close, "completed")
+    except RuntimeError:
+        return False, "agent session is no longer running"
+    log.write("sdk_run_end_after_turn", trace_id=trace_id)
+    return True, "ending after this turn"
+
+
 def send_prompt(trace_id: str, text: str) -> tuple[bool, str]:
     """Queue a follow-up prompt onto a run this process owns.
 
