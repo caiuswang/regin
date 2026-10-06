@@ -429,7 +429,7 @@ html[data-pl-theme="pixel"] [data-pl-part="panel-meta"][data-tone="warn"] {
 /* A meter is the one place a status hue may fill (R7): grey by how far a part
    has got, amber where a human must act, red where it failed. Covers both the
    loop's tones and a stage bar's. */
-html[data-pl-theme="pixel"] [data-pl-part="meter"] {
+html[data-pl-theme="pixel"] [data-pl-part="meter-bar"] {
     border-radius: 0;
 }
 
@@ -464,7 +464,6 @@ html[data-pl-theme="pixel"] [data-pl-part="row"] {
 html[data-pl-theme="pixel"] [data-pl-part="row-id"] {
     font-family: var(--pl-font);
     font-size: 10px;
-    font-weight: 700;
     letter-spacing: 0.06em;
     color: var(--pl-muted);
 }
