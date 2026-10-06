@@ -4,6 +4,7 @@ import FeatureStageTabs from './slots/FeatureStageTabs.vue'
 import StageTrack from './slots/StageTrack.vue'
 import OverviewLoop from './slots/OverviewLoop.vue'
 import ProjectsPanel from './slots/ProjectsPanel.vue'
+import ProjectScopePanel from './slots/ProjectScopePanel.vue'
 import ChoiceField from './slots/ChoiceField.vue'
 import MenuField from './slots/MenuField.vue'
 import SecretStage from './slots/SecretStage.vue'
@@ -30,6 +31,7 @@ export default {
     StageTrack,
     OverviewLoop,
     ProjectsPanel,
+    ProjectScopePanel,
     ChoiceField,
     MenuField,
     SecretStage,
