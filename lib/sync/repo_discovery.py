@@ -2,15 +2,16 @@
 
 Each entry in `settings.repo_paths` is the absolute path of a git
 working tree. The /repos web UI and `regin add-repo` / `regin
-remove-repo` CLI commands mutate this list and reconcile the
-`repos` / `branches` tables.
+remove-repo` CLI commands mutate this list and the matching
+`repos` / `branches` rows; `register_repos` reconciles the whole table.
 """
 
 from __future__ import annotations
 
+import fcntl
 import os
 import tempfile
-import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
 
 from sqlmodel import delete, select
@@ -52,10 +53,25 @@ def detect_default_branch(repo_path: str) -> str:
 
 # ── settings I/O ─────────────────────────────────────────────
 
-# `add_repo` / `remove_repo` read `repo_paths`, write it back, then reconcile
-# the `repos` table to that list — so two interleaved calls (threaded Flask)
-# each drop the row the other just wrote. Serializes them within a process.
-_repo_paths_lock = threading.Lock()
+@contextmanager
+def _repo_paths_locked():
+    """Hold an exclusive lock across a read-modify-write of `repo_paths`.
+
+    A file lock rather than a thread lock: the server and `regin add-repo`
+    are separate processes writing the same settings file. `flock` also
+    conflicts between two descriptors in one process, so it covers threaded
+    Flask too.
+    """
+    from lib import settings as _cfg
+    lock_path = _cfg.SETTINGS_LOCAL_PATH + ".lock"
+    os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+    with open(lock_path, "a") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
 
 def _load_repo_paths() -> list[str]:
     """Read `repo_paths` from settings, normalized."""
@@ -108,6 +124,36 @@ def scan_repos() -> list:
     return out
 
 
+def _upsert_repo(session, repo: dict) -> str:
+    """Insert or refresh one `Repo` row and its default-branch `Branch`;
+    returns which of added / updated / skipped happened."""
+    existing = session.exec(select(Repo).where(Repo.name == repo["name"])).first()
+    if existing is None:
+        outcome = "added"
+        existing = Repo(name=repo["name"], path=repo["path"],
+                        default_branch=repo["default_branch"])
+        session.add(existing)
+        session.flush()
+    elif (existing.path, existing.default_branch) != (repo["path"], repo["default_branch"]):
+        outcome = "updated"
+        existing.path = repo["path"]
+        existing.default_branch = repo["default_branch"]
+        existing.updated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        session.add(existing)
+    else:
+        outcome = "skipped"
+
+    branch_exists = session.exec(
+        select(Branch).where(
+            Branch.repo_id == existing.id,
+            Branch.name == repo["default_branch"],
+        )
+    ).first()
+    if branch_exists is None:
+        session.add(Branch(repo_id=existing.id, name=repo["default_branch"]))
+    return outcome
+
+
 def register_repos(repos: list) -> dict:
     """Reconcile the `repos` / `branches` tables with `repos`.
 
@@ -119,43 +165,7 @@ def register_repos(repos: list) -> dict:
 
     with SessionLocal() as session:
         for repo in repos:
-            existing = session.exec(
-                select(Repo).where(Repo.name == repo["name"])
-            ).first()
-
-            if existing is not None:
-                if (existing.path != repo["path"]
-                        or existing.default_branch != repo["default_branch"]):
-                    existing.path = repo["path"]
-                    existing.default_branch = repo["default_branch"]
-                    existing.updated_at = datetime.now(timezone.utc).strftime(
-                        "%Y-%m-%d %H:%M:%S"
-                    )
-                    session.add(existing)
-                    stats["updated"] += 1
-                else:
-                    stats["skipped"] += 1
-                target_repo = existing
-            else:
-                target_repo = Repo(
-                    name=repo["name"], path=repo["path"],
-                    default_branch=repo["default_branch"],
-                )
-                session.add(target_repo)
-                session.flush()
-                stats["added"] += 1
-
-            branch_exists = session.exec(
-                select(Branch).where(
-                    Branch.repo_id == target_repo.id,
-                    Branch.name == repo["default_branch"],
-                )
-            ).first()
-            if branch_exists is None:
-                session.add(Branch(
-                    repo_id=target_repo.id,
-                    name=repo["default_branch"],
-                ))
+            stats[_upsert_repo(session, repo)] += 1
 
         for db_repo in session.exec(select(Repo)).all():
             if db_repo.name not in scanned_names:
@@ -196,7 +206,7 @@ def add_repo(path: str) -> dict:
         raise RepoAddError(f"path does not exist: {norm}")
     if not is_git_repo(norm):
         raise RepoAddError(f"not a git repository: {norm}")
-    with _repo_paths_lock:
+    with _repo_paths_locked():
         return _register_new_path(norm)
 
 
@@ -217,19 +227,12 @@ def _register_new_path(norm: str) -> dict:
     default_branch = detect_default_branch(norm)
     paths.append(norm)
     _save_repo_paths(paths)
-    register_repos([
-        {"name": name, "path": norm, "default_branch": default_branch}
-    ] + [
-        # Preserve the other registered repos so the reconcile step
-        # doesn't remove them.
-        {
-            "name": os.path.basename(p.rstrip(os.sep)),
-            "path": p,
-            "default_branch": detect_default_branch(p),
-        }
-        for p in paths if p != norm and is_git_repo(p)
-    ])
-    return {"name": name, "path": norm, "default_branch": default_branch}
+    info = {"name": name, "path": norm, "default_branch": default_branch}
+    with SessionLocal() as session:
+        _upsert_repo(session, info)
+        session.commit()
+    _sync_log().write("repo_added", name=name, path=norm)
+    return info
 
 
 def _is_orphan_path(path: str) -> bool:
@@ -322,7 +325,7 @@ def remove_repo(name: str) -> dict:
     rows. Returns `{removed: bool, name, path}`. The repo's source
     tree on disk is untouched.
     """
-    with _repo_paths_lock:
+    with _repo_paths_locked():
         paths = _load_repo_paths()
         target_path = next(
             (p for p in paths if os.path.basename(p.rstrip(os.sep)) == name), None,

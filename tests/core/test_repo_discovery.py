@@ -192,10 +192,10 @@ def test_add_repo_rejects_duplicate(tmp_db, tmp_path, _isolated_settings):
 def test_concurrent_add_repo_keeps_both_rows(tmp_db, tmp_path, _isolated_settings,
                                              monkeypatch):
     """Two registrations interleaved inside one process (threaded Flask) must
-    not lose an update: each one loads `repo_paths`, saves, then reconciles the
-    `repos` table to exactly its own list, so an unserialized pair deletes
-    whichever row the other wrote."""
+    not lose an update: each one loads `repo_paths` and saves it back, so an
+    unserialized pair drops whichever path the other wrote."""
     import threading
+    from contextlib import contextmanager
 
     import lib.sync.repo_discovery as rd
 
@@ -208,16 +208,14 @@ def test_concurrent_add_repo_keeps_both_rows(tmp_db, tmp_path, _isolated_setting
     # (serialized: it cannot read them until the first is done).
     second_progressed = threading.Event()
     real_load, real_save = rd._load_repo_paths, rd._save_repo_paths
-    real_lock = rd._repo_paths_lock
+    real_locked = rd._repo_paths_locked
 
-    class SignallingLock:
-        def __enter__(self):
-            if threading.current_thread().name == "second":
-                second_progressed.set()
-            return real_lock.__enter__()
-
-        def __exit__(self, *exc):
-            return real_lock.__exit__(*exc)
+    @contextmanager
+    def signalling_locked():
+        if threading.current_thread().name == "second":
+            second_progressed.set()
+        with real_locked():
+            yield
 
     def load():
         paths = real_load()
@@ -232,7 +230,7 @@ def test_concurrent_add_repo_keeps_both_rows(tmp_db, tmp_path, _isolated_setting
 
     monkeypatch.setattr(rd, "_load_repo_paths", load)
     monkeypatch.setattr(rd, "_save_repo_paths", save)
-    monkeypatch.setattr(rd, "_repo_paths_lock", SignallingLock())
+    monkeypatch.setattr(rd, "_repo_paths_locked", signalling_locked)
 
     t1 = threading.Thread(target=add_repo, args=(str(first),), name="first")
     t2 = threading.Thread(target=add_repo, args=(str(second),), name="second")
@@ -242,6 +240,63 @@ def test_concurrent_add_repo_keeps_both_rows(tmp_db, tmp_path, _isolated_setting
     t2.join()
 
     assert sorted(r.name for r in _fetch_repos()) == ["first", "second"]
+    assert sorted(os.path.basename(p) for p in rd._load_repo_paths()) == [
+        "first", "second"]
+
+
+def test_add_repo_keeps_rows_it_did_not_list(tmp_db, tmp_path, _isolated_settings):
+    register_repos([{"name": "seeded", "path": "/elsewhere/seeded",
+                     "default_branch": "main"}])
+    repo_path = tmp_path / "svc"
+    _make_git_repo(repo_path)
+    add_repo(str(repo_path))
+    assert sorted(r.name for r in _fetch_repos()) == ["seeded", "svc"]
+
+
+def test_add_repo_waits_for_a_settings_writer_in_another_process(
+        tmp_db, tmp_path, _isolated_settings, monkeypatch):
+    """A CLI `regin add-repo` and the server are separate processes, so an
+    in-process lock cannot serialize them. The writer here holds the settings
+    lock through its own file descriptor, which is what another process has."""
+    import fcntl
+    import json
+    import threading
+
+    import lib.sync.repo_discovery as rd
+
+    theirs, ours = tmp_path / "theirs", tmp_path / "ours"
+    _make_git_repo(theirs)
+    _make_git_repo(ours)
+
+    reached = threading.Event()
+    real_flock = rd.fcntl.flock
+    real_load = rd._load_repo_paths
+
+    def flock(fh, op):
+        if threading.current_thread().name == "ours" and op == fcntl.LOCK_EX:
+            reached.set()
+        return real_flock(fh, op)
+
+    def load():
+        if threading.current_thread().name == "ours":
+            reached.set()
+        return real_load()
+
+    monkeypatch.setattr(rd.fcntl, "flock", flock)
+    monkeypatch.setattr(rd, "_load_repo_paths", load)
+
+    lock_path = str(_isolated_settings["local"]) + ".lock"
+    with open(lock_path, "a") as other_process:
+        real_flock(other_process, fcntl.LOCK_EX)
+        t = threading.Thread(target=add_repo, args=(str(ours),), name="ours")
+        t.start()
+        reached.wait()
+        _isolated_settings["local"].write_text(json.dumps(
+            {"repo_paths": [os.path.realpath(theirs)]}))
+        real_flock(other_process, fcntl.LOCK_UN)
+    t.join()
+
+    assert sorted(os.path.basename(p) for p in real_load()) == ["ours", "theirs"]
 
 
 # ── remove_repo ──────────────────────────────────────────────
