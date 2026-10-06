@@ -261,7 +261,7 @@ defineExpose({ reload })
         @dismiss="runAllReport = null"
       />
       <template v-if="!collapsed[group.key]">
-        <ul class="nsl-rows">
+        <ul class="nsl-rows" data-pl-part="group-rows">
           <NextStepRow
             v-for="task in group.rows"
             :key="task.id"

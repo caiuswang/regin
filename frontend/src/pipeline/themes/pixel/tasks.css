@@ -152,9 +152,24 @@ html[data-pl-theme="pixel"] [data-pl-part="more"] {
     color: var(--pl-muted);
 }
 
+/* A group's rows hang under its head: the rule drops from the chevron and
+   each row's checkbox lands under the group sprite. */
+html[data-pl-theme="pixel"] [data-pl-part="group-rows"] {
+    margin-left: 2.25rem;
+    padding-left: 1.5rem;
+    border-left: 1px solid var(--pl-rule);
+}
+
 /* ── List rows ───────────────────────────────────────────────────────── */
 html[data-pl-theme="pixel"] [data-pl-part="row"] {
     border-color: var(--pl-rule);
+}
+
+/* Silkscreen keys outgrow classic's 8.5rem action slot (WATCH + STOP,
+   WAITS ON #N (RUNNING)). Set once on the panel: the flat list's date head
+   reads the same width, so the head stays over the column it names. */
+html[data-pl-theme="pixel"] [data-pl-part="panel"] {
+    --pl-task-action-w: 11.5rem;
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="row-id"] {
@@ -311,6 +326,11 @@ html[data-pl-theme="pixel"] [data-pl-part="view-switch"] [role="tablist"] button
 /* Silkscreen runs wide: on a phone the group head keeps its one line by
    tightening the label and the RUN ALL key, never by scrolling sideways. */
 @media (max-width: 767.98px) {
+    html[data-pl-theme="pixel"] [data-pl-part="group-rows"] {
+        margin-left: 0.5rem;
+        padding-left: 0.75rem;
+    }
+
     html[data-pl-theme="pixel"] [data-pl-part="group-label"] {
         min-width: 0;
         overflow: hidden;

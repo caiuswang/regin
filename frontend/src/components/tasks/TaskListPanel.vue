@@ -385,19 +385,19 @@ defineExpose({ reload: afterWrite })
 }
 .tl-list :deep(.task-row:last-child) { border-bottom: 0; }
 /* One label over the rows' date column. The right padding is the row's
-   padding, its action cluster's primary slot (8.5rem) and the row gap before
+   padding, its action cluster's primary slot (--pl-task-action-w) and the row gap before
    it — plus, for an editor, the ⋯ trigger and its gap. */
 .tl-head {
     display: flex;
     justify-content: flex-end;
-    padding: 0.3125rem calc(0.75rem + 8.5rem + 0.5rem) 0.3125rem 0.75rem;
+    padding: 0.3125rem calc(0.75rem + var(--pl-task-action-w, 8.5rem) + 0.5rem) 0.3125rem 0.75rem;
     font-size: 0.6875rem;
     font-weight: 600;
     color: var(--color-fg-subtle);
     background: var(--color-surface-2);
     border-bottom: 1px solid var(--color-border-subtle);
 }
-.tl-head.can-write { padding-right: calc(0.75rem + 8.5rem + 0.5rem + 0.25rem + var(--tl-menu-w, 2.125rem)); }
+.tl-head.can-write { padding-right: calc(0.75rem + var(--pl-task-action-w, 8.5rem) + 0.5rem + 0.25rem + var(--tl-menu-w, 2.125rem)); }
 .tl-head-day { flex: 0 0 5.25rem; text-align: right; }
 @media (max-width: 40rem) {
     .tl-head { display: none; }
