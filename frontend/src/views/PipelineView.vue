@@ -44,7 +44,10 @@ function isActive(tab) {
 }
 
 const onTab = computed(() => TABS.some(t => t.path === route.path))
-useShellTheme(() => onTab.value)
+// The All-defects list is themed with the tabs (it lights Features); a detail
+// page, `/defects/:id` included, is not.
+const themed = computed(() => onTab.value || route.path === '/defects')
+useShellTheme(() => themed.value)
 const { ready: themeReady } = usePipelineTheme()
 // A detail route is a page of its own, not a tab: it keeps the strip above it
 // but must never be cached, or two ids would share one mount.
@@ -62,7 +65,7 @@ const { isMdUp } = useBreakpoint()
 const isLegalScope = v => v === SCOPE_NONE || /^\d+$/.test(v)
 // `/defects` is not a tab, but its list is filtered by `?project=`, so the chip
 // over it has to name that same scope.
-const readsQuery = computed(() => onTab.value || route.path === '/defects')
+const readsQuery = themed
 // A detail page has no `?project=` of its own, so the strip beside it carries
 // the scope a list was last left under in this visit (a URL-only scope is
 // never persisted), else the stored one.
@@ -193,7 +196,7 @@ usePipelineLive(() => loadCounts(carried.value))
         </div>
         <span v-if="subline && isMdUp" class="pl-subline" data-testid="pipeline-subline" data-pl-part="meta-label">{{ subline }}</span>
         <span class="pl-spacer" />
-        <PipelineThemeSwitch v-if="onTab && !isMdUp" />
+        <PipelineThemeSwitch v-if="themed && !isMdUp" />
         <span v-if="updatedLabel && isMdUp" class="pl-updated" data-testid="pipeline-updated" data-pl-part="meta-label">{{ updatedLabel }}</span>
         <!-- The tabs are siblings of this header, so a tab's create action
              teleports in here. Below 768px the same slot is the floating
@@ -222,7 +225,7 @@ usePipelineLive(() => loadCounts(carried.value))
           >{{ tabCount(tab) }}</span>
         </router-link>
       </nav>
-      <PipelineThemeSwitch v-if="onTab && isMdUp" />
+      <PipelineThemeSwitch v-if="themed && isMdUp" />
       </div>
     </header>
 
@@ -238,7 +241,7 @@ usePipelineLive(() => loadCounts(carried.value))
          corrupts Vue's activate/deactivate bookkeeping. -->
     <!-- Hidden, not unmounted, while a theme module loads: a theme never
          flashes in over classic, and the kept-alive tabs keep their state. -->
-    <div v-show="themeReady || !onTab" class="pl-body">
+    <div v-show="themeReady || !themed" class="pl-body">
       <router-view v-slot="{ Component }">
         <KeepAlive :include="CACHED_TABS">
           <component :is="Component" :key="route.path" />

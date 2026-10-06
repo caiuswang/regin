@@ -75,7 +75,7 @@ defineExpose({ focusSearch: () => search.value?.focus() })
 </script>
 
 <template>
-  <div class="plt" data-testid="pipeline-list-toolbar">
+  <div class="plt" data-testid="pipeline-list-toolbar" data-pl-part="toolbar">
     <Tabs
       v-if="views.length"
       :model-value="view"
@@ -98,6 +98,7 @@ defineExpose({ focusSearch: () => search.value?.focus() })
           :placeholder="searchPlaceholder"
           :aria-label="searchLabel"
           data-testid="list-search"
+          data-pl-part="input"
           @keydown.enter.prevent="commit"
           @keydown.esc.prevent="revert"
         />
@@ -135,6 +136,7 @@ defineExpose({ focusSearch: () => search.value?.focus() })
           size="sm"
           :aria-label="dirLabel"
           data-testid="list-sort-dir"
+          data-pl-part="key"
           @click="emit('patch', { sort: `${sortKey}:${sortDir === 'asc' ? 'desc' : 'asc'}` })"
         >
           <Icon :name="sortDir === 'asc' ? 'arrow-up' : 'arrow-down'" :size="12" />
@@ -149,13 +151,14 @@ defineExpose({ focusSearch: () => search.value?.focus() })
         :disabled="!dirtyCount"
         :aria-label="clearLabel"
         data-testid="list-clear"
+        data-pl-part="key"
         @click="emit('reset')"
       >
         <Icon name="x" :size="13" />
         {{ dirtyCount ? `Clear ${dirtyCount}` : 'Clear' }}
       </Button>
 
-      <span v-if="countText" class="plt-count" data-testid="list-count">{{ countText }}</span>
+      <span v-if="countText" class="plt-count" data-testid="list-count" data-pl-part="toolbar-count">{{ countText }}</span>
     </template>
   </div>
 </template>

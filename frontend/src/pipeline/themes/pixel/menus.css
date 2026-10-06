@@ -93,6 +93,19 @@ html[data-pl-theme="pixel"] [data-pl-part="listbox"] [data-pl-part="listbox-head
     color: var(--pl-muted);
 }
 
+/* A row menu names the row it acts on (DropdownMenu's `head`, e.g. D-97). */
+html[data-pl-theme="pixel"] [data-pl-part="menu"][data-pl-head]::before {
+    content: attr(data-pl-head);
+    display: block;
+    padding: 0.55rem 0.9rem 0.45rem 1.75rem;
+    border-bottom: 1px dashed var(--pl-rule);
+    font-family: var(--pl-font);
+    font-size: 9px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--pl-muted);
+}
+
 html[data-pl-theme="pixel"] [data-pl-part="listbox"] [data-pl-part="listbox-item"],
 html[data-pl-theme="pixel"] [data-pl-part="menu"] [data-pl-part="menu-item"] {
     position: relative;

@@ -8,11 +8,13 @@ import ProjectScopePanel from './slots/ProjectScopePanel.vue'
 import ChoiceField from './slots/ChoiceField.vue'
 import MenuField from './slots/MenuField.vue'
 import SecretStage from './slots/SecretStage.vue'
+import DefectsHead from './slots/DefectsHead.vue'
 import './tokens.css'
 import './features.css'
 import './tasks.css'
 import './dialogs.css'
 import './menus.css'
+import './defects.css'
 
 // A glyph is a sprite drawn where <PlGlyph kind="…"> sits; PlGlyph's own
 // `kind` prop is dropped so it does not land on the <svg> as an attribute.
@@ -35,6 +37,7 @@ export default {
     ChoiceField,
     MenuField,
     SecretStage,
+    DefectsHead,
   },
   glyphs: {
     portfolio: glyph('grid'),
@@ -48,6 +51,7 @@ export default {
     'task.done': glyph('check'),
     'feature.building': glyph('bot'),
     'defect.wild': glyph('bug'),
+    'defect.closed': glyph('bug.cold'),
     'dialog.feature': glyph('flag'),
     'dialog.task': glyph('bulb'),
     'dialog.arm': glyph('bot'),

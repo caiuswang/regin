@@ -1,0 +1,211 @@
+/*
+ * Pixel theme — All defects (3-3, it lights the Features tab): the DefectsHead
+ * slot, the list toolbar, and each defect as a card. Same rules as tokens.css:
+ * html[data-pl-theme="pixel"] first, hooks only, --pl-* only.
+ *
+ * Several selectors chain [data-pl-part="sheet"]: DefectRow and its toolbar
+ * carry global classes (.ledger-tag, .card) whose fills a bare hook rule would
+ * tie with, and the sheet is the one ancestor that exists only on this page.
+ */
+
+/* ── Sheet: the page's one framed panel ──────────────────────────────── */
+html[data-pl-theme="pixel"] [data-pl-part="sheet"] {
+    padding: 0 0.9rem 0.9rem;
+    background: var(--pl-paper);
+    box-shadow: 0 0 0 2px var(--pl-ink);
+}
+
+/* ── Head (slot DefectsHead) ─────────────────────────────────────────── */
+html[data-pl-theme="pixel"] [data-pl-part="sheet"] > [data-pl-part="panel-head"] {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.35rem 0.9rem;
+    margin: 0 -0.9rem;
+    padding: 0.7rem 0.9rem 0.6rem;
+    border-bottom: 2px solid var(--pl-ink);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="panel-head"] [data-pl-part="panel-link"][data-pl-back] {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    text-decoration: none;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="panel-head"] [data-pl-part="panel-link"][data-pl-back]::before {
+    content: "";
+    border-right: 6px solid var(--pl-action-text);
+    border-top: 5px solid transparent;
+    border-bottom: 5px solid transparent;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="panel-head"] [data-pl-part="panel-link"][data-pl-back]:hover {
+    text-decoration: underline;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="panel-head"] [data-pl-part="panel-chapter"] {
+    font-family: var(--pl-font);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    color: var(--pl-muted);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="panel-head"] [data-pl-part="panel-title"] {
+    margin: 0;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="panel-head"] [data-pl-part="panel-meta"][data-pl-end] {
+    margin-left: auto;
+    color: var(--pl-ink);
+}
+
+/* ── Toolbar ─────────────────────────────────────────────────────────── */
+html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="toolbar"] {
+    margin: 0 -0.9rem;
+    padding: 0.75rem 0.9rem;
+    border-bottom: 1px solid var(--pl-shade);
+}
+
+/* The head carries the count, as the server's total. */
+html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="toolbar-count"] {
+    display: none;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="toolbar"] [data-pl-part="key"] {
+    font-size: 10px;
+}
+
+/* × CLEAR with nothing to clear is inert, not a key: no edge, no shadow. */
+html[data-pl-theme="pixel"] [data-pl-part="toolbar"] [data-pl-part="key"]:disabled {
+    border-color: transparent;
+    background: none;
+    box-shadow: none;
+    color: var(--pl-rule);
+    opacity: 1;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="toolbar"] [data-pl-part="tag"] {
+    border: 0;
+}
+
+/* ── Cards ───────────────────────────────────────────────────────────── */
+html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="card"] {
+    border-color: var(--pl-rule);
+    background: var(--pl-paper);
+}
+
+/* An open report nobody has blamed: a 2px ink frame, the list's call to act. */
+html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="card"][data-pl-unblamed] {
+    border-color: var(--pl-ink);
+    box-shadow: 0 0 0 1px var(--pl-ink);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="card"][data-expanded] {
+    border-color: var(--pl-ink);
+    box-shadow: 0 0 0 1px var(--pl-ink), 3px 3px 0 1px var(--pl-ink);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="card"] [data-pl-part="card-head"] [data-pl-glyph] {
+    width: 22px;
+    height: 18px;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="card"] [data-pl-part="row-id"] {
+    font-size: 11px;
+}
+
+/* ── Tags ────────────────────────────────────────────────────────────── */
+/* Status is an outline in its hue, a mark (R7); held-out and reopened are
+   quiet dashed outlines. */
+html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="tag"] {
+    padding: 0 0.4rem;
+    border-radius: 0;
+    background: var(--pl-paper);
+    font-size: 9px;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="tag"][data-tone="warn"] {
+    box-shadow: inset 0 0 0 1px var(--pl-warn);
+    color: var(--pl-warn);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="tag"][data-tone="ship"] {
+    box-shadow: inset 0 0 0 1px var(--pl-ship);
+    color: var(--pl-ship);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="tag"][data-pl-dashed] {
+    box-shadow: none;
+    outline: 1px dashed var(--pl-rule);
+    outline-offset: -1px;
+    color: var(--pl-muted);
+}
+
+/* The blamed feature is a title, so it keeps the sans (R8). */
+html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="card-head"] [data-pl-part="feature-link"] {
+    font-family: var(--font-sans, inherit);
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--pl-action-text);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="card-head"] [data-pl-part="state"] {
+    font-size: 9px;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="card-head"] [data-pl-part="key"] {
+    font-size: 9px;
+}
+
+/* ── Body ────────────────────────────────────────────────────────────── */
+html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="card"] [data-pl-part="symptom"] {
+    color: var(--pl-ink);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="card"] [data-pl-part="facts"] {
+    padding: 0.55rem 0.75rem;
+    background: var(--pl-paper-2);
+    box-shadow: inset 0 0 0 1px var(--pl-shade);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="card"] [data-pl-part="facts"] dt {
+    font-family: var(--pl-font);
+    font-size: 9px;
+    letter-spacing: 0.1em;
+    color: var(--pl-muted);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="card"] [data-pl-part="facts"] dd {
+    color: var(--pl-ink);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="card"] [data-pl-part="verbs"] {
+    padding-top: 0.5rem;
+    border-top: 1px dashed var(--pl-shade);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="verbs"] [data-pl-part="key"],
+html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="verbs"] [data-pl-part="key--primary"] {
+    font-size: 10px;
+    opacity: 1;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="card"] [data-pl-part="hint"] {
+    color: var(--pl-muted);
+}
+
+@media (max-width: 767.98px) {
+    html[data-pl-theme="pixel"] [data-pl-part="sheet"] {
+        padding: 0 0.6rem 0.6rem;
+    }
+
+    html[data-pl-theme="pixel"] [data-pl-part="sheet"] > [data-pl-part="panel-head"],
+    html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="toolbar"] {
+        margin: 0 -0.6rem;
+        padding-left: 0.6rem;
+        padding-right: 0.6rem;
+    }
+}

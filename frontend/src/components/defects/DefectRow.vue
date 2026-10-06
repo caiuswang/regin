@@ -10,6 +10,7 @@ import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
 import DefectActions from './DefectActions.vue'
 import DefectImages from './DefectImages.vue'
+import PlGlyph from '../pipeline/PlGlyph.vue'
 import { shortDate } from '../../utils/ledgerFormat'
 import { utcTitle } from '../../utils/time.js'
 import { reopenedLabel } from '../../utils/pipelineFormat'
@@ -32,41 +33,50 @@ defineEmits(['changed'])
 
 const open = ref(!props.collapsible)
 const heldOut = computed(() => ['snoozed', 'declined'].includes(props.defect.queue_position))
+// An open report nobody has blamed is the list's call to action (R7: framed, not filled).
+const unblamed = computed(() => props.defect.status === 'open' && !props.defect.feature_id)
 </script>
 
 <template>
   <li
     :class="[flat ? 'ledger-row defect-flat' : 'card', { 'is-collapsed': !open }]"
     :data-testid="`defect-row-${defect.id}`"
+    data-pl-part="card"
+    :data-status="defect.status"
+    :data-pl-unblamed="unblamed ? '' : undefined"
+    :data-expanded="collapsible && open ? '' : undefined"
   >
-    <div class="head">
+    <div class="head" data-pl-part="card-head">
+      <PlGlyph :kind="defect.status === 'open' ? 'defect.wild' : 'defect.closed'" />
       <!-- The id is the row's address. A list is a predicate plus a page
            position, and neither survives being sent to someone else; a
            defect that cannot be linked to can only be pointed at by
            describing it. -->
       <router-link class="ledger-id id" :to="`/defects/${defect.id}`"
                    :data-testid="`defect-permalink-${defect.id}`"
+                   data-pl-part="row-id"
       >#{{ defect.id }}</router-link>
       <span class="ledger-tag"
             :class="defect.status === 'open' ? 'ledger-tag-amber' : 'ledger-tag-green'"
+            data-pl-part="tag" :data-tone="defect.status === 'open' ? 'warn' : 'ship'"
       >{{ defect.status }}</span>
-      <span v-if="reopenedLabel(defect.round)" class="ledger-tag">{{ reopenedLabel(defect.round) }}</span>
+      <span v-if="reopenedLabel(defect.round)" class="ledger-tag" data-pl-part="tag" data-pl-dashed="">{{ reopenedLabel(defect.round) }}</span>
       <!-- Held out of the queue, and only while it is. Separate from `status`
            because a declined report and a fixed bug are both closed, and only
            one of them was ever looked at. `queue_position`, not
            `triage_state`: a snoozed report that woke still carries the old
            state but is back in the queue, offering the queue's verbs. -->
-      <span v-if="heldOut" class="ledger-tag"
+      <span v-if="heldOut" class="ledger-tag" data-pl-part="tag" data-pl-dashed=""
             :data-testid="`defect-triage-${defect.id}`">{{ defect.queue_position }}</span>
       <template v-if="!hideFeature">
         <router-link v-if="defect.feature_id" class="key"
-                     :to="`/features/${defect.feature_id}`">
+                     :to="`/features/${defect.feature_id}`" data-pl-part="feature-link">
           {{ defect.feature_title || `#${defect.feature_id}` }}
         </router-link>
-        <span v-else class="unblamed">unattributed</span>
+        <span v-else class="unblamed" data-pl-part="state" data-tone="warning">unattributed</span>
       </template>
       <span class="spacer" />
-      <span class="when" :title="utcTitle(defect.opened_at)">{{ shortDate(defect.opened_at) }}</span>
+      <span class="when" :title="utcTitle(defect.opened_at)" data-pl-part="meta-label">{{ shortDate(defect.opened_at) }}</span>
       <Button
         v-if="collapsible"
         variant="ghost"
@@ -74,6 +84,7 @@ const heldOut = computed(() => ['snoozed', 'declined'].includes(props.defect.que
         :aria-expanded="open"
         :aria-label="`${open ? 'Hide' : 'Show'} details and actions for defect #${defect.id}`"
         :data-testid="`defect-toggle-${defect.id}`"
+        data-pl-part="key"
         @click="open = !open"
       >
         <Icon :name="open ? 'chevron-down' : 'chevron-right'" :size="13" />
@@ -81,7 +92,7 @@ const heldOut = computed(() => ['snoozed', 'declined'].includes(props.defect.que
       </Button>
     </div>
 
-    <p class="symptom" :class="{ 'symptom-clamped': !open }"
+    <p class="symptom" :class="{ 'symptom-clamped': !open }" data-pl-part="symptom"
        :title="open ? undefined : defect.symptom">{{ defect.symptom }}</p>
 
     <template v-if="open">
@@ -91,7 +102,7 @@ const heldOut = computed(() => ['snoozed', 'declined'].includes(props.defect.que
          have none should pay nothing for them. -->
     <DefectImages v-if="defect.images?.length" :defect="defect" />
 
-    <dl class="facts">
+    <dl class="facts" data-pl-part="facts">
       <template v-if="defect.suspect_paths.length">
         <dt>suspect paths</dt>
         <dd class="mono">{{ defect.suspect_paths.join(' · ') }}</dd>

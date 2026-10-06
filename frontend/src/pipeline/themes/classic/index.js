@@ -19,6 +19,7 @@ export default {
     ChoiceField: ChoiceSelect,
     MenuField: MenuSelect,
     SecretStage: null,
+    DefectsHead: null,
   },
   // Empty on purpose: a classic glyph is whatever icon its call site already
   // draws, passed to <PlGlyph> as the default slot, so classic cannot drift

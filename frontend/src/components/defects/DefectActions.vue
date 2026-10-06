@@ -89,6 +89,8 @@ function verbItem(verb) {
 }
 
 const primary = computed(() => verbItem(PRIMARY[state.value]))
+// Attribute is the one verb an untriaged report waits on; the others are routine.
+const primaryPart = computed(() => (state.value === 'untriaged' ? 'key--primary' : 'key'))
 
 const menuItems = computed(() => {
   const items = []
@@ -235,21 +237,22 @@ async function onRemedy(remedy) {
 
 <template>
   <div v-if="canWrite" class="acts">
-    <div class="row">
+    <div class="row" data-pl-part="verbs">
       <Button
         v-if="primary"
         variant="secondary" size="sm" :disabled="busy"
         :data-testid="`defect-primary-${defect.id}`"
+        :data-pl-part="primaryPart"
         @click="primary.onSelect"
       >{{ primary.label }}</Button>
-      <DropdownMenu :items="menuItems" align="start">
+      <DropdownMenu :items="menuItems" align="start" :head="`D-${defect.id}`">
         <template #trigger>
           <Button variant="ghost" size="sm" class="ledger-reveal"
                   :aria-label="`More actions for defect #${defect.id}`"
-                  :data-testid="`defect-more-${defect.id}`">⋯</Button>
+                  :data-testid="`defect-more-${defect.id}`" data-pl-part="key">⋯</Button>
         </template>
       </DropdownMenu>
-      <span v-if="attributeNote" class="note"
+      <span v-if="attributeNote" class="note" data-pl-part="hint"
             :data-testid="`defect-fix-create-blocked-${defect.id}`">{{ ATTRIBUTE_FIRST }}</span>
       <input
         ref="filePick" type="file" accept="image/*" multiple class="sr-only"
