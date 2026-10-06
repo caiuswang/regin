@@ -69,6 +69,7 @@ export const SPRITES = {
   'bug.cold': { grid: BUG, palette: { ...INK, a: 'gray' } },
   flag: { grid: FLAG, palette: { ...INK, c: 'green' } },
   'flag.escaped': { grid: FLAG, palette: { ...INK, c: 'amber' } },
+  'flag.cold': { grid: FLAG, palette: { ...INK, c: 'gray' } },
   bulb: {
     grid: [
       '..kkkkk..',

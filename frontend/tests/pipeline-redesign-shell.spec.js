@@ -587,7 +587,7 @@ test('test_overview_colour_budget', async ({ page }) => {
   expect(ring).toContain(agentSoft)
 })
 
-test('test_features_stage_tabs_expand_and_triage_keys', async ({ page }) => {
+test('test_features_stage_tabs_expand_and_triage_keys', async ({ page, pipelineTheme }) => {
   const state = await stubPipeline(page)
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto('/features')
@@ -603,17 +603,21 @@ test('test_features_stage_tabs_expand_and_triage_keys', async ({ page }) => {
 
   // Stage cell: label, step and one segment per step reached; escaped reads
   // "Shipped · escaped" with a warning last segment. Round pips carry no tone.
+  // Classic pixels: the pixel theme draws this cell as its level track, which
+  // pipeline-theme-features.spec.js checks instead.
   const stageOf = id => page.getByTestId(`feature-row-${id}`).getByTestId('stage-segments')
-  await expect(stageOf(44)).toContainText('Building')
-  await expect(stageOf(44).getByTestId('stage-step')).toHaveText('2 of 3')
-  await expect(stageOf(44).locator('.ss-seg')).toHaveCount(2)
-  await expect(stageOf(46).getByTestId('stage-step')).toHaveText('1 of 3')
-  await expect(stageOf(46).locator('.ss-seg')).toHaveCount(1)
-  await expect(stageOf(35).locator('.ss-seg--success')).toHaveCount(3)
-  await expect(stageOf(31)).toContainText('Shipped')
-  await expect(stageOf(31).getByTestId('stage-step')).toHaveText('escaped')
-  await expect(stageOf(31).locator('.ss-seg--success')).toHaveCount(2)
-  await expect(stageOf(31).locator('.ss-seg--warning')).toHaveCount(1)
+  if (pipelineTheme !== 'pixel') {
+    await expect(stageOf(44)).toContainText('Building')
+    await expect(stageOf(44).getByTestId('stage-step')).toHaveText('2 of 3')
+    await expect(stageOf(44).locator('.ss-seg')).toHaveCount(2)
+    await expect(stageOf(46).getByTestId('stage-step')).toHaveText('1 of 3')
+    await expect(stageOf(46).locator('.ss-seg')).toHaveCount(1)
+    await expect(stageOf(35).locator('.ss-seg--success')).toHaveCount(3)
+    await expect(stageOf(31)).toContainText('Shipped')
+    await expect(stageOf(31).getByTestId('stage-step')).toHaveText('escaped')
+    await expect(stageOf(31).locator('.ss-seg--success')).toHaveCount(2)
+    await expect(stageOf(31).locator('.ss-seg--warning')).toHaveCount(1)
+  }
   const pips = page.getByTestId('feature-row-31').getByTestId('feature-rounds').locator('.ftt-pip')
   await expect(pips).toHaveCount(5)
   const pipColours = new Set(await pips.evaluateAll(els => els.map(e => getComputedStyle(e).backgroundColor)))

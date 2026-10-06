@@ -1,0 +1,427 @@
+/*
+ * Pixel theme — the Features tab (chapter 3): the stage tabs and level track
+ * slots, the feature table, a row's expansion and the triage rail. Same rules
+ * as tokens.css: html[data-pl-theme="pixel"] first, hooks only, --pl-* only.
+ *
+ * Some selectors chain an ancestor hook they do not strictly need: the
+ * component's scoped rule they restyle carries two or three classes, and a
+ * pixel rule has to outrank it rather than lean on source order.
+ */
+
+/* ── Chapters (R10) ──────────────────────────────────────────────────── */
+html[data-pl-theme="pixel"] [data-pl-part="panel-head"][data-pl-chapter]::before {
+    content: attr(data-pl-chapter) / "";
+    flex: none;
+    font-family: var(--pl-font);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    color: var(--pl-muted);
+}
+
+/* A toolbar that is also the panel's head gets its chapter line to itself. */
+html[data-pl-theme="pixel"] [data-pl-part="panel-head"][data-pl-chapter][data-pl-title]::before {
+    content: attr(data-pl-chapter) "\00a0\00a0" attr(data-pl-title) / "";
+    flex-basis: 100%;
+    text-transform: uppercase;
+    color: var(--pl-ink);
+}
+
+/* ── Stage tabs (slot FeatureStageTabs) ──────────────────────────────── */
+html[data-pl-theme="pixel"] [data-pl-part="stage-tabs"] {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="stage-tab"] {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    height: 32px;
+    padding: 0 10px 0 6px;
+    border: 1px solid var(--pl-ink);
+    border-radius: 0;
+    background: var(--pl-paper);
+    color: var(--pl-ink);
+    font-family: var(--pl-font);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="stage-tab"]:hover {
+    background: var(--pl-paper-2);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="stage-tab"][aria-selected="true"] {
+    background: var(--pl-paper-2);
+    box-shadow: inset 0 0 0 1px var(--pl-ink), 2px 2px 0 var(--pl-ink);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="stage-tab"]:focus-visible {
+    outline: 2px solid var(--pl-action);
+    outline-offset: 2px;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="stage-tab"] [data-pl-part="count"] {
+    font-weight: 400;
+    color: var(--pl-muted);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="stage-tab"][data-stage="escaped"] [data-pl-part="stage-label"],
+html[data-pl-theme="pixel"] [data-pl-part="stage-tab"][data-stage="escaped"] [data-pl-part="count"] {
+    color: var(--pl-warn);
+}
+
+/* Phone (R9): classic's mechanics — a row that scrolls inside itself, 44px keys. */
+html[data-pl-theme="pixel"] [data-pl-part="stage-tabs"][data-pl-compact] {
+    gap: 0.4rem;
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="stage-tabs"][data-pl-compact] [data-pl-part="stage-tab"] {
+    flex: none;
+    height: 44px;
+    padding: 0 12px 0 8px;
+}
+
+/* ── Level track (slot StageTrack) ───────────────────────────────────── */
+html[data-pl-theme="pixel"] [data-pl-part="level"] {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: 13rem;
+    min-width: 0;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="level"][data-pl-compact] {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.5rem;
+    width: auto;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="level-track"] {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    width: 100%;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="level"][data-pl-compact] [data-pl-part="level-track"] {
+    width: 5.5rem;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="level-station"] {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-width: 0;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="level-actors"] {
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 2px;
+    height: 36px;
+}
+
+/* The end stations sit on the track's edges and their actors lean inward: a
+   bot, flag and bug at 2x are wider than a station in the table's narrow
+   tiers, and an overflow must land on an empty neighbouring station, never in
+   the next column. */
+html[data-pl-theme="pixel"] [data-pl-part="level-station"]:first-child {
+    align-items: flex-start;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="level-station"]:last-child {
+    align-items: flex-end;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="level-station"]:first-child [data-pl-part="level-actors"] {
+    justify-content: flex-start;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="level-station"]:last-child [data-pl-part="level-actors"] {
+    justify-content: flex-end;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="level"][data-pl-compact] [data-pl-part="level-actors"] {
+    height: 13px;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="level-bot"] {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="level-agent"] {
+    padding: 0 2px;
+    font-family: var(--pl-font);
+    font-size: 8px;
+    line-height: 9px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--pl-run);
+    box-shadow: inset 0 0 0 1px var(--pl-run);
+}
+
+/* The dashed line runs through every station; the tick marks the station. */
+html[data-pl-theme="pixel"] [data-pl-part="level-tick"] {
+    position: relative;
+    display: block;
+    align-self: stretch;
+    height: 4px;
+    margin-top: 3px;
+    border-top: 1px dashed var(--pl-rule);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="level-tick"]::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: -3px;
+    width: 2px;
+    height: 5px;
+    margin-left: -1px;
+    background: var(--pl-rule);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="level-station"]:first-child [data-pl-part="level-tick"]::after {
+    left: 0;
+    margin-left: 0;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="level-station"]:last-child [data-pl-part="level-tick"]::after {
+    left: auto;
+    right: 0;
+    margin-left: 0;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="level-station"][data-reached] [data-pl-part="level-tick"]::after {
+    background: var(--pl-ink);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="level-name"] {
+    margin-top: 2px;
+    font-family: var(--pl-font);
+    font-size: 8px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--pl-muted);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="level-station"][data-current] [data-pl-part="level-name"] {
+    font-weight: 700;
+    color: var(--pl-ink);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="level-word"] {
+    font-family: var(--pl-font);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--pl-muted);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="level"][data-stage="escaped"] [data-pl-part="level-word"] {
+    color: var(--pl-warn);
+}
+
+/* ── Feature table ───────────────────────────────────────────────────── */
+html[data-pl-theme="pixel"] [data-pl-part="table-head"] {
+    font-family: var(--pl-font);
+    font-size: 10px;
+    font-weight: 400;
+    letter-spacing: 0.1em;
+    color: var(--pl-muted);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="rows"] {
+    border-color: var(--pl-ink);
+    border-radius: 0;
+    background: var(--pl-paper);
+    box-shadow: 2px 2px 0 var(--pl-ink);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="row"] {
+    border-top-color: var(--pl-rule);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="row"][data-expanded] {
+    background: var(--pl-paper-2);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="row-toggle"] {
+    border: 1px solid var(--pl-ink);
+    border-radius: 0;
+    background: var(--pl-paper);
+    color: var(--pl-ink);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="row-id"] {
+    font-family: var(--pl-font);
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    color: var(--pl-muted);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="stat"] {
+    font-family: var(--pl-font);
+    font-size: 10px;
+    font-weight: 400;
+    letter-spacing: 0.06em;
+    color: var(--pl-ink);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="stat"][data-warn] {
+    color: var(--pl-warn);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="meter"] {
+    height: 6px;
+    border-radius: 0;
+    background: var(--pl-paper);
+    box-shadow: inset 0 0 0 1px var(--pl-ink);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="meter"] [data-pl-part="meter-fill"] {
+    background: var(--pl-ship);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="pip"] {
+    border-radius: 0;
+    background: var(--pl-ink);
+}
+
+/* ── Row expansion ───────────────────────────────────────────────────── */
+html[data-pl-theme="pixel"] [data-pl-part="section-label"] {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--pl-font);
+    font-size: 10px;
+    font-weight: 400;
+    letter-spacing: 0.1em;
+    color: var(--pl-muted);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="sub-row"] {
+    border-color: var(--pl-ink);
+    border-radius: 0;
+    background: var(--pl-paper);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="sub-row"][data-status="running"] {
+    border-color: var(--pl-run);
+    box-shadow: inset 0 0 0 1px var(--pl-run);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="state"] {
+    font-family: var(--pl-font);
+    font-size: 10px;
+    font-weight: 400;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--pl-muted);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="state"]:is([data-status="running"], [data-tone="agent"]) {
+    color: var(--pl-run);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="state"][data-tone="warning"] {
+    color: var(--pl-warn);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="state"][data-tone="danger"] {
+    color: var(--pl-fail);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="note"] {
+    border-color: var(--pl-rule);
+    border-radius: 0;
+    color: var(--pl-muted);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="alert"] {
+    border-radius: 0;
+    background: var(--pl-paper);
+    color: var(--pl-fail);
+    box-shadow: inset 0 0 0 1px var(--pl-fail);
+}
+
+/* ── Triage rail ─────────────────────────────────────────────────────── */
+html[data-pl-theme="pixel"] [data-pl-part="card"] {
+    border-color: var(--pl-ink);
+    border-radius: 0;
+    background: var(--pl-paper);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="card"][aria-current="true"] {
+    border-color: var(--pl-ink);
+    box-shadow: inset 0 0 0 1px var(--pl-ink), 3px 3px 0 var(--pl-ink);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="card"][data-stage="escaped"] {
+    border-color: var(--pl-warn);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="card-head"] {
+    font-family: var(--pl-font);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--pl-muted);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="card"] [data-pl-part="row-id"] {
+    font-weight: 700;
+    color: var(--pl-ink);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="card-meta"] {
+    font-family: var(--pl-font);
+    font-size: 9px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--pl-muted);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="card"] [data-pl-part="verbs"] [data-pl-part="key"],
+html[data-pl-theme="pixel"] [data-pl-part="card"] [data-pl-part="verbs"] [data-pl-part="key--primary"] {
+    border: 1px solid var(--pl-ink);
+    font-size: 10px;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="card"] [data-pl-part="verbs"] [data-pl-part="key"] {
+    background: var(--pl-paper);
+    color: var(--pl-ink);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="card"] [data-pl-part="verbs"] [data-pl-part="key--primary"] {
+    background: var(--pl-action);
+    color: var(--pl-action-ink);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="card"] [data-pl-part="verbs"] [data-pl-part="key"]:hover {
+    background: var(--pl-paper-2);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="card"] [data-pl-part="verbs"] [data-pl-part="key--primary"]:hover {
+    background: var(--pl-action-hover);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="badge"] {
+    border-radius: 0;
+    background: var(--pl-paper);
+    color: var(--pl-warn);
+    box-shadow: inset 0 0 0 1px var(--pl-warn);
+}
