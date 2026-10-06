@@ -12,11 +12,11 @@ defineProps({
 </script>
 
 <template>
-  <article class="fc" :class="{ 'is-escaped': feature.stage === 'escaped' }" :data-testid="`feature-card-${feature.id}`">
+  <article class="fc" :class="{ 'is-escaped': feature.stage === 'escaped' }" :data-testid="`feature-card-${feature.id}`" data-pl-part="card" :data-stage="feature.stage">
     <header class="fc-head">
-      <span class="fc-id" data-testid="feature-id">#{{ feature.id }}</span>
+      <span class="fc-id" data-testid="feature-id" data-pl-part="row-id">#{{ feature.id }}</span>
       <router-link :to="`/features/${feature.id}`" class="fc-title focus-visible:outline-2 focus-visible:outline-blue-500">{{ feature.title }}</router-link>
-      <span class="fc-ago">{{ ago(feature.last_activity) }}</span>
+      <span class="fc-ago" data-pl-part="card-meta">{{ ago(feature.last_activity) }}</span>
     </header>
     <div class="fc-line">
       <PlSlot name="StageTrack" :stage="feature.stage" compact />

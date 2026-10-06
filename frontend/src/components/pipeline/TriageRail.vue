@@ -171,15 +171,15 @@ defineExpose({ load: reload })
       @click="emit('update:folded', false)"
     >
       <span class="tr-strip__icon"><Icon name="panel-right-open" :size="15" /></span>
-      <span v-if="!loading && total" class="tr-strip__badge" data-testid="triage-fold-count">{{ total }}</span>
+      <span v-if="!loading && total" class="tr-strip__badge" data-testid="triage-fold-count" data-pl-part="badge">{{ total }}</span>
       <span class="tr-strip__label">Triage</span>
       <span v-if="stripCaption" class="tr-strip__caption">{{ stripCaption }}</span>
       <kbd class="tr-strip__kbd">]</kbd>
     </Button>
     <template v-else>
-    <header class="tr-head">
-      <h2 class="tr-title">Triage</h2>
-      <span class="tr-caption">
+    <header class="tr-head" data-pl-part="panel-head" data-pl-chapter="3-2">
+      <h2 class="tr-title" data-pl-part="panel-title">Triage</h2>
+      <span class="tr-caption" data-pl-part="panel-meta">
         <span data-testid="triage-count">{{ total }}</span> waiting ·
         <span v-if="allProjects" data-testid="triage-all-projects">all projects</span>
         <template v-else>no feature is preselected</template>
@@ -189,6 +189,7 @@ defineExpose({ load: reload })
         variant="ghost"
         size="icon"
         class="tr-fold"
+        data-pl-part="key"
         data-testid="triage-fold"
         aria-expanded="true"
         aria-label="Fold triage to the side"
@@ -201,9 +202,9 @@ defineExpose({ load: reload })
 
     <DefectRefusal v-if="notice" :refusal="notice" :busy="busy"
                    testid="triage-notice" @remedy="onNoticeRemedy" />
-    <p v-if="loading" class="tr-muted">Loading…</p>
-    <p v-else-if="error" class="tr-refusal" role="alert">{{ error }}</p>
-    <p v-else-if="!items.length" class="tr-empty" data-testid="triage-empty">
+    <p v-if="loading" class="tr-muted" data-pl-part="note">Loading…</p>
+    <p v-else-if="error" class="tr-refusal" role="alert" data-pl-part="alert">{{ error }}</p>
+    <p v-else-if="!items.length" class="tr-empty" data-testid="triage-empty" data-pl-part="note">
       Nothing waiting on a routing decision.
     </p>
     <ul v-else class="tr-list" :class="{ 'is-busy': busy }">
@@ -229,9 +230,10 @@ defineExpose({ load: reload })
       v-if="snoozed" to="/defects?triage=snoozed"
       class="tr-snoozed focus-visible:outline-2 focus-visible:outline-blue-500"
       data-testid="triage-snoozed"
+      data-pl-part="panel-meta"
     ><Icon name="pause" :size="12" /> {{ snoozed }} snoozed</router-link>
     <router-link to="/defects" class="tr-all focus-visible:outline-2 focus-visible:outline-blue-500"
-                 data-testid="triage-all-defects">All defects →</router-link>
+                 data-testid="triage-all-defects" data-pl-part="panel-link">All defects →</router-link>
     </template>
   </section>
 </template>
