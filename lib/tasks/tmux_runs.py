@@ -128,6 +128,16 @@ def stop(view: dict) -> bool:
         return False
 
 
+def end_own(view: dict) -> bool:
+    """`stop`, called from inside the attempt's own pane."""
+    name = session_name(view["task_id"], view["attempt"])
+    try:
+        return attach.release_own_session(name, view["trace_id"] or "")
+    except (OSError, subprocess.SubprocessError):
+        log.error("task_tmux_end_failed", run_id=view["id"], exc_info=True)
+        return False
+
+
 def interrupt(view: dict) -> bool:
     return delivery.deliver_key(view["trace_id"], "Escape").delivered
 

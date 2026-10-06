@@ -266,7 +266,7 @@ async function submit() {
 
       <label class="live-launch-check">
         <Checkbox v-model="draft.one_shot" data-testid="task-arm-oneshot" />
-        <span>end after the first turn</span>
+        <span>end the session once the agent reports finished</span>
       </label>
 
       <p v-if="armError" class="live-launch-warn" role="alert" data-testid="task-arm-refusal">
