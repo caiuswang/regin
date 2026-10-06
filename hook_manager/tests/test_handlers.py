@@ -579,6 +579,14 @@ def test_session_start_model_independent_of_source(captured_spans):
 
 # ── trace_payload ─────────────────────────────────────────────────────
 
+@pytest.fixture
+def diagnostics_on(monkeypatch):
+    # diagnostics_enabled is a per-machine setting (default off); pin it so
+    # these tests exercise the write path regardless of the host's toggle.
+    monkeypatch.setattr(trace_payload, '_diagnostics_enabled', lambda: True)
+
+
+@pytest.mark.usefixtures('diagnostics_on')
 def test_trace_payload_writes_line_to_log(monkeypatch, tmp_path):
     log = tmp_path / 'hooks.jsonl'
     monkeypatch.setattr(trace_payload, '_log_path', lambda _p=None: str(log))
@@ -591,6 +599,7 @@ def test_trace_payload_writes_line_to_log(monkeypatch, tmp_path):
     assert entries[0]['hook_event'] == 'Stop'
 
 
+@pytest.mark.usefixtures('diagnostics_on')
 def test_trace_payload_rotates_when_oversized(monkeypatch, tmp_path):
     log = tmp_path / 'big.jsonl'
     log.write_text('x' * 1024)
@@ -602,6 +611,7 @@ def test_trace_payload_rotates_when_oversized(monkeypatch, tmp_path):
     assert len(log.read_text().splitlines()) == 1
 
 
+@pytest.mark.usefixtures('diagnostics_on')
 def test_trace_payload_appends_across_calls(monkeypatch, tmp_path):
     """Three sequential Stop events must produce three lines. A
     regression where the handler truncated the file on each write
@@ -616,6 +626,7 @@ def test_trace_payload_appends_across_calls(monkeypatch, tmp_path):
     assert sessions == ['s0', 's1', 's2']
 
 
+@pytest.mark.usefixtures('diagnostics_on')
 def test_trace_payload_creates_parent_dir_if_missing(monkeypatch, tmp_path):
     """First-run scenario: ~/.claude/hook-payloads.jsonl's parent dir
     may not exist yet. The handler uses os.makedirs(exist_ok=True) so
@@ -627,6 +638,7 @@ def test_trace_payload_creates_parent_dir_if_missing(monkeypatch, tmp_path):
     assert json.loads(log.read_text().strip())['session_id'] == 'first'
 
 
+@pytest.mark.usefixtures('diagnostics_on')
 def test_trace_payload_preserves_unicode(monkeypatch, tmp_path):
     """ensure_ascii=False keeps unicode chars intact in the jsonl.
     Without this, a prompt containing 日本語 or émoji would be written
@@ -644,6 +656,7 @@ def test_trace_payload_preserves_unicode(monkeypatch, tmp_path):
     assert '🌟' in raw
 
 
+@pytest.mark.usefixtures('diagnostics_on')
 def test_trace_payload_swallows_os_errors(monkeypatch, tmp_path):
     """Write path failures (disk full, permission issue) must not
     propagate — the handler's try/except OSError is explicit. Return
@@ -662,6 +675,7 @@ def test_trace_payload_swallows_os_errors(monkeypatch, tmp_path):
     assert r.suppress_output is True
 
 
+@pytest.mark.usefixtures('diagnostics_on')
 def test_trace_payload_rotation_overwrites_existing_backup(monkeypatch, tmp_path):
     """After two rotations, only one `.1` backup exists — the second
     overwrites the first. Bounded disk: at most 2×_MAX_BYTES on disk

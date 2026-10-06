@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import threading
 from datetime import datetime, timezone
 
 from sqlmodel import delete, select
@@ -50,6 +51,11 @@ def detect_default_branch(repo_path: str) -> str:
 
 
 # ── settings I/O ─────────────────────────────────────────────
+
+# `add_repo` / `remove_repo` read `repo_paths`, write it back, then reconcile
+# the `repos` table to that list — so two interleaved calls (threaded Flask)
+# each drop the row the other just wrote. Serializes them within a process.
+_repo_paths_lock = threading.Lock()
 
 def _load_repo_paths() -> list[str]:
     """Read `repo_paths` from settings, normalized."""
@@ -190,7 +196,11 @@ def add_repo(path: str) -> dict:
         raise RepoAddError(f"path does not exist: {norm}")
     if not is_git_repo(norm):
         raise RepoAddError(f"not a git repository: {norm}")
+    with _repo_paths_lock:
+        return _register_new_path(norm)
 
+
+def _register_new_path(norm: str) -> dict:
     name = os.path.basename(norm.rstrip(os.sep))
     paths = _load_repo_paths()
     if norm in paths:
@@ -312,14 +322,14 @@ def remove_repo(name: str) -> dict:
     rows. Returns `{removed: bool, name, path}`. The repo's source
     tree on disk is untouched.
     """
-    paths = _load_repo_paths()
-    target_path = next(
-        (p for p in paths if os.path.basename(p.rstrip(os.sep)) == name), None,
-    )
-    if target_path:
-        _save_repo_paths([p for p in paths if p != target_path])
-
-    repo_id = _delete_repo_named(name)
+    with _repo_paths_lock:
+        paths = _load_repo_paths()
+        target_path = next(
+            (p for p in paths if os.path.basename(p.rstrip(os.sep)) == name), None,
+        )
+        if target_path:
+            _save_repo_paths([p for p in paths if p != target_path])
+        repo_id = _delete_repo_named(name)
     removed = repo_id is not None
 
     if removed or target_path is not None:

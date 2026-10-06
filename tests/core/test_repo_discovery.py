@@ -189,6 +189,61 @@ def test_add_repo_rejects_duplicate(tmp_db, tmp_path, _isolated_settings):
         add_repo(str(repo_path))
 
 
+def test_concurrent_add_repo_keeps_both_rows(tmp_db, tmp_path, _isolated_settings,
+                                             monkeypatch):
+    """Two registrations interleaved inside one process (threaded Flask) must
+    not lose an update: each one loads `repo_paths`, saves, then reconciles the
+    `repos` table to exactly its own list, so an unserialized pair deletes
+    whichever row the other wrote."""
+    import threading
+
+    import lib.sync.repo_discovery as rd
+
+    first, second = tmp_path / "first", tmp_path / "second"
+    _make_git_repo(first)
+    _make_git_repo(second)
+
+    # Set by the second registration once it has either read the paths
+    # (unserialized: the lost update is now certain) or reached the lock
+    # (serialized: it cannot read them until the first is done).
+    second_progressed = threading.Event()
+    real_load, real_save = rd._load_repo_paths, rd._save_repo_paths
+    real_lock = rd._repo_paths_lock
+
+    class SignallingLock:
+        def __enter__(self):
+            if threading.current_thread().name == "second":
+                second_progressed.set()
+            return real_lock.__enter__()
+
+        def __exit__(self, *exc):
+            return real_lock.__exit__(*exc)
+
+    def load():
+        paths = real_load()
+        if threading.current_thread().name == "second":
+            second_progressed.set()
+        return paths
+
+    def save(paths):
+        if threading.current_thread().name == "first":
+            second_progressed.wait()
+        real_save(paths)
+
+    monkeypatch.setattr(rd, "_load_repo_paths", load)
+    monkeypatch.setattr(rd, "_save_repo_paths", save)
+    monkeypatch.setattr(rd, "_repo_paths_lock", SignallingLock())
+
+    t1 = threading.Thread(target=add_repo, args=(str(first),), name="first")
+    t2 = threading.Thread(target=add_repo, args=(str(second),), name="second")
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    assert sorted(r.name for r in _fetch_repos()) == ["first", "second"]
+
+
 # ── remove_repo ──────────────────────────────────────────────
 
 def test_remove_repo_drops_db_rows(tmp_db, tmp_path, _isolated_settings):

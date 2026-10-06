@@ -49,17 +49,20 @@ const fileSource = computed(() => spanPathSource(props.span))
       @click="$emit('activate', span); folding.toggleDiffExpanded(span.span_id)"
     >
       <span class="text-[12px] font-semibold text-orange-700 shrink-0">{{ diffOpLabel(span.attributes?.edit_op) }}</span>
-      <Button
-        v-if="fileSource"
-        variant="link"
-        size="sm"
-        class="font-mono font-normal text-[11.5px] flex-1 min-w-0 justify-start"
-        :class="folding.diffExpanded(span.span_id) ? 'text-orange-800 hover:text-orange-900' : 'text-slate-500 hover:text-slate-700'"
-        :title="`Open ${span.attributes.file_path}`"
-        data-testid="diff-card-file"
-        @click.stop="openFilePreview(fileSource)"
-        @keydown.enter.stop
-      ><span class="min-w-0 truncate">{{ diffFileName(span) }}</span></Button>
+      <!-- The link is only as wide as the name: the rest of the slot stays the
+           header's own click target (select + expand). -->
+      <span v-if="fileSource" class="flex flex-1 min-w-0">
+        <Button
+          variant="link"
+          size="sm"
+          class="font-mono font-normal text-[11.5px] min-w-0 max-w-full justify-start"
+          :class="folding.diffExpanded(span.span_id) ? 'text-orange-800 hover:text-orange-900' : 'text-slate-500 hover:text-slate-700'"
+          :title="`Open ${span.attributes.file_path}`"
+          data-testid="diff-card-file"
+          @click.stop="openFilePreview(fileSource)"
+          @keydown.enter.stop
+        ><span class="min-w-0 truncate">{{ diffFileName(span) }}</span></Button>
+      </span>
       <span
         v-else
         class="font-mono text-[11.5px] flex-1 min-w-0 truncate"
