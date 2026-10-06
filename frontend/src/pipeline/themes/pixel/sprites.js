@@ -132,6 +132,19 @@ export const SPRITES = {
     ],
     palette: INK,
   },
+  check: {
+    grid: [
+      '.........kk',
+      '........kgk',
+      '.......kgk.',
+      'kk....kgk..',
+      'kgk..kgk...',
+      '.kgkkgk....',
+      '..kggk.....',
+      '...kk......',
+    ],
+    palette: { ...INK, g: 'green' },
+  },
   grid: {
     grid: [
       'kkkkkkkkkkkkk',

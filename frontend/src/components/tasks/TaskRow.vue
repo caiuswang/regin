@@ -66,6 +66,7 @@ const runCount = computed(() => props.task.run_count || 0)
   <div
     :id="`task-${task.id}`"
     class="task-row"
+    data-pl-part="row"
     :class="{ 'task-row-selected': selected, 'task-row-archived': archived }"
     :data-status="task.status"
     :data-feature="task.feature_id ?? undefined"
@@ -89,7 +90,7 @@ const runCount = computed(() => props.task.run_count || 0)
 
     <TaskStatusIcon :status="task.status" />
 
-    <router-link class="task-id" :to="`/tasks/${task.id}`" data-testid="task-id">
+    <router-link class="task-id" :to="`/tasks/${task.id}`" data-pl-part="row-id" data-testid="task-id">
       {{ ref_ }}
     </router-link>
 

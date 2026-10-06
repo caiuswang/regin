@@ -24,12 +24,14 @@ const live = computed(() => (props.showLive && props.task.live
     v-for="id in fixes"
     :key="`fix-${id}`"
     class="tf-chip tf-fix"
+    data-pl-part="tag"
+    data-tone="fail"
     data-testid="task-fixes"
   >fixes D-{{ id }}</span>
-  <span v-if="waits" class="tf-chip tf-wait" data-testid="task-waits">
+  <span v-if="waits" class="tf-chip tf-wait" data-pl-part="tag" data-tone="warn" data-testid="task-waits">
     <Icon name="dependency-tree" :size="11" />{{ waits }}
   </span>
-  <span v-if="live" class="tf-live" data-testid="task-live">
+  <span v-if="live" class="tf-live" data-pl-part="live" data-testid="task-live">
     <span class="tf-dot" aria-hidden="true" />{{ live }}
   </span>
 </template>

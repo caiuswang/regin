@@ -43,8 +43,8 @@ const isHero = (row, i) => i === 0 && row.action.kind === 'run'
 <template>
   <section class="pl-panel rn" data-pl-part="panel" data-testid="run-next" aria-labelledby="rn-title">
     <RunningNow v-if="running?.total" :running="running" :compact="compact" @stopped="emit('ran')" />
-    <header class="pl-panel__head" data-pl-part="panel-head" :class="{ 'rn-head--after': running?.total }">
-      <h2 id="rn-title" class="pl-panel__title" data-pl-part="panel-title" data-pl-chapter="1-2">Run next</h2>
+    <header class="pl-panel__head" data-pl-part="panel-head" data-pl-chapter="1-2" :class="{ 'rn-head--after': running?.total }">
+      <h2 id="rn-title" class="pl-panel__title" data-pl-part="panel-title">Run next</h2>
       <span class="pl-panel__sub" data-pl-part="panel-meta" data-pl-label="ready" data-testid="run-next-count">{{ runNext.ready }}</span>
       <router-link
         v-if="runNext.blocked" :to="groupTo('blocked')"

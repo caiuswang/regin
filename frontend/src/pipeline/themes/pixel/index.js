@@ -8,6 +8,7 @@ import ChoiceField from './slots/ChoiceField.vue'
 import SecretStage from './slots/SecretStage.vue'
 import './tokens.css'
 import './features.css'
+import './tasks.css'
 import './dialogs.css'
 
 // A glyph is a sprite drawn where <PlGlyph kind="…"> sits; PlGlyph's own
@@ -34,9 +35,12 @@ export default {
     portfolio: glyph('grid'),
     project: glyph('bot'),
     'project.none': glyph('tray'),
-    'task.running': glyph('bot.running'),
     'task.ready': glyph('bot'),
+    'task.running': glyph('bot.running'),
     'task.blocked': glyph('lock'),
+    'task.failed': glyph('bot.failed'),
+    'task.idea': glyph('bulb'),
+    'task.done': glyph('check'),
     'feature.building': glyph('bot'),
     'defect.wild': glyph('bug'),
     'dialog.feature': glyph('flag'),

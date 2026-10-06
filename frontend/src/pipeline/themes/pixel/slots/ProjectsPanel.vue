@@ -30,8 +30,8 @@ function seen(row) {
     data-testid="projects-panel"
     aria-labelledby="pj-title"
   >
-    <header class="pl-panel__head" data-pl-part="panel-head">
-      <h2 id="pj-title" class="pl-panel__title" data-pl-part="panel-title" data-pl-chapter="1-4">Projects</h2>
+    <header class="pl-panel__head" data-pl-part="panel-head" data-pl-chapter="1-4">
+      <h2 id="pj-title" class="pl-panel__title" data-pl-part="panel-title">Projects</h2>
       <span class="pl-panel__sub" data-pl-part="panel-meta" data-testid="projects-counts">{{ panel.active }} active · {{ panel.quiet }} quiet</span>
       <Button
         variant="link"

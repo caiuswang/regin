@@ -10,12 +10,14 @@ import { computed, ref, watch } from 'vue'
 import api from '../../api'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
+import PlGlyph from '../pipeline/PlGlyph.vue'
 import TaskBoardCard from './TaskBoardCard.vue'
 import TaskSheets from './TaskSheets.vue'
 import TaskStatusIcon from './TaskStatusIcon.vue'
 import { invalidatePipelineCounts } from '../../composables/usePipelineCounts.js'
 import { useTaskBoard } from '../../composables/useTaskViews.js'
 import { useTaskVerbs } from '../../composables/useTaskVerbs.js'
+import { statusGlyph } from '../../utils/taskMeta.js'
 
 const props = defineProps({
   params: { type: Object, required: true },
@@ -85,12 +87,12 @@ defineExpose({ reload })
     </p>
     <p v-else-if="!board.body.value" class="tb-note">Loading the board…</p>
     <template v-else>
-      <div v-if="queueClear" class="tb-clear" role="status" data-testid="board-queue-clear">
+      <div v-if="queueClear" class="tb-clear" role="status" data-pl-part="notice" data-testid="board-queue-clear">
         <Icon name="circle-check" :size="15" class="tb-clear-icon" />
         <span><b>Queue is clear.</b> Nothing armed or running — {{ doneWeek }}
           {{ doneWeek === 1 ? 'task' : 'tasks' }} done this week.</span>
         <span class="tb-clear-actions">
-          <Button variant="secondary" size="sm" @click="emit('compose')">New task</Button>
+          <Button variant="secondary" size="sm" data-pl-part="key" @click="emit('compose')">New task</Button>
           <Button variant="link" size="sm" @click="emit('view', 'list')">Switch to List</Button>
         </span>
       </div>
@@ -100,34 +102,36 @@ defineExpose({ reload })
             v-if="isRail(col)"
             class="tb-rail"
             data-kind="rail"
+            data-pl-part="column"
             :data-testid="`board-column-${col.status}`"
             :aria-label="`${COLUMNS[col.status].label}: no tasks`"
           >
-            <TaskStatusIcon :status="col.status" :size="14" />
-            <span class="tb-rail-n" data-testid="board-rail-n">0</span>
-            <span class="tb-rail-label" data-testid="board-rail-label">{{ COLUMNS[col.status].label }}</span>
+            <PlGlyph :kind="statusGlyph(col.status)" :label="col.status" :scale="2"><TaskStatusIcon :status="col.status" :size="14" /></PlGlyph>
+            <span class="tb-rail-n" data-pl-part="count" data-testid="board-rail-n">0</span>
+            <span class="tb-rail-label" data-pl-part="group-label" data-testid="board-rail-label">{{ COLUMNS[col.status].label }}</span>
           </section>
           <section
             v-else
             class="tb-col"
             data-kind="full"
+            data-pl-part="column"
             :data-testid="`board-column-${col.status}`"
           >
-            <header class="tb-head">
-              <TaskStatusIcon :status="col.status" :size="14" />
-              <span class="tb-label">{{ COLUMNS[col.status].label }}</span>
-              <span class="tb-n" data-testid="board-column-n">{{ col.n }}</span>
-              <span class="tb-hint">{{ COLUMNS[col.status].hint(col) }}</span>
+            <header class="tb-head" data-pl-part="group-head" :data-pl-group="col.status">
+              <PlGlyph :kind="statusGlyph(col.status)" :label="col.status" :scale="2"><TaskStatusIcon :status="col.status" :size="14" /></PlGlyph>
+              <span class="tb-label" data-pl-part="group-label">{{ COLUMNS[col.status].label }}</span>
+              <span class="tb-n" data-pl-part="count" data-testid="board-column-n">{{ col.n }}</span>
+              <span class="tb-hint" data-pl-part="meta-label">{{ COLUMNS[col.status].hint(col) }}</span>
             </header>
             <div
               v-if="col.status === 'done' && failedCount"
               class="tb-failed"
               data-testid="board-failed-group"
             >
-              <div class="tb-subhead">
+              <div class="tb-subhead" data-pl-part="group-head" data-pl-group="failed">
                 <TaskStatusIcon status="failed" :size="12" />
-                <span>Failed</span>
-                <span class="tb-n" data-testid="board-failed-n">{{ failedCount }}</span>
+                <span data-pl-part="group-label">Failed</span>
+                <span class="tb-n" data-pl-part="count" data-testid="board-failed-n">{{ failedCount }}</span>
               </div>
               <div v-if="board.failed.value?.cards?.length" class="tb-cards">
                 <TaskBoardCard
@@ -141,6 +145,7 @@ defineExpose({ reload })
                 variant="ghost"
                 size="sm"
                 class="tb-foot"
+                data-pl-part="more"
                 data-testid="board-failed-show"
                 @click="board.showFailed()"
               >{{ board.failed.value ? `${board.failed.value.more} more failed` : `Show ${failedCount} failed` }}</Button>
@@ -157,6 +162,7 @@ defineExpose({ reload })
               variant="ghost"
               size="sm"
               class="tb-foot"
+              data-pl-part="more"
               :data-testid="`board-more-${col.status}`"
               @click="board.more(col.status)"
             >{{ col.more }} more {{ COLUMNS[col.status].noun }}</Button>
