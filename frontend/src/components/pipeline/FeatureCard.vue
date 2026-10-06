@@ -1,7 +1,7 @@
 <script setup>
 // One feature as a phone card (2c). An escaped card is bordered and lists the
 // defects blamed on it.
-import StageTrack from './StageTrack.vue'
+import PlSlot from './PlSlot.vue'
 import FeatureExpansion from './FeatureExpansion.vue'
 import FeatureNextStep from '../features/FeatureNextStep.vue'
 import { ago } from '../../utils/pipelineFormat'
@@ -19,7 +19,7 @@ defineProps({
       <span class="fc-ago">{{ ago(feature.last_activity) }}</span>
     </header>
     <div class="fc-line">
-      <StageTrack :stage="feature.stage" compact />
+      <PlSlot name="StageTrack" :stage="feature.stage" compact />
       <span class="fc-fig">tasks {{ feature.tasks_done }} / {{ feature.tasks }}</span>
       <span class="fc-fig" :class="{ 'is-warn': feature.defects.open }">defects {{ feature.defects.open }} / {{ feature.defects.total }}</span>
     </div>

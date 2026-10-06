@@ -11,6 +11,7 @@ import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
 import Input from '../ui/Input.vue'
 import SegmentBar from './SegmentBar.vue'
+import PlGlyph from './PlGlyph.vue'
 import { stageParts } from '../../utils/pipelineFormat'
 import { SCOPE_ALL, SCOPE_NONE } from '../../composables/usePipelineScope'
 
@@ -64,6 +65,10 @@ const more = computed(() => Math.max(0, total.value - items.value.length))
 
 // The keyboard walks what is drawn, in drawn order: "All projects", then each
 // group's rows. Index 0 is "All projects".
+const chipGlyph = computed(() => {
+  if (props.scope === SCOPE_ALL) return 'portfolio'
+  return props.scope === SCOPE_NONE ? 'project.none' : 'project'
+})
 const order = computed(() => [SCOPE_ALL, ...groups.value.flatMap(g => g.rows.map(scopeOfRow))])
 function scopeOfRow(row) {
   return row.id == null ? SCOPE_NONE : String(row.id)
@@ -113,7 +118,7 @@ defineExpose({ open: () => { open.value = true } })
 <template>
   <PopoverRoot v-model:open="open">
     <PopoverAnchor as-child>
-      <div class="pp-chip" :class="{ 'is-scoped': scope !== SCOPE_ALL, 'pp-chip--compact': compact }">
+      <div class="pp-chip" data-pl-part="chip" :class="{ 'is-scoped': scope !== SCOPE_ALL, 'pp-chip--compact': compact }">
         <Button
           variant="ghost"
           size="sm"
@@ -123,7 +128,7 @@ defineExpose({ open: () => { open.value = true } })
           aria-haspopup="dialog"
           @click="open = !open"
         >
-          <Icon v-if="!compact" name="folder" :size="13" />
+          <PlGlyph v-if="!compact" :kind="chipGlyph"><Icon name="folder" :size="13" /></PlGlyph>
           <span class="pp-chip__label">{{ label }}</span>
           <Icon name="chevron-down" :size="12" />
         </Button>
@@ -146,6 +151,7 @@ defineExpose({ open: () => { open.value = true } })
         align="start"
         :side-offset="6"
         class="pp-panel"
+        data-pl-part="picker"
         data-testid="project-picker"
         @open-auto-focus.prevent
       >
@@ -156,6 +162,7 @@ defineExpose({ open: () => { open.value = true } })
             v-model="q"
             type="search"
             class="pp-search__input"
+            data-pl-part="input"
             :placeholder="projectCount == null ? 'Find a project' : `Find among ${projectCount} projects`"
             aria-label="Find a project"
             data-testid="project-picker-search"
@@ -166,13 +173,14 @@ defineExpose({ open: () => { open.value = true } })
         <Button
           variant="ghost"
           class="pp-row pp-row--all"
+          data-pl-part="picker-row"
           :class="{ 'is-selected': scope === SCOPE_ALL, 'is-active': isActive(SCOPE_ALL) }"
           :aria-current="isActive(SCOPE_ALL) ? 'true' : undefined"
           data-testid="project-picker-all"
           @click="pick(SCOPE_ALL)"
         >
           <span class="pp-check"><Icon v-if="scope === SCOPE_ALL" name="check" :size="12" /></span>
-          <Icon name="layout-grid" :size="13" />
+          <PlGlyph kind="portfolio"><Icon name="layout-grid" :size="13" /></PlGlyph>
           <span class="pp-name">All projects</span>
           <span class="pp-hint">portfolio view</span>
         </Button>
@@ -184,6 +192,7 @@ defineExpose({ open: () => { open.value = true } })
             :key="row.scope"
             variant="ghost"
             class="pp-row"
+            data-pl-part="picker-row"
             :class="{ 'is-selected': selected(row), 'is-active': isActive(scopeOfRow(row)) }"
             :aria-current="isActive(scopeOfRow(row)) ? 'true' : undefined"
             :data-testid="`project-picker-row-${row.scope}`"

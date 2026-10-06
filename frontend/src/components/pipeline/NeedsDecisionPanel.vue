@@ -30,16 +30,16 @@ const newest = computed(() => props.decision.rows[0] || null)
     >Triage</Button>
   </section>
 
-  <section v-else class="pl-panel nd" data-testid="needs-decision" aria-labelledby="nd-title">
-    <header class="pl-panel__head">
-      <h2 id="nd-title" class="pl-panel__title">Needs a decision</h2>
-      <span class="pl-panel__sub" data-testid="needs-decision-count">{{ decision.waiting }}</span>
-      <span v-if="decision.all_projects" class="pl-panel__sub" data-testid="needs-decision-all-projects">· all projects</span>
-      <router-link :to="featuresTo()" class="pl-panel__link focus-visible:outline-2 focus-visible:outline-blue-500"
+  <section v-else class="pl-panel nd" data-pl-part="panel" data-testid="needs-decision" aria-labelledby="nd-title">
+    <header class="pl-panel__head" data-pl-part="panel-head">
+      <h2 id="nd-title" class="pl-panel__title" data-pl-part="panel-title">Needs a decision</h2>
+      <span class="pl-panel__sub" data-pl-part="panel-meta" data-testid="needs-decision-count">{{ decision.waiting }}</span>
+      <span v-if="decision.all_projects" class="pl-panel__sub" data-pl-part="panel-meta" data-testid="needs-decision-all-projects">· all projects</span>
+      <router-link :to="featuresTo()" class="pl-panel__link focus-visible:outline-2 focus-visible:outline-blue-500" data-pl-part="panel-link"
                    data-testid="needs-decision-triage"
       >Triage all →</router-link>
     </header>
-    <p v-if="!decision.rows.length" class="pl-panel__empty" data-testid="needs-decision-empty">
+    <p v-if="!decision.rows.length" class="pl-panel__empty" data-pl-part="panel-empty" data-testid="needs-decision-empty">
       Nothing waiting.
     </p>
     <ul v-else>

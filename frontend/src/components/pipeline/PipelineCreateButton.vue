@@ -25,7 +25,7 @@ const items = CREATE_KINDS.map(k => ({
 
 <template>
   <span class="pcb">
-    <Button variant="primary" class="pcb-main" :data-testid="testid" @click="openCreate(kind, prefill)">
+    <Button variant="primary" class="pcb-main" data-pl-part="key--primary" :data-testid="testid" @click="openCreate(kind, prefill)">
       <Icon name="plus" :size="14" />
       <span>{{ label }}</span>
       <kbd class="pcb-kbd">c</kbd>
@@ -35,6 +35,7 @@ const items = CREATE_KINDS.map(k => ({
         <Button
           variant="primary"
           class="pcb-more"
+          data-pl-part="key"
           aria-label="New… (task, feature or defect)"
           data-testid="pipeline-new"
         >
