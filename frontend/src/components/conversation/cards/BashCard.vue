@@ -243,6 +243,7 @@ function toggleOutput() { outputOverride.value = !outputOpen.value }
       <BashEditDiffs
         v-if="edits.count"
         :attrs="span.attributes"
+        :trace-id="span.trace_id || ''"
         :divided="Boolean(commandText || span.attributes?.stdout || span.attributes?.stderr || bg)"
       />
     </div>

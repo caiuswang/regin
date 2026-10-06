@@ -76,9 +76,12 @@ export function formatBytes(n) {
 // feed belongs to (a subagent's rows are served under its own scope), and the
 // server looks a span up by that stored trace.
 export function spanPathSource(span) {
-  const path = span?.attributes?.file_path
-  return span?.trace_id && typeof path === 'string' && path
-    ? { session: span.trace_id, path }
+  return sessionPathSource(span?.trace_id, span?.attributes?.file_path)
+}
+
+export function sessionPathSource(traceId, path) {
+  return traceId && typeof path === 'string' && path
+    ? { session: traceId, path }
     : null
 }
 

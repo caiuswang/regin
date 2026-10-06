@@ -114,6 +114,39 @@ def test_session_source_serves_a_span_named_path_outside_the_cwd(
     assert raw.data == b"<h1>report</h1>\n"
 
 
+def test_session_source_serves_a_path_a_shell_command_edited(
+        flask_client, traced_session, tmp_path):
+    cwd = tmp_path / "w"
+    cwd.mkdir()
+    diffed = tmp_path / "out" / "a.py"
+    listed = tmp_path / "out" / "b.py"
+    diffed.parent.mkdir()
+    diffed.write_text("a = 1\n")
+    listed.write_text("b = 1\n")
+    traced_session("S", cwd, [("sp1", "tool.Bash", {
+        "bash_edits": [{"file_path": str(diffed), "diff": "@@ -0,0 +1 @@\n+a = 1"}],
+        "bash_edit_files": [str(diffed), str(listed)],
+    })])
+    for path in (diffed, listed):
+        resp = _meta(flask_client, headers=ADMIN, session="S", path=str(path))
+        assert resp.status_code == 200, path
+
+
+@pytest.mark.parametrize("attrs", [
+    ["bash_edit"], {"bash_edits": 5, "bash_edit_files": "x"},
+    {"bash_edit_files": ["relative.txt"]},
+])
+def test_malformed_or_relative_bash_edit_paths_grant_nothing(
+        flask_client, traced_session, tmp_path, attrs):
+    cwd = tmp_path / "w"
+    cwd.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("x\n")
+    traced_session("S", cwd, [("sp1", "tool.Bash", attrs)])
+    resp = _meta(flask_client, headers=ADMIN, session="S", path=str(outside))
+    assert resp.status_code == 403
+
+
 def test_session_source_serves_a_path_inside_the_cwd(
         flask_client, traced_session, tmp_path):
     cwd = tmp_path / "w"

@@ -158,6 +158,8 @@ function bashEditsFor(span) {
     // Paths Claude Code named but shipped no hunks for — the capped overflow.
     extraPaths: files.filter(p => !shown.has(p)),
     more: a.bash_edit_more || 0,
+    // The session the paths resolve against when the reader opens one.
+    traceId: span.trace_id || '',
     unavailable: !!a.bash_edit_unavailable,
   }
 }

@@ -9,7 +9,10 @@
  * degraded to a bare inline row with no body at all.
  */
 import { randomUUID } from 'node:crypto'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { test, expect } from './auth-fixture.js'
+import { SCRATCH_DIR } from '../e2e-env.js'
 
 const HUNK = '@@ -10,3 +10,5 @@\n ctx\n+one\n+two\n+three\n-gone'
 
@@ -229,4 +232,66 @@ test('a short command with no `command` attribute still shows its command panel'
   await expect(toggle).toBeVisible()
   // No edits on this call, so the panel opens by default — no click needed.
   await expect(row.locator('[data-bash-output]').filter({ hasText: 'sed -i s/gone/one/ a.py' })).toBeVisible()
+})
+
+// Real files outside any session cwd: the seeded trace has none, so the viewer
+// can only admit them because this Bash span named them.
+function editedFiles() {
+  mkdirSync(SCRATCH_DIR, { recursive: true })
+  const dir = mkdtempSync(join(SCRATCH_DIR, 'bash-edit-open-'))
+  const diffed = join(dir, 'diffed.py')
+  const listed = join(dir, 'listed.py')
+  writeFileSync(diffed, 'diffed_on_disk = 1\n')
+  writeFileSync(listed, 'listed_on_disk = 2\n')
+  return {
+    diffed, listed,
+    attrs: {
+      bash_edits: [{ file_path: diffed, edit_op: 'update', diff: HUNK, added_lines: 3, removed_lines: 1 }],
+      bash_edit_files: [diffed, listed],
+    },
+  }
+}
+
+const drawer = page => page.getByTestId('file-preview-drawer')
+
+async function expectDrawerShows(page, text) {
+  const view = drawer(page).getByTestId('file-code-view')
+  await expect(view).toHaveAttribute('data-ready', 'true', { timeout: 20_000 })
+  await expect(view).toContainText(text)
+}
+
+test('a changed file in the card opens the file viewer', async ({ page }) => {
+  test.setTimeout(60_000)
+  const files = editedFiles()
+  await seed(page, files.attrs)
+
+  const row = editRow(page)
+  await row.getByText('sed -i').click()
+  await row.locator('[data-bash-edit]').getByTestId('file-path-link').click()
+  await expectDrawerShows(page, 'diffed_on_disk')
+  // The link is its own control: the card did not fold shut under it.
+  await expect(row.locator('[data-bash-edit] .diff-block')).toHaveCount(1)
+  await page.keyboard.press('Escape')
+  await expect(drawer(page)).toHaveCount(0)
+
+  await row.locator('[data-bash-edit-path]').getByTestId('file-path-link').click()
+  await expectDrawerShows(page, 'listed_on_disk')
+})
+
+test('a changed file in the reader opens the file viewer over it', async ({ page }) => {
+  test.setTimeout(60_000)
+  const files = editedFiles()
+  await seed(page, files.attrs)
+
+  await editRow(page).locator('.present-open').click()
+  const reader = page.getByTestId('span-present-reader')
+  await expect(reader).toBeVisible()
+  await reader.locator('[data-present-bash-edit]').getByTestId('file-path-link').click()
+  await expectDrawerShows(page, 'diffed_on_disk')
+  await page.keyboard.press('Escape')
+  await expect(drawer(page)).toHaveCount(0)
+  await expect(reader).toBeVisible()
+
+  await reader.locator('[data-present-bash-path]').getByTestId('file-path-link').click()
+  await expectDrawerShows(page, 'listed_on_disk')
 })

@@ -5,6 +5,7 @@
 // the loop's heads and the two overflow lists push PresentContent's template
 // past the vue-complexity node and binding budgets.
 import DiffBlock from '../DiffBlock.vue'
+import FilePathLink from '../files/FilePathLink.vue'
 
 defineProps({
   // presentFor().bashEdits
@@ -22,7 +23,7 @@ defineProps({
       data-present-bash-edit
     >
       <div class="present-diff-head">
-        <span class="present-diff-file">{{ f.filePath }}</span>
+        <FilePathLink :trace-id="edits.traceId" :path="f.filePath" class="present-diff-file" />
         <span v-if="f.op" class="present-diff-op">{{ f.op }}</span>
         <span v-if="f.added" class="present-diff-add">+{{ f.added }}</span>
         <span v-if="f.removed" class="present-diff-del">−{{ f.removed }}</span>
@@ -35,7 +36,9 @@ defineProps({
     </div>
     <p v-if="edits.unavailable" class="present-bash-note">diff unavailable</p>
     <ul v-if="edits.extraPaths.length" class="present-bash-paths">
-      <li v-for="p in edits.extraPaths" :key="p" data-present-bash-path>{{ p }}</li>
+      <li v-for="p in edits.extraPaths" :key="p" data-present-bash-path>
+        <FilePathLink :trace-id="edits.traceId" :path="p" class="present-bash-path" />
+      </li>
     </ul>
     <p v-else-if="edits.more" class="present-bash-note">+{{ edits.more }} more files</p>
   </div>
@@ -55,7 +58,8 @@ defineProps({
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   font-family: var(--font-mono); font-size: 11.5px; margin-bottom: 6px;
 }
-.present-diff-file { color: var(--color-fg-muted); word-break: break-all; }
+.present-diff-file, .present-bash-path { color: var(--color-fg-muted); word-break: break-all; }
+.present-diff-file:hover, .present-bash-path:hover { color: var(--color-fg); }
 .present-diff-op {
   color: var(--color-fg-subtle); text-transform: uppercase;
   letter-spacing: 0.08em; font-size: 10px;

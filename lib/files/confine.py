@@ -9,6 +9,7 @@ enough — agents legitimately work in `~/.claude/`, sibling worktrees and /tmp.
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,6 +36,13 @@ _SPAN_PATHS_SQL = text(
     " json_extract(attributes, '$.notebook_path')) FROM session_spans"
     " WHERE trace_id = :trace_id AND name IN ("
     + ",".join(f"'{n}'" for n in FILE_TOUCHING_SPANS) + ")"
+)
+
+# A shell command that rewrote files names them in its edit attributes, not in
+# `file_path`; the filter keeps the JSON parse to the spans that carry them.
+_BASH_EDIT_ATTRS_SQL = text(
+    "SELECT attributes FROM session_spans WHERE trace_id = :trace_id"
+    " AND name = 'tool.Bash' AND attributes LIKE '%bash_edit%'"
 )
 
 
@@ -84,7 +92,30 @@ def span_named_paths(trace_id: str) -> set[str]:
     """Every path a file-touching span of `trace_id` names, as realpaths."""
     with SessionLocal() as session:
         rows = session.execute(_SPAN_PATHS_SQL, {"trace_id": trace_id}).all()
-    return {os.path.realpath(r[0]) for r in rows if isinstance(r[0], str) and r[0]}
+        bash = session.execute(_BASH_EDIT_ATTRS_SQL, {"trace_id": trace_id}).all()
+    paths = [r[0] for r in rows]
+    for (raw,) in bash:
+        paths.extend(_bash_edit_paths(raw))
+    return {os.path.realpath(p) for p in paths if isinstance(p, str) and p}
+
+
+def _bash_edit_paths(raw: str | None) -> list:
+    try:
+        attrs = json.loads(raw or "{}")
+    except ValueError:
+        return []
+    if not isinstance(attrs, dict):
+        return []
+    edits = _as_list(attrs.get("bash_edits"))
+    named = [e.get("file_path") for e in edits if isinstance(e, dict)]
+    named += _as_list(attrs.get("bash_edit_files"))
+    # A relative path would resolve against the server's own cwd, not the
+    # agent's — admitting it would grant whatever sits there.
+    return [p for p in named if isinstance(p, str) and os.path.isabs(p)]
+
+
+def _as_list(value) -> list:
+    return value if isinstance(value, list) else []
 
 
 def _session_base(trace_id: str) -> Path | None:
