@@ -885,7 +885,8 @@ def test_finish_settles_the_attempt_and_fires_the_dependent(flask_client,
     assert len(launcher.calls) == 2
 
 
-def test_finish_leaves_the_session_open_and_stoppable(flask_client, launcher):
+def test_finish_leaves_the_session_open_and_stoppable(flask_client, launcher,
+                                                     monkeypatch):
     task_id = _armed(flask_client, "a task")
     run_id = _launched_run_id(flask_client, task_id)
     trace_id = launcher.handles[0].trace_id
@@ -902,7 +903,8 @@ def test_finish_leaves_the_session_open_and_stoppable(flask_client, launcher):
 
     stopped = []
     import lib.agent_sdk.registry as registry
-    registry.stop_run = lambda tid: (stopped.append(tid), (True, "asked"))[1]
+    monkeypatch.setattr(registry, "stop_run",
+                        lambda tid: (stopped.append(tid), (True, "asked"))[1])
     resp = flask_client.post(f"/api/tasks/{task_id}/stop")
     assert resp.status_code == 200 and stopped == [trace_id]
 

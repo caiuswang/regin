@@ -997,6 +997,19 @@ def test_a_fresh_launch_leaves_other_sessions_alone(tmp_db, monkeypatch):
     assert (other.status, other.ended_at) == ("ended", _ENDED_AT)
 
 
+def _capture_run_handles(monkeypatch) -> list:
+    handles = []
+    real_launch_run = supervisor.launch_run
+
+    def _launch_run(*args, **kwargs):
+        handle = real_launch_run(*args, **kwargs)
+        handles.append(handle)
+        return handle
+
+    monkeypatch.setattr(supervisor, "launch_run", _launch_run)
+    return handles
+
+
 def test_the_card_reads_a_live_session_the_moment_the_launch_returns(
         flask_client, monkeypatch):
     """End to end over the surface the operator actually drives: launch a
@@ -1022,9 +1035,18 @@ def test_the_card_reads_a_live_session_the_moment_the_launch_returns(
     monkeypatch.setattr(settings.agent_sdk, "enabled", True)
     monkeypatch.setattr(supervisor, "run_session", _run_session)
 
+    # The launch's own done callback undoes the revive. Left unawaited it fires
+    # on the shared loop after this test has returned, into whichever DB the
+    # next test installed — stamping that test's revived row 'ended'. Callbacks
+    # run in registration order, so one added after the launch runs after the
+    # undo.
+    handles = _capture_run_handles(monkeypatch)
+    settled = threading.Event()
+
     launched = flask_client.post("/api/agent-runs", json={"resume": _CHILD})
     assert launched.get_json()["trace_id"] == _TRACE
     assert running.wait(timeout=10)
+    handles[0].add_done_callback(lambda _outcome: settled.set())
     try:
         # Both entry points, because the card may be open on either: the run's
         # own id, or the child's (which is where `onLaunched` stays when the
@@ -1034,6 +1056,7 @@ def test_the_card_reads_a_live_session_the_moment_the_launch_returns(
             for tid in (_TRACE, _CHILD)}
     finally:
         release.set()
+        assert settled.wait(timeout=10)
     for tid, card in cards.items():
         assert card["status"] == "active", tid
         assert card["ended_at"] is None, tid

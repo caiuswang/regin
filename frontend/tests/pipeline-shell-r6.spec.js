@@ -28,6 +28,9 @@ test('test_shell_publishes_all_three_counts', async ({ page }) => {
 test('test_shell_publishes_all_three_counts — one request, under the scope',
   async ({ page }) => {
     const asked = []
+    // A sibling worker's write raises a `pipeline` frame that re-reads the
+    // counts; with the ticket held no stream opens, so only the shell reads.
+    await page.route('**/api/auth/stream-ticket', () => {})
     await page.route('**/api/pipeline/counts*', (route) => {
       asked.push(new URL(route.request().url()).searchParams.get('project'))
       return route.fulfill({ status: 200, contentType: 'application/json',
