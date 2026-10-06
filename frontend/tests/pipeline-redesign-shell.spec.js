@@ -637,7 +637,10 @@ test('test_features_stage_tabs_expand_and_triage_keys', async ({ page, pipelineT
   const pipColours = new Set(await pips.evaluateAll(els => els.map(e => getComputedStyle(e).backgroundColor)))
   expect(pipColours.size).toBe(1)
 
-  // Stage tabs are one neutral surface; only the active tab is filled.
+  // Stage tabs are one neutral surface; only the active tab is filled. Read
+  // once the theme chunk is in, or the first tab is measured on a shell the
+  // theme has not yet styled.
+  await expect(page.getByTestId('feature-stage-spec')).toBeVisible()
   const tabBg = key => page.getByTestId(`feature-stage-${key}`).evaluate(e => getComputedStyle(e).backgroundColor)
   const neutral = await tabBg('spec')
   for (const key of ['building', 'shipped', 'escaped']) expect(await tabBg(key)).toBe(neutral)
@@ -706,6 +709,9 @@ test('test_features_triage_rail_folds', async ({ page }) => {
   await expect(page.getByTestId('triage-count')).toHaveText('3')
   const table = page.getByTestId('feature-table')
   const railWidth = async () => (await page.getByTestId('triage-rail').boundingBox()).width
+  // The count's text is in the DOM while the shell is still hidden behind a
+  // loading theme chunk; a hidden table has no box.
+  await expect(table).toBeVisible()
   const open = (await table.boundingBox()).width
 
   // The header button folds the rail to a strip that still counts the queue,

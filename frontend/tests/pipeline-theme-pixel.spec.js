@@ -60,6 +60,24 @@ async function useAppearance(page, appearance) {
   await page.addInitScript((t) => localStorage.setItem('regin_theme', t), appearance)
 }
 
+// The suite shares one server and DB, and a mounted tab re-reads on every
+// `pipeline` frame — so a row another spec writes mid-test lands between two
+// snapshots. The server only sends that frame to a stream that declared the
+// topic, so answering the declaration here keeps the page on the data it
+// first read.
+async function freezeLiveData(page) {
+  await page.route('**/api/notifications/stream/topics', route => route.fulfill({ json: {} }))
+}
+
+// The header's create key mounts before the tab's own reads land; the stage
+// counts, the list and the triage rail each fill in later with keys and inputs
+// of their own, so a snapshot taken on the key alone measures half a tab.
+async function featuresSettled(page) {
+  await expect(page.getByTestId('feature-stage-count-all')).toBeVisible()
+  await expect(page.locator('[data-testid="list-status"][data-state="loading"]')).toHaveCount(0)
+  await expect(page.getByTestId('triage-rail').getByText('Loading…')).toHaveCount(0)
+}
+
 const plTheme = page => page.evaluate(() => document.documentElement.getAttribute('data-pl-theme'))
 
 async function pixelReady(page) {
@@ -192,6 +210,7 @@ test.describe('pixel theme', () => {
   for (const appearance of ['dark', 'light']) {
     test(appearance === 'dark' ? 'test_dark_mode' : 'test_light_mode_contrast', async ({ page, request }) => {
       await seed(request)
+      await freezeLiveData(page)
       await useAppearance(page, appearance)
       await page.addInitScript(() => localStorage.setItem('regin_pipeline_theme', 'pixel'))
       const external = []
@@ -270,8 +289,10 @@ test.describe('pixel theme', () => {
   for (const vp of [{ name: 'desktop', width: 1440, height: 900 }, { name: 'phone', width: 400, height: 860 }]) {
     test(`hit targets are classic's at ${vp.name}`, async ({ page }) => {
       await page.setViewportSize({ width: vp.width, height: vp.height })
+      await freezeLiveData(page)
       await page.goto('/features')
       await expect(page.getByTestId('declare-feature')).toBeVisible()
+      await featuresSettled(page)
       const PARTS = ['tab', 'key', 'chip', 'input', 'theme-switch']
       const boxes = () => page.evaluate((parts) => Object.fromEntries(parts.map(p => [
         p,
