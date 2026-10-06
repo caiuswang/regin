@@ -186,7 +186,7 @@ defineExpose({ open: () => { open.value = true } })
         </Button>
         <p v-if="error" class="pp-error" role="alert">{{ error }}</p>
         <div v-for="g in groups" :key="g.label" class="pp-group">
-          <div class="pp-group__label">{{ g.label }}</div>
+          <div class="pp-group__label" data-pl-part="picker-group">{{ g.label }}</div>
           <Button
             v-for="row in g.rows"
             :key="row.scope"

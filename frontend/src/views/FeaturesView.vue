@@ -146,14 +146,13 @@ useTaskShortcuts({
           />
           <template v-if="isMdUp">
             <span class="fv-spacer" />
-            <label class="fv-search">
+            <label class="fv-search" data-pl-part="input">
               <Icon name="search" :size="13" />
               <Input
                 ref="search"
                 v-model="draft"
                 type="search"
                 class="fv-search__input"
-                data-pl-part="input"
                 placeholder="Search features"
                 aria-label="Search features by title, spec or tracker reference"
                 data-testid="list-search"
