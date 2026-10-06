@@ -11,7 +11,7 @@ from typing import Optional
 from lib.agent_sdk import worktree
 from lib.comments import store as comments
 from lib.orm.models.comments import RESOLUTION_OPEN, SUBJECT_TASK
-from lib.orm.models.tasks import TASK_KIND_SPEC
+from lib.orm.models.tasks import TASK_KIND_BUILD, TASK_KIND_SPEC
 from lib.refs.grammar import RefError, format_label, parse_refs
 from lib.settings import settings
 from lib.tasks import images
@@ -517,8 +517,15 @@ def _launch_kwargs(params: dict) -> dict:
     return kwargs
 
 
+#: The kinds whose work IS the feature's spec. A plain task or a defect fix
+#: that merely carries a `feature_id` for attribution would otherwise ship
+#: every mockup of the feature into a prompt that never cited them (#257).
+_SPEC_WORK_KINDS = frozenset({TASK_KIND_SPEC, TASK_KIND_BUILD})
+
+
 def _launch_images(task: dict) -> list[dict]:
-    """The feature's images, then the task's own.
+    """The feature's images, then the task's own — the feature's only when the
+    task specs or builds that feature.
 
     Resolved here rather than copied onto the slice when the spec was
     transcribed: the mockup is the part of a spec most likely to be replaced
@@ -529,7 +536,7 @@ def _launch_images(task: dict) -> list[dict]:
     """
     own = images.payload_for(task["id"])
     feature_id = task.get("feature_id")
-    if feature_id is None:
+    if feature_id is None or task.get("kind") not in _SPEC_WORK_KINDS:
         return own
     from lib.features import images as feature_images  # noqa: PLC0415
 

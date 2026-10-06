@@ -16,6 +16,8 @@ import pytest
 
 from lib.auth import create_token
 from lib.features import images as feature_images
+from lib.orm import SessionLocal
+from lib.orm.models.tasks import AgentTask
 from lib.tasks import runs
 
 EDITOR = {"Authorization": f"Bearer {create_token(2, 'ed', 'editor')}"}
@@ -227,7 +229,7 @@ def test_a_run_carries_the_feature_images_ahead_of_the_tasks_own(flask_client,
                                                                  launcher):
     feature_id = _feature(flask_client)
     _attach(flask_client, feature_id, PNG)
-    task_id = _task(flask_client, feature_id=feature_id)
+    task_id = _task(flask_client, feature_id=feature_id, kind="build")
     flask_client.post(f"/api/tasks/{task_id}/images",
                       json={"data_b64": _b64(GIF)}, headers=EDITOR)
 
@@ -246,7 +248,7 @@ def test_replacing_the_feature_image_reaches_the_next_attempt(flask_client,
     mockup corrects the next attempt of a slice that already exists."""
     feature_id = _feature(flask_client)
     _attach(flask_client, feature_id, PNG)
-    task_id = _task(flask_client, feature_id=feature_id)
+    task_id = _task(flask_client, feature_id=feature_id, kind="build")
     _run(flask_client, task_id)
     runs.complete_run(runs.latest_attempt(task_id)["id"], status="done")
 
@@ -271,3 +273,34 @@ def test_a_task_with_no_feature_carries_only_its_own_images(flask_client,
 
     assert launcher.calls[0]["images"] == [
         {"media_type": "image/gif", "data_b64": _b64(GIF)}]
+
+
+@pytest.mark.parametrize("kind", ["task", "fix"])
+def test_a_task_only_attributed_to_a_feature_carries_only_its_own_images(
+        flask_client, launcher, kind):
+    """#257: a plain task (or a defect fix) filed under a feature for
+    attribution never cited the feature's mockups — they stay out."""
+    feature_id = _feature(flask_client)
+    _attach(flask_client, feature_id, PNG)
+    task_id = _task(flask_client, feature_id=feature_id)
+    with SessionLocal() as session:
+        session.get(AgentTask, task_id).kind = kind
+        session.commit()
+    flask_client.post(f"/api/tasks/{task_id}/images",
+                      json={"data_b64": _b64(GIF)}, headers=EDITOR)
+
+    _run(flask_client, task_id)
+
+    assert launcher.calls[0]["images"] == [
+        {"media_type": "image/gif", "data_b64": _b64(GIF)}]
+
+
+def test_a_spec_task_carries_the_feature_images(flask_client, launcher):
+    feature_id = _feature(flask_client)
+    _attach(flask_client, feature_id, PNG)
+    task_id = _task(flask_client, feature_id=feature_id, kind="spec")
+
+    _run(flask_client, task_id)
+
+    assert launcher.calls[0]["images"] == [
+        {"media_type": "image/png", "data_b64": _b64(PNG)}]
