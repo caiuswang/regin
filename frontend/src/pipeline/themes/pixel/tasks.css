@@ -1,0 +1,340 @@
+/*
+ * Pixel theme — the Tasks tab ("quest log"): list groups, board columns and
+ * cards, and graph lanes and nodes. Same contract as tokens.css (R4): every
+ * selector starts at a [data-pl-part] / [data-pl-glyph] hook under
+ * html[data-pl-theme="pixel"], and only --pl-* properties are declared.
+ *
+ * Group chapters and lane prefixes are the hook's own data-pl-chapter drawn
+ * by ::before, so classic, which never draws them, keeps an unchanged DOM.
+ * The quest log's own 2-1 line is features.css's panel-head chapter rule.
+ */
+
+html[data-pl-theme="pixel"] [data-pl-part="kbd"] {
+    border-color: var(--pl-ink);
+    border-radius: 0;
+    font-family: var(--pl-font);
+    color: var(--pl-ink);
+}
+
+/* ── Tags: filter chips, FIXES D-n, waits, a card's feature ──────────── */
+/* Paper with a 1px outline; a status hue only on the outline and the word. */
+html[data-pl-theme="pixel"] [data-pl-part="tag"] {
+    border-radius: 0;
+    background: var(--pl-paper);
+    box-shadow: inset 0 0 0 1px var(--pl-rule);
+    font-family: var(--pl-font);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--pl-muted);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="tag"][data-tone="fail"] {
+    box-shadow: inset 0 0 0 1px var(--pl-fail);
+    color: var(--pl-fail);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="tag"][data-tone="warn"] {
+    box-shadow: inset 0 0 0 1px var(--pl-warn);
+    color: var(--pl-warn);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="tag"] button {
+    border-radius: 0;
+}
+
+/* ── LIVE mark ───────────────────────────────────────────────────────── */
+html[data-pl-theme="pixel"] [data-pl-part="live"] {
+    font-family: var(--pl-font);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--pl-run);
+}
+
+/* The pulse dot becomes a square outline: a mark, not a fill (R7). */
+html[data-pl-theme="pixel"] [data-pl-part="live"] > span {
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 0;
+    background: none;
+    box-shadow: inset 0 0 0 2px var(--pl-run);
+}
+
+/* ── Keys inside rows, cards and nodes ───────────────────────────────── */
+/* Watch is a link drawn as a key; it has no border of its own to recolour. */
+html[data-pl-theme="pixel"] [data-pl-part="key"]:is(a, span) {
+    border: 1px solid var(--pl-ink);
+    font-size: 10px;
+}
+
+/* Scoped to the row, card or node so it outweighs the shared action's own
+   tinted Run/Retry rule, which is one class + a scope attribute heavier
+   than a bare hook. */
+html[data-pl-theme="pixel"] [data-pl-part="row"] [data-pl-part="key"],
+html[data-pl-theme="pixel"] [data-pl-part="card"] [data-pl-part="key"],
+html[data-pl-theme="pixel"] [data-pl-part="node"] [data-pl-part="key"] {
+    background: var(--pl-paper);
+    color: var(--pl-ink);
+    font-size: 10px;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="row"] [data-pl-part="key"]:hover,
+html[data-pl-theme="pixel"] [data-pl-part="card"] [data-pl-part="key"]:hover,
+html[data-pl-theme="pixel"] [data-pl-part="node"] [data-pl-part="key"]:hover {
+    background: var(--pl-paper-2);
+}
+
+/* ── Group heads (list groups, board columns) ────────────────────────── */
+html[data-pl-theme="pixel"] [data-pl-part="group-label"] {
+    font-family: var(--pl-font);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--pl-ink);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="group-label"][data-pl-chapter]::before {
+    content: attr(data-pl-chapter);
+    margin-right: 0.875rem;
+    font-size: 10px;
+    font-weight: 400;
+    letter-spacing: 0.08em;
+    color: var(--pl-muted);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="group-head"][data-pl-group="running"] [data-pl-part="group-label"] {
+    color: var(--pl-run);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="group-head"][data-pl-group="failed"] [data-pl-part="group-label"] {
+    color: var(--pl-fail);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="group-head"] [data-pl-part="count"] {
+    font-family: var(--pl-font);
+    font-size: 10px;
+    color: var(--pl-muted);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="group-head"] [data-pl-glyph] {
+    margin-inline: 0.125rem;
+}
+
+/* RUN ALL: the quest log's one primary key (R7). */
+html[data-pl-theme="pixel"] [data-pl-part="group-head"] [data-pl-part="key--primary"] {
+    gap: 0.5rem;
+    padding-inline: 0.75rem;
+    font-size: 10px;
+    text-decoration: none;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="group-head"] [data-pl-part="key--primary"]::before {
+    content: "";
+    border-left: 6px solid currentColor;
+    border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="group-head"] [data-pl-part="key--primary"]:disabled {
+    background: var(--pl-paper-2);
+    color: var(--pl-muted);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="more"] {
+    border-color: var(--pl-rule);
+    border-radius: 0;
+    font-family: var(--pl-font);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--pl-muted);
+}
+
+/* ── List rows ───────────────────────────────────────────────────────── */
+html[data-pl-theme="pixel"] [data-pl-part="row"] {
+    border-color: var(--pl-rule);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="row-id"] {
+    font-family: var(--pl-font);
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    color: var(--pl-muted);
+}
+
+/* Priority bars as square cells. */
+html[data-pl-theme="pixel"] [data-pl-part="row"] svg rect,
+html[data-pl-theme="pixel"] [data-pl-part="card"] svg rect {
+    rx: 0;
+}
+
+/* ── Board ───────────────────────────────────────────────────────────── */
+html[data-pl-theme="pixel"] [data-pl-part="column"] {
+    padding: 0.5rem;
+    border-color: var(--pl-rule);
+    border-radius: 0;
+    background: var(--pl-paper-2);
+    box-shadow: inset 0 0 0 1px var(--pl-rule);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="column"] [data-pl-part="group-head"] {
+    gap: 0.625rem;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="card"] {
+    border-color: var(--pl-ink);
+    border-radius: 0;
+    background: var(--pl-paper);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="card"]:hover {
+    box-shadow: 2px 2px 0 var(--pl-ink);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="card"][data-live] {
+    border-color: var(--pl-run);
+    box-shadow: 0 0 0 1px var(--pl-run);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="notice"] {
+    border-color: var(--pl-ink);
+    border-radius: 0;
+    background: var(--pl-paper);
+}
+
+/* ── Graph ───────────────────────────────────────────────────────────── */
+html[data-pl-theme="pixel"] [data-pl-part="canvas"] {
+    border-color: var(--pl-ink);
+    border-radius: 0;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="canvas"] [data-pl-part="meta-label"] {
+    border-radius: 0;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="lane-head"] {
+    border-right-color: var(--pl-rule);
+    background: var(--pl-paper);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="meta-label"][data-pl-chapter]::before {
+    content: attr(data-pl-chapter) "\00a0\00b7\00a0";
+}
+
+/* Lane progress as a strip of ink cells, empty cells shaded. */
+html[data-pl-theme="pixel"] [data-pl-part="meter"] {
+    height: 6px;
+    border-radius: 0;
+    background: repeating-linear-gradient(90deg, var(--pl-shade) 0 6px, transparent 6px 8px);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="meter"] [data-pl-part="meter-cell"] {
+    background: repeating-linear-gradient(90deg, var(--pl-ink) 0 6px, transparent 6px 8px);
+}
+
+/* The status stripe is a 2px edge (R7), drawn as a shadow so it is an
+   outline rather than a filled bar. */
+html[data-pl-theme="pixel"] [data-pl-part="node"] {
+    --pl-node-hue: var(--pl-rule);
+    --pl-node-edge: 2px;
+    border-color: var(--pl-rule);
+    border-radius: 0;
+    background: var(--pl-paper);
+    box-shadow: inset var(--pl-node-edge) 0 0 var(--pl-node-hue);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="node"]::before {
+    display: none;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="node"]:hover {
+    border-color: var(--pl-ink);
+    box-shadow: inset var(--pl-node-edge) 0 0 var(--pl-node-hue);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="node"][data-pl-tag="armed"] { --pl-node-hue: var(--pl-ink); }
+html[data-pl-theme="pixel"] [data-pl-part="node"][data-pl-tag="blocked"] { --pl-node-hue: var(--pl-warn); }
+html[data-pl-theme="pixel"] [data-pl-part="node"][data-pl-tag="failed"] { --pl-node-hue: var(--pl-fail); }
+html[data-pl-theme="pixel"] [data-pl-part="node"][data-pl-tag="done"] { --pl-node-hue: var(--pl-ship); }
+
+/* The run-hue border already draws 1px of the leading edge, so the stripe
+   adds one more: 2px in all (R7). */
+html[data-pl-theme="pixel"] [data-pl-part="node"][data-pl-tag="running"] {
+    --pl-node-hue: var(--pl-run);
+    --pl-node-edge: 1px;
+    border-color: var(--pl-run);
+    box-shadow: inset var(--pl-node-edge) 0 0 var(--pl-node-hue);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="node"][data-found] {
+    box-shadow: inset var(--pl-node-edge) 0 0 var(--pl-node-hue), 0 0 0 3px var(--pl-action);
+}
+
+/* ── View switch (BOARD · LIST · GRAPH) ──────────────────────────────── */
+/* role attributes add the weight to beat ui/Tabs' scoped variant rules. */
+html[data-pl-theme="pixel"] [data-pl-part="view-switch"] [role="tablist"] {
+    border-radius: 0;
+    background: none;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="view-switch"] [role="tablist"] button[role="tab"] {
+    border-radius: 0;
+    font-family: var(--pl-font);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--pl-muted);
+    box-shadow: inset 0 0 0 1px var(--pl-rule);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="view-switch"] [role="tablist"] button[role="tab"][data-state="active"] {
+    background: var(--pl-paper);
+    color: var(--pl-ink);
+    box-shadow: inset 0 0 0 1px var(--pl-ink);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="view-switch"] [role="tablist"] button[role="tab"][data-state="active"]::before {
+    content: "";
+    border-left: 6px solid var(--pl-action);
+    border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    html[data-pl-theme="pixel"] [data-pl-part="view-switch"] [role="tablist"] button[role="tab"] {
+        transition: none;
+    }
+}
+
+/* Silkscreen runs wide: on a phone the group head keeps its one line by
+   tightening the label and the RUN ALL key, never by scrolling sideways. */
+@media (max-width: 767.98px) {
+    html[data-pl-theme="pixel"] [data-pl-part="group-label"] {
+        min-width: 0;
+        overflow: hidden;
+        font-size: 10px;
+        letter-spacing: 0.04em;
+        text-overflow: ellipsis;
+    }
+
+    html[data-pl-theme="pixel"] [data-pl-part="group-head"] > button:not([data-pl-part]) {
+        min-width: 0;
+        overflow: hidden;
+    }
+
+    html[data-pl-theme="pixel"] [data-pl-part="group-label"][data-pl-chapter]::before {
+        margin-right: 0.5rem;
+        letter-spacing: 0;
+    }
+
+    html[data-pl-theme="pixel"] [data-pl-part="group-head"] [data-pl-part="key--primary"] {
+        padding-inline: 0.5rem;
+        letter-spacing: 0.04em;
+    }
+
+    html[data-pl-theme="pixel"] [data-pl-part="group-head"] [data-pl-part="key--primary"]::before {
+        display: none;
+    }
+}

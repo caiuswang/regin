@@ -10,6 +10,7 @@ import Button from '../ui/Button.vue'
 import Checkbox from '../ui/Checkbox.vue'
 import Icon from '../ui/Icon.vue'
 import NextStepRow from './NextStepRow.vue'
+import PlGlyph from '../pipeline/PlGlyph.vue'
 import RunAllReport from './RunAllReport.vue'
 import TaskBulkBar from './TaskBulkBar.vue'
 import TaskSheets from './TaskSheets.vue'
@@ -23,6 +24,7 @@ import { useNextStep } from '../../composables/useTaskViews.js'
 import { useTaskVerbs } from '../../composables/useTaskVerbs.js'
 import { invalidatePipelineCounts } from '../../composables/usePipelineCounts.js'
 import { taskTitle } from '../../utils/taskTitle.js'
+import { groupChapter, nextStepGlyph } from '../../utils/taskMeta.js'
 
 const props = defineProps({
   params: { type: Object, required: true },
@@ -211,14 +213,14 @@ defineExpose({ reload })
     </p>
 
     <section
-      v-for="group in groups"
+      v-for="(group, index) in groups"
       :key="group.key"
       class="nsl-group"
       :class="{ 'is-anchored': group.key === anchor }"
       :data-anchored="group.key === anchor ? 'true' : undefined"
       :data-testid="`next-step-group-${group.key}`"
     >
-      <header class="nsl-head">
+      <header class="nsl-head" data-pl-part="group-head" :data-pl-group="group.key">
         <Checkbox
           v-if="canWrite && !collapsed[group.key] && group.rows.length"
           class="nsl-selectall"
@@ -237,8 +239,9 @@ defineExpose({ reload })
           @click="toggle(group.key)"
         >
           <Icon :name="collapsed[group.key] ? 'chevron-right' : 'chevron-down'" :size="14" />
-          <span class="nsl-label">{{ group.label }}</span>
-          <span class="nsl-n" data-testid="next-step-n">{{ group.n }}</span>
+          <PlGlyph :kind="nextStepGlyph(group.key)" :scale="2" />
+          <span class="nsl-label" data-pl-part="group-label" :data-pl-chapter="groupChapter(index)">{{ group.label }}</span>
+          <span class="nsl-n" data-pl-part="count" data-testid="next-step-n">{{ group.n }}</span>
         </Button>
         <span v-if="group.hint" class="nsl-hint">{{ group.hint }}</span>
         <Button
@@ -246,6 +249,7 @@ defineExpose({ reload })
           variant="link"
           size="sm"
           class="nsl-bulk"
+          data-pl-part="key--primary"
           :disabled="runningAll"
           data-testid="next-step-run-all"
           @click="runAll(group)"
@@ -275,6 +279,7 @@ defineExpose({ reload })
           variant="ghost"
           size="sm"
           class="nsl-more"
+          data-pl-part="more"
           :data-testid="`next-step-more-${group.key}`"
           @click="feed.more(group.key)"
         >{{ moreLabel(group) }}</Button>

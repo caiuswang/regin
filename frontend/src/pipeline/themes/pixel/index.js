@@ -6,6 +6,7 @@ import OverviewLoop from './slots/OverviewLoop.vue'
 import ProjectsPanel from './slots/ProjectsPanel.vue'
 import './tokens.css'
 import './features.css'
+import './tasks.css'
 
 // A glyph is a sprite drawn where <PlGlyph kind="…"> sits; PlGlyph's own
 // `kind` prop is dropped so it does not land on the <svg> as an attribute.
@@ -29,9 +30,12 @@ export default {
     portfolio: glyph('grid'),
     project: glyph('bot'),
     'project.none': glyph('tray'),
-    'task.running': glyph('bot.running'),
     'task.ready': glyph('bot'),
+    'task.running': glyph('bot.running'),
     'task.blocked': glyph('lock'),
+    'task.failed': glyph('bot.failed'),
+    'task.idea': glyph('bulb'),
+    'task.done': glyph('check'),
     'feature.building': glyph('bot'),
     'defect.wild': glyph('bug'),
   },

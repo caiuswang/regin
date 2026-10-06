@@ -20,6 +20,8 @@ const emit = defineEmits(['verb', 'hover'])
     class="tln cursor-pointer hover:shadow-md focus-visible:outline-2"
     :data-testid="`graph-node-${node.id}`"
     :data-column="node.column"
+    data-pl-part="node"
+    :data-pl-tag="tag"
     @mouseenter="emit('hover', node.id)"
     @mouseleave="emit('hover', null)"
     @focusin="emit('hover', node.id)"
@@ -27,8 +29,8 @@ const emit = defineEmits(['verb', 'hover'])
   >
     <span class="tln-top">
       <TaskStatusIcon :status="node.status" :size="12" />
-      <span class="tln-id">#{{ node.id }}</span>
-      <span v-if="!node.action && node.waits_on == null" class="tlg-node-tag">{{ tag }}</span>
+      <span class="tln-id" data-pl-part="row-id">#{{ node.id }}</span>
+      <span v-if="!node.action && node.waits_on == null" class="tlg-node-tag" data-pl-part="meta-label">{{ tag }}</span>
       <TaskPrimaryAction
         v-else
         class="tln-action"

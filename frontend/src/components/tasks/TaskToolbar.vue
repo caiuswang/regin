@@ -61,6 +61,7 @@ defineExpose({ focusSearch })
         v-if="mobile && !searching && !q"
         variant="secondary"
         class="ttb-pill"
+        data-pl-part="key"
         data-testid="task-search-open"
         @click="focusSearch"
       >
@@ -76,19 +77,21 @@ defineExpose({ focusSearch })
           v-model="draft"
           type="text"
           class="ttb-input"
+          data-pl-part="input"
           :placeholder="placeholder"
           :aria-label="placeholder"
           data-testid="list-search"
           @keydown.enter.prevent="commit"
           @keydown.esc.prevent="revert"
         />
-        <kbd v-if="!mobile" class="ttb-kbd" aria-hidden="true">/</kbd>
+        <kbd v-if="!mobile" class="ttb-kbd" data-pl-part="kbd" aria-hidden="true">/</kbd>
       </div>
 
       <span
         v-for="chip in chips"
         :key="chip.key"
         class="ttb-chip"
+        data-pl-part="tag"
         :data-testid="`task-chip-${chip.key}`"
       >
         <span v-if="chip.field" class="ttb-chip-field">{{ chip.field }}</span>
@@ -115,6 +118,7 @@ defineExpose({ focusSearch })
         :model-value="view"
         :tabs="VIEWS"
         aria-label="View"
+        data-pl-part="view-switch"
         data-testid="list-views"
         @update:model-value="v => v !== view && emit('view', v)"
       />

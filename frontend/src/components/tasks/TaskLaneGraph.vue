@@ -16,6 +16,7 @@ import api from '../../api'
 import { invalidatePipelineCounts } from '../../composables/usePipelineCounts.js'
 import { GRAPH_FILTERS, useLaneGraph } from '../../composables/useTaskViews.js'
 import { useTaskVerbs } from '../../composables/useTaskVerbs.js'
+import { laneChapter } from '../../utils/taskMeta.js'
 import { LANE_W, NODE_H, NODE_W, layoutLanes } from '../../utils/taskLaneLayout.js'
 
 const props = defineProps({
@@ -131,7 +132,7 @@ defineExpose({ reload: graph.load })
 </script>
 
 <template>
-  <div class="tlg" data-testid="task-lane-graph">
+  <div class="tlg" data-pl-part="canvas" data-testid="task-lane-graph">
     <p v-if="graph.error.value" class="tlg-note" role="alert">
       Could not read the graph — {{ graph.error.value }}
       <Button variant="link" size="sm" @click="graph.load">Retry</Button>
@@ -163,19 +164,19 @@ defineExpose({ reload: graph.load })
             :style="{ width: `${layout.width}px`, height: `${layout.height}px`, transform: `scale(${zoom})` }"
           >
             <div
-              v-for="lane in layout.lanes"
+              v-for="(lane, index) in layout.lanes"
               :key="lane.key"
               class="tlg-lane"
               :style="{ top: `${lane.top}px`, height: `${lane.height}px` }"
               :data-testid="`graph-lane-${lane.key}`"
             >
-              <div class="tlg-lane-head" :style="{ width: `${LANE_W}px` }">
-                <span class="tlg-lane-ref">{{ lanePrefix(lane) }}</span>
+              <div class="tlg-lane-head" data-pl-part="lane-head" :style="{ width: `${LANE_W}px` }">
+                <span class="tlg-lane-ref" data-pl-part="meta-label" :data-pl-chapter="laneChapter(index)">{{ lanePrefix(lane) }}</span>
                 <span class="tlg-lane-title" :title="lane.title">{{ lane.title }}</span>
-                <span class="tlg-lane-bar" aria-hidden="true">
-                  <span :style="{ width: `${progress(lane)}%` }" />
+                <span class="tlg-lane-bar" data-pl-part="meter" aria-hidden="true">
+                  <span data-pl-part="meter-cell" :style="{ width: `${progress(lane)}%` }" />
                 </span>
-                <span class="tlg-lane-count" data-testid="graph-lane-count">{{ lane.done }} / {{ lane.total }}</span>
+                <span class="tlg-lane-count" data-pl-part="meta-label" data-testid="graph-lane-count">{{ lane.done }} / {{ lane.total }}</span>
               </div>
             </div>
             <svg class="tlg-edges" :width="layout.width" :height="layout.height" aria-hidden="true">
@@ -211,6 +212,7 @@ defineExpose({ reload: graph.load })
               :node="node"
               :tag="tag(node)"
               :class="nodeClass(node)"
+              :data-found="matches.has(node.id) ? '' : undefined"
               :style="{ left: `${node.x}px`, top: `${node.y}px`, width: `${NODE_W}px`, height: `${NODE_H}px` }"
               :busy="busyId === node.id"
               :can-write="canWrite"
@@ -220,15 +222,15 @@ defineExpose({ reload: graph.load })
           </div>
         </div>
       </div>
-      <p class="tlg-footer" data-testid="graph-footer">{{ footer }}</p>
+      <p class="tlg-footer" data-pl-part="meta-label" data-testid="graph-footer">{{ footer }}</p>
       <div class="tlg-zoom" role="group" aria-label="Zoom">
-        <Button variant="secondary" size="icon" aria-label="Zoom in" @click="setZoom(zoom + ZOOM_STEP)">
+        <Button variant="secondary" size="icon" data-pl-part="key" aria-label="Zoom in" @click="setZoom(zoom + ZOOM_STEP)">
           <Icon name="plus" :size="14" />
         </Button>
-        <Button variant="secondary" size="icon" aria-label="Zoom out" @click="setZoom(zoom - ZOOM_STEP)">
+        <Button variant="secondary" size="icon" data-pl-part="key" aria-label="Zoom out" @click="setZoom(zoom - ZOOM_STEP)">
           <Icon name="minus" :size="14" />
         </Button>
-        <Button variant="secondary" size="icon" class="tlg-fit" aria-label="Fit to width" @click="fit">FIT</Button>
+        <Button variant="secondary" size="icon" class="tlg-fit" data-pl-part="key" aria-label="Fit to width" @click="fit">FIT</Button>
       </div>
     </template>
     <TaskSheets :sheet="sheet" @close="sheet = null" @done="sheetDone" />

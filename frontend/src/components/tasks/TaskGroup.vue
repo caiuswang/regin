@@ -9,7 +9,9 @@
 import { computed, onUnmounted, ref, watch } from 'vue'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
+import PlGlyph from '../pipeline/PlGlyph.vue'
 import TaskRows from './TaskRows.vue'
+import { groupChapter, statusGlyph } from '../../utils/taskMeta.js'
 import { useTaskFeed } from '../../composables/useTasks.js'
 
 const props = defineProps({
@@ -22,6 +24,8 @@ const props = defineProps({
   projectFor: { type: Function, default: () => null },
   canWrite: { type: Boolean, default: true },
   dateField: { type: String, default: 'created_at' },
+  // Position on screen, for the pipeline theme's chapter number.
+  index: { type: Number, default: 0 },
 })
 const emit = defineEmits(['verb', 'open', 'focus', 'select', 'loaded', 'hidden'])
 
@@ -74,14 +78,17 @@ defineExpose({ reload: () => { fetched.value = false; if (open.value) load() } }
     <Button
       variant="ghost"
       class="tg-head"
+      data-pl-part="group-head"
+      :data-pl-group="group.param === 'status' ? group.key : undefined"
       :aria-expanded="open"
       :aria-label="`${open ? 'Collapse' : 'Expand'} ${group.label}`"
       :data-testid="`task-group-toggle-${group.key}`"
       @click="open = !open"
     >
       <Icon :name="open ? 'chevron-down' : 'chevron-right'" :size="14" />
-      <span class="tg-label">{{ group.label }}</span>
-      <span class="tg-count" :data-testid="`task-group-count-${group.key}`">
+      <PlGlyph v-if="group.param === 'status'" :kind="statusGlyph(group.key)" :scale="2" />
+      <span class="tg-label" data-pl-part="group-label" :data-pl-chapter="groupChapter(index)">{{ group.label }}</span>
+      <span class="tg-count" data-pl-part="count" :data-testid="`task-group-count-${group.key}`">
         {{ group.count }}
       </span>
     </Button>

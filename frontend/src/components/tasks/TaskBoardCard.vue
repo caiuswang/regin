@@ -39,6 +39,8 @@ const hasControls = computed(() => !!props.task.action || !!props.task.waits_on
   <div
     class="tbc"
     :class="{ 'is-waiting': !!task.waits_on, 'is-live': !!task.live }"
+    data-pl-part="card"
+    :data-live="task.live ? '' : undefined"
     :data-testid="`board-card-${task.id}`"
   >
     <span class="tbc-top">
@@ -47,13 +49,13 @@ const hasControls = computed(() => !!props.task.action || !!props.task.waits_on
         v-if="task.status === 'failed'" status="failed" :size="13"
         data-testid="board-card-failed"
       />
-      <span class="tbc-id">#{{ task.id }}</span>
-      <span v-if="corner" class="tbc-corner">
+      <span class="tbc-id" data-pl-part="row-id">#{{ task.id }}</span>
+      <span v-if="corner" class="tbc-corner" :data-pl-part="task.live ? 'live' : 'meta-label'">
         <span v-if="task.live" class="tbc-dot" aria-hidden="true" />{{ corner }}
       </span>
     </span>
     <router-link :to="`/tasks/${task.id}`" class="tbc-title">{{ taskTitle(task) }}</router-link>
-    <span v-if="task.feature_id != null" class="tbc-feature">
+    <span v-if="task.feature_id != null" class="tbc-feature" data-pl-part="tag">
       <Icon name="flag" :size="11" />#{{ task.feature_id }} {{ task.feature_title }}
     </span>
     <span v-if="task.fixes_defects?.length" class="tbc-facts">
