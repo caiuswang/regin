@@ -392,10 +392,10 @@ def _latest_denials(trace_ids: list[str]) -> dict:
 
 def _never_ran_agents(trace_ids: list[str]) -> set[tuple]:
     from lib.orm.engine import get_connection
-    from lib.trace.pending_spans import never_ran_blocker_agents
+    from lib.trace.pending_spans import never_ran_pending_agents
     conn = get_connection()
     try:
-        return never_ran_blocker_agents(conn, trace_ids)
+        return never_ran_pending_agents(conn, trace_ids)
     finally:
         conn.close()
 
@@ -413,7 +413,7 @@ class _RetireSignals:
         self.never_ran = _never_ran_agents(trace_ids)
 
     def never_asked(self, trace_id: str, span: dict) -> bool:
-        """A side fork's placeholder — see `never_ran_blocker_agents`."""
+        """A side fork's placeholder — see `never_ran_pending_agents`."""
         agent = _attributes(span).get('agent_id')
         return bool(agent) and (trace_id, agent) in self.never_ran
 

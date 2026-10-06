@@ -265,3 +265,28 @@ def test_a_started_agents_ask_is_not_demoted_by_rule_c():
         'status': 'active', 'last_seen': _iso(now),
         'never_ran': {('t1', 'fork1')}})
     assert served['pending-a1']['status_code'] == 'PENDING'
+
+
+def _store(*rows):
+    import sqlite3
+    conn = sqlite3.connect(':memory:')
+    conn.execute("CREATE TABLE session_spans (trace_id TEXT, span_id TEXT, "
+                 "name TEXT, status_code TEXT, agent_id TEXT, attributes TEXT)")
+    conn.executemany("INSERT INTO session_spans VALUES (?,?,?,?,?,'{}')", rows)
+    return conn
+
+
+def test_a_side_forks_pending_shell_marks_its_agent_never_ran():
+    """Defect #250: the fork's placeholder is a `tool.Bash`, not a blocker —
+    it rendered as a shell running for half an hour."""
+    from lib.trace.pending_spans import never_ran_pending_agents
+    conn = _store(('t1', 'pending-fork', 'tool.Bash', 'PENDING', 'fork1'))
+    assert never_ran_pending_agents(conn, ['t1']) == {('t1', 'fork1')}
+
+
+def test_a_started_agents_pending_shell_is_not_never_ran():
+    from lib.trace.pending_spans import never_ran_pending_agents
+    conn = _store(('t1', 'sa-start', 'subagent.start', 'OK', 'a1'),
+                  ('t1', 'pending-a1', 'tool.Bash', 'PENDING', 'a1'),
+                  ('t1', 'pending-main', 'tool.Bash', 'PENDING', None))
+    assert never_ran_pending_agents(conn, ['t1']) == set()

@@ -128,8 +128,8 @@ def _needs_for(conn, group: list[str]) -> str | None:
     own words, so the facet reads as an inbox rather than as a status list."""
     marks = ','.join('?' for _ in group)
     names = ','.join('?' for _ in _BLOCKER_NAMES)
-    from lib.trace.pending_spans import AGENT_ID_SQL, never_ran_blocker_agents
-    forks = sorted({a for _, a in never_ran_blocker_agents(conn, group)})
+    from lib.trace.pending_spans import AGENT_ID_SQL, never_ran_pending_agents
+    forks = sorted({a for _, a in never_ran_pending_agents(conn, group)})
     skip = (f" AND ({AGENT_ID_SQL} IS NULL OR {AGENT_ID_SQL} NOT IN "
             f"({','.join('?' for _ in forks)}))") if forks else ''
     row = conn.execute(

@@ -180,10 +180,10 @@ def _map_session_activity(stored: list[str]) -> dict | None:
     if not act_row:
         return None
     from lib.orm.engine import get_connection
-    from lib.trace.pending_spans import never_ran_blocker_agents
+    from lib.trace.pending_spans import never_ran_pending_agents
     conn = get_connection()
     try:
-        never_ran = never_ran_blocker_agents(conn, stored)
+        never_ran = never_ran_pending_agents(conn, stored)
     finally:
         conn.close()
     return {'status': act_row[0], 'last_seen': act_row[1],

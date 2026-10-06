@@ -213,9 +213,9 @@ def is_human_blocker(name, span_id=None) -> bool:
     return isinstance(span_id, str) and span_id.startswith(PERM_PENDING_PREFIX)
 
 
-def never_ran_blocker_agents(conn, trace_ids) -> set[tuple[str, str]]:
-    """(trace_id, agent_id) pairs holding a PENDING human blocker whose agent
-    never produced a single resolved span.
+def never_ran_pending_agents(conn, trace_ids) -> set[tuple[str, str]]:
+    """(trace_id, agent_id) pairs holding a PENDING span whose agent never
+    produced a single resolved span.
 
     A real subagent's first act is its `subagent.start` marker (status OK), so
     every agent the session launched has a resolved span. What does not:
@@ -232,12 +232,10 @@ def never_ran_blocker_agents(conn, trace_ids) -> set[tuple[str, str]]:
     if not trace_ids:
         return set()
     traces = ','.join('?' * len(trace_ids))
-    names = ','.join("'%s'" % n for n in HUMAN_BLOCKER_NAMES)
     parked = {
         (r[0], r[1]) for r in conn.execute(
             f"SELECT DISTINCT trace_id, {AGENT_ID_SQL} FROM session_spans "
-            f" WHERE trace_id IN ({traces}) AND status_code = 'PENDING' "
-            f"   AND (name IN ({names}) OR span_id LIKE '{PERM_PENDING_PREFIX}%')",
+            f" WHERE trace_id IN ({traces}) AND status_code = 'PENDING'",
             trace_ids).fetchall()
         if r[1]}
     if not parked:
