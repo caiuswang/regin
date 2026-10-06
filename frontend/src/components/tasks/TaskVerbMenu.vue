@@ -33,6 +33,7 @@ const items = computed(() => (props.task.menu || []).filter(v => !props.omit.inc
         variant="ghost"
         size="sm"
         class="tvm-trigger"
+        data-pl-part="key"
         :aria-label="`More actions for #${task.id}`"
         data-testid="task-menu"
         @click.stop

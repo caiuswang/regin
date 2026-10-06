@@ -33,6 +33,7 @@ const waiting = computed(() => !!props.task.waits_on)
     :id="`task-${task.id}`"
     class="nsr"
     :class="{ 'is-waiting': waiting, 'is-selectable': canWrite }"
+    data-pl-part="row"
     :data-testid="`next-step-row-${task.id}`"
   >
     <Checkbox
@@ -50,7 +51,7 @@ const waiting = computed(() => !!props.task.waits_on)
       <span class="nsr-sub">{{ taskSub(task) }}</span>
     </div>
     <div class="nsr-meta">
-      <span class="nsr-id">#{{ task.id }}</span>
+      <span class="nsr-id" data-pl-part="row-id">#{{ task.id }}</span>
       <span class="nsr-facts"><TaskFacts :task="task" :show-waits="false" /></span>
     </div>
     <div class="nsr-action">
@@ -62,7 +63,7 @@ const waiting = computed(() => !!props.task.waits_on)
       />
       <TaskVerbMenu v-if="canWrite" :task="task" :busy="busy" @verb="v => emit('verb', v, task)" />
     </div>
-    <span class="nsr-day">{{ taskDay(task.created_at) }}</span>
+    <span class="nsr-day" data-pl-part="meta-label">{{ taskDay(task.created_at) }}</span>
     <TaskRefusal v-if="refusal" class="nsr-refusal" :refusal="refusal" />
   </li>
 </template>

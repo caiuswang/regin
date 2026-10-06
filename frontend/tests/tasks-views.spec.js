@@ -218,6 +218,9 @@ test('test_pipeline_mobile_layouts', async ({ page }) => {
   // A chip's remove control is a tap target too.
   await page.goto(`/tasks?tag=${tag}&priority=urgent,high`)
   await expect(page.getByTestId('task-chip-priority')).toContainText('High+')
+  // Text matches while the shell still hides its tabs for a theme chunk to
+  // load; a box only exists once they are painted.
+  await expect(page.getByTestId('task-chip-remove-priority')).toBeVisible()
   const x = await page.getByTestId('task-chip-remove-priority').boundingBox()
   expect(x.width).toBeGreaterThanOrEqual(44)
   expect(x.height).toBeGreaterThanOrEqual(44)

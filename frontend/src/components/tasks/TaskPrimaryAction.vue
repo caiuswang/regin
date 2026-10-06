@@ -45,6 +45,7 @@ const RUN_LABEL = { run: 'Run', retry: 'Retry' }
       <span
         v-if="starting"
         class="tpa-watch is-starting"
+        data-pl-part="key"
         role="status"
         data-testid="task-action-starting"
       >Starting…</span>
@@ -52,6 +53,7 @@ const RUN_LABEL = { run: 'Run', retry: 'Retry' }
         v-else
         :to="watchTo"
         class="tpa-watch"
+        data-pl-part="key"
         :aria-label="`Watch ${ref_}`"
         data-testid="task-action-watch"
         @click.stop
@@ -61,6 +63,7 @@ const RUN_LABEL = { run: 'Run', retry: 'Retry' }
         variant="secondary"
         size="sm"
         :disabled="busy"
+        data-pl-part="key"
         :aria-label="`Run ${ref_} again`"
         data-testid="task-action-run"
         @click.stop.prevent="emit('verb', 'run')"
@@ -70,6 +73,7 @@ const RUN_LABEL = { run: 'Run', retry: 'Retry' }
         variant="danger"
         size="sm"
         :disabled="busy || starting"
+        data-pl-part="key"
         :aria-label="`Stop ${ref_}`"
         data-testid="task-action-stop"
         @click.stop.prevent="emit('verb', 'stop')"
@@ -83,6 +87,7 @@ const RUN_LABEL = { run: 'Run', retry: 'Retry' }
       variant="secondary"
       size="sm"
       class="tpa-run"
+      data-pl-part="key"
       :disabled="busy"
       :aria-label="`${RUN_LABEL[task.action]} ${ref_}`"
       :data-testid="`task-action-${task.action}`"
@@ -96,6 +101,7 @@ const RUN_LABEL = { run: 'Run', retry: 'Retry' }
       variant="secondary"
       size="sm"
       :disabled="busy"
+      data-pl-part="key"
       :aria-label="`Arm ${ref_}`"
       data-testid="task-action-arm"
       @click.stop.prevent="emit('verb', 'arm')"
@@ -104,6 +110,7 @@ const RUN_LABEL = { run: 'Run', retry: 'Retry' }
       v-else-if="waitsOn != null"
       :to="`/tasks/${waitsOn}`"
       class="tpa-waits"
+      data-pl-part="meta-label"
       data-testid="task-action-waits"
       @click.stop
     >{{ waitsText }}</router-link>

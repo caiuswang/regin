@@ -284,11 +284,12 @@ defineExpose({ reload: afterWrite })
 
     <template v-if="status === 'rows' && grouped">
       <TaskGroup
-        v-for="group in groups"
+        v-for="(group, index) in groups"
         :key="`${query.state.value.group}-${group.key}`"
         ref="groupRefs"
         :open="isOpen(query.state.value.group, group.key)"
         :group="group"
+        :index="index"
         :params="query.params"
         :liveness="liveness"
         :refusals="refusals"

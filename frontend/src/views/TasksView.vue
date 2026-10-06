@@ -115,7 +115,7 @@ onBeforeUnmount(() => window.removeEventListener(TASK_CAPTURED_EVENT, afterWrite
 </script>
 
 <template>
-  <div class="tv space-y-3" data-pl-part="panel">
+  <div class="tv space-y-3" data-pl-part="panel" data-pl-chapter="2-1" data-pl-title="Quest log">
     <Teleport v-if="isCurrentTab" defer to="#pipeline-actions">
       <PipelineCreateButton kind="task" testid="task-new" />
     </Teleport>
@@ -142,23 +142,23 @@ onBeforeUnmount(() => window.removeEventListener(TASK_CAPTURED_EVENT, afterWrite
         />
         <DropdownMenu v-if="mobile" :items="groupItems" align="start">
           <template #trigger>
-            <Button variant="ghost" class="tv-sort" data-testid="task-group-menu">Group</Button>
+            <Button variant="ghost" class="tv-sort" data-pl-part="key" data-testid="task-group-menu">Group</Button>
           </template>
         </DropdownMenu>
         <DropdownMenu v-if="mobile && mode === 'flat'" :items="sortItems" align="start">
           <template #trigger>
-            <Button variant="ghost" class="tv-sort" data-testid="task-sort">Sort</Button>
+            <Button variant="ghost" class="tv-sort" data-pl-part="key" data-testid="task-sort">Sort</Button>
           </template>
         </DropdownMenu>
       </template>
       <template #meta>
-        <span v-if="mobile" class="tv-count" data-testid="list-count">{{ count }}</span>
+        <span v-if="mobile" class="tv-count" data-pl-part="panel-meta" data-testid="list-count">{{ count }}</span>
         <template v-else-if="view === 'graph'">
-          <span class="tv-legend"><span class="tv-swatch is-blocking" />blocking</span>
-          <span class="tv-legend"><span class="tv-swatch" />depends on</span>
+          <span class="tv-legend" data-pl-part="meta-label"><span class="tv-swatch is-blocking" />blocking</span>
+          <span class="tv-legend" data-pl-part="meta-label"><span class="tv-swatch" />depends on</span>
         </template>
         <template v-else>
-          <span v-if="count" class="tv-count" data-testid="list-count">{{ count }}</span>
+          <span v-if="count" class="tv-count" data-pl-part="panel-meta" data-testid="list-count">{{ count }}</span>
           <span v-if="mode === 'flat'" class="tv-sort-group">
             <Select
               :model-value="sortKey"
@@ -186,7 +186,7 @@ onBeforeUnmount(() => window.removeEventListener(TASK_CAPTURED_EVENT, afterWrite
             class="tv-group"
             @update:model-value="v => query.patch({ group: v })"
           />
-          <span v-else class="tv-count" title="Columns sort by priority; Running by latest start; Done newest first">
+          <span v-else class="tv-count" data-pl-part="panel-meta" title="Columns sort by priority; Running by latest start; Done newest first">
             Priority <Icon name="arrow-down" :size="12" />
           </span>
         </template>

@@ -64,6 +64,7 @@ function apply() {
         class="tfm-trigger"
         :class="{ 'is-mobile': mobile }"
         :aria-expanded="open"
+        data-pl-part="key"
         data-testid="task-filter-button"
       >
         <Icon name="plus" :size="13" />

@@ -1,6 +1,7 @@
 import { h } from 'vue'
 import PixelSprite from './PixelSprite.vue'
 import './tokens.css'
+import './tasks.css'
 
 // A glyph is a sprite drawn where <PlGlyph kind="…"> sits; PlGlyph's own
 // `kind` prop is dropped so it does not land on the <svg> as an attribute.
@@ -19,5 +20,11 @@ export default {
     portfolio: glyph('grid'),
     project: glyph('bot'),
     'project.none': glyph('tray'),
+    'task.ready': glyph('bot'),
+    'task.running': glyph('bot.running'),
+    'task.blocked': glyph('lock'),
+    'task.failed': glyph('bot.failed'),
+    'task.idea': glyph('bulb'),
+    'task.done': glyph('check'),
   },
 }
