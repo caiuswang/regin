@@ -524,7 +524,7 @@ def _agents_that_ran(act_rows, segments) -> list:
 
     An agent_id with no marker and no resolved span is a Claude Code side
     fork whose PreToolUse fired for a call the harness never executed (see
-    `pending_spans.never_ran_blocker_agents`). A ghost whose markers were lost still has
+    `pending_spans.never_ran_pending_agents`). A ghost whose markers were lost still has
     resolved spans, so it stays."""
     return [r for r in act_rows
             if r['aid'] and (r['aid'] in segments or r['internal_count'])]

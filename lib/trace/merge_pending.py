@@ -225,12 +225,14 @@ def _demote_stale_pending(
           still-open session (`_blocks_on_a_human`), whose age measures the
           wait, not a fault, OR
       (c) its agent never ran (`session_activity['never_ran']`, read off the
-          whole store by `pending_spans.never_ran_blocker_agents`): a side
+          whole store by `pending_spans.never_ran_pending_agents`): a side
           fork's placeholder that no one can ever answer.
 
     INVARIANT: a legitimately-running long tool on an ACTIVE session with no
     same-agent completion activity after it is never demoted — (a) needs a
-    later same-agent move-on past the grace, (b) needs an inactive session.
+    later same-agent move-on past the grace, (b) needs an inactive session,
+    (c) needs an agent with no resolved span — a started agent has its
+    `subagent.start` marker, and the main agent has no agent_id.
 
     A `promptlive-` placeholder gets one extra, event-based rule: a
     `session.end` row with a later monotonic id proves the session ended
