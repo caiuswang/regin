@@ -141,9 +141,12 @@ test('the browser geometry propagates to the tmux client', async ({ page }) => {
   // pane gets WIDER, so a narrower viewport is not a narrower terminal.
   // Follow THIS page's client by its session name: the previous test's client
   // shares the socket until its reap lands, and list order is not ours.
+  // 1400, not 1000: the pane sits ~470px down and clamps at a ~29-row minimum,
+  // so at 1000 it clears the clamp by two rows — any extra chrome above it on
+  // the shared server (a notification banner) makes 1000 and 500 the same.
   const clients = () => groupedClients().map(line => line.split(' '))
   const before = new Set(clients().map(([name]) => name))
-  await page.setViewportSize({ width: 1280, height: 1000 })
+  await page.setViewportSize({ width: 1280, height: 1400 })
   await openTerminalTab(page)
   let mine
   await expect.poll(() => {
@@ -151,11 +154,18 @@ test('the browser geometry propagates to the tmux client', async ({ page }) => {
     return mine
   }, { timeout: 10_000 }).toBeTruthy()
   const sizeOfMine = () => clients().find(([name]) => name === mine)?.[1]
+  const rowsOf = (size) => Number(size?.split('x')[1])
+  // The client is born at the connect URL's geometry, which predates the
+  // page's settled layout — the resize to it lands later. Read `tall` once the
+  // client has caught up with the page's own terminal, not at first sight.
+  const pageRows = () => page.locator('[data-terminal-pane] .xterm-rows')
+    .evaluate(el => el.children.length)
+  await expect.poll(async () => rowsOf(sizeOfMine()) === await pageRows(),
+    { timeout: 10_000 }).toBe(true)
   const tall = sizeOfMine()
 
   await page.setViewportSize({ width: 1280, height: 500 })
   await expect.poll(sizeOfMine, { timeout: 10_000 }).not.toBe(tall)
-  const rowsOf = (size) => Number(size.split('x')[1])
   expect(rowsOf(sizeOfMine())).toBeLessThan(rowsOf(tall))
 })
 
@@ -175,6 +185,10 @@ test('the pane terminal leaves no orphaned tmux client behind', async ({ page })
 test('the span detail rail does not steal the width, or appear uncloseable', async ({ page }) => {
   // Select a span on the Log tab first: that is what used to leave the rail
   // pinned open on the terminal, where its close control is not rendered.
+  // At the default 720px the Log card is ~195px tall under a ~140px sticky
+  // filter bar, so a little extra chrome scrolls the row beneath the bar and
+  // the click never lands.
+  await page.setViewportSize({ width: 1280, height: 1000 })
   await page.goto(`/trace/sessions/${traceId}`)
   await selectViewMode(page, 'Log')
   await page.locator('tr[data-span-id]').first().click()

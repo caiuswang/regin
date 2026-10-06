@@ -119,6 +119,11 @@ test.describe('pixel theme — tasks', () => {
     await page.setViewportSize({ width: 1440, height: 900 })
     const tag = mark()
     const ids = seed(tag)
+    // A sibling worker's write raises a `pipeline` frame on every open page,
+    // and the tab re-reads its counts and rows on it — mid-switch, that read
+    // is indistinguishable from one the theme caused. With the ticket held no
+    // stream opens (same reasoning as pipeline-theme-seam's switch test).
+    await page.route('**/api/auth/stream-ticket', () => {})
 
     for (const view of VIEWS) {
       await page.goto(`/tasks?tag=${tag}&view=${view}`)

@@ -39,6 +39,11 @@ function stubFeed(page, { counts = null, rows = taskRows(3) } = {}) {
   const body = counts || {
     total: 4, by_status: { idea: 2, done: 2 }, by_priority: {}, by_project: {},
   }
+  // The feed is stubbed but the realtime stream is the real server's: every
+  // sibling worker's task write lands here as a `pipeline` frame and re-reads
+  // the page, inflating the request counts these tests pin. With the ticket
+  // held no stream opens.
+  page.route('**/api/auth/stream-ticket', () => {})
   page.route('**/api/tasks/counts*', (route) => {
     asked.push(new URL(route.request().url()))
     return route.fulfill({ status: 200, contentType: 'application/json',
