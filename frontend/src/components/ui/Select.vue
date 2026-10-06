@@ -91,6 +91,7 @@ const displayLabel = computed(() => (selectedItem.value ? selectedItem.value.lab
               v-else
               class="ds-select-item"
               :value="toReka(opt.value)"
+              :data-value="String(opt.value)"
               :disabled="opt.disabled"
             >
               <span class="ds-select-check">

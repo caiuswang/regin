@@ -70,8 +70,8 @@ function addTyped() {
 
 <template>
   <div class="arm-skills" data-testid="task-arm-skills">
-    <label class="live-launch-lbl" for="task-arm-skill">
-      skills <span class="arm-skills-note">— the first opens the run as <code>/&lt;skill&gt;</code>, the rest are loaded after it</span>
+    <label class="live-launch-lbl" for="task-arm-skill" data-pl-part="field-label">
+      skills <span class="arm-skills-note" data-pl-part="field-hint">— the first opens the run as <code>/&lt;skill&gt;</code>, the rest are loaded after it</span>
     </label>
     <Select
       id="task-arm-skill"
@@ -80,6 +80,8 @@ function addTyped() {
       block
       :options="menu"
       :placeholder="skills.length ? 'add another skill…' : 'pick a skill…'"
+      data-pl-part="input"
+      data-pl-field="skill-menu"
       data-testid="task-arm-skill"
       @update:model-value="pick"
     />
@@ -90,17 +92,18 @@ function addTyped() {
     <div v-if="byName" class="arm-skills-add">
       <Input
         v-model="typed"
+        data-pl-part="input"
         data-testid="task-arm-skill-add"
         placeholder="skill name, e.g. my-plugin:skill"
         aria-label="Skill name"
         @keydown.enter.prevent="addTyped"
       />
-      <Button variant="ghost" size="sm" data-testid="task-arm-skill-add-btn" @click="addTyped">Add</Button>
+      <Button variant="ghost" size="sm" data-pl-part="key" data-testid="task-arm-skill-add-btn" @click="addTyped">Add</Button>
     </div>
 
-    <ol v-if="skills.length" class="arm-skills-picked" aria-label="Picked skills">
-      <li v-for="(name, i) in skills" :key="name" :data-testid="`task-arm-skill-picked-${name}`">
-        <span class="arm-skills-order">{{ i === 0 ? 'opens' : `+${i}` }}</span>
+    <ol v-if="skills.length" class="arm-skills-picked" aria-label="Picked skills" data-pl-part="skill-list">
+      <li v-for="(name, i) in skills" :key="name" data-pl-part="skill" :data-testid="`task-arm-skill-picked-${name}`">
+        <span class="arm-skills-order" data-pl-part="skill-order">{{ i === 0 ? 'opens' : `+${i}` }}</span>
         <span class="arm-skills-name">{{ name }}</span>
         <span v-if="sourceOf.get(name)" class="arm-skills-src">{{ sourceOf.get(name) }}</span>
         <span v-if="missing(name)" class="arm-skills-miss">not in this repo</span>
@@ -118,6 +121,8 @@ function addTyped() {
     <Input
       v-if="skills.length"
       :model-value="args"
+      data-pl-part="input"
+      data-pl-field="skill-args"
       data-testid="task-arm-skill-args"
       placeholder="arguments for the first skill, before the task body"
       aria-label="Skill arguments"

@@ -198,6 +198,29 @@ export const SPRITES = {
   },
 }
 
+// Priority as four rising bars, the lit ones in the priority's hue (the same
+// count TaskPriorityIcon draws): urgent 4, high 3, medium 2, low 1, none 0.
+const BAR_HUE = { 4: 'red', 3: 'amber', 2: 'blue', 1: 'ink', 0: 'gray' }
+function bars(lit) {
+  const grid = [3, 2, 1, 0].map(row => [1, 2, 3, 4]
+    .map(bar => (bar > row ? (bar <= lit ? 'o' : 's') : '.')).join('.'))
+  return { grid, palette: { o: BAR_HUE[lit], s: 'gray' } }
+}
+for (const lit of [0, 1, 2, 3, 4]) SPRITES[`bars.${lit}`] = bars(lit)
+
+SPRITES.coin = {
+  grid: [
+    '..kkk..',
+    '.kyyyk.',
+    'kyypyyk',
+    'kyypyyk',
+    'kyypyyk',
+    '.kyyyk.',
+    '..kkk..',
+  ],
+  palette: { ...INK, y: 'yellow' },
+}
+
 // One <rect> per horizontal run of a single colour, so a 12×12 sprite is a
 // few dozen nodes rather than a hundred.
 export function spriteRuns(sprite) {

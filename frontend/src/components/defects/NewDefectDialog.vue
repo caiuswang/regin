@@ -12,6 +12,7 @@ import Button from '../ui/Button.vue'
 import Dialog from '../ui/Dialog.vue'
 import Textarea from '../ui/Textarea.vue'
 import FeaturePicker from '../pipeline/FeaturePicker.vue'
+import PlGlyph from '../pipeline/PlGlyph.vue'
 import TaskImageStrip from '../tasks/TaskImageStrip.vue'
 import { useAttachedImages } from '../../composables/useAttachedImages.js'
 import { imageFilesFrom } from '../../utils/imageFiles'
@@ -93,31 +94,37 @@ async function submit() {
     v-model:open="open"
     title="New defect"
     description="What went wrong. Leave the feature empty when you do not know which one caused it — the report goes to triage."
+    kicker="Wild bug · lands in triage"
+    data-pl-part="dialog"
   >
+    <template #mark><PlGlyph kind="defect.wild" :scale="2" /></template>
     <form class="nd-form" data-testid="new-defect" @submit.prevent="submit" @paste="onPaste">
-      <label class="nd-label" for="nd-symptom">Symptom</label>
+      <label class="nd-label" for="nd-symptom" data-pl-part="field-label">Symptom</label>
       <Textarea
         id="nd-symptom"
         v-model="symptom"
         :rows="4"
         data-testid="new-defect-symptom"
+        data-pl-part="input"
         placeholder="What you saw, and where"
       />
 
-      <span class="nd-label">Feature <span class="nd-optional">(optional — none sends it to triage)</span></span>
+      <span class="nd-label" data-pl-part="field-label">Feature <span class="nd-optional">(optional — none sends it to triage)</span></span>
       <FeaturePicker v-model="featureId" :current="feature" label="The feature that caused this" testid="new-defect-feature" />
 
-      <label class="nd-label" for="nd-paths">Suspect paths <span class="nd-optional">(one per line)</span></label>
+      <label class="nd-label" for="nd-paths" data-pl-part="field-label">Suspect paths <span class="nd-optional">(one per line)</span></label>
       <Textarea
         id="nd-paths"
         v-model="paths"
         :rows="2"
         data-testid="new-defect-paths"
+        data-pl-part="input"
         placeholder="frontend/src/views/…"
       />
 
-      <span class="nd-label">Images <span class="nd-optional">(optional)</span></span>
+      <span class="nd-label" data-pl-part="field-label">Images <span class="nd-optional">(optional)</span></span>
       <TaskImageStrip
+        data-pl-part="drop"
         :items="images"
         :busy="imagesBusy"
         :error="imagesError"
@@ -129,9 +136,10 @@ async function submit() {
     </form>
 
     <template #footer>
-      <Button variant="ghost" @click="open = false">Cancel</Button>
+      <Button variant="ghost" data-pl-part="key" @click="open = false">Cancel</Button>
       <Button
         variant="primary"
+        data-pl-part="key--primary"
         data-testid="new-defect-submit"
         :disabled="saving"
         @click="submit"

@@ -10,6 +10,8 @@ import Dialog from '../ui/Dialog.vue'
 import Input from '../ui/Input.vue'
 import LaunchWorktreeFields from '../live/LaunchWorktreeFields.vue'
 import Select from '../ui/Select.vue'
+import PlGlyph from '../pipeline/PlGlyph.vue'
+import PlSlot from '../pipeline/PlSlot.vue'
 import TaskArmSkills from './TaskArmSkills.vue'
 import { CUSTOM_MODEL, useTaskArm } from '../../composables/useTaskArm.js'
 import api from '../../api'
@@ -29,8 +31,8 @@ const emit = defineEmits(['close', 'armed'])
 // Per slice, never remembered (D1 of #120): only a slice that restarts the
 // server needs a run that outlives it.
 const LAUNCH_OPTIONS = [
-  { value: '', label: 'SDK (default) — ends if the server restarts' },
-  { value: 'tmux', label: 'tmux — survives a server restart' },
+  { value: '', label: 'SDK (default)', hint: 'ends if the server restarts' },
+  { value: 'tmux', label: 'tmux', hint: 'survives a server restart' },
 ]
 
 const {
@@ -161,114 +163,141 @@ async function submit() {
   <Dialog
     :open="true"
     title="Arm this task"
+    short-title="Arm task"
     :description="taskTitle(task)"
+    :kicker="`Idea → queue · #${task.id}`"
+    hint="Esc close"
+    data-pl-part="dialog"
+    data-testid="task-arm"
     @update:open="v => !v && emit('close')"
   >
+    <template #mark><PlGlyph kind="dialog.arm" :scale="2" /></template>
     <div v-if="loading || prefilling" class="task-arm-note">reading launch options…</div>
     <div v-else-if="error" class="live-launch-warn" data-testid="task-arm-error">
       {{ error }}
     </div>
     <div v-else class="live-launch" data-testid="task-arm-form">
-      <p v-if="recalled" class="task-arm-recalled" data-testid="task-arm-recalled">
+      <p v-if="recalled" class="task-arm-recalled" data-pl-part="dialog-note" data-testid="task-arm-recalled">
         <span>Filled in from your last arm — check it before you arm this one.</span>
-        <Button variant="ghost" size="sm" data-testid="task-arm-reset" @click="resetDraft">
+        <Button variant="ghost" size="sm" data-pl-part="key" data-testid="task-arm-reset" @click="resetDraft">
           Reset
         </Button>
       </p>
 
-      <label class="live-launch-lbl" for="task-arm-cwd">working directory</label>
-      <Select
-        id="task-arm-cwd"
-        v-model="draft.cwd"
-        block
-        :options="cwdChoices"
-        data-testid="task-arm-cwd"
-        aria-label="Working directory"
-      />
-      <p v-if="cwdMismatch" class="task-arm-note" role="status" data-testid="task-arm-cwd-mismatch">
-        {{ cwdMismatch }}
-      </p>
+      <!-- Sections are display:contents here, so the form reads as the one
+           column it always was; a theme may lay each out on its own grid. -->
+      <div class="task-arm-sec" data-pl-part="dialog-section" data-pl-section="Where">
+        <label class="live-launch-lbl" for="task-arm-cwd" data-pl-part="field-label">working directory</label>
+        <Select
+          id="task-arm-cwd"
+          v-model="draft.cwd"
+          block
+          :options="cwdChoices"
+          data-pl-part="input"
+          data-testid="task-arm-cwd"
+          aria-label="Working directory"
+        />
+        <p v-if="cwdMismatch" class="task-arm-note" role="status" data-testid="task-arm-cwd-mismatch">
+          {{ cwdMismatch }}
+        </p>
 
-      <LaunchWorktreeFields
-        v-model:enabled="draft.useWorktree"
-        v-model:branch="draft.worktreeBranch"
-        v-model:base="draft.worktreeBase"
-        :cwd="draft.cwd"
-      />
+        <LaunchWorktreeFields
+          v-model:enabled="draft.useWorktree"
+          v-model:branch="draft.worktreeBranch"
+          v-model:base="draft.worktreeBase"
+          :cwd="draft.cwd"
+        />
+      </div>
 
-      <label class="live-launch-lbl" for="task-arm-mode">permission mode</label>
-      <Select
-        id="task-arm-mode"
-        v-model="draft.permission_mode"
-        block
-        :options="modeOptions"
-        data-testid="task-arm-mode"
-        aria-label="Permission mode"
-      />
+      <div class="task-arm-sec" data-pl-part="dialog-section" data-pl-section="Agent">
+        <label class="live-launch-lbl" for="task-arm-mode" data-pl-part="field-label" data-pl-field="mode">permission mode</label>
+        <Select
+          id="task-arm-mode"
+          v-model="draft.permission_mode"
+          block
+          :options="modeOptions"
+          data-pl-part="input"
+          data-pl-field="mode"
+          data-testid="task-arm-mode"
+          aria-label="Permission mode"
+        />
 
-      <label class="live-launch-lbl" for="task-arm-model">model</label>
-      <Select
-        id="task-arm-model"
-        v-model="draft.model"
-        block
-        :options="modelOptions"
-        data-testid="task-arm-model"
-        aria-label="Model"
-      />
-      <Input
-        v-if="draft.model === CUSTOM_MODEL"
-        v-model="draft.modelCustom"
-        data-testid="task-arm-model-custom"
-        placeholder="e.g. claude-opus-4-8"
-        aria-label="Custom model id"
-      />
+        <label class="live-launch-lbl" for="task-arm-model" data-pl-part="field-label" data-pl-field="model">model</label>
+        <Select
+          id="task-arm-model"
+          v-model="draft.model"
+          block
+          :options="modelOptions"
+          data-pl-part="input"
+          data-pl-field="model"
+          data-testid="task-arm-model"
+          aria-label="Model"
+        />
+        <Input
+          v-if="draft.model === CUSTOM_MODEL"
+          v-model="draft.modelCustom"
+          data-pl-part="input"
+          data-pl-field="custom"
+          data-testid="task-arm-model-custom"
+          placeholder="e.g. claude-opus-4-8"
+          aria-label="Custom model id"
+        />
 
-      <label class="live-launch-lbl" for="task-arm-effort">effort</label>
-      <Select
-        id="task-arm-effort"
-        v-model="draft.effort"
-        block
-        :options="effortOptions"
-        data-testid="task-arm-effort"
-        aria-label="Reasoning effort"
-      />
+        <label class="live-launch-lbl" for="task-arm-effort" data-pl-part="field-label" data-pl-field="effort">effort</label>
+        <Select
+          id="task-arm-effort"
+          v-model="draft.effort"
+          block
+          :options="effortOptions"
+          data-pl-part="input"
+          data-pl-field="effort"
+          data-testid="task-arm-effort"
+          aria-label="Reasoning effort"
+        />
 
-      <TaskArmSkills
-        v-model:skills="draft.skills"
-        v-model:args="draft.skillArgs"
-        :catalog="skillCatalog"
-        :missing="skillMissing"
-        :cwd="draft.cwd"
-      />
+        <TaskArmSkills
+          v-model:skills="draft.skills"
+          v-model:args="draft.skillArgs"
+          :catalog="skillCatalog"
+          :missing="skillMissing"
+          :cwd="draft.cwd"
+          data-pl-part="skills"
+          data-pl-field="skills"
+        />
+      </div>
 
-      <label class="live-launch-lbl" for="task-arm-verify">
-        verify command <span class="task-arm-note">Gate — exit 0 marks the task done</span>
-      </label>
-      <Input
-        id="task-arm-verify"
-        v-model="draft.verify_cmd"
-        data-testid="task-arm-verify"
-        placeholder="e.g. .venv/bin/python -m pytest -q"
-        aria-label="Verify command (gate — exit 0 marks the task done)"
-      />
+      <div class="task-arm-sec" data-pl-part="dialog-section" data-pl-section="Finish">
+        <label class="live-launch-lbl" for="task-arm-verify" data-pl-part="field-label">
+          verify command <span class="task-arm-note" data-pl-part="field-hint">Gate — exit 0 marks the task done</span>
+        </label>
+        <Input
+          id="task-arm-verify"
+          v-model="draft.verify_cmd"
+          data-pl-part="input"
+          data-pl-field="verify"
+          data-testid="task-arm-verify"
+          placeholder="e.g. .venv/bin/python -m pytest -q"
+          aria-label="Verify command (gate — exit 0 marks the task done)"
+        />
 
-      <label class="live-launch-lbl" for="task-arm-launch">launch</label>
-      <Select
-        id="task-arm-launch"
-        v-model="draft.launch"
-        block
-        :options="LAUNCH_OPTIONS"
-        data-testid="task-arm-launch"
-        aria-label="Launch mode"
-      />
-      <p v-if="draft.launch === 'tmux' && options?.detached_detail" class="task-arm-note" data-testid="task-arm-launch-off">
-        a tmux run will be refused here: {{ options.detached_detail }}.
-      </p>
+        <label class="live-launch-lbl" for="task-arm-launch" data-pl-part="field-label">launch</label>
+        <PlSlot
+          id="task-arm-launch"
+          v-model="draft.launch"
+          name="ChoiceField"
+          :options="LAUNCH_OPTIONS"
+          data-testid="task-arm-launch"
+          aria-label="Launch mode"
+        />
+        <p v-if="draft.launch === 'tmux' && options?.detached_detail" class="task-arm-note" data-testid="task-arm-launch-off">
+          a tmux run will be refused here: {{ options.detached_detail }}.
+        </p>
 
-      <label class="live-launch-check">
-        <Checkbox v-model="draft.one_shot" data-testid="task-arm-oneshot" />
-        <span>end the session once the agent reports finished</span>
-      </label>
+        <label class="live-launch-check" data-pl-part="check">
+          <Checkbox v-model="draft.one_shot" data-testid="task-arm-oneshot" />
+          <span>end the session once the agent reports finished</span>
+        </label>
+      </div>
 
       <p v-if="armError" class="live-launch-warn" role="alert" data-testid="task-arm-refusal">
         {{ armError.message }}
@@ -284,10 +313,12 @@ async function submit() {
     </div>
 
     <template #footer>
-      <Button variant="ghost" @click="emit('close')">Cancel</Button>
+      <Button variant="ghost" data-pl-part="key" @click="emit('close')">Cancel</Button>
       <Button
         variant="primary"
         :disabled="saving || loading || prefilling || !!error"
+        data-pl-part="key--primary"
+        data-pl-mark="✦"
         data-testid="task-arm-submit"
         @click="submit"
       >
@@ -298,6 +329,8 @@ async function submit() {
 </template>
 
 <style scoped>
+.task-arm-sec { display: contents; }
+
 .task-arm-note {
     font-size: 0.8125rem;
     color: var(--color-fg-muted);

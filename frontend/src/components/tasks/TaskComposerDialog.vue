@@ -14,6 +14,8 @@ import Button from '../ui/Button.vue'
 import Dialog from '../ui/Dialog.vue'
 import Input from '../ui/Input.vue'
 import Select from '../ui/Select.vue'
+import PlGlyph from '../pipeline/PlGlyph.vue'
+import PlSlot from '../pipeline/PlSlot.vue'
 import TaskImageStrip from './TaskImageStrip.vue'
 import RefTextarea from '../refs/RefTextarea.vue'
 import { PRIORITIES } from '../../utils/taskMeta.js'
@@ -33,6 +35,9 @@ const props = defineProps({
   project: { type: String, default: '' },
 })
 const emit = defineEmits(['created'])
+
+// A theme may draw these as keys, so each carries its bar glyph too.
+const PRIORITY_CHOICES = PRIORITIES.map(p => ({ value: p.value, label: p.label, glyph: `bars.${p.bars}` }))
 
 const { saving, formError, create } = useTaskMutations()
 const { items: projectList, ensure: ensureProjects } = useProjects()
@@ -119,12 +124,18 @@ function reset() {
     v-model:open="open"
     title="New task"
     description="Capture an idea. Nothing runs until someone arms it."
+    kicker="New quest · lands in ideas"
+    hint="Enter capture · Esc close"
     wide
+    data-pl-part="dialog"
+    data-testid="task-composer"
   >
+    <template #mark><PlGlyph kind="dialog.task" :scale="2" /></template>
     <form class="space-y-3" @submit.prevent="submit" @paste="onPaste"
           @dragover.prevent @drop="onDrop">
       <div>
-        <label class="field-label" for="task-title">Title</label>
+        <label class="field-label" for="task-title" data-pl-part="field-label"
+               :data-pl-count="`${draft.title.length}/${TITLE_MAX}`">Title</label>
         <Input
           id="task-title"
           ref="titleInput"
@@ -133,38 +144,40 @@ function reset() {
           :error="!!formError"
           :placeholder="`What should happen? (${TITLE_MAX} characters max)`"
           data-testid="task-title"
+          data-pl-part="input"
           @keyup.enter="submit"
         />
       </div>
       <div>
-        <label class="field-label" for="task-body">
+        <label class="field-label" for="task-body" data-pl-part="field-label">
           Details <span class="font-normal text-slate-400">(optional)</span>
         </label>
         <RefTextarea
-          id="task-body" ref="bodyArea" v-model="draft.body"
+          id="task-body" ref="bodyArea" v-model="draft.body" data-pl-part="input"
           :project="draft.project_id" :rows="4"
         />
       </div>
-      <div class="tc-row">
-        <div class="tc-col">
-          <label class="field-label" for="task-tags">
+      <div class="tc-row" data-pl-part="field-row">
+        <div class="tc-col" data-pl-part="field" data-pl-field="tags">
+          <label class="field-label" for="task-tags" data-pl-part="field-label">
             Tags <span class="font-normal text-slate-400">(comma separated)</span>
           </label>
-          <Input id="task-tags" v-model="draft.tags" type="text" />
+          <Input id="task-tags" v-model="draft.tags" type="text" data-pl-part="input" />
         </div>
-        <div class="tc-col">
-          <span class="field-label">Priority</span>
-          <Select
+        <div class="tc-col" data-pl-part="field" data-pl-field="priority">
+          <span class="field-label" data-pl-part="field-label">Priority</span>
+          <PlSlot
             v-model="draft.priority"
-            block
-            :options="PRIORITIES.map(p => ({ value: p.value, label: p.label }))"
+            name="ChoiceField"
+            :options="PRIORITY_CHOICES"
             aria-label="Priority"
             data-testid="task-composer-priority"
           />
         </div>
-        <div class="tc-col">
-          <span class="field-label">Project</span>
+        <div class="tc-col" data-pl-part="field" data-pl-field="project">
+          <span class="field-label" data-pl-part="field-label">Project</span>
           <Select
+            data-pl-part="input"
             v-model="draft.project_id"
             block
             :options="projectOptions(projects)"
@@ -174,10 +187,11 @@ function reset() {
         </div>
       </div>
       <div>
-        <span class="field-label">
+        <span class="field-label" data-pl-part="field-label">
           Images <span class="font-normal text-slate-400">(optional)</span>
         </span>
         <TaskImageStrip
+          data-pl-part="drop"
           :items="images"
           :busy="imagesBusy"
           :error="imagesError"
@@ -191,9 +205,11 @@ function reset() {
     </form>
 
     <template #footer>
-      <Button variant="secondary" @click="open = false">Cancel</Button>
+      <Button variant="secondary" data-pl-part="key" @click="open = false">Cancel</Button>
       <Button
         variant="primary"
+        data-pl-part="key--primary"
+        data-pl-mark="✦"
         :disabled="saving || !draft.title.trim()"
         data-testid="task-submit"
         @click="submit"

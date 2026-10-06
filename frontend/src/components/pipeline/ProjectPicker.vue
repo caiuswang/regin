@@ -73,6 +73,11 @@ const order = computed(() => [SCOPE_ALL, ...groups.value.flatMap(g => g.rows.map
 function scopeOfRow(row) {
   return row.id == null ? SCOPE_NONE : String(row.id)
 }
+// Classic draws no per-row icon, so these glyphs have no fallback.
+function rowGlyph(row) {
+  if (needsAttention(row)) return 'defect.wild'
+  return row.id == null ? 'project.none' : 'project'
+}
 const isActive = scope => order.value[active.value] === scope
 
 async function move(delta) {
@@ -152,6 +157,7 @@ defineExpose({ open: () => { open.value = true } })
         :side-offset="6"
         class="pp-panel"
         data-pl-part="picker"
+        data-pl-hint="↑↓ move · Enter pick · Esc close"
         data-testid="project-picker"
         @open-auto-focus.prevent
       >
@@ -199,6 +205,7 @@ defineExpose({ open: () => { open.value = true } })
             @click="pick(scopeOfRow(row))"
           >
             <span class="pp-check"><Icon v-if="selected(row)" name="check" :size="12" /></span>
+            <PlGlyph :kind="rowGlyph(row)" />
             <span class="pp-name">{{ row.name || (row.id == null ? 'No project' : `project #${row.id}`) }}</span>
             <span class="pp-bar"><SegmentBar :parts="stageParts(row.features?.by_stage)" :height="4" /></span>
             <span v-if="row.defects?.open" class="pp-open">{{ row.defects.open }} open</span>

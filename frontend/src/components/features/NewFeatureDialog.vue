@@ -21,6 +21,7 @@ import Dialog from '../ui/Dialog.vue'
 import Input from '../ui/Input.vue'
 import RefTextarea from '../refs/RefTextarea.vue'
 import Select from '../ui/Select.vue'
+import PlGlyph from '../pipeline/PlGlyph.vue'
 import TaskImageStrip from '../tasks/TaskImageStrip.vue'
 import { useAttachedImages } from '../../composables/useAttachedImages.js'
 import { carriedProject, projectOptions, useProjects }
@@ -145,11 +146,16 @@ async function declare() {
     v-model:open="open"
     :title="adopting ? 'Adopt a tracker issue' : 'Declare a feature'"
     :description="description"
+    kicker="New level · lands in spec"
+    data-pl-part="dialog"
+    data-testid="new-feature"
   >
+    <template #mark><PlGlyph kind="dialog.feature" :scale="2" /></template>
     <div class="nf-modes" role="group" aria-label="How this feature comes into being">
       <Button
         :variant="adopting ? 'ghost' : 'secondary'"
         size="sm"
+        data-pl-part="key"
         data-testid="mode-declare"
         :aria-pressed="!adopting"
         @click="mode = 'declare'"
@@ -157,6 +163,7 @@ async function declare() {
       <Button
         :variant="adopting ? 'secondary' : 'ghost'"
         size="sm"
+        data-pl-part="key"
         data-testid="mode-adopt"
         :aria-pressed="adopting"
         @click="mode = 'adopt'"
@@ -166,55 +173,61 @@ async function declare() {
     <form class="nf-form" @submit.prevent="declare" @paste="onPaste"
           @dragover.prevent @drop="onDrop">
       <template v-if="adopting">
-        <label class="nf-label" for="nf-ref">Issue reference</label>
+        <label class="nf-label" for="nf-ref" data-pl-part="field-label">Issue reference</label>
         <Input
           id="nf-ref"
           v-model="reference"
           data-testid="adopt-ref"
+          data-pl-part="input"
           placeholder="CAI-274, or a full issue URL"
         />
 
-        <label class="nf-label" for="nf-provider">Provider</label>
+        <label class="nf-label" for="nf-provider" data-pl-part="field-label">Provider</label>
         <Input
           id="nf-provider"
           v-model="provider"
           data-testid="adopt-provider"
+          data-pl-part="input"
           placeholder="leave blank to let the reference decide"
         />
       </template>
 
       <template v-else>
-        <label class="nf-label" for="nf-title">Title</label>
+        <label class="nf-label" for="nf-title" data-pl-part="field-label">Title</label>
         <Input
           id="nf-title"
           v-model="title"
           data-testid="declare-title"
+          data-pl-part="input"
           placeholder="what is being delivered"
         />
 
-        <label class="nf-label" for="nf-body">Spec</label>
+        <label class="nf-label" for="nf-body" data-pl-part="field-label">Spec</label>
         <RefTextarea
           id="nf-body"
           ref="bodyArea"
           v-model="body"
           :project="projectId"
           data-testid="declare-body"
+          data-pl-part="input"
           :rows="8"
           placeholder="Intent, non-goals, and the acceptance items — as test names"
         />
       </template>
 
-      <span class="nf-label">Project</span>
+      <span class="nf-label" data-pl-part="field-label">Project</span>
       <Select
         v-model="projectId"
         block
         :options="projectOptions(projects)"
         aria-label="Project"
+        data-pl-part="input"
         data-testid="declare-project"
       />
 
-      <span class="nf-label">Images <span class="nf-optional">(optional)</span></span>
+      <span class="nf-label" data-pl-part="field-label">Images <span class="nf-optional">(optional)</span></span>
       <TaskImageStrip
+        data-pl-part="drop"
         :items="images"
         :busy="imagesBusy"
         :error="imagesError"
@@ -229,12 +242,15 @@ async function declare() {
       <Button
         v-if="!pristine"
         variant="ghost"
+        data-pl-part="key"
         data-testid="declare-discard"
         @click="discard(); open = false"
       >Discard draft</Button>
-      <Button variant="ghost" @click="open = false">Cancel</Button>
+      <Button variant="ghost" data-pl-part="key" @click="open = false">Cancel</Button>
       <Button
         variant="primary"
+        data-pl-part="key--primary"
+        data-pl-mark="⚑"
         data-testid="declare-submit"
         :disabled="saving"
         @click="declare"
