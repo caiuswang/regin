@@ -209,9 +209,6 @@ test.describe('pixel theme — Features', () => {
     await page.getByTestId('feature-stage-building').click()
     await expect(page).toHaveURL(/stage=building/)
     await expect(page.getByTestId('feature-stage-building')).toHaveAttribute('aria-selected', 'true')
-    // The secret stage is S6's; until then a triple click opens nothing.
-    await page.getByTestId('feature-stage-all').click({ clickCount: 3 })
-    await expect(page.getByRole('dialog')).toHaveCount(0)
   })
 
   test('the level track marks stage, live agent and open defects', async ({ page }) => {

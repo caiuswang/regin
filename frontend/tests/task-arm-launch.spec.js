@@ -2,6 +2,7 @@
  * Feature #120 — the arm sheet offers the launch mode, prefilled per R4b of #119.
  */
 import { test, expect } from './auth-fixture.js'
+import { pickChoice } from './helpers/choice.js'
 
 const TASK = {
   id: 61, title: 'restart slice', status: 'armed', priority: 'none', body: '',
@@ -54,8 +55,7 @@ test('test_arm_sheet_launch_defaults_to_sdk', async ({ page }) => {
 
   await expect(page.getByTestId('task-arm-launch')).toContainText('SDK')
   await expect(page.getByTestId('task-arm-launch-off')).toHaveCount(0)
-  await page.getByTestId('task-arm-launch').click()
-  await page.getByRole('option', { name: /tmux/ }).click()
+  await pickChoice(page, 'task-arm-launch', 'tmux')
   await expect(page.getByTestId('task-arm-launch-off')).toContainText('bridge disabled')
   await page.getByTestId('task-arm-submit').click()
   await expect.poll(() => posted.length).toBe(1)

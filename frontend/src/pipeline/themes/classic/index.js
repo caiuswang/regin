@@ -5,6 +5,7 @@ import OverviewLoop from '../../../components/pipeline/OverviewLoop.vue'
 import StageTrack from '../../../components/pipeline/StageTrack.vue'
 import FeatureStageTabs from '../../../components/pipeline/FeatureStageTabs.vue'
 import ProjectsPanel from '../../../components/pipeline/ProjectsPanel.vue'
+import ChoiceSelect from '../../../components/pipeline/ChoiceSelect.vue'
 
 export default {
   slots: {
@@ -12,6 +13,7 @@ export default {
     StageTrack,
     FeatureStageTabs,
     ProjectsPanel,
+    ChoiceField: ChoiceSelect,
     SecretStage: null,
   },
   // Empty on purpose: a classic glyph is whatever icon its call site already

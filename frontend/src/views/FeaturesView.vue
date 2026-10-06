@@ -9,7 +9,7 @@
 import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { usePipelineHeaderPublisher, usePipelineTabActive } from '../composables/usePipelineHeader'
-import { scopeParam } from '../composables/usePipelineScope'
+import { SCOPE_ALL, SCOPE_NONE, scopeOf, scopeParam } from '../composables/usePipelineScope'
 import { usePage } from '../composables/usePage'
 import { listStatusState, useListQuery } from '../composables/useListQuery'
 import { useTaskShortcuts } from '../composables/useTaskShortcuts'
@@ -108,6 +108,28 @@ const canWrite = computed(() => api.getStoredUser()?.role !== 'viewer')
 const { openCreate } = usePipelineCreate()
 const { revision } = usePipelineCounts()
 const triaging = ref(false)
+
+// The secret stage's HIGH SCORE is the loop's settled totals for this scope,
+// read when it opens; the classic theme never asks.
+// Only the newest open may write: a reply for a scope since left would put
+// that scope's numbers under this one's label.
+const secret = ref({ open: false, loop: null, label: '', error: '' })
+let secretAsked = 0
+async function openSecret() {
+  const mine = ++secretAsked
+  const scope = scopeOf(route.query)
+  const label = scope === SCOPE_ALL ? 'All projects' : scope === SCOPE_NONE ? 'No project' : `project #${scope}`
+  secret.value = { open: true, loop: null, label, error: '' }
+  try {
+    const qs = scope !== SCOPE_ALL ? `?project=${encodeURIComponent(scope)}` : ''
+    const body = await api.get(`/pipeline/overview${qs}`)
+    if (mine !== secretAsked) return
+    secret.value = { ...secret.value, loop: body.loop, label: body.project_head?.name || label }
+  } catch (e) {
+    if (mine !== secretAsked) return
+    secret.value = { ...secret.value, error: e?.message || String(e) }
+  }
+}
 const rail = ref(null)
 const railFolded = ref(false)
 
@@ -143,6 +165,7 @@ useTaskShortcuts({
             :stage="state.stage"
             :compact="!isMdUp"
             @select="s => list.patch({ stage: s })"
+            @secret="openSecret"
           />
           <template v-if="isMdUp">
             <span class="fv-spacer" />
@@ -233,6 +256,13 @@ useTaskShortcuts({
       v-model:open="triaging"
       :scope="route.query.project ? String(route.query.project) : ''"
       @changed="reload"
+    />
+    <PlSlot
+      v-model:open="secret.open"
+      name="SecretStage"
+      :loop="secret.loop"
+      :scope-label="secret.label"
+      :error="secret.error"
     />
   </div>
 </template>

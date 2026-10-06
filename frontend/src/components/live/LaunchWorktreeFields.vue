@@ -106,7 +106,7 @@ const branchMissing = computed(() => enabled.value && !slug.value)
 
 <template>
   <div class="launch-wt">
-    <label class="live-launch-check">
+    <label class="live-launch-check" data-pl-part="check">
       <Checkbox
         v-model="enabled"
         :disabled="disabled || !opts"
@@ -133,10 +133,12 @@ const branchMissing = computed(() => enabled.value && !slug.value)
     >{{ unavailableNote }}</p>
 
     <template v-if="enabled && opts && !disabled">
-      <label class="live-launch-lbl" for="live-launch-wt-branch">branch</label>
+      <label class="live-launch-lbl" for="live-launch-wt-branch" data-pl-part="field-label" data-pl-field="branch">branch</label>
       <Input
         id="live-launch-wt-branch"
         v-model="branch"
+        data-pl-part="input"
+        data-pl-field="branch"
         data-testid="live-launch-worktree-branch"
         placeholder="e.g. feat/new-ui"
         aria-label="Branch for the new worktree"
@@ -144,17 +146,20 @@ const branchMissing = computed(() => enabled.value && !slug.value)
       <p
         v-if="branchMissing"
         class="live-launch-warn"
+        data-pl-field="branch-note"
         data-testid="live-launch-worktree-branch-hint"
       >
         name the branch — the worktree is created for it.
       </p>
 
-      <label class="live-launch-lbl" for="live-launch-wt-base">base branch</label>
+      <label class="live-launch-lbl" for="live-launch-wt-base" data-pl-part="field-label" data-pl-field="base">base branch</label>
       <Select
         id="live-launch-wt-base"
         v-model="base"
         block
         :options="baseOptions"
+        data-pl-part="input"
+        data-pl-field="base"
         data-testid="live-launch-worktree-base"
         aria-label="Base branch for the new worktree"
       />
@@ -162,6 +167,7 @@ const branchMissing = computed(() => enabled.value && !slug.value)
       <p
         v-if="destination"
         class="launch-wt-note"
+        data-pl-field="branch-note"
         data-testid="live-launch-worktree-path"
       >
         → <code>{{ destination }}</code>

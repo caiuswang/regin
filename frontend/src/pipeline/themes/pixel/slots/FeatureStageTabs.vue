@@ -9,7 +9,14 @@ const props = defineProps({
   stage: { type: String, default: '' },
   compact: { type: Boolean, default: false },
 })
-const emit = defineEmits(['select'])
+const emit = defineEmits(['select', 'secret'])
+
+// The browser's own click count (`detail`), not a timer: a third click in one
+// gesture on ALL opens the secret stage (R12). It still selects ALL first.
+function pick(t, e) {
+  emit('select', t.key)
+  if (t.key === '' && e.detail >= 3) emit('secret')
+}
 
 const DESKTOP = ['', 'spec', 'building', 'shipped', 'escaped']
 const MOBILE = ['', 'escaped', 'building', 'shipped', 'spec']
@@ -42,7 +49,7 @@ const tabs = computed(() => (props.compact ? MOBILE : DESKTOP).map(key => ({
       :data-stage="t.id"
       :aria-selected="stage === t.key"
       :data-testid="`feature-stage-${t.id}`"
-      @click="emit('select', t.key)"
+      @click="pick(t, $event)"
     >
       <PixelSprite :name="t.sprite" :scale="2" :data-pl-glyph="`feature.${t.id}`" />
       <span data-pl-part="stage-label">{{ t.label }}</span>

@@ -1,0 +1,491 @@
+/*
+ * Pixel theme: the create dialogs, the arm sheet, the secret stage and the
+ * project picker. Same R4 discipline as tokens.css. Every dialog rule hangs
+ * off [data-pl-part="dialog"], which only those dialogs carry: any other
+ * dialog opened from a shell tab keeps the classic look.
+ *
+ * The dialog box keeps classic's width and padding; head and foot bleed to
+ * its edges with negative margins so their rules run edge to edge.
+ */
+
+/* ── Box ─────────────────────────────────────────────────────────────── */
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] {
+    border-color: var(--pl-ink);
+    border-radius: 0;
+    background: var(--pl-paper);
+    color: var(--pl-ink);
+    box-shadow: 0 0 0 1px var(--pl-ink), 6px 6px 0 1px var(--pl-ink);
+    clip-path: inset(-12px);
+    transition: clip-path 160ms steps(4, end);
+}
+
+/* Opens like a cartridge door: four hard steps from a slit to the box.
+   @starting-style rather than @keyframes, so nothing outlives the open. */
+@starting-style {
+    html[data-pl-theme="pixel"] [data-pl-part="dialog"] {
+        clip-path: inset(0 0 100% 0);
+    }
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="dialog-head"] {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: -1.25rem -1.25rem 0;
+    padding: 0.875rem 3.5rem 0.875rem 1.25rem;
+    border-bottom: 1px solid var(--pl-ink);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="dialog-title"] {
+    font-family: var(--pl-font);
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--pl-ink);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="dialog-title"][data-pl-kicker]::before {
+    content: attr(data-pl-kicker);
+    display: block;
+    margin-bottom: 2px;
+    font-size: 9px;
+    font-weight: 400;
+    letter-spacing: 0.12em;
+    color: var(--pl-muted);
+}
+
+/* The terser title replaces the long one, visually and for assistive tech:
+   display:none takes each out of the accessible name too. */
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="dialog-title-long"] {
+    display: none;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="dialog-title-short"] {
+    display: inline;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="dialog-lead"] {
+    margin-top: 0.875rem;
+    font-size: 0.8125rem;
+    color: var(--pl-ink);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="dialog-close"] {
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    top: 0.875rem;
+    border: 1px solid var(--pl-ink);
+    border-radius: 0;
+    background: var(--pl-paper);
+    color: var(--pl-ink);
+    font-size: 11px;
+    box-shadow: 2px 2px 0 var(--pl-ink);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="dialog-close"]:hover {
+    background: var(--pl-paper-2);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="dialog-close"]:active {
+    transform: translate(2px, 2px);
+    box-shadow: none;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="dialog-foot"] {
+    align-items: center;
+    margin: 1.25rem -1.25rem -1.25rem;
+    padding: 0.75rem 1.25rem;
+    border-top: 1px solid var(--pl-ink);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="dialog-foot"][data-pl-hint]::before {
+    content: attr(data-pl-hint);
+    margin-right: auto;
+    font-family: var(--pl-font);
+    font-size: 9px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--pl-muted);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="key--primary"][data-pl-mark]::before {
+    content: attr(data-pl-mark);
+    margin-right: 0.5em;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="key--primary"]:disabled {
+    opacity: 0.4;
+}
+
+/* ── Fields ──────────────────────────────────────────────────────────── */
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="field-label"] {
+    display: block;
+    font-family: var(--pl-font);
+    font-size: 9px;
+    font-weight: 400;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--pl-ink);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="field-label"] span {
+    font-weight: 400;
+    color: var(--pl-muted);
+}
+
+/* The title counter: on the label's right, read off the draft (n/200). */
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="field-label"][data-pl-count]::after {
+    content: attr(data-pl-count);
+    float: right;
+    color: var(--pl-muted);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="field-hint"] code {
+    padding: 0;
+    background: none;
+    font: inherit;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="field-hint"] {
+    font-family: var(--pl-font);
+    font-size: 9px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--pl-action-text);
+}
+
+/* Priority takes a row of its own above tags + project, which sit side by
+   side — the order the form is filled in. */
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="field"][data-pl-field="priority"] {
+    flex-basis: 100%;
+    order: -1;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="input"]:is(textarea, input)[data-pl-field="verify"] {
+    font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="drop"] {
+    padding: 12px;
+    border: 1px dashed var(--pl-rule);
+    background: var(--pl-paper-2);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="drop"] button {
+    border-radius: 0;
+}
+
+/* Square checks: an ink box, filled ink when checked. Colour is a mark. */
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="check"] input[type="checkbox"] {
+    appearance: none;
+    flex: none;
+    width: 14px;
+    height: 14px;
+    margin: 0;
+    border: 1px solid var(--pl-ink);
+    border-radius: 0;
+    background: var(--pl-paper);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="check"] input[type="checkbox"]:checked {
+    background: var(--pl-ink);
+    box-shadow: inset 0 0 0 2px var(--pl-paper);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="check"] input[type="checkbox"]:focus-visible {
+    outline: 2px solid var(--pl-action);
+    outline-offset: 2px;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="dialog-note"] {
+    border: 1px dashed var(--pl-ink);
+    border-radius: 0;
+    background: var(--pl-paper-2);
+    color: var(--pl-ink);
+}
+
+/* ── Keys of a choice (ChoiceField) ──────────────────────────────────── */
+html[data-pl-theme="pixel"] [data-pl-part="choice"] {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="choice"] [data-pl-part="choice-key"] {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 2px;
+    height: auto;
+    min-height: 32px;
+    padding: 4px 10px;
+    border: 1px solid var(--pl-ink);
+    border-radius: 0;
+    background: var(--pl-paper);
+    color: var(--pl-ink);
+    box-shadow: 2px 2px 0 var(--pl-ink);
+    font-family: var(--pl-font);
+    font-size: 10px;
+    font-weight: 400;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    transition: transform 80ms steps(2, end);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="choice"] [data-pl-part="choice-key"]:hover {
+    background: var(--pl-paper-2);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="choice"] [data-pl-part="choice-key"][aria-checked="true"] {
+    background: var(--pl-paper-2);
+    box-shadow: inset 0 0 0 1px var(--pl-ink), 2px 2px 0 var(--pl-ink);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="choice"] [data-pl-part="choice-key"]:active {
+    transform: translate(2px, 2px);
+    box-shadow: none;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="choice"] [data-pl-part="choice-line"] {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+/* A key with a hint is a card: the pick on top, its consequence below. */
+html[data-pl-theme="pixel"] [data-pl-part="choice"] [data-pl-part="choice-key"]:has([data-pl-part="choice-hint"]) {
+    flex: 1 1 12rem;
+    min-height: 48px;
+    padding: 6px 12px;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="choice"] [data-pl-part="choice-hint"] {
+    display: block;
+    font-family: var(--font-sans, inherit);
+    font-size: 12px;
+    letter-spacing: 0;
+    text-transform: none;
+    color: var(--pl-muted);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="choice"] [data-pl-part="choice-hint"]::first-letter {
+    text-transform: uppercase;
+}
+
+/* ── Mode keys (declare / adopt) ─────────────────────────────────────── */
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="key"][aria-pressed] {
+    font-size: 10px;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="key"][aria-pressed="true"] {
+    box-shadow: inset 0 0 0 1px var(--pl-ink), 2px 2px 0 var(--pl-ink);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="key"][aria-pressed="true"]::before {
+    content: "";
+    flex: none;
+    border-left: 6px solid var(--pl-action);
+    border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent;
+}
+
+/* ── Arm sheet: WHERE · AGENT · FINISH ───────────────────────────────── */
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="dialog-section"] {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: 12px;
+    row-gap: 6px;
+    margin-top: 8px;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="dialog-section"] * {
+    grid-column: 1 / -1;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="dialog-section"]::before {
+    content: attr(data-pl-section);
+    grid-column: 1 / -1;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--pl-rule);
+    font-family: var(--pl-font);
+    font-size: 9px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--pl-muted);
+}
+
+/* Descendants, not children: the worktree fields sit in a display:contents
+   wrapper, so they are grid items of the section without being its children. */
+
+/* Two fields side by side: AGENT's MODEL + EFFORT, WHERE's BRANCH + BASE
+   BRANCH. Labels and controls are separate grid items, so each pair is placed
+   by order — both labels on one row, both controls on the next. */
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="dialog-section"] [data-pl-part="field-label"]:is([data-pl-field="model"], [data-pl-field="effort"], [data-pl-field="branch"], [data-pl-field="base"]) {
+    order: 1;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="dialog-section"] [data-pl-part="input"]:is([data-pl-field="model"], [data-pl-field="effort"], [data-pl-field="branch"], [data-pl-field="base"]) {
+    order: 2;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="dialog-section"] :is([data-pl-field="model"], [data-pl-field="branch"]) {
+    grid-column: 1;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="dialog-section"] :is([data-pl-field="effort"], [data-pl-field="base"]) {
+    grid-column: 2;
+}
+
+/* What follows a pair keeps following it. */
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="dialog-section"] :is([data-pl-field="custom"], [data-pl-field="branch-note"]) {
+    order: 3;
+}
+
+/* AGENT reads model → effort → permission → skills (classic: permission first). */
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="dialog-section"] [data-pl-field="mode"] {
+    order: 4;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="dialog-section"] [data-pl-field="skills"] {
+    order: 5;
+}
+
+/* SKILLS: the picked list first (OPENS, +1, +2…), then the add menu. */
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="skills"] > [data-pl-part="field-label"] {
+    order: -2;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="skills"] > [data-pl-part="skill-list"] {
+    order: -1;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="skill"] {
+    border-color: var(--pl-ink);
+    border-radius: 0;
+    background: var(--pl-paper);
+    box-shadow: inset 2px 2px 0 var(--pl-shade);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="skill-order"] {
+    font-family: var(--pl-font);
+    font-size: 9px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--pl-action-text);
+}
+
+/* ── Secret stage ────────────────────────────────────────────────────── */
+html[data-pl-theme="pixel"] [data-pl-part="dialog"][data-pl-secret] {
+    width: min(22rem, calc(100vw - 2rem));
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="menu"] {
+    display: flex;
+    flex-direction: column;
+    margin: 0 -1.25rem;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="menu-item"] {
+    justify-content: flex-start;
+    gap: 12px;
+    height: 38px;
+    padding: 0 1.25rem 0 2.5rem;
+    border-radius: 0;
+    font-family: var(--pl-font);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--pl-ink);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="menu-item"]:focus-visible,
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="menu-item"]:focus {
+    outline: none;
+    background: var(--pl-paper-2);
+    box-shadow: none;
+}
+
+/* The ▶ cursor sits on the focused entry, like the active tab's. */
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="menu-item"]:focus::before {
+    content: "";
+    margin-left: -1.25rem;
+    border-left: 7px solid var(--pl-action);
+    border-top: 5px solid transparent;
+    border-bottom: 5px solid transparent;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="score"] {
+    margin-bottom: 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--pl-ink);
+    background: var(--pl-paper-2);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="score-scope"] {
+    margin-bottom: 6px;
+    font-family: var(--pl-font);
+    font-size: 9px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--pl-muted);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="score-row"] {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    font-family: var(--pl-font);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="score-row"] dd {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ── Picker ──────────────────────────────────────────────────────────── */
+html[data-pl-theme="pixel"] [data-pl-part="picker"] [data-pl-part="picker-row"]::before {
+    content: "";
+    flex: none;
+    width: 0;
+    border-left: 6px solid transparent;
+    border-top: 5px solid transparent;
+    border-bottom: 5px solid transparent;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="picker"] [data-pl-part="picker-row"][aria-current="true"]::before {
+    border-left-color: var(--pl-action);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="picker"][data-pl-hint]::after {
+    content: attr(data-pl-hint);
+    display: block;
+    margin-top: 0.35rem;
+    padding: 0.5rem 0.75rem 0.15rem;
+    border-top: 1px dashed var(--pl-rule);
+    font-family: var(--pl-font);
+    font-size: 9px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--pl-muted);
+}
+
+/* ── Motion ──────────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+    html[data-pl-theme="pixel"] [data-pl-part="dialog"],
+    html[data-pl-theme="pixel"] [data-pl-part="choice"] [data-pl-part="choice-key"] {
+        transition: none;
+    }
+
+    html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="dialog-close"]:active,
+    html[data-pl-theme="pixel"] [data-pl-part="choice"] [data-pl-part="choice-key"]:active {
+        transform: none;
+    }
+}

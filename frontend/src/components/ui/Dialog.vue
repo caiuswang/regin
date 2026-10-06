@@ -6,6 +6,9 @@
 // #trigger and #footer slots.
 import { DialogRoot, DialogTrigger, DialogPortal, DialogOverlay, DialogContent, DialogTitle, DialogDescription, DialogClose } from 'reka-ui'
 
+// Attributes belong on the dialog box: DialogRoot renders nothing of its own.
+defineOptions({ inheritAttrs: false })
+
 const open = defineModel('open', { type: Boolean, default: false })
 // Reka's own auto-focus stays prevented; a consumer that wants a specific
 // field focused listens for this instead of racing the portal's mount.
@@ -17,6 +20,11 @@ defineProps({
   // terminal capture, a diff — which the default reading width squeezes into
   // a horizontal-scroll ribbon.
   wide: { type: Boolean, default: false },
+  // Read only by a pipeline theme (data-pl-*): a line above the title, the
+  // footer's key hints, and a terser title. Classic draws none of them.
+  kicker: { type: String, default: '' },
+  hint: { type: String, default: '' },
+  shortTitle: { type: String, default: '' },
 })
 
 // A `[data-ref-menu]` popup is teleported to <body> from a field inside this
@@ -36,6 +44,7 @@ function keepForRefMenu(event) {
     <DialogPortal>
       <DialogOverlay class="ds-dialog-overlay" />
       <DialogContent
+        v-bind="$attrs"
         class="ds-dialog"
         :class="{ 'ds-dialog-wide': wide }"
         @open-auto-focus.prevent="$emit('open-auto-focus', $event)"
@@ -43,13 +52,24 @@ function keepForRefMenu(event) {
         @focus-outside="keepForRefMenu"
         @interact-outside="keepForRefMenu"
       >
-        <DialogTitle v-if="title" class="ds-dialog-title">{{ title }}</DialogTitle>
-        <DialogDescription v-if="description" class="ds-dialog-desc">
+        <div v-if="title" data-pl-part="dialog-head">
+          <slot name="mark" />
+          <DialogTitle class="ds-dialog-title" data-pl-part="dialog-title" :data-pl-kicker="kicker || undefined">
+            <template v-if="shortTitle">
+              <span data-pl-part="dialog-title-long">{{ title }}</span>
+              <span class="ds-dialog-title-short" data-pl-part="dialog-title-short">{{ shortTitle }}</span>
+            </template>
+            <template v-else>{{ title }}</template>
+          </DialogTitle>
+        </div>
+        <DialogDescription v-if="description" class="ds-dialog-desc" data-pl-part="dialog-lead">
           {{ description }}
         </DialogDescription>
-        <div class="ds-dialog-body"><slot /></div>
-        <div v-if="$slots.footer" class="ds-dialog-footer"><slot name="footer" /></div>
-        <DialogClose class="ds-dialog-x" aria-label="Close">✕</DialogClose>
+        <div class="ds-dialog-body" data-pl-part="dialog-body"><slot /></div>
+        <div v-if="$slots.footer" class="ds-dialog-footer" data-pl-part="dialog-foot" :data-pl-hint="hint || undefined">
+          <slot name="footer" />
+        </div>
+        <DialogClose class="ds-dialog-x" data-pl-part="dialog-close" aria-label="Close">✕</DialogClose>
       </DialogContent>
     </DialogPortal>
   </DialogRoot>
@@ -82,6 +102,7 @@ function keepForRefMenu(event) {
 }
 .ds-dialog-wide { width: min(72rem, calc(100vw - 3rem)); }
 .ds-dialog-title { font-size: 1rem; font-weight: 600; color: var(--color-fg); }
+.ds-dialog-title-short { display: none; }
 .ds-dialog-desc { margin-top: 0.25rem; font-size: 0.8125rem; color: var(--color-fg-muted); }
 .ds-dialog-body { margin-top: 0.875rem; font-size: 0.8125rem; color: var(--color-fg); }
 .ds-dialog-footer {
