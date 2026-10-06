@@ -150,6 +150,12 @@ test.describe('theme seam', () => {
   test('test_switching_keeps_place', async ({ page, request }) => {
     const feature = await create(request, '/api/features', { title: `Seam switch ${Date.now()}` })
     const url = `/features?stage=spec&q=${encodeURIComponent(feature.title)}`
+    // Realtime frames are broadcast to every open page, so a sibling worker's
+    // write re-reads the lists mid-switch. With the ticket held, no stream opens;
+    // useRealtime's own re-read is then the fallback poll, whose first tick
+    // (four ticket timeouts plus backoff, then FALLBACK_POLL_MS) lands past the
+    // 30s test timeout — so the switch is the only thing that could read.
+    await page.route('**/api/auth/stream-ticket', () => {})
     await page.goto(url)
     const toggle = page.getByTestId(`feature-toggle-${feature.id}`)
     await toggle.click()
@@ -186,6 +192,10 @@ test.describe('theme seam', () => {
 
     await page.getByTestId('pipeline-tab-tasks').click()
     await expect.poll(() => plTheme(page)).toBe('pixel')
+    // The quest log folds a group past its first rows, so any other urgent idea
+    // in the DB can push this one out of sight.
+    await page.getByTestId('list-search').fill(task.title)
+    await page.getByTestId('list-search').press('Enter')
     await page.locator(`a[href="/tasks/${task.id}"]`).first().click()
     await expect(page).toHaveURL(new RegExp(`/tasks/${task.id}$`))
     await expect.poll(() => plTheme(page)).toBeNull()

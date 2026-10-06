@@ -207,7 +207,16 @@ def test_an_unknown_id_is_left_alone(quiet):
 # ── the child's pane ──────────────────────────────────────────────────
 
 
-def test_the_child_never_registers_the_launchers_tmux_pane():
+@pytest.fixture
+def cli(monkeypatch, tmp_path):
+    """`build_options` resolves the CLI; left to PATH, these tests fail whenever
+    the host's `claude` is mid-reinstall."""
+    path = tmp_path / "claude"
+    path.write_text("")
+    monkeypatch.setattr(settings.agent_sdk, "cli_path", str(path))
+
+
+def test_the_child_never_registers_the_launchers_tmux_pane(cli):
     """`TMUX_PANE` is inherited, so without this the child's SessionStart hook
     registers the pane regin's server runs in as the session's bridge pane."""
     pytest.importorskip("claude_agent_sdk")
@@ -215,7 +224,7 @@ def test_the_child_never_registers_the_launchers_tmux_pane():
     assert client.build_options().env["REGIN_BRIDGE"] == "0"
 
 
-def test_a_runs_own_env_still_travels_with_it():
+def test_a_runs_own_env_still_travels_with_it(cli):
     pytest.importorskip("claude_agent_sdk")
 
     options = client.RunOptions(env={"REGIN_LLM_SURFACE": "drafting"})
@@ -225,7 +234,7 @@ def test_a_runs_own_env_still_travels_with_it():
     assert built.env == {"REGIN_BRIDGE": "0", "REGIN_LLM_SURFACE": "drafting"}
 
 
-def test_a_run_cannot_switch_the_bridge_back_on_for_itself():
+def test_a_run_cannot_switch_the_bridge_back_on_for_itself(cli):
     """Every other key a run supplies wins; this one is a property of who
     launched the process, not of the run."""
     pytest.importorskip("claude_agent_sdk")

@@ -754,6 +754,9 @@ test('test_pipeline_mobile_overview_features_triage', async ({ page, pipelineThe
   // 2a: stacked loop; Running now + Run next show the same rows as desktop (defect #215); one decision card.
   if (pipelineTheme !== 'pixel') await expect(page.getByTestId('overview-loop')).toHaveClass(/ol--compact/)
   const runningNow = page.getByTestId('running-now')
+  // The tab body is v-show-hidden until a non-classic theme module lands, and a
+  // hidden element counts but has no box.
+  await expect(runningNow).toBeVisible()
   await expect(runningNow.locator('li')).toHaveCount(2)
   await expect(page.getByTestId('running-now-count')).toHaveText('2')
   for (const id of ['running-now-watch-414', 'running-now-stop-414']) {
