@@ -1,10 +1,10 @@
 """Images attached to a feature — storage, the routes, and delivery.
 
-The invariant that separates `feature_images` from `agent_task_images` is the
-one the launch resolves: a feature's images are read THROUGH the task's
-`feature_id` at launch time rather than copied onto the slices when the spec is
-transcribed, so replacing the mockup corrects the next attempt of every slice
-that was already cut.
+The invariant that separates `feature_images` from `agent_task_images` is
+delivery: a task's own images ride beside its launch prompt, a feature's never
+do. The spec cites them as `![](image:N)` and the run fetches the one it needs
+(`regin feature image`), so a run of a feature-attributed task never pays for
+mockups it did not cite (#257).
 """
 
 from __future__ import annotations
@@ -225,61 +225,10 @@ def _run(client, task_id):
     return client.post(f"/api/tasks/{task_id}/run", headers=EDITOR)
 
 
-def test_a_run_carries_the_feature_images_ahead_of_the_tasks_own(flask_client,
-                                                                 launcher):
-    feature_id = _feature(flask_client)
-    _attach(flask_client, feature_id, PNG)
-    task_id = _task(flask_client, feature_id=feature_id, kind="build")
-    flask_client.post(f"/api/tasks/{task_id}/images",
-                      json={"data_b64": _b64(GIF)}, headers=EDITOR)
-
-    resp = _run(flask_client, task_id)
-
-    assert resp.status_code == 201, resp.get_json()
-    assert launcher.calls[0]["images"] == [
-        {"media_type": "image/png", "data_b64": _b64(PNG)},
-        {"media_type": "image/gif", "data_b64": _b64(GIF)},
-    ]
-
-
-def test_replacing_the_feature_image_reaches_the_next_attempt(flask_client,
-                                                              launcher):
-    """Resolved at launch, never copied at transcription: correcting the
-    mockup corrects the next attempt of a slice that already exists."""
-    feature_id = _feature(flask_client)
-    _attach(flask_client, feature_id, PNG)
-    task_id = _task(flask_client, feature_id=feature_id, kind="build")
-    _run(flask_client, task_id)
-    runs.complete_run(runs.latest_attempt(task_id)["id"], status="done")
-
-    flask_client.delete(f"/api/features/{feature_id}/images/1", headers=EDITOR)
-    _attach(flask_client, feature_id, GIF)
-    _run(flask_client, task_id)
-
-    assert len(launcher.calls) == 2
-    assert launcher.calls[0]["images"] == [
-        {"media_type": "image/png", "data_b64": _b64(PNG)}]
-    assert launcher.calls[1]["images"] == [
-        {"media_type": "image/gif", "data_b64": _b64(GIF)}]
-
-
-def test_a_task_with_no_feature_carries_only_its_own_images(flask_client,
-                                                            launcher):
-    task_id = _task(flask_client)
-    flask_client.post(f"/api/tasks/{task_id}/images",
-                      json={"data_b64": _b64(GIF)}, headers=EDITOR)
-
-    _run(flask_client, task_id)
-
-    assert launcher.calls[0]["images"] == [
-        {"media_type": "image/gif", "data_b64": _b64(GIF)}]
-
-
-@pytest.mark.parametrize("kind", ["task", "fix"])
-def test_a_task_only_attributed_to_a_feature_carries_only_its_own_images(
-        flask_client, launcher, kind):
-    """#257: a plain task (or a defect fix) filed under a feature for
-    attribution never cited the feature's mockups — they stay out."""
+@pytest.mark.parametrize("kind", ["task", "fix", "spec", "build"])
+def test_a_run_carries_only_its_tasks_own_images(flask_client, launcher,
+                                                 kind):
+    """#257: whatever the kind, the feature's mockups stay off the launch."""
     feature_id = _feature(flask_client)
     _attach(flask_client, feature_id, PNG)
     task_id = _task(flask_client, feature_id=feature_id)
@@ -295,12 +244,69 @@ def test_a_task_only_attributed_to_a_feature_carries_only_its_own_images(
         {"media_type": "image/gif", "data_b64": _b64(GIF)}]
 
 
-def test_a_spec_task_carries_the_feature_images(flask_client, launcher):
+def test_the_prompt_names_the_feature_images_and_how_to_fetch_one(
+        flask_client, launcher):
     feature_id = _feature(flask_client)
     _attach(flask_client, feature_id, PNG)
-    task_id = _task(flask_client, feature_id=feature_id, kind="spec")
+    _attach(flask_client, feature_id, GIF)
+    task_id = _task(flask_client, feature_id=feature_id, kind="build")
+
+    _run(flask_client, task_id)
+
+    prompt = launcher.calls[0]["prompt"]
+    assert "(the feature holds: 1, 2)" in prompt
+    assert f"feature image {feature_id} '<N>'" in prompt
+    assert prompt.index("(the feature holds: 1, 2)") < prompt.index("</feature>")
+
+
+def test_a_feature_without_images_adds_no_fetch_line(flask_client, launcher):
+    task_id = _task(flask_client, feature_id=_feature(flask_client))
+
+    _run(flask_client, task_id)
+
+    assert "feature image" not in launcher.calls[0]["prompt"]
+
+
+def test_the_cli_writes_the_cited_image_and_prints_its_path(flask_client,
+                                                           tmp_path):
+    from typer.testing import CliRunner  # noqa: PLC0415
+
+    from cli.commands.feature import feature_app  # noqa: PLC0415
+
+    feature_id = _feature(flask_client)
+    _attach(flask_client, feature_id, PNG)
+    _attach(flask_client, feature_id, GIF)
+    out = tmp_path / "shot.gif"
+
+    result = CliRunner().invoke(
+        feature_app, ["image", str(feature_id), "2", "--out", str(out)])
+
+    assert result.exit_code == 0, result.output
+    assert result.output.strip() == str(out)
+    assert out.read_bytes() == GIF
+
+
+def test_the_cli_names_the_images_that_exist_when_one_does_not(flask_client):
+    from typer.testing import CliRunner  # noqa: PLC0415
+
+    from cli.commands.feature import feature_app  # noqa: PLC0415
+
+    feature_id = _feature(flask_client)
+    _attach(flask_client, feature_id, PNG)
+
+    result = CliRunner().invoke(feature_app, ["image", str(feature_id), "7"])
+
+    assert result.exit_code == 2
+    assert "has no image 7 (it has: 1)" in result.output
+
+
+def test_a_task_with_no_feature_carries_only_its_own_images(flask_client,
+                                                            launcher):
+    task_id = _task(flask_client)
+    flask_client.post(f"/api/tasks/{task_id}/images",
+                      json={"data_b64": _b64(GIF)}, headers=EDITOR)
 
     _run(flask_client, task_id)
 
     assert launcher.calls[0]["images"] == [
-        {"media_type": "image/png", "data_b64": _b64(PNG)}]
+        {"media_type": "image/gif", "data_b64": _b64(GIF)}]

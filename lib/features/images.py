@@ -3,11 +3,11 @@
 The storage, the ceilings and the `idx` discipline are `lib.attached_images`;
 this binds them to the feature table.
 
-What is specific to a feature is the delivery: these bytes are read through a
-task's `feature_id` when an attempt is launched, never copied onto the slices
-when the spec is transcribed. The mockup is the part of a spec most likely to
-be replaced after the slices exist, and a copy would leave every slice already
-cut carrying the superseded picture with nothing to say so.
+What is specific to a feature is the delivery: these bytes are never attached
+to a run's launch, nor copied onto the slices when the spec is transcribed.
+The spec cites them as `![](image:N)`, and a run that needs one fetches it
+(`regin feature image <F> <N>`) — so a corrected mockup reaches every slice
+already cut, and a run that never looks at a picture never pays for it.
 """
 
 from __future__ import annotations

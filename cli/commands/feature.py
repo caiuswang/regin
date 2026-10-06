@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import sys
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -262,6 +263,38 @@ def spec_cmd(
         typer.echo(str(exc), err=True)
         raise typer.Exit(2)
     typer.echo(f"#{row.id}  spec {len(row.body or '')} characters")
+
+
+@feature_app.command("image")
+def image_cmd(
+    key: str = typer.Argument(..., help="Feature id"),
+    idx: int = typer.Argument(..., help="The N of the spec's `![](image:N)`"),
+    ref: Optional[str] = typer.Option(
+        None, "--ref", help="Name the feature by its tracker reference"),
+    out: Optional[str] = typer.Option(
+        None, "--out", help="Where to write it (default: a temp file)"),
+) -> None:
+    """Write one of the feature's images to a file and print its path.
+
+    A run's launch carries only its task's own images; this is how a run whose
+    spec cites a mockup reads that one picture and no other.
+    """
+    from lib.features import images as feature_images  # noqa: PLC0415
+
+    feature_id = _resolve(key, ref)
+    found = feature_images.get_bytes(feature_id, idx)
+    if found is None:
+        held = [row["idx"] for row in feature_images.list_for(feature_id)]
+        typer.echo(f"feature #{feature_id} has no image {idx} "
+                   f"(it has: {', '.join(map(str, held)) or 'none'})", err=True)
+        raise typer.Exit(2)
+    data, media_type = found
+    suffix = media_type.split("/", 1)[-1]
+    target = (Path(out) if out else Path(tempfile.gettempdir())
+              / "regin-feature-images" / f"{feature_id}-{idx}.{suffix}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(data)
+    typer.echo(str(target))
 
 
 @feature_app.command("ship")

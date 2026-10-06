@@ -25,6 +25,7 @@ LAUNCH_SURFACE_ID = "task-run-launch"
 TRACKER_SURFACE_ID = "task-run-tracker"
 FOLLOWUP_SURFACE_ID = "task-run-followup"
 FEATURE_SURFACE_ID = "task-run-feature"
+FEATURE_IMAGES_SURFACE_ID = "task-run-feature-images"
 FINISH_SURFACE_ID = "task-run-finish"
 FINISH_ORDER_LINKED_SURFACE_ID = "task-run-finish-order-linked"
 FINISH_ORDER_NATIVE_SURFACE_ID = "task-run-finish-order-native"
@@ -76,8 +77,12 @@ The feature's spec is the description this task was cut from, and this run is wh
 
   {{spec_cmd}}
 
-Revise it in place as the design now stands; do not append a changelog of this run. Leave it alone when the work simply did what it already said.
+Revise it in place as the design now stands; do not append a changelog of this run. Leave it alone when the work simply did what it already said.{{images}}
 </feature>"""
+
+_FEATURE_IMAGES_BODY = """The spec cites the feature's images as `![](image:N)` (the feature holds: {{indices}}). They are NOT attached to this prompt — when the work needs one, fetch it; the command writes the image to a file and prints the path, which you then read:
+
+  {{image_cmd}}"""
 
 _FINISH_BODY = """<finish>
 This work was launched from a regin task. Running the command below is the ONLY thing that marks the task complete and releases whatever depends on it; your session stays open either way, so run it as soon as the work is done rather than waiting to be stopped.
@@ -198,6 +203,23 @@ register_surface(
         PromptVariable("feature_named", "The feature as the prompt names it.", example="#80 (Agent SDK runs)"),
         PromptVariable("feature_id", "The feature's numeric id.", example="80"),
         PromptVariable("spec_cmd", "The literal `regin feature spec` command, with this feature's id filled in."),
+        PromptVariable("images", "How to fetch the feature's images. Empty when it has none.", required=False),
+    ),
+)
+
+register_surface(
+    FEATURE_IMAGES_SURFACE_ID,
+    label="Task run — feature images line",
+    area="task-run",
+    default_body=_FEATURE_IMAGES_BODY,
+    description=(
+        "Inside the feature block: the feature's images are not attached to "
+        "the launch, so this names how to fetch one the spec cites."
+    ),
+    applies_to=("external-agent",),
+    variables=(
+        PromptVariable("indices", "The feature's image numbers, comma-separated.", example="1, 2, 14"),
+        PromptVariable("image_cmd", "The literal `regin feature image` command, with this feature's id filled in and `<N>` for the image."),
     ),
 )
 
@@ -328,6 +350,11 @@ register_retired_default(
 register_retired_default(
     FEATURE_SURFACE_ID,
     sha256="cf0c2b6f698a75a4ae248e1bde62e13069053b56727f3e7ec7383e91b3a4db52")
+# The feature block before it named how to fetch the feature's images, which
+# stopped riding on the launch.
+register_retired_default(
+    FEATURE_SURFACE_ID,
+    sha256="69808dd3a8401488a5bf603ad0c84df2bc1ab3f8e83a7eb735aabfc5f6382b9d")
 # The finish block before it asked for a report rather than only a status.
 register_retired_default(
     FINISH_SURFACE_ID,

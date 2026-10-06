@@ -11,7 +11,7 @@ from typing import Optional
 from lib.agent_sdk import worktree
 from lib.comments import store as comments
 from lib.orm.models.comments import RESOLUTION_OPEN, SUBJECT_TASK
-from lib.orm.models.tasks import TASK_KIND_BUILD, TASK_KIND_SPEC
+from lib.orm.models.tasks import TASK_KIND_SPEC
 from lib.refs.grammar import RefError, format_label, parse_refs
 from lib.settings import settings
 from lib.tasks import images
@@ -266,7 +266,23 @@ def _feature_block(task: dict) -> str:
     return "\n\n" + render_surface(FEATURE_SURFACE_ID, {
         "feature_named": named, "feature_id": feature_id,
         "spec_cmd": _cli_command("feature", "spec", str(feature_id),
-                                 "--file", "-")})
+                                 "--file", "-"),
+        "images": _feature_images_line(feature_id)})
+
+
+def _feature_images_line(feature_id: int) -> str:
+    """How to fetch the feature's images, which the launch does not attach."""
+    from lib.features import images as feature_images  # noqa: PLC0415
+    from lib.prompts import render_surface  # noqa: PLC0415
+    from lib.prompts.surfaces.tasks import (  # noqa: PLC0415
+        FEATURE_IMAGES_SURFACE_ID)
+
+    indices = [str(row["idx"]) for row in feature_images.list_for(feature_id)]
+    if not indices:
+        return ""
+    return "\n" + render_surface(FEATURE_IMAGES_SURFACE_ID, {
+        "indices": ", ".join(indices),
+        "image_cmd": _cli_command("feature", "image", str(feature_id), "<N>")})
 
 
 def _spec_block(task: dict) -> str:
@@ -517,27 +533,12 @@ def _launch_kwargs(params: dict) -> dict:
     return kwargs
 
 
-#: The kinds whose work IS the feature's spec. A plain task or a defect fix
-#: that merely carries a `feature_id` for attribution would otherwise ship
-#: every mockup of the feature into a prompt that never cited them (#257).
-_SPEC_WORK_KINDS = frozenset({TASK_KIND_SPEC, TASK_KIND_BUILD})
-
-
 def _launch_images(task: dict) -> list[dict]:
-    """The feature's images, then the task's own — the feature's only when the
-    task specs or builds that feature.
+    """The task's own images — never its feature's.
 
-    Resolved here rather than copied onto the slice when the spec was
-    transcribed: the mockup is the part of a spec most likely to be replaced
-    after the slices exist, and reading it through `feature_id` means
-    correcting it corrects the next attempt of every slice already cut. The
-    feature's go first — they are the shared backdrop the slice-specific shot
-    is read against.
+    A feature's mockups are cited by its spec as `![](image:N)` and fetched on
+    demand (`_feature_images_line`): attaching all of them made every run of a
+    feature-attributed task — a defect fix, a chore — pay for pictures it never
+    cited, and re-read them on every attempt (#257).
     """
-    own = images.payload_for(task["id"])
-    feature_id = task.get("feature_id")
-    if feature_id is None or task.get("kind") not in _SPEC_WORK_KINDS:
-        return own
-    from lib.features import images as feature_images  # noqa: PLC0415
-
-    return feature_images.payload_for(feature_id) + own
+    return images.payload_for(task["id"])
