@@ -49,6 +49,7 @@ db/*.db-wal
 db/*.db-shm
 config/settings.local.json
 config/settings.local.json.lock
+config/settings*.json.*.tmp
 config/jwt_secret.txt
 __pycache__/
 node_modules/

@@ -14,7 +14,8 @@ from lib.providers import (
     list_visible_provider_ids, build_provider, is_provider_id, active_provider_id,
 )
 from lib.settings import (
-    get_current_values, save_settings, _load_settings, SETTINGS_SCHEMA,
+    get_current_values, save_settings, settings_file_lock, _load_settings,
+    SETTINGS_SCHEMA,
     ProviderConfig, ProviderPathOverrides,
 )
 from web.blueprints.settings_fields import (  # noqa: F401
@@ -271,14 +272,15 @@ def _coerce_setting_value(default, val):
 def api_settings_save():
     data = request.get_json(silent=True) or {}
     updates = {}
-    for key, default, _ in SETTINGS_SCHEMA:
-        if key not in data:
-            existing = _load_settings()
-            existing.pop(key, None)
-            save_settings(existing)
-            continue
-        updates[key] = _coerce_setting_value(default, data[key])
-    save_settings(updates)
+    with settings_file_lock():
+        for key, default, _ in SETTINGS_SCHEMA:
+            if key not in data:
+                existing = _load_settings()
+                existing.pop(key, None)
+                save_settings(existing)
+                continue
+            updates[key] = _coerce_setting_value(default, data[key])
+        save_settings(updates)
     return jsonify({'ok': True, 'msg': 'Settings saved. Restart server to apply.'})
 
 

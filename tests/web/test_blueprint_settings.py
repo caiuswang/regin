@@ -639,3 +639,48 @@ def test_tasks_is_quiet_when_capture_is_off(monkeypatch, tmp_db):
     from lib.settings import TasksConfig
     from web.blueprints.settings import _tasks_warnings
     assert _tasks_warnings(TasksConfig()) == []
+
+
+def test_post_settings_save_keeps_a_concurrent_repo_registration(
+        flask_client, isolated_settings_files, monkeypatch):
+    """The save re-writes every setting it loaded, so a `repo_paths` write
+    landing between its load and its save is lost unless the load is inside
+    the settings lock."""
+    import fcntl
+    import threading
+
+    import web.blueprints.settings as bp
+    from lib.settings import save_settings
+
+    isolated_settings_files["local"].write_text(json.dumps({"repo_paths": ["/old"]}))
+    reached = threading.Event()
+    real_flock, real_load = fcntl.flock, bp._load_settings
+    writers = []
+
+    def flock(fh, op):
+        if threading.current_thread().name == "registrar" and op == fcntl.LOCK_EX:
+            reached.set()
+        return real_flock(fh, op)
+
+    def register():
+        save_settings({"repo_paths": ["/old", "/new"]}, scope="local")
+        reached.set()
+
+    def load():
+        loaded = real_load()
+        if not writers:
+            writers.append(threading.Thread(target=register, name="registrar"))
+            writers[0].start()
+            reached.wait()
+        return loaded
+
+    monkeypatch.setattr(fcntl, "flock", flock)
+    monkeypatch.setattr(bp, "_load_settings", load)
+
+    resp = flask_client.post("/api/settings", json={"web_port": 7777},
+                             headers=_editor_auth_header())
+    writers[0].join()
+
+    assert resp.status_code == 200
+    local = json.loads(isolated_settings_files["local"].read_text())
+    assert local["repo_paths"] == ["/old", "/new"]

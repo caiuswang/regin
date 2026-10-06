@@ -25,8 +25,13 @@ when their consuming modules are refactored.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
+import stat
+import tempfile
+import threading
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Literal, Tuple, Type
 
@@ -609,12 +614,57 @@ def _get(key: str, default):
     return value
 
 
+_lock_state = threading.local()
+
+
+@contextmanager
+def settings_file_lock():
+    """Exclusive lock over the settings files for a read-modify-write.
+
+    A file lock because the server and the CLI are separate processes
+    writing the same files; `flock` also conflicts between two descriptors in
+    one process, so request threads queue too. Reentrant per thread, so a
+    caller holding it across its own load→`save_settings` does not deadlock.
+    """
+    if getattr(_lock_state, "held", False):
+        yield
+        return
+    lock_path = SETTINGS_LOCAL_PATH + ".lock"
+    os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+    with open(lock_path, "a") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        _lock_state.held = True
+        try:
+            yield
+        finally:
+            _lock_state.held = False
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
+def _write_json_atomic(path: str, data: dict) -> None:
+    """Replace `path` in one rename, so a concurrent reader sees the old file
+    or the new one, never a truncated one. Writes through a symlink to its
+    target and keeps the target's mode."""
+    target = os.path.realpath(path)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(target),
+                               prefix=os.path.basename(target) + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f, indent=2)
+        if os.path.exists(target):
+            os.chmod(tmp, stat.S_IMODE(os.stat(target).st_mode))
+        os.replace(tmp, target)
+    except BaseException:
+        os.unlink(tmp)
+        raise
+
+
 def _save_to_file(path: str, updates: dict) -> None:
     """Merge updates into a JSON file."""
-    existing = _load_json(path)
-    existing.update(updates)
-    with open(path, "w") as f:
-        json.dump(existing, f, indent=2)
+    with settings_file_lock():
+        existing = _load_json(path)
+        existing.update(updates)
+        _write_json_atomic(path, existing)
 
 
 def save_settings(updates: dict, scope: str = "auto") -> None:
@@ -685,6 +735,6 @@ __all__ = [
     # Config-file paths + settings.json CRUD (relocated from lib/config.py).
     "CONFIG_DIR", "SETTINGS_PATH", "SETTINGS_LOCAL_PATH",
     "LOCAL_SETTINGS_KEYS", "SETTINGS_SCHEMA",
-    "save_settings", "get_current_values",
+    "save_settings", "get_current_values", "settings_file_lock",
     "_load_settings", "_get",
 ]

@@ -8,15 +8,13 @@ remove-repo` CLI commands mutate this list and the matching
 
 from __future__ import annotations
 
-import fcntl
 import os
 import tempfile
-from contextlib import contextmanager
 from datetime import datetime, timezone
 
 from sqlmodel import delete, select
 
-from lib.settings import _get
+from lib.settings import _get, settings_file_lock
 from lib.sync.git_ops import get_branches, is_git_repo
 from lib.orm import SessionLocal
 from lib.orm.models import Branch, Repo, SessionRepo
@@ -52,26 +50,6 @@ def detect_default_branch(repo_path: str) -> str:
 
 
 # ── settings I/O ─────────────────────────────────────────────
-
-@contextmanager
-def _repo_paths_locked():
-    """Hold an exclusive lock across a read-modify-write of `repo_paths`.
-
-    A file lock rather than a thread lock: the server and `regin add-repo`
-    are separate processes writing the same settings file. `flock` also
-    conflicts between two descriptors in one process, so it covers threaded
-    Flask too.
-    """
-    from lib import settings as _cfg
-    lock_path = _cfg.SETTINGS_LOCAL_PATH + ".lock"
-    os.makedirs(os.path.dirname(lock_path), exist_ok=True)
-    with open(lock_path, "a") as fh:
-        fcntl.flock(fh, fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(fh, fcntl.LOCK_UN)
-
 
 def _load_repo_paths() -> list[str]:
     """Read `repo_paths` from settings, normalized."""
@@ -206,7 +184,7 @@ def add_repo(path: str) -> dict:
         raise RepoAddError(f"path does not exist: {norm}")
     if not is_git_repo(norm):
         raise RepoAddError(f"not a git repository: {norm}")
-    with _repo_paths_locked():
+    with settings_file_lock():
         return _register_new_path(norm)
 
 
@@ -325,7 +303,7 @@ def remove_repo(name: str) -> dict:
     rows. Returns `{removed: bool, name, path}`. The repo's source
     tree on disk is untouched.
     """
-    with _repo_paths_locked():
+    with settings_file_lock():
         paths = _load_repo_paths()
         target_path = next(
             (p for p in paths if os.path.basename(p.rstrip(os.sep)) == name), None,

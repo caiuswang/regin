@@ -208,7 +208,7 @@ def test_concurrent_add_repo_keeps_both_rows(tmp_db, tmp_path, _isolated_setting
     # (serialized: it cannot read them until the first is done).
     second_progressed = threading.Event()
     real_load, real_save = rd._load_repo_paths, rd._save_repo_paths
-    real_locked = rd._repo_paths_locked
+    real_locked = rd.settings_file_lock
 
     @contextmanager
     def signalling_locked():
@@ -230,7 +230,7 @@ def test_concurrent_add_repo_keeps_both_rows(tmp_db, tmp_path, _isolated_setting
 
     monkeypatch.setattr(rd, "_load_repo_paths", load)
     monkeypatch.setattr(rd, "_save_repo_paths", save)
-    monkeypatch.setattr(rd, "_repo_paths_locked", signalling_locked)
+    monkeypatch.setattr(rd, "settings_file_lock", signalling_locked)
 
     t1 = threading.Thread(target=add_repo, args=(str(first),), name="first")
     t2 = threading.Thread(target=add_repo, args=(str(second),), name="second")
@@ -269,7 +269,7 @@ def test_add_repo_waits_for_a_settings_writer_in_another_process(
     _make_git_repo(ours)
 
     reached = threading.Event()
-    real_flock = rd.fcntl.flock
+    real_flock = fcntl.flock
     real_load = rd._load_repo_paths
 
     def flock(fh, op):
@@ -282,7 +282,7 @@ def test_add_repo_waits_for_a_settings_writer_in_another_process(
             reached.set()
         return real_load()
 
-    monkeypatch.setattr(rd.fcntl, "flock", flock)
+    monkeypatch.setattr(fcntl, "flock", flock)
     monkeypatch.setattr(rd, "_load_repo_paths", load)
 
     lock_path = str(_isolated_settings["local"]) + ".lock"
