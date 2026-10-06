@@ -263,3 +263,36 @@ def test_a_dropped_project_does_not_stop_the_launch(run):
         session.commit()
 
     assert _lines(run(task_id)) == ["- file docs/a.md"]
+
+
+def test_a_fix_task_reads_its_defect_and_feature_as_they_are_now(run):
+    """The fix task cites rather than copies, so a defect reworded, re-pathed
+    and closed — and a feature renamed — after the task was cut is what its
+    run reads, and the task row itself is never rewritten."""
+    from lib.defects import fix_items  # noqa: PLC0415
+    from lib.orm.models.tasks import AgentTask  # noqa: PLC0415
+
+    feature = feature_store.create("Old name")
+    defect = defect_store.record("old wording", feature_id=feature.id,
+                                 session_id="t-11",
+                                 suspect_paths=["lib/a.py"])
+    task_id = fix_items.create_for(defect.id).fix_task_id
+    with SessionLocal() as session:
+        cut = session.get(AgentTask, task_id).body
+
+    defect_store.edit(defect.id, symptom="new wording",
+                      suspect_paths=["lib/b.py", "lib/c.py"])
+    defect_store.close(defect.id, missing_check="test_new")
+    feature_store.rename(feature.id, "New name")
+    stage = _stage(feature.id)
+    prompt = run(task_id)
+
+    with SessionLocal() as session:
+        assert session.get(AgentTask, task_id).body == cut
+    assert _lines(prompt) == [
+        f"- D{defect.id} 「new wording」 — defect, status closed, "
+        f"feature #{feature.id} — reported in session t-11 — "
+        "suspect paths: lib/b.py, lib/c.py — missing check: test_new",
+        f"- F{feature.id} 「New name」 — feature, stage {stage} — read: "
+        + _cli_command("feature", "spec", str(feature.id)),
+    ]

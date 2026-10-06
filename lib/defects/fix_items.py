@@ -14,23 +14,21 @@ one-column write with no second row to author.
 from __future__ import annotations
 
 import json
-import re
 
 from lib.activity_log import get_activity_logger
 from lib.defects import store
 from lib.orm.models.tasks import TASK_KIND_FIX
+from lib.refs.grammar import format_ref
 
 log = get_activity_logger("defects")
-
-_IMAGE_REF_RE = re.compile(r"!\[[^\]]*\]\(image:(\d+)\)")
 
 
 def create_for(defect_id: int):
     """Capture the task, attach it, and never touch it again.
 
-    Title is the symptom verbatim; the body is the `defect-fix-task` prompt
-    surface. No label, assignee or priority — those are fields with human
-    writers. `external_id` makes it one task per defect: a second click, a
+    Title is the symptom verbatim, a shelf label stamped once; the body is
+    the `defect-fix-task` prompt surface. No label, assignee or priority —
+    those are fields with human writers. `external_id` makes it one task per defect: a second click, a
     second tab or the CLI after the browser all resolve to the first task
     instead of filing a duplicate.
     """
@@ -89,20 +87,27 @@ def _copy_images(defect_id: int, task_id: int) -> None:
 
 
 def task_body(row) -> str:
+    """The defect and its feature are cited as references, never copied: a
+    symptom edited or a feature renamed after the task was cut must not leave
+    the task describing the old one. The run reads them live in its
+    `<references>` block (`lib/tasks/run_prompt.py`)."""
     from lib.features import store as feature_store  # noqa: PLC0415
     from lib.prompts import render_surface  # noqa: PLC0415
     from lib.prompts.surfaces.defects import FIX_TASK_SURFACE_ID  # noqa: PLC0415
 
     feature = feature_store.get(row.feature_id)
-    paths = ", ".join(json.loads(row.suspect_paths_json or "[]"))
+    title = feature.title if feature else ""
+    paths = ", ".join(suspect_paths(row))
     return render_surface(FIX_TASK_SURFACE_ID, {
         "defect_id": row.id,
+        "defect_ref": format_ref("defect", str(row.id), row.symptom),
+        "feature_ref": format_ref("feature", str(row.feature_id), title),
         "symptom": row.symptom,
         "feature_named": f"#{row.feature_id}"
-                         + (f" ({feature.title})" if feature else ""),
+                         + (f" ({title})" if title else ""),
         "round": row.round,
         "images": _image_refs(row),
-        "details": _details(row, paths),
+        "details": "\n".join(facts(row)),
         "reported_session": row.reported_by_trace or "",
         "suspect_paths": paths,
         "missing_check": row.missing_check or "",
@@ -110,31 +115,34 @@ def task_body(row) -> str:
 
 
 def _image_refs(row) -> str:
-    """A reference for every screenshot the symptom does not already name.
+    """A reference for every screenshot of the defect.
 
-    Screenshots are attached to a defect beside its symptom, not pasted into
-    it, so without these lines the copied images ride the run as content
-    blocks the body never mentions — nothing tells the agent they exist or
-    that they are the bug. `_copy_images` keeps each `idx`, so the reference
-    written here resolves on the task too.
+    The body cites the symptom rather than carrying its prose, so an image the
+    symptom names inline is named nowhere else in the task; without these
+    lines the copied images ride the run as content blocks the body never
+    mentions. `_copy_images` keeps each `idx`, so the reference written here
+    resolves on the task too.
     """
     from lib.defects import images as defect_images  # noqa: PLC0415
 
-    named = {int(n) for n in _IMAGE_REF_RE.findall(row.symptom or "")}
     return "".join(f"![](image:{image['idx']})\n"
-                   for image in defect_images.list_for(row.id)
-                   if image["idx"] not in named)
+                   for image in defect_images.list_for(row.id))
 
 
-def _details(row, paths: str) -> str:
-    """Only the lines that apply. The named check rides along because it is
+def suspect_paths(row) -> list[str]:
+    return json.loads(row.suspect_paths_json or "[]")
+
+
+def facts(row) -> list[str]:
+    """Only the facts that apply. The named check rides along because it is
     the one line of a defect that describes *future* work: the task is where
     that test gets written."""
     lines = []
     if row.reported_by_trace:
         lines.append(f"reported in session {row.reported_by_trace}")
+    paths = ", ".join(suspect_paths(row))
     if paths:
         lines.append("suspect paths: " + paths)
     if row.missing_check:
         lines.append(f"missing check: {row.missing_check}")
-    return "\n".join(lines)
+    return lines

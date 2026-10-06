@@ -182,8 +182,8 @@ def test_create_writes_the_symptom_verbatim_under_the_feature(feature_row):
         task = session.get(AgentTask, task_id)
     assert task.title == "the gutter folds the newest span"
     assert task.feature_id == feature.id
-    assert f"regin defect #{row.id}" in task.body
-    assert "t-1" in task.body and "a.py" in task.body
+    assert f"](defect:{row.id})" in task.body
+    assert f"](feature:{feature.id})" in task.body
 
 
 def test_the_fix_item_pointer_is_last_writer_wins(feature_row, native_task):

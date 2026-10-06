@@ -332,9 +332,20 @@ def _read_command(kind: str, key: str) -> str:
     return _cli_command(*argv) if argv else ""
 
 
+def _defect_facts(key: str) -> list[str]:
+    from lib.defects import fix_items  # noqa: PLC0415
+    from lib.defects import store as defect_store  # noqa: PLC0415
+
+    try:
+        return fix_items.facts(defect_store.get(int(key)))
+    except defect_store.DefectError:
+        return []
+
+
 def _reference_line(ref: str, item: Optional[dict]) -> str:
     """One reference as the run reads it: what it is now, and how to read the
-    rest. A defect has no read command, so its line carries the symptom whole.
+    rest. A defect has no read command, so its line carries the symptom whole
+    and the facts a fix task's body cites rather than copies.
     """
     if item is None:
         return f"- {ref} — not found"
@@ -344,15 +355,21 @@ def _reference_line(ref: str, item: Optional[dict]) -> str:
         return " ".join(f"- file {item['title']}{where}".splitlines())
     title = " ".join(item["title"].split())
     head = format_label(kind, item["key"]) + (f" 「{title}」" if title else "")
+    details = _defect_facts(item["key"]) if kind == "defect" else []
+    read = _read_command(kind, item["key"])
+    line = " — ".join([f"- {head}", _state(item), *details])
+    return " ".join((line + (f" — read: {read}" if read else "")).splitlines())
+
+
+def _state(item: dict) -> str:
+    kind = item["kind"]
     facts = [kind]
     if item["status"]:
         facts.append(("stage " if kind == "feature" else "status ")
                      + item["status"])
     if kind == "defect" and item["feature_id"] is not None:
         facts.append(f"feature #{item['feature_id']}")
-    read = _read_command(kind, item["key"])
-    return f"- {head} — {', '.join(facts)}" + (f" — read: {read}" if read
-                                               else "")
+    return ", ".join(facts)
 
 
 def _references_block(task: dict, feature) -> str:

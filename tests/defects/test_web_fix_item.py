@@ -46,10 +46,10 @@ def test_creating_a_fix_task_from_the_browser_closes_the_loop(flask_client,
     assert task.title == "the gutter folds the newest span"
 
 
-def test_the_fix_task_body_carries_the_named_check(flask_client, feature_row):
-    """The check is the one line of a defect that describes future work, and
-    the task is where that test gets written. Without it the agent picking the
-    task up has to go back to the ledger to learn what it must prove."""
+def test_the_fix_task_body_cites_the_named_check_rather_than_copying_it(
+        flask_client, feature_row):
+    """The check reaches the run through the defect's reference line, read at
+    launch, so a body cut before the defect closed is not left without it."""
     feature = feature_row()
     row = store.record("it broke", feature_id=feature.id, session_id="t-9")
     store.close(row.id, missing_check="test_it_does_not_break")
@@ -59,8 +59,9 @@ def test_the_fix_task_body_carries_the_named_check(flask_client, feature_row):
 
     with SessionLocal() as session:
         task = session.get(AgentTask, store.get(row.id).fix_task_id)
-    assert f"regin defect #{row.id}" in task.body
-    assert "missing check: test_it_does_not_break" in task.body
+    assert f"](defect:{row.id})" in task.body
+    assert "test_it_does_not_break" not in task.body
+    assert "t-9" not in task.body
 
 
 def test_an_open_defect_names_no_check_and_the_body_says_nothing(
@@ -226,10 +227,10 @@ def test_creating_twice_resolves_to_the_same_task(flask_client, feature_row):
     assert len(rows) == 1
 
 
-def test_the_body_carries_the_symptom_and_the_feature(flask_client,
-                                                      feature_row):
-    """The body is what a run is launched with, so without the symptom in it
-    the fixing agent is never told what the bug is."""
+def test_the_body_cites_the_defect_and_the_feature(flask_client,
+                                                   feature_row):
+    """References, not copies: the run resolves both at launch, so a symptom
+    reworded or a feature renamed after the task was cut is what it reads."""
     feature = feature_row("the gutter")
     row = store.record("the gutter folds the newest span",
                        feature_id=feature.id, session_id="t-7",
@@ -237,12 +238,10 @@ def test_the_body_carries_the_symptom_and_the_feature(flask_client,
 
     _create(flask_client, row.id)
 
-    body = _fix_task(row.id).body
-    assert "the gutter folds the newest span" in body
-    assert f"#{feature.id} (the gutter)" in body
-    assert "reported in session t-7" in body
-    assert "suspect paths: lib/trace/merge.py" in body
-    assert "{{" not in body
+    assert _fix_task(row.id).body == (
+        f"Fix regin defect [D{row.id} the gutter folds the newest span]"
+        f"(defect:{row.id}), reported against feature "
+        f"[F{feature.id} the gutter](feature:{feature.id}).")
 
 
 def test_an_edited_surface_reaches_the_next_fix_task(flask_client,
@@ -280,13 +279,12 @@ def test_the_defect_screenshots_ride_the_fix_task(flask_client, feature_row):
     task_id = store.get(row.id).fix_task_id
     assert [i["idx"] for i in task_images.list_for(task_id)] == [2]
     assert task_images.get_bytes(task_id, 2)[0] == png
-    assert _fix_task(row.id).body.count("image:2") == 1
+    assert _fix_task(row.id).body.count("![](image:2)") == 1
 
 
-def test_screenshots_the_symptom_never_names_are_named_in_the_body(
-        flask_client, feature_row):
-    """Screenshots are attached beside a symptom, not pasted into it, so the
-    body has to name them or the run gets pictures its prompt never mentions."""
+def test_every_screenshot_is_named_in_the_body(flask_client, feature_row):
+    """The body cites the symptom instead of carrying its prose, so it has to
+    name each screenshot or the run gets pictures its prompt never mentions."""
     from lib.defects import images as defect_images  # noqa: PLC0415
     from lib.tasks import images as task_images  # noqa: PLC0415
 
@@ -302,8 +300,7 @@ def test_screenshots_the_symptom_never_names_are_named_in_the_body(
     body = _fix_task(row.id).body
     task_id = store.get(row.id).fix_task_id
     assert [i["idx"] for i in task_images.list_for(task_id)] == [1, 2]
-    assert "the badge overlaps\n![](image:1)\n![](image:2)\n" \
-           "reported in session t-3" in body
+    assert body.endswith(f"(feature:{feature.id}).\n![](image:1)\n![](image:2)")
 
 
 def test_a_defect_without_screenshots_names_none(flask_client, feature_row):
@@ -312,7 +309,7 @@ def test_a_defect_without_screenshots_names_none(flask_client, feature_row):
 
     _create(flask_client, row.id)
 
-    assert _fix_task(row.id).body.endswith("it broke\nreported in session t-4")
+    assert _fix_task(row.id).body.endswith(f"(feature:{feature.id}).")
 
 
 def test_the_surface_is_listed_for_editing():
@@ -320,7 +317,8 @@ def test_the_surface_is_listed_for_editing():
 
     surface = next(s for s in list_surfaces() if s.id == "defect-fix-task")
     assert surface.area == "defect"
-    assert {"defect_id", "symptom", "details"} <= set(surface.variable_names())
+    assert {"defect_id", "defect_ref", "feature_ref", "symptom",
+            "details"} <= set(surface.variable_names())
 
 
 def test_create_refuses_to_override_a_pointer_it_did_not_write(
