@@ -36,6 +36,32 @@ const MD_A = `# Doc A
 [next](b.md)
 `
 
+// Shaped like a Claude Code memory file: nested keys, and a closing fence that
+// marked would read as the underline of a setext heading.
+const MD_FM = `---
+name: fm-doc
+description: a frontmatter doc
+metadata:
+  type: feedback
+---
+
+# Body title
+
+![pic](img/b.png)
+
+[![linked](img/b.png)](b.md)
+
+---
+
+after the rule
+`
+
+const MD_UNCLOSED = `---
+not: frontmatter
+
+# Still a doc
+`
+
 const CSV = ['id,name', ...Array.from({ length: 1500 }, (_, i) => `${i + 1},row ${i + 1}`)].join('\n') + '\n'
 
 const NOTEBOOK = JSON.stringify({
@@ -66,6 +92,8 @@ test.beforeAll(async ({ playwright }) => {
     mkdirSync(join(root, 'docs', 'img'), { recursive: true })
     writeFileSync(join(root, 'docs', 'a.md'), MD_A)
     writeFileSync(join(root, 'docs', 'b.md'), '# Doc B\n')
+    writeFileSync(join(root, 'docs', 'fm.md'), MD_FM)
+    writeFileSync(join(root, 'docs', 'unclosed.md'), MD_UNCLOSED)
     writeFileSync(join(root, 'docs', 'img', 'b.png'), Buffer.from(PNG_B64, 'base64'))
     writeFileSync(join(root, 'page.html'), PAGE_HTML)
     writeFileSync(join(root, 'data.csv'), CSV)
@@ -174,6 +202,39 @@ test('test_relative_image_in_markdown_loads_from_the_same_source', async ({ page
   await expect(page).toHaveURL(/path=docs(%2F|\/)b\.md/)
   await expect(page.getByTestId('file-viewer-name')).toHaveText('b.md')
   await expect(page.getByTestId('file-markdown-view').locator('h1')).toHaveText('Doc B')
+})
+
+test('test_markdown_frontmatter_renders_as_a_block_not_a_heading', async ({ page }) => {
+  await page.goto(fileUrl('docs/fm.md'))
+  const view = page.getByTestId('file-markdown-view')
+  const fm = view.getByTestId('file-markdown-frontmatter')
+  await expect(fm).toHaveText('name: fm-doc\ndescription: a frontmatter doc\nmetadata:\n  type: feedback')
+  const body = view.locator('.fmd-body')
+  await expect(body.locator('h1')).toHaveText('Body title')
+  await expect(body.locator('h2')).toHaveCount(0)
+  await expect(body.locator('hr')).toHaveCount(1)
+  await expect(body).not.toContainText('fm-doc')
+  await expect(body).toContainText('after the rule')
+
+  await page.goto(fileUrl('docs/unclosed.md'))
+  await expect(page.getByTestId('file-markdown-frontmatter')).toHaveCount(0)
+  await expect(page.getByTestId('file-markdown-view').locator('h1')).toHaveText('Still a doc')
+})
+
+test('test_markdown_image_click_opens_the_image', async ({ page }) => {
+  await page.goto(fileUrl('docs/fm.md'))
+  const view = page.getByTestId('file-markdown-view')
+  const linked = view.locator('img[alt="linked"]')
+  await expect(linked).toHaveAttribute('src', /^blob:/)
+  await linked.click()
+  await expect(page).toHaveURL(/path=docs(%2F|\/)b\.md/)
+
+  await page.goto(fileUrl('docs/fm.md'))
+  const img = page.getByTestId('file-markdown-view').locator('img[alt="pic"]')
+  await expect(img).toHaveAttribute('src', /^blob:/)
+  await img.click()
+  await expect(page).toHaveURL(/path=docs(%2F|\/)img(%2F|\/)b\.png/)
+  await expect(page.getByTestId('file-viewer-name')).toHaveText('b.png')
 })
 
 test('test_notebook_renders_cells_and_image_outputs', async ({ page }) => {

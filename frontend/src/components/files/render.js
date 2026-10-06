@@ -50,6 +50,25 @@ export function sanitizeMarkdown(text) {
   })
 }
 
+// A leading `---` fence closed by `---` or `...` on its own line. Scanned by
+// line, not by regex: a lazy pattern can pair the opening fence with a
+// thematic break further down the document.
+export function splitFrontmatter(text) {
+  const src = (text || '').replace(/^\uFEFF/, '')
+  const lines = src.split('\n')
+  if (lines[0].trimEnd() !== '---') return { frontmatter: null, body: src }
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trimEnd()
+    if (line === '---' || line === '...') {
+      return {
+        frontmatter: lines.slice(1, i).join('\n').replace(/\r$/gm, ''),
+        body: lines.slice(i + 1).join('\n'),
+      }
+    }
+  }
+  return { frontmatter: null, body: src }
+}
+
 function normalize(parts) {
   const out = []
   for (const part of parts) {

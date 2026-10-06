@@ -7,7 +7,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import api from '../../api'
 import { rawUrl } from './source'
-import { resolveRelative, sanitizeMarkdown } from './render'
+import { resolveRelative, sanitizeMarkdown, splitFrontmatter } from './render'
 
 const props = defineProps({
   meta: { type: Object, required: true },
@@ -21,7 +21,11 @@ const fetched = ref(null)
 const error = ref('')
 const container = ref(null)
 const body = computed(() => (props.text != null ? props.text : fetched.value))
-const html = computed(() => (body.value == null ? '' : sanitizeMarkdown(body.value)))
+// Only a whole file has frontmatter; a notebook cell's leading `---` is a rule.
+const parts = computed(() =>
+  props.text != null ? { frontmatter: null, body: props.text } : splitFrontmatter(fetched.value),
+)
+const html = computed(() => (body.value == null ? '' : sanitizeMarkdown(parts.value.body)))
 
 let blobUrls = []
 let paint = 0
@@ -59,12 +63,27 @@ async function paintImages() {
   for (const img of container.value.querySelectorAll('img[data-fv-src]')) loadImage(img, id)
 }
 
+function openImage(img) {
+  const ref = img.getAttribute('data-fv-src')
+  if (ref) {
+    const target = resolveRelative(props.source, ref)
+    if (target) emit('navigate', target.source, '')
+  } else if (/^https?:/i.test(img.getAttribute('src') || '')) {
+    window.open(img.getAttribute('src'), '_blank', 'noopener,noreferrer')
+  }
+}
+
 function onClick(event) {
-  const a = event.target instanceof Element ? event.target.closest('a[data-fv-href]') : null
-  if (!a) return
-  event.preventDefault()
-  const target = resolveRelative(props.source, a.getAttribute('data-fv-href'))
-  if (target) emit('navigate', target.source, target.anchor)
+  const el = event.target instanceof Element ? event.target : null
+  const a = el?.closest('a')
+  if (a) {
+    if (!a.hasAttribute('data-fv-href')) return
+    event.preventDefault()
+    const target = resolveRelative(props.source, a.getAttribute('data-fv-href'))
+    if (target) emit('navigate', target.source, target.anchor)
+  } else if (el?.tagName === 'IMG' && !el.hasAttribute('data-fv-refused')) {
+    openImage(el)
+  }
 }
 
 onMounted(async () => {
@@ -94,8 +113,11 @@ onBeforeUnmount(() => {
   <div class="fmd" :class="{ 'fmd-page': text == null }" data-testid="file-markdown-view">
     <p v-if="error" class="fmd-note fmd-error" role="alert">{{ error }}</p>
     <p v-else-if="body == null" class="fmd-note" role="status">Loading…</p>
-    <!-- eslint-disable-next-line vue/no-v-html -- sanitized by DOMPurify in sanitizeMarkdown -->
-    <div v-else ref="container" class="pattern-content fmd-body" v-html="html" />
+    <template v-else>
+      <pre v-if="parts.frontmatter" class="fmd-frontmatter" data-testid="file-markdown-frontmatter"><code>{{ parts.frontmatter }}</code></pre>
+      <!-- eslint-disable-next-line vue/no-v-html -- sanitized by DOMPurify in sanitizeMarkdown -->
+      <div ref="container" class="pattern-content fmd-body" v-html="html" />
+    </template>
   </div>
 </template>
 
@@ -109,4 +131,18 @@ onBeforeUnmount(() => {
 .fmd-note { padding: 1rem 1.25rem; font-size: 13px; color: var(--color-fg-muted); }
 .fmd-error { color: var(--color-danger); }
 .fmd-body :deep(img) { max-width: 100%; }
+.fmd-body :deep(img:not([data-fv-refused])) { cursor: zoom-in; }
+.fmd-body :deep(a img) { cursor: pointer; }
+.fmd-frontmatter {
+  margin: 0 0 1rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface-2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--color-fg-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 </style>
