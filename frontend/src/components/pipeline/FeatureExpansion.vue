@@ -5,6 +5,7 @@
 import { computed, onMounted, ref } from 'vue'
 import api from '../../api'
 import FeatureActiveTasks from './FeatureActiveTasks.vue'
+import PlGlyph from './PlGlyph.vue'
 import { defectRef } from '../../utils/pipelineFormat'
 
 const props = defineProps({
@@ -43,17 +44,18 @@ function stateOf(d) {
 <template>
   <div class="fx" :class="{ 'fx--compact': compact }" :data-testid="`feature-expansion-${feature.id}`">
     <FeatureActiveTasks v-if="!compact" :feature-id="feature.id" />
-    <p v-if="!loaded" class="fx-muted">Loading…</p>
-    <p v-else-if="error" class="fx-muted" role="alert">{{ error }}</p>
+    <p v-if="!loaded" class="fx-muted" data-pl-part="note">Loading…</p>
+    <p v-else-if="error" class="fx-muted" role="alert" data-pl-part="note">{{ error }}</p>
     <template v-else>
       <div class="fx-col">
-        <h3 v-if="!compact" class="fx-label">Blamed defects · {{ open.length }} open</h3>
-        <p v-if="!shown.length" class="fx-muted">No defect is blamed on this feature.</p>
+        <h3 v-if="!compact" class="fx-label" data-pl-part="section-label"><PlGlyph kind="defect.wild" />Blamed defects · {{ open.length }} open</h3>
+        <p v-if="!shown.length" class="fx-muted" data-pl-part="note">No defect is blamed on this feature.</p>
         <ul class="fx-list">
-          <li v-for="d in shown" :key="d.id" class="fx-item" :data-testid="`feature-defect-${d.id}`">
-            <router-link :to="`/defects/${d.id}`" class="fx-id focus-visible:outline-2 focus-visible:outline-blue-500">{{ defectRef(d.id) }}</router-link>
+          <li v-for="d in shown" :key="d.id" class="fx-item" :data-testid="`feature-defect-${d.id}`" data-pl-part="sub-row">
+            <PlGlyph kind="defect.wild" />
+            <router-link :to="`/defects/${d.id}`" class="fx-id focus-visible:outline-2 focus-visible:outline-blue-500" data-pl-part="row-id">{{ defectRef(d.id) }}</router-link>
             <span class="fx-text">{{ d.symptom }}</span>
-            <span class="fx-state" :class="`text-tone-${stateOf(d).tone}`">{{ stateOf(d).text }}</span>
+            <span class="fx-state" :class="`text-tone-${stateOf(d).tone}`" data-pl-part="state" :data-tone="stateOf(d).tone">{{ stateOf(d).text }}</span>
           </li>
         </ul>
       </div>

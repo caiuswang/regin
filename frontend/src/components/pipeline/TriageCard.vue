@@ -5,6 +5,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import Button from '../ui/Button.vue'
 import Input from '../ui/Input.vue'
 import FeaturePicker from './FeaturePicker.vue'
+import PlGlyph from './PlGlyph.vue'
 import DefectImages from '../defects/DefectImages.vue'
 import DefectMergePicker from '../defects/DefectMergePicker.vue'
 import DefectRefusal from '../defects/DefectRefusal.vue'
@@ -56,28 +57,31 @@ defineExpose({ focus: () => card.value?.focus() })
     tabindex="-1"
     :data-testid="`triage-card-${defect.id}`"
     :aria-current="focused ? 'true' : undefined"
+    data-pl-part="card"
     @click="onPointer"
   >
-    <div class="tc-head">
+    <div class="tc-head" data-pl-part="card-head">
+      <PlGlyph kind="defect.wild" :scale="2" />
       <router-link
         class="tc-id focus-visible:outline-2 focus-visible:outline-blue-500"
+        data-pl-part="row-id"
         :to="`/defects/${defect.id}`"
         :data-testid="`triage-permalink-${defect.id}`"
         @click.stop
       >{{ defectRef(defect.id) }}</router-link>
-      <span v-if="reopenedLabel(defect.round)" class="tc-round">{{ reopenedLabel(defect.round) }}</span>
+      <span v-if="reopenedLabel(defect.round)" class="tc-round" data-pl-part="state" data-tone="warning">{{ reopenedLabel(defect.round) }}</span>
       <span class="tc-spacer" />
-      <span class="tc-when" :title="utcTitle(defect.opened_at)">{{ monthDay(defect.opened_at) }}</span>
+      <span class="tc-when" :title="utcTitle(defect.opened_at)" data-pl-part="card-meta">{{ monthDay(defect.opened_at) }}</span>
     </div>
     <p class="tc-symptom">{{ defect.symptom }}</p>
-    <p v-if="defect.suspect_paths?.length" class="tc-paths" title="Where it was seen, not who caused it">
+    <p v-if="defect.suspect_paths?.length" class="tc-paths" title="Where it was seen, not who caused it" data-pl-part="card-meta">
       {{ defect.suspect_paths.join(' · ') }}
     </p>
     <DefectImages v-if="defect.images?.length" :defect="defect" />
 
     <template v-if="focused">
       <FeaturePicker v-model="blamed" :disabled="busy" testid="triage-blame" @picked="picked" />
-      <div class="tc-verbs" role="group" aria-label="Triage verbs">
+      <div class="tc-verbs" role="group" aria-label="Triage verbs" data-pl-part="verbs">
         <Button
           v-for="chord in VERB_ORDER"
           :key="chord"
@@ -88,6 +92,7 @@ defineExpose({ focus: () => card.value?.focus() })
                     'is-ready': chord === 'A' && blamed }"
           :disabled="busy"
           :aria-keyshortcuts="chord"
+          :data-pl-part="chord === 'A' ? 'key--primary' : 'key'"
           :data-testid="`triage-verb-${VERBS[chord].key}`"
           @click.stop="emit('verb', chord)"
         >
@@ -124,6 +129,7 @@ defineExpose({ focus: () => card.value?.focus() })
           size="sm"
           :variant="pending === 'X' ? 'danger' : 'primary'"
           :disabled="busy || !!problem"
+          data-pl-part="key"
           :data-testid="`triage-submit-${VERBS[pending].key}`"
         >{{ pending === 'X' ? 'Confirm decline' : VERBS[pending].label }}</Button>
       </form>
