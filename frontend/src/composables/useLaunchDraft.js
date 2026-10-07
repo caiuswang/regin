@@ -15,6 +15,10 @@ import { reactive, toRefs } from 'vue'
 const blank = () => ({
   // 'sdk' | 'terminal' — which kind of session Launch starts.
   kind: 'sdk',
+  // Which CLI an SDK-kind launch runs on; '' is claude (D1 of #140). A resume
+  // pick overwrites it with the session's own, which is the one that can
+  // reopen it.
+  provider: '',
   prompt: '',
   cwd: '',
   // The menu pick. `CUSTOM_MODEL` means "the id typed into `modelCustom`" —
@@ -37,7 +41,7 @@ const blank = () => ({
   // (not just its id) is what lets the form say which trace a pick lands on
   // and adopt its cwd without a second fetch.
   resume: null,
-  // cwd/model as they stood before a pick overwrote them, so dropping the pick
+  // provider/cwd/model as they stood before a pick overwrote them, so dropping the pick
   // puts them back. In the draft, not the component: a pick made, the sheet
   // dismissed and the pick dropped on reopen is the same undo.
   beforePick: null,

@@ -293,6 +293,26 @@ def _agent_bridge_items(check_tool) -> list[dict]:
     return items
 
 
+def _task_launch_provider_items() -> list[dict]:
+    """One optional row per provider that can launch a task run: its CLI on
+    PATH and the version it reports. Optional because arming offers only the
+    providers this install can start."""
+    from lib.providers.registry import build_provider, list_provider_ids
+    items = []
+    for pid in list_provider_ids():
+        provider = build_provider(pid)
+        binary = provider.launch_capabilities()["binary"]
+        if not binary:
+            continue
+        items.append({
+            'id': f'launch_{pid}', 'label': f'{provider.display_name} (`{binary}`)',
+            **_check_tool(binary, [binary, '--version']),
+            'optional': True,
+            'install_hint': f'install the `{binary}` CLI to arm tasks with {provider.display_name}',
+        })
+    return items
+
+
 def _version(cmd: list[str]) -> str:
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
@@ -697,6 +717,9 @@ def run_checks() -> dict:
 
     groups.append({'name': 'Prompt skeletons (seed vs built-in default)',
                    'items': _stale_skeleton_items()})
+
+    groups.append({'name': 'Task launch providers',
+                   'items': _task_launch_provider_items()})
 
     groups.append({'name': 'Agent bridge (web steering)',
                    'items': _agent_bridge_items(_check_tool)})

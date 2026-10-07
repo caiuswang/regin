@@ -60,6 +60,27 @@ Each registered repo gets its own topic wiki: a store of repo-specific knowledge
 
 At task time, topics are routed to the agent by keyword match over the approved graph and pulled into context on demand — only the slices that touch what it's doing right now, instead of being statically pasted in. The goal is simple: keep the knowledge each repo has accumulated *with* that repo, as a reviewable, self-refreshing artifact rather than prose that quietly rots.
 
+## Run a task with Kimi
+
+A task can be armed on Kimi Code instead of Claude.
+
+1. **Install and sign in.** `kimi` on `PATH` (`regin doctor` lists it under *Task launch providers*), then `kimi login` once.
+2. **Arm.** In the task's arm panel pick **Kimi Code** in the provider picker; it is greyed out, naming the missing binary, when `kimi` isn't installed. Only the fields Kimi declares are shown (a model id, free text) — no permission mode or effort.
+3. **Pick a launch.**
+   - **ACP** — regin drives `kimi acp` as a child of `regin serve`. Stopping or restarting the server ends the run.
+   - **tmux** — `kimi` runs in a tmux session on regin's own tmux server, so a `regin serve` restart does not interrupt it.
+4. **Watch it.** The run shows on `/live` like any session, with steer and Stop. To look at the pane itself, attach to regin's tmux server (socket `regin-bridge` by default, `settings.agent_bridge.attach_socket`): `tmux -L regin-bridge attach -t task-<task id>-a<attempt>`. Detach with `Ctrl-b d`; closing your client never ends the session.
+
+Known limits:
+
+- Runs are unattended: panes start with `--yolo`, and an ACP run answers approval and question requests with `cancelled`.
+- A steer into a running turn is cancel-then-re-prompt; the ACP protocol exposes no mid-turn injection.
+- `codex` and `generic` cannot be armed — arming them is refused rather than run as Claude.
+- `/live` can launch and Resume Kimi sessions over ACP, but its *terminal* session type still opens only Claude.
+- A new worktree needs Kimi's workspace trust; regin writes the record before launch, so no Trust dialog should appear.
+
+Design and the per-provider declaration: *Provider launch capabilities* in [ARCHITECTURE.md](ARCHITECTURE.md).
+
 ## What regin is not
 
 Not a chat UI, not an agent runtime, not a model. It assumes you already have an agent and a codebase, and it makes that pairing more productive. The question regin answers is *"how do I keep this agent on-spec across a real team and a real repo,"* not *"how do I run an agent."*

@@ -4,6 +4,12 @@ Speaks just enough ACP (newline-delimited JSON-RPC over stdio) to exercise
 `lib.agent_acp.client`: initialize handshake, session/new, and a session/prompt
 that streams chunks then acks. Set FAKE_ACP_BUSY=1 to answer every prompt with
 the turn.agent_busy error the real server raises mid-turn.
+
+Lifecycle knobs: FAKE_ACP_STOP_REASON sets the prompt ack's stopReason,
+FAKE_ACP_NO_IMAGE=1 declares no image prompt support, FAKE_ACP_NO_LOAD=1
+declares no loadSession (session/load then errors), FAKE_ACP_REJECT_MODEL=1
+errors session/set_model, and FAKE_ACP_RECORD=<path> appends every request
+received to that file, one JSON object per line.
 """
 
 from __future__ import annotations
@@ -73,7 +79,8 @@ def _handle_prompt(params, msg_id, sessions, busy, serial, open_turns,
                   "content": {"type": "text",
                               "text": _prompt_text(params)}})
     open_turns.discard(sid)
-    _respond(msg_id, {"stopReason": "end_turn"})
+    _respond(msg_id, {"stopReason": os.environ.get("FAKE_ACP_STOP_REASON")
+                      or "end_turn"})
 
 
 class _State:
@@ -88,8 +95,13 @@ class _State:
 
 
 def _initialize(_params, msg_id, _state):
+    caps = json.loads(json.dumps(CAPABILITIES))
+    if os.environ.get("FAKE_ACP_NO_IMAGE") == "1":
+        caps["promptCapabilities"]["image"] = False
+    if os.environ.get("FAKE_ACP_NO_LOAD") == "1":
+        caps["loadSession"] = False
     _respond(msg_id, {"protocolVersion": 1,
-                      "agentCapabilities": CAPABILITIES,
+                      "agentCapabilities": caps,
                       "authMethods": [], "modes": MODES})
 
 
@@ -100,15 +112,44 @@ def _session_new(_params, msg_id, state):
     _respond(msg_id, {"sessionId": sid, "modes": MODES})
 
 
+def _session_load(params, msg_id, state):
+    """Take over an existing id, replaying its history first — as the real
+    server does — so a client that mistakes replay for a live turn shows."""
+    sid = params.get("sessionId")
+    if os.environ.get("FAKE_ACP_NO_LOAD") == "1" or not sid:
+        _error(msg_id, -32601, "Method not found: session/load")
+        return
+    state.sessions[sid] = 0
+    _update(sid, {"sessionUpdate": "agent_message_chunk",
+                  "content": {"type": "text", "text": "replayed"}})
+    _respond(msg_id, {"modes": MODES})
+
+
 def _session_prompt(params, msg_id, state):
     _handle_prompt(params, msg_id, state.sessions, state.busy, state.serial,
                    state.open_turns, state.stall)
 
 
+def _session_set_model(_params, msg_id, _state):
+    if os.environ.get("FAKE_ACP_REJECT_MODEL") == "1":
+        _error(msg_id, -32602, "unknown model")
+    else:
+        _respond(msg_id, {})
+
+
+def _record(msg):
+    path = os.environ.get("FAKE_ACP_RECORD")
+    if path:
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(msg) + "\n")
+
+
 _HANDLERS = {
     "initialize": _initialize,
     "session/new": _session_new,
+    "session/load": _session_load,
     "session/set_mode": lambda _p, msg_id, _s: _respond(msg_id, {}),
+    "session/set_model": _session_set_model,
     "session/prompt": _session_prompt,
     "session/cancel": lambda *_args: None,  # notification: nothing to answer
 }
@@ -124,6 +165,7 @@ def main():
             msg = json.loads(line)
         except json.JSONDecodeError:
             continue
+        _record(msg)
         method, msg_id, params = msg.get("method"), msg.get("id"), \
             msg.get("params") or {}
         handler = _HANDLERS.get(method)

@@ -522,7 +522,7 @@ test.describe('/tasks — arming', () => {
       () => JSON.parse(localStorage.getItem('regin.tasks.arm.last')))
     expect(Object.keys(stored).sort()).toEqual([
       'cwd', 'effort', 'model', 'one_shot', 'permission_mode',
-      'skillArgs', 'skills',
+      'provider', 'skillArgs', 'skills',
     ])
     expect(stored.skills).toEqual(['goal-verified', 'feature-pipeline'])
 

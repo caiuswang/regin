@@ -12,7 +12,7 @@
 // the trace in view or opens a new one is the server's answer, carried on the
 // row — a stopped run regin launched is resumed as itself, while a session the
 // user drove in a terminal is reopened by id under a fresh trace.
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import api from '../../api'
 import Button from '../ui/Button.vue'
 import Checkbox from '../ui/Checkbox.vue'
@@ -24,6 +24,9 @@ import LiveResumePicker from './LiveResumePicker.vue'
 import Select from '../ui/Select.vue'
 import Textarea from '../ui/Textarea.vue'
 import { useLaunchDraft } from '../../composables/useLaunchDraft.js'
+import {
+  CUSTOM_MODEL, DEFAULT_PROVIDER, declares, deferOption, useLaunchProviders,
+} from '../../composables/useLaunchProviders.js'
 import { resumeKindLabel } from '../../utils/resumeKind.js'
 import { slugifyBranch } from '../../utils/worktreeSlug.js'
 import { shortTraceId } from '../../utils/traceFormatters.js'
@@ -60,15 +63,40 @@ const held = ref(null)
 // reopening should land on the form the draft describes, not back inside the
 // picker the operator was leaving.
 const {
-  kind, prompt, cwd, model, modelCustom, effort, mode, oneShot, resume, beforePick,
+  kind, provider, prompt, cwd, model, modelCustom, effort, mode, oneShot, resume, beforePick,
   useWorktree, worktreeBranch, worktreeBase, resetDraft,
 } = useLaunchDraft(props.scope || props.resumeFrom)
 const picking = ref(false)
 
-// Sentinel for "not one of the offered aliases". The launch route accepts any
-// model string, so an operator pinning an exact id (`claude-opus-4-8`) must
-// stay expressible — the menu decides what is one tap away, not what is legal.
-const CUSTOM_MODEL = '__custom__'
+const { providerRow, providerOptions, providerModels, modelOptions: providerModelOptions } =
+  useLaunchProviders(opts)
+
+// The pane a terminal launch opens is claude's TUI, so the provider pick is an
+// SDK-kind choice; a terminal launch reads claude's declarations whatever was
+// picked.
+const launchProvider = computed(() => (
+  kind.value === 'terminal' ? DEFAULT_PROVIDER : provider.value || DEFAULT_PROVIDER))
+const providerDecl = computed(() => providerRow(launchProvider.value))
+const shows = field => declares(providerDecl.value, field)
+
+// A model is one CLI's id, so switching provider drops it rather than send
+// `opus` to kimi. A setter rather than a watcher: a resume pick assigns the
+// session's provider and its model together, and must keep both.
+const providerPick = computed({
+  get: () => provider.value || DEFAULT_PROVIDER,
+  set: id => {
+    provider.value = id
+    model.value = ''
+    modelCustom.value = ''
+  },
+})
+// The kind toggle switches provider too when the pick is not claude's.
+watch(kind, () => {
+  if (provider.value && provider.value !== DEFAULT_PROVIDER) {
+    model.value = ''
+    modelCustom.value = ''
+  }
+})
 
 // A resumed session's cwd is not a preference — `claude --resume` resolves the
 // id relative to the working directory, so launching from anywhere else finds
@@ -99,17 +127,7 @@ const modeOptions = computed(() => {
 // Both menus name the install's own default in their sentinel rather than
 // saying "default": an operator who cannot see which model a blank field means
 // has no way to tell whether picking one changed anything.
-function deferOption(configured, noun) {
-  return {
-    value: '',
-    label: configured ? `use server setting (${configured})` : `${noun} default`,
-  }
-}
-const modelOptions = computed(() => [
-  deferOption(opts.value?.default_model, 'CLI'),
-  ...(opts.value?.models || []).map(m => ({ value: m, label: m })),
-  { value: CUSTOM_MODEL, label: 'custom…' },
-])
+const modelOptions = computed(() => providerModelOptions(launchProvider.value))
 const effortOptions = computed(() => [
   deferOption(opts.value?.default_effort, 'CLI'),
   ...(opts.value?.efforts || []).map(e => ({ value: e, label: e })),
@@ -130,7 +148,7 @@ const resumeKind = computed(() => (
 // aliases does not contain — so adopting one lands in the custom slot rather
 // than silently resetting the picker to "use server setting".
 function adoptModel(id) {
-  const known = (opts.value?.models || []).includes(id)
+  const known = providerModels(launchProvider.value).includes(id)
   model.value = id ? (known ? id : CUSTOM_MODEL) : ''
   if (id && !known) modelCustom.value = id
 }
@@ -138,10 +156,14 @@ function adoptModel(id) {
 function pickResume(row) {
   if (!resume.value) {
     beforePick.value = {
-      cwd: cwd.value, model: model.value, modelCustom: modelCustom.value,
+      provider: provider.value, cwd: cwd.value, model: model.value,
+      modelCustom: modelCustom.value,
     }
   }
   resume.value = row
+  // The session resumes on the CLI that recorded it — the server refuses any
+  // other — so the pick carries the provider before the model is adopted.
+  if (row.provider) provider.value = row.provider
   // Adopting the session's cwd is not a convenience: resume resolves the id
   // relative to it, so keeping the previous selection would launch a run that
   // finds nothing to continue.
@@ -159,6 +181,7 @@ function clearResume() {
   // The adopted working directory belongs to the session that was picked;
   // left behind, it silently becomes the cwd of the next, unrelated launch.
   if (beforePick.value) {
+    provider.value = beforePick.value.provider || ''
     cwd.value = beforePick.value.cwd
     model.value = beforePick.value.model
     modelCustom.value = beforePick.value.modelCustom
@@ -171,7 +194,8 @@ function clearResume() {
 // never turned on.
 const isTerminal = computed(() => kind.value === 'terminal')
 const shadowWarning = computed(() => (
-  !isTerminal.value && opts.value?.gating_active && ['acceptEdits', 'bypassPermissions'].includes(mode.value)
+  !isTerminal.value && shows('permission_mode') && opts.value?.gating_active
+    && ['acceptEdits', 'bypassPermissions'].includes(mode.value)
     ? `${mode.value} skips the permission callback — nothing will be held for approval.`
     : null
 ))
@@ -193,7 +217,7 @@ const oneShotNeedsPrompt = computed(() => (
 // on the card ever says so. Refused here for the same reason `one_shot` is —
 // the mistake is legible before the click, not after the run.
 const customModelIsBlank = computed(() => (
-  model.value === CUSTOM_MODEL && !modelCustom.value.trim()))
+  shows('model') && model.value === CUSTOM_MODEL && !modelCustom.value.trim()))
 // A resume outranks the worktree toggle rather than clearing it: the operator
 // may drop the pick again, and a checkbox that silently unticked itself
 // meanwhile would launch in the repo when they asked for a tree.
@@ -216,6 +240,7 @@ onMounted(async () => {
   try {
     opts.value = await api.get('/agent-runs/launch-options')
     settleKind()
+    settleProvider()
   } catch (e) {
     error.value = e?.message || 'Failed to load launch options.'
   } finally {
@@ -233,18 +258,33 @@ function settleKind() {
   if (ok[other]) kind.value = other
 }
 
+// The draft outlives the sheet, so it can name a provider this install no
+// longer lists; that goes back to claude rather than aim Launch at a refusal.
+// A resume pick keeps its provider: it is the session's, not a preference.
+function settleProvider() {
+  if (!provider.value || resume.value || !providerOptions.value.length) return
+  if (!providerRow(provider.value)) providerPick.value = DEFAULT_PROVIDER
+}
+
 const chosenModel = computed(() => (
   model.value === CUSTOM_MODEL ? modelCustom.value.trim() : model.value))
+
+// Invariant 4 of #140: a field the provider does not declare is not sent at
+// all — the server refuses it rather than let a CLI quietly ignore it.
+function declared(field, value) {
+  return (shows(field) && value) || undefined
+}
 
 function launchBody() {
   const sdk = !isTerminal.value
   return {
     kind: sdk ? undefined : 'terminal',
+    provider: sdk && provider.value ? provider.value : undefined,
     prompt: prompt.value.trim(),
     cwd: cwd.value || undefined,
-    model: chosenModel.value || undefined,
-    effort: effort.value || undefined,
-    permission_mode: mode.value || undefined,
+    model: declared('model', chosenModel.value),
+    effort: declared('effort', effort.value),
+    permission_mode: declared('permission_mode', mode.value),
     one_shot: (sdk && oneShot.value) || undefined,
     resume: resume.value?.session_id || undefined,
     worktree: worktreeActive.value
@@ -356,8 +396,22 @@ async function launch() {
         :disabled="resumeApplies"
       />
 
-      <label class="live-launch-lbl" for="live-launch-mode">permission mode</label>
+      <template v-if="!isTerminal && providerOptions.length">
+        <label class="live-launch-lbl" for="live-launch-provider">agent</label>
+        <Select
+          id="live-launch-provider"
+          v-model="providerPick"
+          block
+          :options="providerOptions"
+          :disabled="resumeApplies"
+          data-testid="live-launch-provider"
+          aria-label="Agent provider"
+        />
+      </template>
+
+      <label v-if="shows('permission_mode')" class="live-launch-lbl" for="live-launch-mode">permission mode</label>
       <Select
+        v-if="shows('permission_mode')"
         id="live-launch-mode"
         v-model="mode"
         block
@@ -369,8 +423,9 @@ async function launch() {
         {{ shadowWarning }}
       </p>
 
-      <label class="live-launch-lbl" for="live-launch-model">model</label>
+      <label v-if="shows('model')" class="live-launch-lbl" for="live-launch-model">model</label>
       <Select
+        v-if="shows('model')"
         id="live-launch-model"
         v-model="model"
         block
@@ -379,7 +434,7 @@ async function launch() {
         aria-label="Model"
       />
       <Input
-        v-if="model === CUSTOM_MODEL"
+        v-if="shows('model') && model === CUSTOM_MODEL"
         v-model="modelCustom"
         class="live-launch-model-custom"
         data-testid="live-launch-model-custom"
@@ -395,8 +450,9 @@ async function launch() {
         the server default.
       </p>
 
-      <label class="live-launch-lbl" for="live-launch-effort">effort</label>
+      <label v-if="shows('effort')" class="live-launch-lbl" for="live-launch-effort">effort</label>
       <Select
+        v-if="shows('effort')"
         id="live-launch-effort"
         v-model="effort"
         block

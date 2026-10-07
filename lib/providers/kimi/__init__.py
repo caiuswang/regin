@@ -25,16 +25,30 @@ provider-agnostic deployer writes the standard ``SKILL.md`` layout there.
 from __future__ import annotations
 
 import glob
+import hashlib
 import json
 import os
 import re
+import shutil
+import time
 from pathlib import Path
 
-from lib.providers.base import AgentProvider, ProviderCapabilities
+from lib.providers.base import (AgentProvider, LaunchCapabilities, PaneInput,
+                                ProviderCapabilities, SkillCatalogLayout)
 from hook_manager.core import HookPayload, HookResponse, PermissionRequestInfo
 
 
 _KIMI_HOME = Path.home() / ".kimi-code"
+_WORKSPACE_TRUST_DIR = _KIMI_HOME / "workspace-trust"
+
+# Probed on kimi 2.1.1: the composer row is `│ > …` inside its box; a long
+# paste collapses to `[paste #N +M lines]` (multi-line) or `[paste #N C chars]`;
+# C-m submits where a modified Enter may not reach it (extended-keys off).
+_KIMI_PANE_INPUT = PaneInput(
+    ready=r"(?m)^\s*│ >",
+    paste_chip=r"\[paste #(\d+)(?:\s+\+\d+\s+lines?|\s+\d+\s+chars?)?\s*\]",
+    submit_key="C-m",
+)
 _SKILL_READ_CONTENT_RE = re.compile(
     r"^(?:\.kimi-code|\.agents)/skills/([^/]+)/content\.md$"
 )
@@ -239,6 +253,43 @@ class KimiProvider(AgentProvider):
     # Kimi's session file is the event-sourced wire.jsonl, parsed by
     # lib.trace.kimi_transcript rather than Claude's read_usage.
 
+    def launch_capabilities(self) -> LaunchCapabilities:
+        return {
+            "launch_modes": ["sdk", "tmux"],
+            "fields": ["model"],
+            "binary": "kimi",
+            # `kimi` is a node script: a pane running it reports `node`
+            # (probed on kimi 2.1.1 under tmux 3.6).
+            "pane_commands": ["node"],
+            "labels": {"sdk": "ACP", "tmux": "tmux"},
+            "models": [],
+            "default_model": "",
+        }
+
+    def pane_session_id(self, cwd: str, env: dict[str, str]) -> str:
+        """D5: kimi mints its own ids and `--session` only resumes one that
+        exists, so the session is created over ACP and the channel closed.
+        The empty session resumes in the pane under the same id."""
+        from lib.agent_acp.client import AcpClient
+
+        with AcpClient(cwd=cwd, env=env) as client:
+            client.initialize()
+            return client.session_new(cwd)
+
+    def pane_argv(self, session_id: str, *, model: str = "", effort: str = "",
+                  permission_mode: str = "", prompt: str = "",
+                  resume: bool = False) -> list[str]:
+        # `--flag=value`: kimi's option parser is greedy and would take a
+        # following token as the value of a bare `--session`.
+        argv = [shutil.which("kimi") or "kimi", f"--session={session_id}",
+                "--yolo"]
+        if model:
+            argv.append(f"--model={model}")
+        return argv
+
+    def pane_input(self) -> PaneInput:
+        return _KIMI_PANE_INPUT
+
     def channel_launcher(self):
         from lib.agent_acp.launcher import launch_run
         return launch_run
@@ -355,6 +406,41 @@ class KimiProvider(AgentProvider):
 
     def project_skills_subpath(self) -> tuple[str, ...]:
         return (".kimi-code", "skills")
+
+    def skill_catalog_layout(self) -> SkillCatalogLayout:
+        return SkillCatalogLayout(
+            skill_dirs=((".kimi-code", "skills"), (".agents", "skills")))
+
+    def skill_invocation(self, name: str, args: str, also: list[str]) -> str:
+        """`/skill:<name>` — probed on kimi 2.1.1 over ACP: the SKILL.md body
+        is expanded into the turn (the bare `/<name>` form also works, but can
+        collide with a built-in command of the same name)."""
+        line = f"/skill:{name}"
+        if args:
+            line += f" {args}"
+        line += "\n\n"
+        if also:
+            named = ", ".join(f"`{n}`" for n in also)
+            line += ("Also read and follow these skills — each is "
+                     "`skills/<name>/SKILL.md` under `.kimi-code/` or "
+                     "`.agents/`, in the project or in your home: "
+                     f"{named}.\n\n")
+        return line
+
+    def prepare_workspace(self, cwd: Path) -> None:
+        """Pre-write kimi's workspace-trust record, or the first launch in a
+        fresh worktree blocks on the interactive Trust prompt. The name is
+        kimi's own `wd_<basename>_<sha256(realpath)[:12]>`, checked against
+        records kimi wrote itself; an existing record is kimi's and is kept."""
+        root = os.path.realpath(cwd)
+        digest = hashlib.sha256(root.encode()).hexdigest()[:12]
+        record = _WORKSPACE_TRUST_DIR / f"wd_{os.path.basename(root)}_{digest}"
+        if record.exists():
+            return
+        record.parent.mkdir(parents=True, exist_ok=True)
+        record.write_text(json.dumps(
+            {"root": root, "trustedAt": int(time.time() * 1000)},
+            separators=(",", ":")))
 
     def skill_invoke_path(self, skill_id: str) -> str:
         return f".kimi-code/skills/{skill_id}/invoke"

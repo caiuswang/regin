@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 from threading import Thread
 from typing import Optional
 
@@ -484,12 +485,15 @@ def start_run(task_id: int) -> Optional[dict]:
     _refuse_unrunnable(task)
     row = open_attempt(task_id)
     kwargs = _launch_kwargs(row["params"])
-    runner = _channel_launcher((row["params"] or {}).get("provider")
-                               or "claude")
-    if runner is not None:
-        return _start_channel(task, row, runner, kwargs)
     if tmux_runs.is_tmux(row["params"]):
         return _start_tmux(task, row, kwargs)
+    try:
+        runner = _channel_launcher((row["params"] or {}).get("provider")
+                                   or "claude")
+    except RunRefused as exc:
+        raise _refuse_launch(row, exc) from exc
+    if runner is not None:
+        return _start_channel(task, row, runner, kwargs)
     try:
         handle = supervisor.launch_run(_prompt(task, row["id"],
                                                row["params"]),
@@ -508,14 +512,17 @@ def start_run(task_id: int) -> Optional[dict]:
 
 
 def _channel_launcher(provider_id: str):
-    """The provider's structured-channel launcher, or None when the provider
-    launches Claude-style (the sdk/tmux arms below). Feature #140's seam:
-    adding a channel-launched provider is an adapter override, not a branch
-    here."""
+    """The provider's structured-channel launcher, or None for Claude (the
+    sdk arm below). Feature #140's seam: adding a channel-launched
+    provider is an adapter override, not a branch here. Any other provider
+    without a channel is refused, never launched as Claude."""
     if provider_id == "claude":
         return None
     from lib.providers.registry import build_provider  # noqa: PLC0415
-    return build_provider(provider_id).channel_launcher()
+    runner = build_provider(provider_id).channel_launcher()
+    if runner is None:
+        raise RunRefused(f"{provider_id} has no task launch channel")
+    return runner
 
 
 def _start_channel(task: dict, row: dict, runner, kwargs: dict) -> dict:
@@ -524,12 +531,18 @@ def _start_channel(task: dict, row: dict, runner, kwargs: dict) -> dict:
     Unlike the SDK arm there is no trace-id placeholder: the channel answers
     with the child session id before the prompt is sent, so the attempt is
     marked running under the id the trace will actually land on.
+
+    The channel's completion only ever reports a failure (D6): a turn ending
+    `end_turn` leaves the attempt running for the agent's `task finish`.
+    Unlike the SDK arm, `one_shot` is handed to the launch: the channel
+    closes after the first turn, and an unreported attempt settles failed.
     """
-    launch_kwargs = {name: kwargs.get(name)
-                     for name in ("cwd", "env", "model", "one_shot")}
+    launch_kwargs = {name: kwargs.get(name) for name in ("cwd", "env", "model")}
     try:
+        _prepare_workspace(row, launch_kwargs["cwd"])
         handle = runner(_prompt(task, row["id"], row["params"]),
-                        **launch_kwargs)
+                        one_shot=bool((row["params"] or {}).get("one_shot")),
+                        images=_launch_images(task), **launch_kwargs)
     except Exception as exc:
         raise _refuse_launch(row, exc) from exc
     view = _mark_started(task, row, handle.trace_id)
@@ -539,6 +552,15 @@ def _start_channel(task: dict, row: dict, runner, kwargs: dict) -> dict:
               trace_id=handle.trace_id, attempt=view["attempt"],
               launch="channel")
     return view
+
+
+def _prepare_workspace(row: dict, cwd: Optional[str]) -> None:
+    """D8: the provider readies the directory before the launch opens a
+    session there — kimi's would otherwise stop on its Trust prompt."""
+    from lib.providers.registry import build_provider  # noqa: PLC0415
+    provider = build_provider((row["params"] or {}).get("provider")
+                              or "claude")
+    provider.prepare_workspace(Path(cwd or settings.project_root).resolve())
 
 
 def _refuse_launch(row: dict, exc: Exception) -> RunRefused:

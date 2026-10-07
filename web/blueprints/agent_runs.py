@@ -13,11 +13,15 @@ not a 404, mirroring `bridge-send`.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from flask import Blueprint, request, jsonify
 
 from lib.auth import get_current_user, require_editor
 from lib.agent_bridge import launch as terminal_launch
 from lib.agent_sdk import client, resumable, store, supervisor, worktree
+from lib.providers import registry as provider_registry
+from lib.providers.base import provider_for_trace
 from lib.settings import settings
 from lib.tasks import skill_catalog
 
@@ -34,6 +38,10 @@ _PATH_MAX = 2000
 # no session under that id, so it names an `agent_runs` row to resume *through*
 # rather than a session id to hand the CLI.
 _SYNTHETIC_PREFIX = 'sdk-'
+# D1 of #140: a launch that names no provider runs claude, whatever the
+# install's active provider is.
+_DEFAULT_PROVIDER = 'claude'
+_PROVIDER_FIELDS = ("model", "permission_mode", "effort")
 
 
 class _BadRequest(ValueError):
@@ -119,7 +127,53 @@ def _resumed_child(resume: str, row: dict) -> str | None:
     return store.latest_cli_session(row["trace_id"])
 
 
-def _launch_params(payload: dict) -> dict:
+def _launch_provider(payload: dict):
+    """The provider this launch runs on.
+
+    A resume runs on the CLI that recorded the session, never on the active
+    provider: only that CLI can reopen it. Naming a different one is refused
+    rather than overridden, so a body never quietly means something else.
+    """
+    named = _text(payload, "provider", _ID_MAX)
+    if named and named not in provider_registry.list_provider_ids():
+        raise _BadRequest(f"unknown provider {named!r}")
+    resume = _text(payload, "resume", _ID_MAX)
+    if not resume:
+        return provider_registry.build_provider(named or _DEFAULT_PROVIDER)
+    own = provider_for_trace(resume)
+    if named and named != own.provider_id:
+        raise _BadRequest(f"that session was recorded by {own.provider_id} — "
+                          f"it resumes on {own.provider_id}, not {named}")
+    return own
+
+
+def _refuse_undeclared(payload: dict, provider) -> None:
+    """Invariant 4: a field the provider does not declare is a 400 naming it,
+    not a value dropped on the way to a CLI that has no such setting."""
+    caps = provider.launch_capabilities()
+    if not caps["launch_modes"]:
+        raise _BadRequest(f"{provider.provider_id} has no launch channel")
+    for field in _PROVIDER_FIELDS:
+        if _text(payload, field, _ID_MAX) and field not in caps["fields"]:
+            raise _BadRequest(
+                f"{provider.provider_id} does not accept {field}")
+
+
+def _channel_resume_target(resume: str) -> tuple[str | None, None]:
+    """A channel session resumes under its own id — there is no `sdk-…` run
+    to continue through — so the refusals are only the live ones."""
+    if not resume:
+        return None, None
+    from lib import agent_sdk
+
+    if agent_sdk.is_sdk_owned(resume):
+        raise _BadRequest("that session is still live — stop it before "
+                          "resuming")
+    _refuse_if_live_in_terminal(resume)
+    return resume, None
+
+
+def _launch_params(payload: dict, provider=None) -> dict:
     """Validated per-run overrides for `supervisor.launch`.
 
     `permission_mode` and `effort` are checked against the CLI's own vocabulary
@@ -134,7 +188,9 @@ def _launch_params(payload: dict) -> dict:
     effort = _text(payload, "effort", _ID_MAX)
     if effort and effort not in client.EFFORT_LEVELS:
         raise _BadRequest(f"unknown effort {effort!r}")
-    resume, trace_id = _resume_target(_text(payload, "resume", _ID_MAX))
+    channel = provider is not None and provider.channel_launcher() is not None
+    target = _channel_resume_target if channel else _resume_target
+    resume, trace_id = target(_text(payload, "resume", _ID_MAX))
     return {
         "cwd": _text(payload, "cwd", _PATH_MAX) or None,
         "model": _text(payload, "model", _ID_MAX),
@@ -232,6 +288,7 @@ def api_launch_options():
         "terminal_available": not terminal_reason,
         "terminal_detail": terminal_reason,
         "detached_detail": terminal_launch.detached_unavailable_reason(),
+        "providers": provider_registry.launch_provider_rows(),
     })
 
 
@@ -258,10 +315,17 @@ def api_worktree_options():
 def api_skill_options():
     """The skills a run in `cwd` can open with — per-repo, like the worktree
     options, because a skill one repo carries is a dead slash command in
-    another. An empty `cwd` is the server working directory, as at launch."""
+    another, and per-provider, because each CLI reads its own dirs. An empty
+    `cwd` is the server working directory and an empty `provider` is claude,
+    as at launch."""
     cwd = (request.args.get('cwd') or '').strip()[:_PATH_MAX]
     cwd = cwd or str(settings.project_root)
-    return jsonify({"cwd": cwd, "skills": skill_catalog.available_skills(cwd)})
+    provider = (request.args.get('provider') or '').strip() or "claude"
+    try:
+        skills = skill_catalog.available_skills(cwd, provider=provider)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"cwd": cwd, "provider": provider, "skills": skills})
 
 
 @agent_runs_bp.route('/api/agent-runs/resumable', methods=['GET'])
@@ -292,9 +356,16 @@ def _caller_role() -> str | None:
 
 def _refuse_sdk_only_fields(payload: dict) -> None:
     """An interactive TUI has no one-shot mode — refused rather than ignored,
-    so a launch never quietly means less than the form asked for."""
+    so a launch never quietly means less than the form asked for.
+
+    The pane is claude's TUI, so a terminal launch on any other provider is
+    refused too rather than opened as claude (D3 of #140)."""
     if payload.get("one_shot"):
         raise _BadRequest("one_shot is not supported for terminal sessions")
+    provider = _launch_provider(payload)
+    if provider.provider_id != _DEFAULT_PROVIDER:
+        raise _BadRequest(f"terminal sessions launch {_DEFAULT_PROVIDER} "
+                          f"only, not {provider.provider_id}")
 
 
 def _launch_terminal(payload: dict, prompt: str):
@@ -350,7 +421,9 @@ def _launch_sdk(payload: dict, prompt: str):
     if not settings.agent_sdk.enabled:
         return jsonify({"launched": False, "detail": "agent_sdk disabled"})
     try:
-        params = _launch_params(payload)
+        provider = _launch_provider(payload)
+        _refuse_undeclared(payload, provider)
+        params = _launch_params(payload, provider)
         _require_prompt_only_for_one_shot(prompt, params)
         created_worktree = _worktree_cwd(_worktree_spec(payload), params)
     except (_BadRequest, worktree.WorktreeRefused) as exc:
@@ -359,6 +432,9 @@ def _launch_sdk(payload: dict, prompt: str):
     # already on disk by now, and an operator told only "refused" would go
     # looking for a directory nothing mentioned. A retry reuses it.
     made = {"worktree": created_worktree} if created_worktree else {}
+    runner = provider.channel_launcher()
+    if runner is not None:
+        return _launch_on_channel(provider, runner, prompt, params, made)
     try:
         trace_id = supervisor.launch(prompt[:_PROMPT_MAX], **params)
     except supervisor.LaunchRefused as exc:
@@ -376,6 +452,24 @@ def _launch_sdk(payload: dict, prompt: str):
     if warning:
         body["warning"] = warning
     return jsonify(body)
+
+
+def _launch_on_channel(provider, runner, prompt: str, params: dict,
+                       made: dict):
+    """The structured-channel arm (kimi over ACP). The workspace is readied
+    first (D8): kimi would otherwise stop a fresh directory on its Trust
+    prompt with nobody at the terminal to answer it."""
+    try:
+        provider.prepare_workspace(
+            Path(params["cwd"] or settings.project_root).resolve())
+        trace_id = supervisor.launch_channel(
+            runner, prompt[:_PROMPT_MAX], cwd=params["cwd"],
+            model=params["model"], one_shot=params["one_shot"],
+            resume=params["resume"])
+    except Exception as exc:  # noqa: BLE001 — each channel raises its own refusal
+        return jsonify({"launched": False, "detail": str(exc), **made})
+    return jsonify({"launched": True, "trace_id": trace_id,
+                    "provider": provider.provider_id, **made})
 
 
 @agent_runs_bp.route('/api/agent-runs/<trace_id>/prompt', methods=['POST'])

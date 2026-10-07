@@ -8,9 +8,10 @@ without hard-coded path rewrites across the codebase.
 from __future__ import annotations
 
 import glob
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, TypedDict
 
 if TYPE_CHECKING:
     from hook_manager.core import HookPayload, HookResponse, PermissionRequestInfo
@@ -24,6 +25,49 @@ class ProviderCapabilities:
     hooks: bool = False
     sessions: bool = False
     transcript_usage: bool = False
+
+
+@dataclass(frozen=True)
+class SkillCatalogLayout:
+    """`skill_dirs` hold `<name>/SKILL.md`; `command_dirs` hold `<name>.md`;
+    `plugins` reads Claude Code's enabled-plugin registry."""
+
+    skill_dirs: tuple[tuple[str, ...], ...]
+    command_dirs: tuple[tuple[str, ...], ...] = ()
+    plugins: bool = False
+
+
+class LaunchCapabilities(TypedDict):
+    """How a task run may be launched through one provider.
+
+    `launch_modes` is the provider's own meaning of each value: `sdk` is its
+    structured channel (claude_agent_sdk, kimi's ACP), `tmux` a pane. Empty
+    means the provider cannot launch a task run at all.
+    """
+
+    launch_modes: list[Literal["sdk", "tmux"]]
+    fields: list[Literal["model", "permission_mode", "effort"]]
+    binary: str
+    pane_commands: list[str]
+    labels: dict[str, str]
+    models: list[str]
+    default_model: str
+
+
+@dataclass(frozen=True)
+class PaneInput:
+    """How a first turn is typed into a pane whose argv cannot carry one.
+
+    `ready` matches the raw capture once the composer takes input — keys sent
+    before the TUI owns the terminal are lost. `paste_chip` matches the
+    placeholder a long paste collapses to, group 1 being the paste counter,
+    which only ever grows for the life of the process. `submit_key` is the
+    tmux key that sends the line.
+    """
+
+    ready: str
+    paste_chip: str
+    submit_key: str
 
 
 class AgentProvider:
@@ -111,15 +155,52 @@ class AgentProvider:
         """
         return None
 
+    def launch_capabilities(self) -> LaunchCapabilities:
+        """What a task run launched through this provider may carry.
+
+        The default declares no launch channel, so arming a provider that has
+        not opted in is refused rather than quietly launched as Claude.
+        """
+        return {"launch_modes": [], "fields": [], "binary": "",
+                "pane_commands": [], "labels": {}, "models": [],
+                "default_model": ""}
+
+    def pane_session_id(self, cwd: str, env: dict[str, str]) -> str:
+        """The id a new pane session will run under, fixed before the pane
+        starts so the attempt records the id the session's hooks report.
+
+        The default is a fresh uuid for a CLI that takes a caller-chosen id
+        on argv. One that mints its own ids creates the session here.
+        """
+        return str(uuid.uuid4())
+
+    def pane_argv(self, session_id: str, *, model: str = "", effort: str = "",
+                  permission_mode: str = "", prompt: str = "",
+                  resume: bool = False) -> list[str]:
+        """The command line a tmux pane runs for `session_id`.
+
+        `prompt` is the first turn when argv can carry one; a provider that
+        cannot declares `pane_input` and is handed none. `resume` says the
+        session already exists rather than being started under that id.
+        """
+        raise NotImplementedError
+
+    def pane_input(self) -> PaneInput | None:
+        """How the first turn is typed into the pane, or None when
+        `pane_argv` carries it."""
+        return None
+
     def channel_launcher(self):
         """Callable launching a task run through this provider's structured
         channel, or None when the provider launches Claude-style (the
         sdk/tmux arms).
 
         A channel launcher matches `supervisor.launch_run`'s contract: it
-        takes the prompt plus the launch-parameter subset and returns a
-        handle with `trace_id` and `add_done_callback`. Providers whose CLI
-        speaks a structured wire protocol (Kimi's ACP) override this; the
+        takes the prompt plus the launch-parameter subset (and `resume`, a
+        session id to take over under its own id) and returns a handle with
+        `trace_id`, `add_done_callback`, `add_close_callback` and `enqueue`.
+        Providers whose CLI speaks a structured wire protocol (Kimi's ACP)
+        override this; the
         import stays inside the override so the channel module loads only
         when the provider is actually asked to launch.
         """
@@ -273,6 +354,38 @@ class AgentProvider:
         would double-render the one rejected call.
         """
         return False
+
+    def prepare_workspace(self, cwd: Path) -> None:
+        """Make `cwd` launchable unattended before a run starts there."""
+        return None
+
+    def skill_invocation(self, name: str, args: str, also: list[str]) -> str:
+        """The lines an armed skill puts in front of a task run's prompt.
+
+        A slash command is what the CLI resolves from the *start* of a prompt,
+        so the invocation is the first line and the body follows as the rest
+        of the skill's arguments. The CLI expands only that one command, so
+        further armed skills are named on the next line for the agent to load
+        itself.
+        """
+        line = f"/{name}"
+        if args:
+            line += f" {args}"
+        line += "\n\n"
+        if also:
+            named = ", ".join(f"`{n}`" for n in also)
+            line += (f"Also load and follow these skills with the Skill tool: "
+                     f"{named}.\n\n")
+        return line
+
+    def skill_catalog_layout(self) -> "SkillCatalogLayout":
+        """Where this CLI resolves skills from, relative to each project
+        directory and to home."""
+        return SkillCatalogLayout(skill_dirs=(self.project_skills_subpath(),))
+
+    def project_config_dir(self) -> str:
+        """The per-project config directory a fresh worktree must be given."""
+        return self.project_skills_subpath()[0]
 
     def global_skills_dir(self) -> Path:
         raise NotImplementedError

@@ -10,6 +10,9 @@ the turn that made it:
 
   * SDK — the run is launched steerable and the report closes its queue
     (`supervisor.end_after_turn`), so the pump stops at that turn's result.
+  * ACP channel — the same call reaches the channel handle, which closes
+    after the turn in flight; a channel launched `one_shot` already closes
+    after its first turn on its own.
   * tmux — the session is not this process's, so the report is stamped on the
     attempt and the pane's own `Stop` hook ends it (`end_reported_tmux`).
 

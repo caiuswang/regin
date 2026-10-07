@@ -43,8 +43,7 @@ def _wait_turns(handle, count, timeout=WAIT):
 def test_run_registers_while_live_and_unregisters_at_close(tmp_path):
     handle = _launch(tmp_path)
     assert registry.is_owned(handle.trace_id)
-    outcome = handle.wait(timeout=WAIT)
-    assert outcome.status == "exited"
+    assert _wait_turns(handle, 1)[0].status == "exited"
     handle.close()
     assert not registry.is_owned(handle.trace_id)
 
@@ -58,8 +57,6 @@ def test_queued_prompt_runs_as_followup_turn(tmp_path):
                                           "FAKE_ACP_STALL": "0.4"})
     try:
         assert handle.enqueue("second") is True
-        outcome = handle.wait(timeout=WAIT)          # the launch turn
-        assert outcome.status == "exited"
         turns = _wait_turns(handle, 2)
         assert [t.status for t in turns] == ["exited", "exited"]
     finally:
@@ -79,7 +76,7 @@ def test_queued_prompts_lists_pending_and_clears(tmp_path):
 
 def test_enqueue_refused_after_close(tmp_path):
     handle = _launch(tmp_path)
-    handle.wait(timeout=WAIT)
+    _wait_turns(handle, 1)
     handle.close()
     assert handle.enqueue("too late") is False
     assert not registry.is_owned(handle.trace_id)
@@ -100,12 +97,12 @@ def test_cancel_queued_drops_before_its_turn(tmp_path):
 
 
 def test_first_turn_outcome_survives_a_busy_followup(tmp_path):
-    # If a follow-up turn itself is rejected (server-side), the run reports
-    # the launch turn's outcome — the attempt must not flip to failed.
+    # An end_turn launch turn leaves the run unsettled (D6): only a failed
+    # turn or the close settles the handle.
     handle = _launch(tmp_path)
     try:
-        outcome = handle.wait(timeout=WAIT)
-        assert outcome.status == "exited"
+        assert _wait_turns(handle, 1)[0].status == "exited"
+        assert not handle.done()
     finally:
         handle.close()
 

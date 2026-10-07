@@ -3,9 +3,10 @@
 The arm sheet used to offer regin's own deployed skills, which says nothing
 about the repo a task runs in: a skill deployed only to repo A, armed on a task
 for repo B, opens its run with a slash command nobody answers. So the menu is
-read off disk the way the Claude Code CLI resolves it at launch — the project's
-`.claude/` from `cwd` up to its checkout root, the user's `~/.claude/`, and the
-plugins enabled for that project.
+read off disk the way the armed provider's CLI resolves it at launch — the
+project's config dirs from `cwd` up to its checkout root, the same dirs under
+home, and (for Claude Code) the plugins enabled for that project. Which dirs
+those are is the provider's `skill_catalog_layout()`.
 
 Best-effort by design: a name missing here can still be typed into the sheet,
 so an unreadable file or a plugin layout this misses narrows the menu, never
@@ -18,18 +19,27 @@ import json
 from pathlib import Path
 from typing import Optional
 
+from lib.providers.base import SkillCatalogLayout
+
 PROJECT, USER, PLUGIN = "project", "user", "plugin"
 
 
-def _skill_names(claude_dir: Path) -> list[str]:
+def _names_in(base: Path, layout: SkillCatalogLayout) -> list[str]:
     names = []
-    skills = claude_dir / "skills"
-    if skills.is_dir():
-        names += [d.name for d in skills.iterdir() if (d / "SKILL.md").is_file()]
-    commands = claude_dir / "commands"
-    if commands.is_dir():
-        names += [f.stem for f in commands.glob("*.md") if f.is_file()]
+    for parts in layout.skill_dirs:
+        skills = base.joinpath(*parts)
+        if skills.is_dir():
+            names += [d.name for d in skills.iterdir()
+                      if (d / "SKILL.md").is_file()]
+    for parts in layout.command_dirs:
+        commands = base.joinpath(*parts)
+        if commands.is_dir():
+            names += [f.stem for f in commands.glob("*.md") if f.is_file()]
     return names
+
+
+_PLUGIN_LAYOUT = SkillCatalogLayout(skill_dirs=(("skills",),),
+                                    command_dirs=(("commands",),))
 
 
 def _project_dirs(cwd: Path, home: Path) -> list[Path]:
@@ -92,12 +102,17 @@ def _plugin_skills(project_dirs: list[Path], home: Path) -> list[str]:
         if path is None:
             continue
         plugin = key.split("@", 1)[0]
-        names += [f"{plugin}:{name}" for name in _skill_names(path)]
+        names += [f"{plugin}:{name}" for name in _names_in(path, _PLUGIN_LAYOUT)]
     return names
 
 
-def available_skills(cwd: str | Path, home: Optional[Path] = None) -> list[dict]:
-    """`[{name, source}]` sorted by name; a project skill shadows a user one."""
+def available_skills(cwd: str | Path, home: Optional[Path] = None,
+                     provider: str = "claude") -> list[dict]:
+    """`[{name, source}]` sorted by name; a project skill shadows a user one.
+
+    Raises `ValueError` for an unknown provider id."""
+    from lib.providers.registry import build_provider  # noqa: PLC0415
+    layout = build_provider(provider).skill_catalog_layout()
     home = (home or Path.home()).resolve()
     root = Path(cwd).expanduser().resolve()
     if not root.is_dir():
@@ -105,10 +120,11 @@ def available_skills(cwd: str | Path, home: Optional[Path] = None) -> list[dict]
     project_dirs = _project_dirs(root, home)
     found: dict[str, str] = {}
     for path in project_dirs:
-        for name in _skill_names(path / ".claude"):
+        for name in _names_in(path, layout):
             found.setdefault(name, PROJECT)
-    for name in _skill_names(home / ".claude"):
+    for name in _names_in(home, layout):
         found.setdefault(name, USER)
-    for name in _plugin_skills(project_dirs, home):
-        found.setdefault(name, PLUGIN)
+    if layout.plugins:
+        for name in _plugin_skills(project_dirs, home):
+            found.setdefault(name, PLUGIN)
     return [{"name": name, "source": found[name]} for name in sorted(found)]

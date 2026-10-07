@@ -1,4 +1,4 @@
-import { CUSTOM_MODEL, armDraft } from './useTaskArm.js'
+import { CUSTOM_MODEL, DEFAULT_PROVIDER, armDraft } from './useTaskArm.js'
 
 // Arming is a privileged write, so the remembered draft is deliberately narrow:
 // only the fields that describe HOW an operator runs things, never which branch
@@ -8,8 +8,10 @@ import { CUSTOM_MODEL, armDraft } from './useTaskArm.js'
 // it is what proves THAT task done, and carried into the next sheet it is
 // armed unseen and settles an unrelated run.
 const KEY = 'regin.tasks.arm.last'
+// `provider` leads: a remembered model is only recalled under the provider it
+// was picked for.
 const REMEMBERED = [
-  'cwd', 'model', 'permission_mode', 'effort',
+  'provider', 'cwd', 'model', 'permission_mode', 'effort',
   'skills', 'skillArgs', 'one_shot',
 ]
 
@@ -39,6 +41,9 @@ export function rememberArm(draft) {
   const kept = {}
   for (const field of REMEMBERED) kept[field] = draft[field]
   kept.model = draft.model === CUSTOM_MODEL ? draft.modelCustom.trim() : draft.model
+  // The default is no carry-over: every draft settles to it, so storing it
+  // would make the banner claim a recall on every sheet.
+  kept.provider = draft.provider === DEFAULT_PROVIDER ? '' : draft.provider || ''
   kept.skills = [...draft.skills]
   // Args with no skill are not a selection: the sheet hides the input the
   // moment no skill is ticked, so storing them would let an invisible field
@@ -67,14 +72,17 @@ export function forgetArm() {
  * there.
  */
 export function hasRecalledValues(draft) {
-  return REMEMBERED.some(field => !isEmpty(draft[field]))
+  return REMEMBERED.some(field => field === 'provider'
+    ? !isEmpty(draft.provider) && draft.provider !== DEFAULT_PROVIDER
+    : !isEmpty(draft[field]))
 }
 
 // R4b: once the plan (a slice's arm-proposal) or history (the last attempt)
-// has spoken, the remembered prefs may only say HOW to run — skill and model.
+// has spoken, the remembered prefs may only say HOW to run — provider, skill
+// and model.
 // Everything else they carry was another task's, and a cwd borrowed from it
 // would silently outrank nothing and aim this one elsewhere.
-const HOW_ONLY = ['model', 'skills', 'skillArgs']
+const HOW_ONLY = ['provider', 'model', 'skills', 'skillArgs']
 
 /** A slice row's proposal (`GET /tasks/<id>/arm-proposal`) as an attempt. */
 export function proposalAttempt(proposal) {
@@ -111,6 +119,12 @@ function usableStored(field, value, stored) {
   return typeof value === 'string' ? !!value : value === true
 }
 
+// A model id means something only to the CLI it was picked for: `opus` sent
+// to kimi is a model it refuses at session/set_model.
+function modelFits(draft, stored) {
+  return (stored.provider || DEFAULT_PROVIDER) === (draft.provider || DEFAULT_PROVIDER)
+}
+
 // First non-empty source wins, per field. `useWorktree` follows the branch
 // it gates, so a proposal's branch switches the worktree on with it.
 function fillEmpty(draft, attempt) {
@@ -129,6 +143,7 @@ function fillFromStored(draft, task, fields) {
     // last task's: that is how a task filed under repo B came to run in A.
     if (field === 'cwd' && task?.project_id != null) continue
     if (!isEmpty(draft[field])) continue
+    if (field === 'model' && !modelFits(draft, stored)) continue
     const value = stored[field]
     if (usableStored(field, value, stored)) {
       draft[field] = Array.isArray(value) ? [...value] : value
@@ -151,11 +166,19 @@ function fillFromStored(draft, task, fields) {
  */
 export function prefilledArmDraft(task, { proposal = null, lastRun = null } = {}) {
   const draft = armDraft(task)
-  if (task?.armed?.params) return { draft, recalled: false, recalledFields: [] }
+  if (task?.armed?.params) return { draft: withProvider(draft), recalled: false, recalledFields: [] }
   const higher = [proposalAttempt(proposal), lastRun].filter(Boolean)
   for (const attempt of higher) fillEmpty(draft, attempt)
+  // A run that names no provider ran on claude (D1 of #140); its model is a
+  // claude id, so the remembered provider must not re-aim it.
+  if (lastRun && !draft.provider) draft.provider = DEFAULT_PROVIDER
   const recalledFields = fillFromStored(draft, task, higher.length ? HOW_ONLY : REMEMBERED)
-  return { draft, recalled: recalledFields.length > 0, recalledFields }
+  return { draft: withProvider(draft), recalled: recalledFields.length > 0, recalledFields }
+}
+
+function withProvider(draft) {
+  draft.provider ||= DEFAULT_PROVIDER
+  return draft
 }
 
 export function seededArmDraft(task) {
@@ -187,7 +210,7 @@ export function cwdWithin(cwd, root) {
 
 /** Reset a recalled draft back to what a first-ever arm would have shown. */
 export function blankArmDraft(task) {
-  return armDraft({ ...task, armed: null })
+  return withProvider(armDraft({ ...task, armed: null }))
 }
 
 export { KEY as ARM_PREFS_KEY, REMEMBERED as ARM_REMEMBERED_FIELDS }
