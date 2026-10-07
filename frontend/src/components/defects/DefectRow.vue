@@ -149,6 +149,7 @@ const unblamed = computed(() => props.defect.status === 'open' && !props.defect.
     border: 1px solid var(--color-border); border-radius: var(--radius-xl);
     background: var(--color-surface-1); padding: 0.7rem 0.9rem;
 }
+[data-theme="dark"] .card { background: var(--color-slate-100); border-color: transparent; }
 .defect-flat { display: flex; flex-direction: column; gap: 0.35rem; }
 .head {
     display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem;

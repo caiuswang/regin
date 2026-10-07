@@ -59,6 +59,7 @@ const note = computed(() => loopNote(props.loop.fix_tasks))
     border: 1px solid var(--color-border); border-radius: var(--radius-xl);
     background: var(--color-surface); overflow: hidden;
 }
+[data-theme="dark"] .ol { background: var(--color-slate-50); border-color: transparent; }
 .ol-stages { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .ol-stage { min-width: 0; display: flex; flex-direction: column; gap: 0.625rem; padding: 1rem 1.125rem; }
 .ol-stage + .ol-stage { border-left: 1px solid var(--color-border); }

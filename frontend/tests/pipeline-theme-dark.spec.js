@@ -38,6 +38,9 @@ const FRAMED = {
   '/defects': '[data-pl-part="sheet"]',
 }
 
+// Content surfaces that sit on slate-50 with no frame; the rest keep paper + frame.
+const WELLS = new Set(['/overview', '/features', '/defects'])
+
 async function seed(request) {
   const { token } = await (await request.post(`${API_BASE}/api/auth/login`, { data: TEST_USER })).json()
   const headers = { Authorization: `Bearer ${token}` }
@@ -171,11 +174,17 @@ test.describe('pixel dark palette', () => {
       expect(await page.evaluate(() => document.documentElement.getAttribute('data-theme'))).toBe('dark')
       expect(await hex('[data-pl-part="shell"]', 'backgroundColor'), path).toBe('#0b0e16')
       const panel = FRAMED[path]
-      expect(await hex(panel, 'backgroundColor'), path).toBe('#151b27')
-      // A frame is the border, or a zero-offset box-shadow ring where the panel draws no border.
-      const ring = await page.locator(panel).first().evaluate(el => getComputedStyle(el).borderTopWidth === '0px')
-      if (ring) expect(await page.locator(panel).first().evaluate(el => getComputedStyle(el).boxShadow), path).toContain('rgb(111, 127, 156)')
-      else expect(await hex(panel, 'borderTopColor'), path).toBe('#6f7f9c')
+      if (WELLS.has(path)) {
+        expect(await hex(panel, 'backgroundColor'), path).toBe('#0f1115')
+        expect(await page.locator(panel).first().evaluate(el => getComputedStyle(el).boxShadow), path).toBe('none')
+        expect(await page.locator(panel).first().evaluate(el => { const c = getComputedStyle(el); return c.borderTopWidth === '0px' || c.borderTopColor === 'rgba(0, 0, 0, 0)' }), path).toBe(true)
+      } else {
+        expect(await hex(panel, 'backgroundColor'), path).toBe('#151b27')
+        // A frame is the border, or a zero-offset box-shadow ring where the panel draws no border.
+        const ring = await page.locator(panel).first().evaluate(el => getComputedStyle(el).borderTopWidth === '0px')
+        if (ring) expect(await page.locator(panel).first().evaluate(el => getComputedStyle(el).boxShadow), path).toContain('rgb(111, 127, 156)')
+        else expect(await hex(panel, 'borderTopColor'), path).toBe('#6f7f9c')
+      }
       expect(await hex('[data-pl-part="tab"][aria-current="page"]', 'color'), path).toBe('#e6ecf5')
       expect(await hex('[data-pl-part="meta-label"]', 'color'), path).toBe('#97a4ba')
     }

@@ -85,6 +85,7 @@ const newest = computed(() => props.decision.rows[0] || null)
     border: 1px solid var(--color-border); border-radius: var(--radius-xl);
     background: var(--color-surface); padding: 0.9rem 1rem;
 }
+[data-theme="dark"] .nd-card { background: var(--color-slate-50); border-color: transparent; }
 .nd-card__text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.15rem; font-size: 12.5px; color: var(--color-fg-muted); }
 .nd-card__text strong { font-size: 14px; color: var(--color-fg); }
 .nd-card .nd-card__go { min-height: 44px; }

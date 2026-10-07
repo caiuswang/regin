@@ -129,6 +129,8 @@ function cost(row) {
 .ftt-body { border: 1px solid var(--color-border); border-radius: var(--radius-xl); background: var(--color-surface); overflow: hidden; }
 .ftt-group + .ftt-group { border-top: 1px solid var(--color-border-subtle); }
 .ftt-group.is-expanded { background: var(--color-surface-2); }
+[data-theme="dark"] .ftt-body { background: var(--color-slate-50); border-color: transparent; }
+[data-theme="dark"] .ftt-group.is-expanded { background: var(--color-slate-100); }
 .ftt-row { padding-top: 0.7rem; padding-bottom: 0.7rem; }
 .ftt-feature { display: flex; align-items: center; gap: 0.4rem; min-width: 0; }
 .ftt-feature .ftt-toggle { width: 24px; height: 24px; flex: none; margin-left: -0.4rem; }

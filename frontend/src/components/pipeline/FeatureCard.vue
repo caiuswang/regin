@@ -35,6 +35,8 @@ defineProps({
     background: var(--color-surface); padding: 0.8rem 0.9rem;
 }
 .fc.is-escaped { border-color: var(--color-amber-400); }
+[data-theme="dark"] .fc { background: var(--color-slate-50); border-color: transparent; }
+[data-theme="dark"] .fc.is-escaped { border-color: var(--color-amber-400); }
 .fc-head { display: flex; align-items: baseline; gap: 0.45rem; min-width: 0; }
 .fc-id { font-size: 12px; color: var(--color-fg-faint); flex: none; }
 .fc-title {

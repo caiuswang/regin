@@ -4517,6 +4517,7 @@ a.ledger-tag:hover { text-decoration: underline; }
     min-width: 0; border: 1px solid var(--color-border); border-radius: var(--radius-xl);
     background: var(--color-surface); overflow: hidden;
 }
+[data-theme="dark"] .pl-panel { background: var(--color-slate-50); border-color: transparent; }
 .pl-panel__head {
     display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap;
     padding: 0.85rem 1.1rem;

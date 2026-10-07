@@ -108,6 +108,7 @@ function label(t) {
     border: 1px solid var(--color-border); border-radius: var(--radius-lg);
     background: var(--color-surface); padding: 0.4rem 0.6rem; font-size: 12.5px;
 }
+[data-theme="dark"] .fa-item { background: var(--color-slate-50); border-color: transparent; }
 .fa-item :deep(svg) { flex: none; }
 .fa-id { font-family: var(--font-mono, monospace); font-size: 11.5px; color: var(--color-fg-faint); flex: none; }
 .fa-title { flex: 1; min-width: 0; color: var(--color-fg); text-decoration: none; text-wrap: pretty; }

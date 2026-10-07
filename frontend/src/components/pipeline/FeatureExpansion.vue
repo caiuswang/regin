@@ -77,6 +77,7 @@ function stateOf(d) {
     border: 1px solid var(--color-border); border-radius: var(--radius-lg);
     background: var(--color-surface); padding: 0.4rem 0.6rem; font-size: 12.5px;
 }
+[data-theme="dark"] .fx-item { background: var(--color-slate-50); border-color: transparent; }
 .fx--compact .fx-item { border: 0; border-top: 1px solid var(--color-border-subtle); border-radius: 0; padding: 0.55rem 0; background: none; }
 .fx-id { font-family: var(--font-mono, monospace); font-weight: 700; color: var(--color-fg); text-decoration: none; flex: none; }
 .fx-text { flex: 1; min-width: 0; text-wrap: pretty; color: var(--color-fg); }

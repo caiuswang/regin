@@ -38,6 +38,8 @@ html[data-pl-theme="pixel"] {
     --pl-page-top: transparent;
     --pl-page-clip: none;
     --pl-paper: #ffffff;
+    --pl-well: #ffffff;
+    --pl-well-2: #f1f3f7;
     --pl-paper-2: #f1f3f7;
     --pl-paper-3: #f1f3f7;
     --pl-sunk: #ffffff;
@@ -102,6 +104,8 @@ html[data-pl-theme="pixel"][data-theme="dark"] {
     --pl-page-top: #0d111a;
     --pl-page-clip: inset(0 -100vmax -100vmax);
     --pl-paper: #151b27;
+    --pl-well: #0f1115;
+    --pl-well-2: #171b21;
     --pl-paper-2: #1a2231;
     --pl-paper-3: #222b3c;
     --pl-sunk: #171d2a;
@@ -671,4 +675,36 @@ html[data-pl-theme="pixel"] [data-pl-part="wait"] svg {
     html[data-pl-theme="pixel"] [data-pl-part="key--primary"]:active {
         transform: none;
     }
+}
+
+/* Dark surfaces that hold content (panels, table, cards, sub-rows) sit on the
+   app's slate-50/100 wells with no frame; dialogs and menus keep paper + frame. */
+html[data-pl-theme="pixel"][data-theme="dark"] [data-pl-part="panel"]:is(section),
+html[data-pl-theme="pixel"][data-theme="dark"] [data-pl-part="rows"],
+html[data-pl-theme="pixel"][data-theme="dark"] [data-pl-part="card"],
+html[data-pl-theme="pixel"][data-theme="dark"] [data-pl-part="sub-row"] {
+    background: var(--pl-well);
+    border-color: transparent;
+    box-shadow: none;
+}
+
+html[data-pl-theme="pixel"][data-theme="dark"] [data-pl-part="card"][data-stage="escaped"] {
+    border-color: var(--pl-warn-line);
+}
+
+html[data-pl-theme="pixel"][data-theme="dark"] [data-pl-part="sub-row"][data-status="running"] {
+    border-color: var(--pl-run-line);
+}
+
+html[data-pl-theme="pixel"][data-theme="dark"] [data-pl-part="row"][data-expanded] {
+    background: var(--pl-well-2);
+}
+
+html[data-pl-theme="pixel"][data-theme="dark"] [data-pl-part="sheet"] {
+    background: var(--pl-well);
+    box-shadow: none;
+}
+
+html[data-pl-theme="pixel"][data-theme="dark"] [data-pl-part="sheet"] [data-pl-part="card"] {
+    background: var(--pl-well-2);
 }
