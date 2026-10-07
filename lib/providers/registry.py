@@ -83,6 +83,13 @@ def launch_provider_rows() -> list[dict]:
     return rows
 
 
+def declared_pane_commands() -> frozenset[str]:
+    """Every foreground command a provider declares its pane may report."""
+    return frozenset(
+        command for pid in list_provider_ids()
+        for command in build_provider(pid).launch_capabilities()["pane_commands"])
+
+
 def provider_session_id_env_vars() -> list[str]:
     """Every registered provider's session-id env vars, deduplicated.
 

@@ -103,10 +103,12 @@ class AgentBridgeConfig(BaseModel):
     tracked `config/settings.json`. Delivery is bounded per-session by
     `rate_limit_per_minute`; each message is sanitized and capped at
     `max_text_len` before it is typed literally into the pane. Only panes
-    whose foreground process is in `allowed_pane_commands` accept delivery —
-    the guard that stops a message typed at a fallen-back shell from
-    executing as a shell command (native builds report `claude.exe`; NVM
-    installs report `claude` or `node`).
+    whose foreground process is in `allowed_pane_commands`, or in a provider's
+    declared `pane_commands`, accept delivery — the guard that stops a message
+    typed at a fallen-back shell from executing as a shell command (native
+    builds report `claude.exe`; NVM installs report `claude` or `node`; kimi
+    reports `node`). The list adds to the providers' declarations; it cannot
+    remove one.
     """
 
     enabled: bool = False

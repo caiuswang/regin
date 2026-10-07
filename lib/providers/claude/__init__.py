@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 from pathlib import Path
 
 from lib.providers.base import (AgentProvider, LaunchCapabilities,
@@ -68,6 +69,25 @@ class ClaudeProvider(AgentProvider):
             "pane_commands": ["claude", "claude.exe", "node"],
             "labels": {"sdk": "Agent SDK", "tmux": "tmux"},
         }
+
+    def pane_argv(self, session_id: str, *, model: str = "", effort: str = "",
+                  permission_mode: str = "", prompt: str = "",
+                  resume: bool = False) -> list[str]:
+        # Absolute: the tmux server may predate this process and does not carry
+        # its PATH, and an nvm-installed claude is on no system path.
+        # `--resume` without `--fork-session` keeps the session's own id, so the
+        # id is still regin's to name — it is just not a fresh one.
+        argv = [shutil.which("claude") or "claude",
+                "--resume" if resume else "--session-id", session_id]
+        for flag, value in (("--model", model), ("--effort", effort),
+                            ("--permission-mode", permission_mode)):
+            if value:
+                argv += [flag, value]
+        if prompt:
+            # `--` ends option parsing: a prompt opening with `-` (a markdown
+            # bullet, or `--dangerously-skip-permissions`) is a first turn, never a flag.
+            argv += ["--", prompt]
+        return argv
 
     def client_version(self) -> str | None:
         from lib.trace.claude_version import current_claude_version

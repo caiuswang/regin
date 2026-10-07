@@ -8,6 +8,7 @@ without hard-coded path rewrites across the codebase.
 from __future__ import annotations
 
 import glob
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypedDict
@@ -49,6 +50,22 @@ class LaunchCapabilities(TypedDict):
     binary: str
     pane_commands: list[str]
     labels: dict[str, str]
+
+
+@dataclass(frozen=True)
+class PaneInput:
+    """How a first turn is typed into a pane whose argv cannot carry one.
+
+    `ready` matches the raw capture once the composer takes input — keys sent
+    before the TUI owns the terminal are lost. `paste_chip` matches the
+    placeholder a long paste collapses to, group 1 being the paste counter,
+    which only ever grows for the life of the process. `submit_key` is the
+    tmux key that sends the line.
+    """
+
+    ready: str
+    paste_chip: str
+    submit_key: str
 
 
 class AgentProvider:
@@ -144,6 +161,31 @@ class AgentProvider:
         """
         return {"launch_modes": [], "fields": [], "binary": "",
                 "pane_commands": [], "labels": {}}
+
+    def pane_session_id(self, cwd: str, env: dict[str, str]) -> str:
+        """The id a new pane session will run under, fixed before the pane
+        starts so the attempt records the id the session's hooks report.
+
+        The default is a fresh uuid for a CLI that takes a caller-chosen id
+        on argv. One that mints its own ids creates the session here.
+        """
+        return str(uuid.uuid4())
+
+    def pane_argv(self, session_id: str, *, model: str = "", effort: str = "",
+                  permission_mode: str = "", prompt: str = "",
+                  resume: bool = False) -> list[str]:
+        """The command line a tmux pane runs for `session_id`.
+
+        `prompt` is the first turn when argv can carry one; a provider that
+        cannot declares `pane_input` and is handed none. `resume` says the
+        session already exists rather than being started under that id.
+        """
+        raise NotImplementedError
+
+    def pane_input(self) -> PaneInput | None:
+        """How the first turn is typed into the pane, or None when
+        `pane_argv` carries it."""
+        return None
 
     def channel_launcher(self):
         """Callable launching a task run through this provider's structured

@@ -1,6 +1,6 @@
 """Task runs launched in a detached tmux session — `launch=tmux`.
 
-An SDK run is a child of `regin serve` and dies with it. A tmux run's `claude`
+An SDK run is a child of `regin serve` and dies with it. A tmux run's CLI
 lives on regin's own tmux server instead, so it keeps going across a server
 restart — including one it triggers itself — and settles the way every run
 does, through the agent's own `regin task finish`.
@@ -16,8 +16,9 @@ from __future__ import annotations
 
 import base64
 import mimetypes
+import os
 import subprocess
-import uuid
+from pathlib import Path
 from typing import Optional
 
 from sqlmodel import select
@@ -26,6 +27,7 @@ from lib.activity_log import get_activity_logger
 from lib.agent_bridge import attach, delivery, launch
 from lib.orm import SessionLocal
 from lib.orm.models.tasks import AgentTaskRun, RUN_OPEN_STATUSES
+from lib.providers.registry import build_provider
 from lib.settings import settings
 from lib.tasks import store
 from lib.tasks.arm import LAUNCH_TMUX
@@ -75,31 +77,68 @@ def _with_images(prompt: str, paths: list[str]) -> str:
     return f"{prompt}\n\nImages attached to this task (read them):\n{listed}"
 
 
+def _anchor(provider, cwd: str | None, env: dict) -> str:
+    """The session id the pane will run under, settled before it starts —
+    after the provider has readied the directory for an unattended start.
+
+    Resolved, because the pane's process sees its cwd resolved: kimi refuses
+    to resume a session created under `/tmp/x` from `/private/tmp/x`."""
+    workdir = os.path.realpath(cwd or settings.project_root)
+    try:
+        provider.prepare_workspace(Path(workdir))
+        return provider.pane_session_id(workdir, env)
+    except Exception as exc:  # noqa: BLE001 — any failure refuses the launch
+        raise TmuxRunRefused(
+            f"no {provider.provider_id} session to start the pane on: "
+            f"{exc}") from exc
+
+
+def _pane_provider(row: dict):
+    """The attempt's provider, refused unless it can start here in tmux."""
+    provider = build_provider((row["params"] or {}).get("provider")
+                              or "claude")
+    caps = provider.launch_capabilities()
+    if LAUNCH_TMUX not in caps["launch_modes"]:
+        raise TmuxRunRefused(f"{provider.provider_id} has no tmux launch")
+    reason = launch.detached_unavailable_reason(caps["binary"])
+    if reason:
+        raise TmuxRunRefused(reason)
+    return provider
+
+
+def _argv(provider, trace_id: str, kwargs: dict, prompt: str) -> list[str]:
+    return provider.pane_argv(
+        trace_id, model=kwargs.get("model") or "",
+        effort=kwargs.get("effort") or "",
+        permission_mode=kwargs.get("permission_mode") or "", prompt=prompt)
+
+
 def launch_attempt(row: dict, prompt: str, kwargs: dict,
                    images: list[dict]) -> str:
     """Start `row`'s attempt in its own tmux session. Returns the trace id.
 
-    The trace id is chosen here and pinned with `--session-id`, so the id the
+    The provider fixes the session id before the pane starts, so the id the
     attempt records is the id the session's own hooks report.
     """
-    reason = launch.detached_unavailable_reason()
-    if reason:
-        raise TmuxRunRefused(reason)
-    trace_id = str(uuid.uuid4())
-    argv = launch.claude_argv(
-        trace_id, model=kwargs.get("model") or "",
-        effort=kwargs.get("effort") or "",
-        permission_mode=kwargs.get("permission_mode") or "",
-        prompt=_with_images(prompt, _image_paths(row["id"], images)))
+    provider = _pane_provider(row)
+    env = kwargs.get("env") or {}
+    trace_id = _anchor(provider, kwargs.get("cwd"), env)
+    text = _with_images(prompt, _image_paths(row["id"], images))
+    typing = provider.pane_input()
+    name = session_name(row["task_id"], row["attempt"])
     try:
-        launch.spawn_detached(session_name(row["task_id"], row["attempt"]),
-                              trace_id, cwd=kwargs.get("cwd"), argv=argv,
-                              env=kwargs.get("env") or {})
+        launch.spawn_detached(
+            name, trace_id, cwd=kwargs.get("cwd"), env=env,
+            argv=_argv(provider, trace_id, kwargs, "" if typing else text))
     except launch.TerminalLaunchRefused as exc:
         raise TmuxRunRefused(str(exc)) from exc
+    if typing:
+        sent = delivery.deliver_first_turn(trace_id, text, typing)
+        if not sent.delivered:
+            attach.release_session(name, trace_id)
+            raise TmuxRunRefused(f"first turn not delivered: {sent.detail}")
     log.write("task_tmux_run_launched", run_id=row["id"],
-              task_id=row["task_id"], trace_id=trace_id,
-              session=session_name(row["task_id"], row["attempt"]))
+              task_id=row["task_id"], trace_id=trace_id, session=name)
     return trace_id
 
 
