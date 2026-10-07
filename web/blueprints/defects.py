@@ -363,6 +363,39 @@ def _positive_id(value) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
 
+def _defect_ids(payload) -> "list[int] | None":
+    ids = payload.get("defect_ids") if isinstance(payload, dict) else None
+    if not isinstance(ids, list) or not ids \
+            or not all(_positive_id(i) for i in ids):
+        return None
+    return ids
+
+
+@defects_bp.route("/api/defects/fix-task", methods=["POST"])
+@require_editor
+def api_create_fix_task():
+    """One fix task for every defect the body names, or nothing.
+
+    A refusal is `409` with `blocking` listing each defect that cannot join,
+    so the page marks them all instead of failing one per retry.
+    """
+    ids = _defect_ids(request.get_json(silent=True))
+    if ids is None:
+        return jsonify({"error": "defect_ids must be a non-empty list of "
+                                 "defect ids"}), 400
+    missing = [i for i in ids if _missing(i)]
+    if missing:
+        return jsonify({"error": f"no defect {missing[0]}"}), 404
+    try:
+        task_id, rows = fix_items.create_batch(ids)
+    except fix_items.BatchRefused as exc:
+        return jsonify({"error": str(exc), "blocking": exc.blocking}), 409
+    except store.DefectError as exc:
+        return _refused(exc)
+    return jsonify({"task_id": task_id,
+                    "defects": [_serialize(row) for row in rows]}), 200
+
+
 @defects_bp.route("/api/defects/<int:defect_id>/merge", methods=["POST"])
 @require_editor
 def api_merge_defect(defect_id: int):

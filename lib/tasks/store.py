@@ -263,10 +263,12 @@ def capture_task(*, title: str, source: str, body: Optional[str] = None,
                  project_id=FROM_FEATURE,
                  feature_id: Optional[int] = None,
                  priority: str = TASK_PRIORITY_NONE,
-                 kind: str = TASK_KIND_TASK) -> tuple[dict, bool]:
+                 kind: str = TASK_KIND_TASK,
+                 auto_title: Optional[str] = None) -> tuple[dict, bool]:
     """Insert an idea, or resolve a replay. Returns `(task, created)`.
 
-    `status` is `idea` unconditionally — no caller can set it.
+    `status` is `idea` unconditionally — no caller can set it. `auto_title`
+    is passed only by a writer that will recompute the title later.
     """
     with SessionLocal() as session:
         existing = _find_existing(session, source, external_id)
@@ -283,7 +285,7 @@ def capture_task(*, title: str, source: str, body: Optional[str] = None,
             project_id=_created_project(session, project_id, feature_id),
             feature_id=feature_id,
             priority=priority, priority_rank=PRIORITY_ORDER[priority],
-            kind=kind,
+            kind=kind, auto_title=auto_title,
         )
         session.add(row)
         try:

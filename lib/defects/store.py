@@ -601,9 +601,11 @@ def merge_many(duplicate_ids: Iterable[int], *, into: int) -> Defect:
             keeper.fix_task_id = keeper.fix_task_id or dup.fix_task_id
         _move_images(session, dups, keeper)
         _touch(keeper)
+        left = [dup.fix_task_id for dup in dups]
         for dup in dups:
             session.delete(dup)
         session.add(keeper)
+        retitle(session, keeper.fix_task_id, *left)
         session.commit()
         session.refresh(keeper)
         for dup in dups:
@@ -632,9 +634,11 @@ def set_fix_item(defect_id: int, task_id: int) -> Defect:
         row = _get(session, defect_id)
         if session.get(AgentTask, task_id) is None:
             raise DefectError(f"no task {task_id}")
+        left = row.fix_task_id
         row.fix_task_id = task_id
         _touch(row)
         session.add(row)
+        retitle(session, left, task_id)
         session.commit()
         session.refresh(row)
         log.write("defect_fix_item_set", defect_id=row.id,
@@ -642,16 +646,72 @@ def set_fix_item(defect_id: int, task_id: int) -> Defect:
         return row
 
 
+def set_fix_items(defect_ids: Iterable[int], task_id: int) -> None:
+    """Point several defects at one task in a single commit, so the retitle
+    sees the whole set rather than each intermediate one."""
+    defect_ids = list(defect_ids)
+    with SessionLocal() as session:
+        rows = [_get(session, defect_id) for defect_id in defect_ids]
+        left = [row.fix_task_id for row in rows]
+        for row in rows:
+            row.fix_task_id = task_id
+            _touch(row)
+            session.add(row)
+        retitle(session, *left, task_id)
+        session.commit()
+    for defect_id in defect_ids:
+        log.write("defect_fix_item_set", defect_id=defect_id,
+                  fix_task_id=task_id)
+
+
 def clear_fix_item(defect_id: int) -> Defect:
     with SessionLocal() as session:
         row = _get(session, defect_id)
+        left = row.fix_task_id
         row.fix_task_id = None
         _touch(row)
         session.add(row)
+        retitle(session, left)
         session.commit()
         session.refresh(row)
         log.write("defect_fix_item_set", defect_id=row.id, fix_task_id=None)
         return row
+
+
+def fix_task_title(rows: Iterable[Defect]) -> str:
+    """One defect's task is labelled by its symptom; a task several defects
+    share names them all, so the board shows which ones it fixes."""
+    from lib.orm.models.tasks import TITLE_MAX  # noqa: PLC0415
+
+    rows = sorted(rows, key=lambda r: r.id)
+    if len(rows) == 1:
+        return rows[0].symptom[:TITLE_MAX]
+    ids = ", ".join(f"#{r.id}" for r in rows)
+    return f"Fix {ids}: {rows[0].symptom}"[:TITLE_MAX]
+
+
+def retitle(session, *task_ids: Optional[int]) -> None:
+    """Recompute each task's title from the defects now pointing at it — only
+    while the title is still the one regin wrote (`title == auto_title`); a
+    hand edit breaks the equality and the title is the operator's from then.
+
+    Takes the caller's session so the label moves in the same commit as the
+    pointer: a task never shows a defect set it no longer has.
+    """
+    from lib.orm.models.tasks import AgentTask  # noqa: PLC0415
+
+    session.flush()
+    for task_id in dict.fromkeys(t for t in task_ids if t is not None):
+        task = session.get(AgentTask, task_id)
+        if task is None or task.auto_title is None \
+                or task.title != task.auto_title:
+            continue
+        rows = session.exec(
+            select(Defect).where(Defect.fix_task_id == task_id)).all()
+        if not rows:
+            continue
+        task.title = task.auto_title = fix_task_title(rows)
+        session.add(task)
 
 
 def by_fix_item(task_id: int) -> list[Defect]:

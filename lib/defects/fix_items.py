@@ -8,12 +8,16 @@ verbatim exists to prevent. The wording itself is the `defect-fix-task`
 prompt surface, editable on the prompts page like every other agent prompt.
 
 Pointing at an *existing* task stays in `store.set_fix_item`: that is a
-one-column write with no second row to author.
+one-column write with no second row to author. The defects a task fixes are
+read live by its runs (`run_prompt._cited_refs`), so the body is written once
+and never grows as defects are linked.
 """
 
 from __future__ import annotations
 
 import json
+
+from sqlmodel import select
 
 from lib.activity_log import get_activity_logger
 from lib.defects import store
@@ -23,17 +27,26 @@ from lib.refs.grammar import format_ref
 log = get_activity_logger("defects")
 
 
+class BatchRefused(store.DefectError):
+    """A batch with at least one defect that cannot join the task. Nothing was
+    written; `blocking` names every offender so a surface can mark them all
+    at once instead of one refusal per retry."""
+
+    def __init__(self, message: str, blocking: list[int]):
+        super().__init__(message)
+        self.blocking = blocking
+
+
 def create_for(defect_id: int):
     """Capture the task, attach it, and never touch it again.
 
-    Title is the symptom verbatim, a shelf label stamped once; the body is
-    the `defect-fix-task` prompt surface. No label, assignee or priority —
-    those are fields with human writers. `external_id` makes it one task per defect: a second click, a
-    second tab or the CLI after the browser all resolve to the first task
+    Title is the symptom verbatim, a shelf label regin recomputes only while
+    nobody has renamed it (`store.retitle`); the body is the `defect-fix-task`
+    prompt surface. No label, assignee or priority — those are fields with
+    human writers. `external_id` makes it one task per defect: a second click,
+    a second tab or the CLI after the browser all resolve to the first task
     instead of filing a duplicate.
     """
-    from lib.tasks import store as task_store  # noqa: PLC0415
-
     row = store.get(defect_id)
     if row.feature_id is None:
         raise store.DefectError(
@@ -47,50 +60,129 @@ def create_for(defect_id: int):
             f"#{row.id} already points at task #{row.fix_task_id}, which was "
             f"not created from it — re-point with `regin defects fix-item "
             f"{row.id} --task <ID>` instead of creating a second one")
-    # A replay here means the defect's own task was unlinked by `--clear`:
+    _create([row])
+    return store.get(row.id)
+
+
+def create_batch(defect_ids) -> tuple[int, list]:
+    """One fix task for several defects of one feature, or nothing at all.
+
+    Keyed on the lowest id, so the same selection posted twice — or the
+    lowest one alone through `create_for` — resolves to the same task. Every
+    defect must already point at that task or at none: a defect re-pointed
+    elsewhere is refused rather than silently pulled back.
+    """
+    ids = sorted(set(defect_ids))
+    if not ids:
+        raise store.DefectError("name at least one defect")
+    task_id = _create([store.get(i) for i in ids])
+    return task_id, [store.get(i) for i in ids]
+
+
+def _create(rows) -> int:
+    from lib.tasks import store as task_store  # noqa: PLC0415
+
+    lead = rows[0]
+    external_id = f"defect:{lead.id}"
+    blocking = _blocking(rows, _task_keyed(external_id))
+    if blocking:
+        raise BatchRefused(
+            "; ".join(f"#{i} {why}" for i, why in blocking.items())
+            + " — nothing was created", list(blocking))
+    title = store.fix_task_title(rows)
+    # A replay here means the lowest defect's task was unlinked by `--clear`:
     # it is relinked rather than filed again, one task per defect for good.
     view, created = task_store.capture_task(
-        title=row.symptom[:200], body=task_body(row), source="defect",
-        external_id=f"defect:{row.id}", feature_id=row.feature_id,
+        title=title, auto_title=title, source="defect",
+        external_id=external_id, feature_id=lead.feature_id,
         kind=TASK_KIND_FIX)
-    pointed = store.set_fix_item(row.id, view["id"])
     if created:
-        _copy_images(row.id, view["id"])
-    return pointed
+        _copy_images(rows, view["id"])
+    # Written on a replay too while still empty: a first attempt that died
+    # between the insert and this line would otherwise never get a body.
+    if view["body"] is None:
+        task_store.update_task(
+            view["id"], {"body": task_body(lead, _image_refs(view["id"]))})
+    store.set_fix_items([row.id for row in rows], view["id"])
+    return view["id"]
+
+
+def _task_keyed(external_id: str):
+    from lib.orm import SessionLocal  # noqa: PLC0415
+    from lib.orm.models.tasks import AgentTask  # noqa: PLC0415
+
+    with SessionLocal() as session:
+        task = session.exec(select(AgentTask).where(
+            AgentTask.source == "defect",
+            AgentTask.external_id == external_id)).first()
+    return task.id if task is not None else None
+
+
+def _blocking(rows, task_id) -> dict[int, str]:
+    """`{defect_id: why}` for every row that cannot join `task_id`. The
+    feature is the lowest attributed defect's, so one stray row is named
+    rather than the whole selection."""
+    feature_id = next(
+        (r.feature_id for r in rows if r.feature_id is not None), None)
+    why = {}
+    for row in rows:
+        if row.feature_id is None:
+            why[row.id] = "is unattributed"
+        elif row.feature_id != feature_id:
+            why[row.id] = (f"belongs to feature #{row.feature_id}, "
+                           f"not #{feature_id}")
+        elif row.fix_task_id is not None and row.fix_task_id != task_id:
+            why[row.id] = f"already points at task #{row.fix_task_id}"
+    return why
 
 
 def _is_own_task(row) -> bool:
+    """Any defect-sourced task the row points at, not only the one keyed on
+    its own id: a task several defects share was keyed on the lowest."""
     from lib.orm import SessionLocal  # noqa: PLC0415
     from lib.orm.models.tasks import AgentTask  # noqa: PLC0415
 
     with SessionLocal() as session:
         task = session.get(AgentTask, row.fix_task_id)
-    return (task is not None and task.source == "defect"
-            and task.external_id == f"defect:{row.id}")
+    return task is not None and task.source == "defect"
 
 
-def _copy_images(defect_id: int, task_id: int) -> None:
-    """A defect's screenshots reach no model; a task's ride its runs. Each
-    keeps its `idx`, so an `![](image:N)` in the symptom still names it."""
+def _copy_images(rows, task_id: int) -> None:
+    """A defect's screenshots reach no model; a task's ride its runs. Copied
+    in defect-id order, so the lowest defect keeps its `idx` and a later one
+    whose `idx` is taken gets the next free number."""
     from lib.defects import images as defect_images  # noqa: PLC0415
     from lib.tasks import images as task_images  # noqa: PLC0415
 
-    for image in defect_images.list_for(defect_id):
-        found = defect_images.get_bytes(defect_id, image["idx"])
-        if found is None:
-            continue
-        try:
-            task_images.attach(task_id, found[0], want_idx=image["idx"])
-        except ValueError:
-            log.error("defect_image_not_copied", defect_id=defect_id,
-                      task_id=task_id, idx=image["idx"], exc_info=True)
+    for row in rows:
+        for image in defect_images.list_for(row.id):
+            found = defect_images.get_bytes(row.id, image["idx"])
+            if found is None:
+                continue
+            try:
+                task_images.attach(task_id, found[0], want_idx=image["idx"])
+            except ValueError:
+                log.error("defect_image_not_copied", defect_id=row.id,
+                          task_id=task_id, idx=image["idx"], exc_info=True)
 
 
-def task_body(row) -> str:
+def _image_refs(task_id: int) -> str:
+    """An `![](image:N)` line per image under the number it landed on."""
+    from lib.tasks import images as task_images  # noqa: PLC0415
+
+    return "".join(f"![](image:{image['idx']})\n"
+                   for image in task_images.list_for(task_id))
+
+
+def task_body(row, images: str = "") -> str:
     """The defect and its feature are cited as references, never copied: a
     symptom edited or a feature renamed after the task was cut must not leave
     the task describing the old one. The run reads them live in its
-    `<references>` block (`lib/tasks/run_prompt.py`)."""
+    `<references>` block (`lib/tasks/run_prompt.py`).
+
+    `images` names every copied screenshot: since the symptom is cited rather
+    than carried, an image it names inline is named nowhere else, and would
+    ride the run as a content block the body never mentions."""
     from lib.features import store as feature_store  # noqa: PLC0415
     from lib.prompts import render_surface  # noqa: PLC0415
     from lib.prompts.surfaces.defects import FIX_TASK_SURFACE_ID  # noqa: PLC0415
@@ -106,27 +198,12 @@ def task_body(row) -> str:
         "feature_named": f"#{row.feature_id}"
                          + (f" ({title})" if title else ""),
         "round": row.round,
-        "images": _image_refs(row),
+        "images": images,
         "details": "\n".join(facts(row)),
         "reported_session": row.reported_by_trace or "",
         "suspect_paths": paths,
         "missing_check": row.missing_check or "",
     }).rstrip()
-
-
-def _image_refs(row) -> str:
-    """A reference for every screenshot of the defect.
-
-    The body cites the symptom rather than carrying its prose, so an image the
-    symptom names inline is named nowhere else in the task; without these
-    lines the copied images ride the run as content blocks the body never
-    mentions. `_copy_images` keeps each `idx`, so the reference written here
-    resolves on the task too.
-    """
-    from lib.defects import images as defect_images  # noqa: PLC0415
-
-    return "".join(f"![](image:{image['idx']})\n"
-                   for image in defect_images.list_for(row.id))
 
 
 def suspect_paths(row) -> list[str]:

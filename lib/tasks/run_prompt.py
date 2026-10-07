@@ -312,17 +312,32 @@ def _spec_block(task: dict) -> str:
 
 def _cited_refs(task: dict, feature) -> list[str]:
     """Every reference the task's text cites — its body, or its title when it
-    has none and the title is what the run is told — then each one its
-    feature's spec adds, once, in order of first appearance.
+    has none and the title is what the run is told — then every defect the
+    task is the fix for, then each one its feature's spec adds, once, in order
+    of first appearance.
 
     The whole body is read, not its `PROMPT_MAX` cut: a reference past the cut
     is the one whose text the run never sees, so its line is the only trace of
-    it the run gets.
+    it the run gets. The linked defects come from the pointer, not the text: a
+    defect linked after the body was written, or to a task typed by hand, is
+    cited nowhere, and closed ones stay listed so the run knows what is
+    already done. They precede the spec's so `REFERENCES_MAX` never cuts them.
     """
     spec = feature.body if feature is not None else None
     own = (task.get("body") or "").strip() or task.get("title")
-    cited = (ref.ref for text in (own, spec) for ref in parse_refs(text))
+    cited = [ref.ref for ref in parse_refs(own)]
+    cited += _linked_defects(task.get("id"))
+    cited += [ref.ref for ref in parse_refs(spec)]
     return list(dict.fromkeys(cited))
+
+
+def _linked_defects(task_id: Optional[int]) -> list[str]:
+    from lib.defects import store as defect_store  # noqa: PLC0415
+
+    if task_id is None:
+        return []
+    ids = sorted(row.id for row in defect_store.by_fix_item(task_id))
+    return [f"defect:{defect_id}" for defect_id in ids]
 
 
 def _project_of(task: dict, feature) -> Optional[int]:
