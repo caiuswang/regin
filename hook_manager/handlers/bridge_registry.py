@@ -13,8 +13,9 @@ Opt-in and fail-soft by design:
 - tmux query fails or times out (~2s guard — SessionStart is on the
   interactive startup path; a hung tmux socket must not stall launch)
   → no row, no error.
-- the pane's foreground command is not in
-  `settings.agent_bridge.allowed_pane_commands` → no row, logged refusal
+- the pane's foreground command is neither in
+  `settings.agent_bridge.allowed_pane_commands` nor a provider's declared
+  `pane_commands` → no row, logged refusal
   (`bridge_pane_register_refused`, naming the observed command). Delivery
   would refuse such a pane anyway; a row for it only buys a `/live` steer
   composer that fails at send time. Known limitation: a claude launched
@@ -264,8 +265,8 @@ def _query_pane_identity(pane_id: str) -> tuple[int, int, str] | None:
 
 
 def _command_allowed(command: str) -> bool:
-    from lib.settings import settings
-    return command in settings.agent_bridge.allowed_pane_commands
+    from lib.agent_bridge.pane_io import allowed_pane_commands
+    return command in allowed_pane_commands()
 
 
 def _log_command_refusal(trace_id: str, pane_id: str, command: str,

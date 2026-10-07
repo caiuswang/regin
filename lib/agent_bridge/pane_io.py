@@ -76,7 +76,8 @@ _PANE_DECOR_RE = re.compile(r"[\s│┃║|]+")
 _PASTE_CHIP_RE = re.compile(r"\[Pasted text #(\d+)(?:\s+\+\d+\s+lines?)?\s*\]")
 
 
-def _paste_chip_high_water(capture: str) -> int:
+def _paste_chip_high_water(capture: str,
+                           chip: re.Pattern = _PASTE_CHIP_RE) -> int:
     """Highest `[Pasted text #N]` counter anywhere in `capture`; 0 for none.
 
     Normalizes first, and does so HERE rather than at the call sites: reading
@@ -85,7 +86,7 @@ def _paste_chip_high_water(capture: str) -> int:
     send (`5 > 0`) — a blind submit of text that never landed, which is exactly
     what the baseline exists to prevent."""
     return max((int(n) for n in
-                _PASTE_CHIP_RE.findall(_PANE_DECOR_RE.sub(" ", capture or ""))),
+                chip.findall(_PANE_DECOR_RE.sub(" ", capture or ""))),
                default=0)
 
 
@@ -126,7 +127,7 @@ def _tmux(socket: str | None, *args: str):
                                            stderr=str(exc))
 
 
-def sanitize_body(text: str) -> str:
+def sanitize_body(text: str, capped: bool = True) -> str:
     """Printable text with its LINE STRUCTURE intact: no ANSI, no control
     bytes but tab and newline, `\r\n`/`\r` normalized to `\n`; capped at
     `settings.agent_bridge.max_text_len`.
@@ -142,7 +143,9 @@ def sanitize_body(text: str) -> str:
     text = _ANSI_RE.sub("", text or "")
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = _CTRL_KEEP_BREAKS_RE.sub("", text)
-    return text[:settings.agent_bridge.max_text_len].strip()
+    if capped:
+        text = text[:settings.agent_bridge.max_text_len]
+    return text.strip()
 
 
 def sanitize_text(text: str) -> str:
@@ -182,6 +185,15 @@ def _rate_ok(trace_id: str) -> bool:
 _UNREADABLE = "unparseable pane identity"
 
 
+def allowed_pane_commands() -> frozenset[str]:
+    """The foreground commands a pane may run and still be steered: the
+    operator's list plus what each provider declares its CLI reports."""
+    from lib.providers.registry import declared_pane_commands
+
+    return (frozenset(settings.agent_bridge.allowed_pane_commands)
+            | declared_pane_commands())
+
+
 def _match_identity(row: dict, pid_s: str, pane_pid_s: str,
                     command: str) -> str | None:
     """Refusal detail if the live pane does not match the registered triple
@@ -195,7 +207,7 @@ def _match_identity(row: dict, pid_s: str, pane_pid_s: str,
                 f"registered {row['tmux_server_pid']}")
     if pane_pid != row["pane_pid"]:
         return f"stale: pane pid {pane_pid} != registered {row['pane_pid']}"
-    if command not in settings.agent_bridge.allowed_pane_commands:
+    if command not in allowed_pane_commands():
         return f"refused: pane runs {command!r}, not claude"
     return None
 
@@ -314,7 +326,8 @@ def _pasted_payload(text: str) -> str:
 
 
 def _composer_ack_refusal(socket: str | None, pane: str, text: str,
-                          baseline: int | None) -> str | None:
+                          baseline: int | None,
+                          chip: re.Pattern = _PASTE_CHIP_RE) -> str | None:
     """None once the composer has echoed `text`; else the refusal detail.
 
     The composer renders a long line three ways and only one of them shows the
@@ -326,25 +339,27 @@ def _composer_ack_refusal(socket: str | None, pane: str, text: str,
     a NORMAL-mode composer ignores C-u, and the residue would survive the
     "clear" a retry depends on."""
     if _await_pane_text(socket, pane, text[:30], tail=text[-30:],
-                        paste_baseline=baseline):
+                        paste_baseline=baseline, chip=chip):
         return None
     left = "" if _reset_composer(socket, pane) else "; composer may hold residue"
     return f"not visible in pane; not submitting{left}"
 
 
-def _echo_seen(raw: str, wants: list[str], paste_baseline: int | None) -> bool:
+def _echo_seen(raw: str, wants: list[str], paste_baseline: int | None,
+               chip: re.Pattern = _PASTE_CHIP_RE) -> bool:
     """True when `raw` shows any of `wants`, or a paste chip newer than
     `paste_baseline`. See `_await_pane_text` for why one needle is not enough."""
     if any(w in _PANE_DECOR_RE.sub(" ", raw) for w in wants):
         return True
     return (paste_baseline is not None
-            and _paste_chip_high_water(raw) > paste_baseline)
+            and _paste_chip_high_water(raw, chip) > paste_baseline)
 
 
 def _await_pane_text(socket: str | None, pane: str, needle: str,
                      attempts: int = 5, interval: float = 0.3,
                      tail: str | None = None,
-                     paste_baseline: int | None = None) -> bool:
+                     paste_baseline: int | None = None,
+                     chip: re.Pattern = _PASTE_CHIP_RE) -> bool:
     """Poll capture-pane until `needle` appears (echo can lag the keystroke).
     True as soon as it is seen; False if it never shows within the budget.
 
@@ -377,7 +392,7 @@ def _await_pane_text(socket: str | None, pane: str, needle: str,
     for _ in range(attempts):
         time.sleep(interval)
         capture = _tmux(socket, "capture-pane", "-pt", pane, "-S", "-40")
-        if _echo_seen(capture.stdout or "", wants, paste_baseline):
+        if _echo_seen(capture.stdout or "", wants, paste_baseline, chip):
             return True
     return False
 
