@@ -193,6 +193,8 @@ const runCount = computed(() => props.task.run_count || 0)
     min-width: 0;
 }
 .task-row:hover { background: var(--color-surface-2); }
+[data-theme="dark"] .task-row, [data-theme="dark"] .task-stale { background: var(--color-slate-50); }
+[data-theme="dark"] .task-row:hover { background: var(--color-slate-100); }
 .task-row-selected { background: var(--color-surface-selected); }
 .task-row-archived .task-title { color: var(--color-fg-subtle); }
 

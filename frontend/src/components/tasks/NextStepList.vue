@@ -291,6 +291,7 @@ defineExpose({ reload })
 </template>
 
 <style scoped>
+[data-theme="dark"] .nsl { padding: 0.25rem 1rem 0.5rem; border-radius: var(--radius-xl); background: var(--color-slate-50); }
 .nsl-bar { position: sticky; top: 0; z-index: 2; }
 .nsl-note {
     padding: 1.25rem 0;

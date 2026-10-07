@@ -139,6 +139,7 @@ defineExpose({ reload: () => { fetched.value = false; if (open.value) load() } }
     background: var(--color-surface);
     overflow: hidden;
 }
+html:not([data-pl-theme="pixel"])[data-theme="dark"] .tg { background: var(--color-slate-50); border-color: transparent; }
 .tg-head {
     display: flex;
     align-items: center;

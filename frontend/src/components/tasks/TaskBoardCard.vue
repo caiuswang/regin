@@ -94,6 +94,8 @@ const hasControls = computed(() => !!props.task.action || !!props.task.waits_on
     border-color: var(--color-agent);
     box-shadow: 0 0 0 2px var(--color-agent-line);
 }
+[data-theme="dark"] .tbc { background: var(--color-slate-100); border-color: transparent; }
+[data-theme="dark"] .tbc.is-live { border-color: var(--color-agent); }
 .tbc-top {
     display: flex;
     align-items: center;

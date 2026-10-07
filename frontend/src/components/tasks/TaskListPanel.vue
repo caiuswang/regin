@@ -382,6 +382,7 @@ defineExpose({ reload: afterWrite })
     border-radius: var(--radius-lg);
     overflow: hidden;
 }
+[data-theme="dark"] .tl-list { border-color: transparent; }
 .tl-list :deep(.task-row:last-child) { border-bottom: 0; }
 /* One label over the rows' date column. The right padding is the row's
    padding, its action cluster's primary slot (--pl-task-action-w) and the row gap before
