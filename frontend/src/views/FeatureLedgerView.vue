@@ -25,6 +25,9 @@ import { useConfirm } from '../composables/useConfirm'
 import { rememberedQuery } from '../composables/usePipelineTabState'
 import { useDetailBack } from '../composables/useDetailBack'
 import { usePipelineLive } from '../composables/usePipelineEvents'
+import { usePipelineCreate } from '../composables/usePipelineCreate'
+import { useTaskShortcuts } from '../composables/useTaskShortcuts'
+import { useBreakpoint } from '../composables/useBreakpoint'
 import {
   DEFECTS_ANCHOR, IMAGES_ANCHOR, LEDGER_ANCHORS, SESSIONS_ANCHOR, SLICES_ANCHOR,
   SPEC_ANCHOR, TASKS_ANCHOR, reveal,
@@ -32,6 +35,7 @@ import {
 import { reopenMessage, shipMessage } from '../utils/featureConfirm'
 import Button from '../components/ui/Button.vue'
 import Icon from '../components/ui/Icon.vue'
+import PipelineCreateButton from '../components/pipeline/PipelineCreateButton.vue'
 import DeclareSessionDialog from '../components/features/DeclareSessionDialog.vue'
 import RefBacklinks from '../components/refs/RefBacklinks.vue'
 import FeatureDefects from '../components/features/FeatureDefects.vue'
@@ -59,6 +63,7 @@ const loadError = ref('')
 const refreshing = ref(false)
 const refreshFailed = ref('')
 const tasksCard = ref(null)
+const defectsCard = ref(null)
 const taskCount = ref(null)
 const declaring = ref(false)
 const writeFailed = ref('')
@@ -105,7 +110,22 @@ async function load({ quiet = false } = {}) {
   }
 }
 watch(featureId, () => { taskCount.value = null; load() }, { immediate: true })
-usePipelineLive(() => load({ quiet: true }))
+// The cards read their own lists, so a write made through the shell's dialogs
+// (or anywhere else) reaches them only through this frame.
+usePipelineLive(() => Promise.all([
+  load({ quiet: true }), tasksCard.value?.load(), defectsCard.value?.load(),
+]))
+
+// Every create this page opens is for this feature — still a chip the
+// operator can clear in the dialog.
+const createPrefill = computed(() => (ledger.value
+  ? { feature: { id: ledger.value.id, title: ledger.value.title } } : null))
+const { openCreate } = usePipelineCreate()
+const { isMdUp } = useBreakpoint()
+function create(kind) {
+  if (canWrite.value && createPrefill.value) openCreate(kind, createPrefill.value)
+}
+useTaskShortcuts({ c: () => create('defect') })
 
 // An arrival at `/features/12#feature-sessions` — the index's sessions count —
 // has to land ON the evidence list, and the list does not exist until the
@@ -272,6 +292,10 @@ function onDeclared() {
 
 <template>
   <div class="ledger space-y-4 p-4">
+    <Teleport v-if="canWrite && ledger" defer to="#pipeline-actions">
+      <PipelineCreateButton kind="defect" testid="feature-new-defect" :prefill="createPrefill" />
+    </Teleport>
+
     <router-link v-slot="{ href }" :to="back.to.value" custom>
       <a :href="href" class="back focus-visible:outline-2 focus-visible:outline-blue-500" data-testid="detail-back" @click="back.go">
         <Icon name="chevron-left" :size="14" />{{ back.label.value }}
@@ -320,7 +344,26 @@ function onDeclared() {
         </template>
       </FeatureStageLine>
 
-      <FeatureSectionNav :entries="sections" end-id="feature-end" />
+      <FeatureSectionNav :entries="sections" end-id="feature-end">
+        <template v-if="canWrite">
+          <Button
+            variant="ghost" size="sm" data-testid="section-nav-report-defect"
+            :aria-label="`Report a defect against ${ledger.title}`"
+            @click="create('defect')"
+          >
+            <Icon name="alert-triangle" :size="12" />
+            <span v-if="isMdUp">Report defect</span>
+          </Button>
+          <Button
+            variant="ghost" size="sm" data-testid="section-nav-new-task"
+            :aria-label="`New task under ${ledger.title}`"
+            @click="create('task')"
+          >
+            <Icon name="plus" :size="12" />
+            <span v-if="isMdUp">New task</span>
+          </Button>
+        </template>
+      </FeatureSectionNav>
 
       <!-- Beside the control that failed, never a toast: a refused ship has to
            be readable next to the stage it did not change. -->
@@ -375,7 +418,7 @@ function onDeclared() {
         @counted="taskCount = $event"
       />
 
-      <FeatureDefects :feature="ledger" :can-write="canWrite"
+      <FeatureDefects ref="defectsCard" :feature="ledger" :can-write="canWrite"
                       @changed="onDefectsChanged" />
 
       <section class="card">

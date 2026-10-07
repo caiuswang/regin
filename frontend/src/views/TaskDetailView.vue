@@ -23,6 +23,7 @@ import TaskKindChip from '../components/tasks/TaskKindChip.vue'
 import TaskPriorityIcon from '../components/tasks/TaskPriorityIcon.vue'
 import TaskRefusal from '../components/tasks/TaskRefusal.vue'
 import FeatureDefects from '../components/features/FeatureDefects.vue'
+import NewDefectDialog from '../components/defects/NewDefectDialog.vue'
 import RefBacklinks from '../components/refs/RefBacklinks.vue'
 import TaskPrimaryAction from '../components/tasks/TaskPrimaryAction.vue'
 import TaskVerbMenu from '../components/tasks/TaskVerbMenu.vue'
@@ -38,6 +39,7 @@ import { useTaskMutations } from '../composables/useTasks.js'
 import { rememberedQuery } from '../composables/usePipelineTabState'
 import { useDetailBack } from '../composables/useDetailBack'
 import { usePipelineLive } from '../composables/usePipelineEvents'
+import { useFlash } from '../composables/useFlash'
 import { taskTitle } from '../utils/taskTitle.js'
 
 const router = useRouter()
@@ -75,6 +77,20 @@ const canWrite = computed(() => user?.role !== 'viewer')
 // what this step does, and the two diverge.
 const feature = ref(null)
 const featureTitle = computed(() => feature.value?.title || task.value?.feature_title || '')
+
+// This page sits outside the Pipeline shell, whose dialogs it cannot reach,
+// so it owns its own report dialog — opened on the task's feature, if any.
+const reporting = ref(false)
+const reportFeature = computed(() => (task.value?.feature_id
+  ? { id: task.value.feature_id, title: featureTitle.value || `#${task.value.feature_id}` }
+  : null))
+const { flash } = useFlash()
+function defectReported({ defect, outcome }) {
+  const where = defect.feature_id ? `on feature #${defect.feature_id}` : 'in triage'
+  const verb = outcome === 'deduped' ? 'matched an open report' : 'reported'
+  flash(`Defect #${defect.id} ${verb} ${where}`, 'success',
+    { link: { to: `/defects/${defect.id}`, label: 'Open' } })
+}
 
 // What a step with no written instructions is for — its kind says it, and an
 // empty body would otherwise read as a step with nothing to do.
@@ -189,6 +205,13 @@ onMounted(() => { ensureProjects(); load() })
           :can-write="canWrite"
           @verb="act"
         />
+        <Button
+          v-if="canWrite" variant="ghost" data-testid="task-detail-report-defect"
+          @click="reporting = true"
+        >
+          <Icon name="alert-triangle" :size="13" />
+          <span>Report defect</span>
+        </Button>
         <Button variant="ghost" data-testid="task-detail-runs" @click="sheet = 'runs'">
           <Icon name="list" :size="13" />
           <span>Runs</span>
@@ -209,6 +232,11 @@ onMounted(() => { ensureProjects(); load() })
         />
       </div>
     </header>
+
+    <NewDefectDialog
+      v-if="canWrite" v-model:open="reporting" :feature="reportFeature"
+      @created="defectReported"
+    />
 
     <div v-if="loading" class="empty-state">Loading…</div>
     <div v-else-if="error" class="empty-state" role="alert" data-testid="task-detail-error">

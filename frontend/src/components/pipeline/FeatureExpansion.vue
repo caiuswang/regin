@@ -4,9 +4,13 @@
 // and each defect row carries its fix's state. Read on expand, never on the page load.
 import { computed, onMounted, ref } from 'vue'
 import api from '../../api'
+import Button from '../ui/Button.vue'
+import Icon from '../ui/Icon.vue'
 import FeatureActiveTasks from './FeatureActiveTasks.vue'
 import PlGlyph from './PlGlyph.vue'
 import { defectRef } from '../../utils/pipelineFormat'
+import { usePipelineCreate } from '../../composables/usePipelineCreate'
+import { usePipelineLive } from '../../composables/usePipelineEvents'
 
 const props = defineProps({
   feature: { type: Object, required: true },
@@ -17,16 +21,27 @@ const defects = ref([])
 const loaded = ref(false)
 const error = ref('')
 
-onMounted(async () => {
+async function load() {
   try {
     const d = await api.get(`/defects?feature_id=${props.feature.id}&with_fix_state=1&size=50`)
     defects.value = d.items || []
+    error.value = ''
   } catch (e) {
     error.value = e?.message || String(e)
   } finally {
     loaded.value = true
   }
-})
+}
+onMounted(load)
+// A report filed from this row lands through the shell's dialog, so the
+// push frame is what brings it into the list.
+usePipelineLive(load)
+
+const canWrite = computed(() => api.getStoredUser()?.role !== 'viewer')
+const { openCreate } = usePipelineCreate()
+function report() {
+  openCreate('defect', { feature: { id: props.feature.id, title: props.feature.title } })
+}
 
 const open = computed(() => defects.value.filter(d => d.status === 'open'))
 const shown = computed(() => (props.compact ? open.value : defects.value))
@@ -48,7 +63,15 @@ function stateOf(d) {
     <p v-else-if="error" class="fx-muted" role="alert" data-pl-part="note">{{ error }}</p>
     <template v-else>
       <div class="fx-col">
-        <h3 v-if="!compact" class="fx-label" data-pl-part="section-label"><PlGlyph kind="defect.wild" />Blamed defects · {{ open.length }} open</h3>
+        <div v-if="!compact" class="fx-head">
+          <h3 class="fx-label" data-pl-part="section-label"><PlGlyph kind="defect.wild" />Blamed defects · {{ open.length }} open</h3>
+          <Button
+            v-if="canWrite" variant="ghost" size="sm" data-pl-part="key"
+            :aria-label="`Report a defect against ${feature.title}`"
+            :data-testid="`feature-expansion-report-${feature.id}`"
+            @click="report"
+          ><Icon name="plus" :size="12" /> Report</Button>
+        </div>
         <p v-if="!shown.length" class="fx-muted" data-pl-part="note">No defect is blamed on this feature.</p>
         <ul class="fx-list">
           <li v-for="d in shown" :key="d.id" class="fx-item" :data-testid="`feature-defect-${d.id}`" data-pl-part="sub-row">
@@ -67,6 +90,7 @@ function stateOf(d) {
 .fx { display: flex; flex-direction: column; gap: 0.9rem; padding: 0.25rem 0 0.5rem; }
 .fx--compact { display: block; padding: 0; }
 .fx-col { min-width: 0; display: flex; flex-direction: column; gap: 0.4rem; }
+.fx-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
 .fx-label {
     font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em;
     text-transform: uppercase; color: var(--color-fg-faint);

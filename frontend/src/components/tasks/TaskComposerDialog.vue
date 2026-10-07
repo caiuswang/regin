@@ -16,6 +16,7 @@ import Input from '../ui/Input.vue'
 import Select from '../ui/Select.vue'
 import PlGlyph from '../pipeline/PlGlyph.vue'
 import PlSlot from '../pipeline/PlSlot.vue'
+import FeaturePicker from '../pipeline/FeaturePicker.vue'
 import TaskImageStrip from './TaskImageStrip.vue'
 import RefTextarea from '../refs/RefTextarea.vue'
 import { PRIORITIES } from '../../utils/taskMeta.js'
@@ -33,6 +34,8 @@ const props = defineProps({
   projects: { type: Array, default: () => [] },
   // The Tasks toolbar's project — a repo id, `none`, or `''` for every one.
   project: { type: String, default: '' },
+  // `{ id, title }` of the feature the opening page names — a chip, not a lock.
+  feature: { type: Object, default: null },
 })
 const emit = defineEmits(['created'])
 
@@ -50,6 +53,9 @@ const {
   add: addImages, remove: removeImage, flush: flushImages, reset: resetImages,
 } = useAttachedImages()
 
+// The dialog outlives the page that prefilled it, so a prefill the operator
+// left untouched is withdrawn when a page naming no feature opens it again.
+let prefilled = ''
 // The images cannot survive a close: they are browser blobs held against a
 // task id that does not exist yet, and a thumbnail still sitting there on the
 // next open would belong to an idea that was never captured.
@@ -57,6 +63,11 @@ watch(open, async (isOpen) => {
   if (!isOpen) {
     resetImages()
     return
+  }
+  if (props.feature?.id) {
+    draft.value.feature_id = prefilled = String(props.feature.id)
+  } else if (prefilled && draft.value.feature_id === prefilled) {
+    draft.value.feature_id = prefilled = ''
   }
   const fresh = !draft.value.title && !draft.value.body
   await nextTick()
@@ -185,6 +196,15 @@ function reset() {
             data-testid="task-composer-project"
           />
         </div>
+      </div>
+      <div>
+        <span class="field-label" data-pl-part="field-label">
+          Feature <span class="font-normal text-slate-400">(optional)</span>
+        </span>
+        <FeaturePicker
+          v-model="draft.feature_id" :current="feature"
+          label="The feature this task is a step of" testid="task-composer-feature"
+        />
       </div>
       <div>
         <span class="field-label" data-pl-part="field-label">

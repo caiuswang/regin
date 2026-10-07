@@ -254,6 +254,7 @@ usePipelineLive(() => loadCounts(carried.value))
         v-model:open="taskOpen"
         :projects="projects"
         :project="createProject"
+        :feature="prefill?.feature"
         @created="taskCreated"
       />
       <NewFeatureDialog v-model:open="featureOpen" :scope="createProject" @declared="featureDeclared" />

@@ -247,7 +247,8 @@ async function submit() {
       {{ failed }}
     </p>
 
-    <p v-if="loading" class="ft-note">Loading…</p>
+    <!-- Only before the first read: a push re-read keeps the rows mounted. -->
+    <p v-if="loading && !items.length" class="ft-note">Loading…</p>
     <p v-else-if="loadError" class="ft-fail" role="alert">{{ loadError }}</p>
     <p v-else-if="!items.length" class="ft-note" data-testid="feature-tasks-empty">
       No task is placed under this feature. It can still be shipped and blamed —
@@ -278,11 +279,11 @@ async function submit() {
 
 <style scoped>
 .ft-head {
-    display: flex; align-items: flex-start; justify-content: space-between;
+    display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between;
     gap: 0.75rem; margin-bottom: 0.6rem;
 }
 .ft-title { margin-bottom: 0; }
-.ft-verbs { display: flex; align-items: center; gap: 0.35rem; flex: none; }
+.ft-verbs { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; min-width: 0; }
 .ft-free { font-size: 11px; color: var(--color-fg-muted); }
 .ft-sub { font-size: 11.5px; color: var(--color-fg-subtle); }
 .ft-form { display: flex; flex-direction: column; gap: 0.35rem; }

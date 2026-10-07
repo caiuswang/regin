@@ -144,6 +144,11 @@ function jump(entry) {
         >{{ e.label }}<span v-if="e.count" class="fsn-count">{{ e.count }}</span></a>
       </li>
     </ul>
+    <!-- Outside the list, so the actions never scroll away with the links and
+         are never counted as a section. -->
+    <div v-if="$slots.default" class="fsn-actions" data-testid="section-nav-actions">
+      <slot />
+    </div>
   </nav>
 </template>
 
@@ -153,17 +158,20 @@ function jump(entry) {
    scroll through the gap over it. */
 .fsn {
     position: sticky; top: -1.5rem; z-index: 20;
+    display: flex; align-items: center; gap: 0.5rem;
     min-width: 0;
     background: var(--color-surface);
     border-bottom: 1px solid var(--color-border);
 }
 .fsn-list {
+    flex: 1 1 auto; min-width: 0;
     display: flex; gap: 0.25rem;
     overflow-x: auto; white-space: nowrap;
     padding: 0.35rem 0;
     scrollbar-width: none;
 }
 .fsn-list::-webkit-scrollbar { display: none; }
+.fsn-actions { flex: none; display: flex; align-items: center; gap: 0.25rem; }
 @media (max-width: 767px) {
     .fsn { top: -1rem; }
 }

@@ -76,17 +76,20 @@ async function load() {
     loading.value = false
     return
   }
+  // A push re-read can still be in flight when the page moves to another
+  // feature or task, so an answer for a scope this card has left is dropped.
+  const want = scopeParam.value
   loading.value = true
   loadError.value = ''
   try {
-    const body = await api.get(
-      `/defects?${scopeParam.value}&size=${MAX_ROWS}`)
+    const body = await api.get(`/defects?${want}&size=${MAX_ROWS}`)
+    if (want !== scopeParam.value) return
     items.value = body.items || []
     total.value = body.pagination?.total ?? items.value.length
   } catch (e) {
-    loadError.value = e?.message || String(e)
+    if (want === scopeParam.value) loadError.value = e?.message || String(e)
   } finally {
-    loading.value = false
+    if (want === scopeParam.value) loading.value = false
   }
 }
 // A different feature's rows are not this one's, so they go before the read
@@ -100,6 +103,7 @@ watch([() => props.feature?.id, () => props.fixTaskId],
 // never filed, and a thumbnail still there on the next open would be evidence
 // for a different bug.
 watch(open, (isOpen) => { if (!isOpen) resetShots() })
+defineExpose({ load })
 
 // A screenshot is what the sentence is usually describing. Paste and drop are
 // bound on the form rather than on the strip: a reporter pastes into the field
