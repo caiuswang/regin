@@ -30,7 +30,7 @@ import os
 import re
 from pathlib import Path
 
-from lib.providers.base import AgentProvider, ProviderCapabilities
+from lib.providers.base import AgentProvider, LaunchCapabilities, ProviderCapabilities
 from hook_manager.core import HookPayload, HookResponse, PermissionRequestInfo
 
 
@@ -238,6 +238,15 @@ class KimiProvider(AgentProvider):
     hook_output_format = "kimi"
     # Kimi's session file is the event-sourced wire.jsonl, parsed by
     # lib.trace.kimi_transcript rather than Claude's read_usage.
+
+    def launch_capabilities(self) -> LaunchCapabilities:
+        return {
+            "launch_modes": ["sdk"],
+            "fields": ["model"],
+            "binary": "kimi",
+            "pane_commands": ["kimi"],
+            "labels": {"sdk": "ACP"},
+        }
 
     def channel_launcher(self):
         from lib.agent_acp.launcher import launch_run

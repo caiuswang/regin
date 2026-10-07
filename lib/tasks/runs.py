@@ -484,8 +484,11 @@ def start_run(task_id: int) -> Optional[dict]:
     _refuse_unrunnable(task)
     row = open_attempt(task_id)
     kwargs = _launch_kwargs(row["params"])
-    runner = _channel_launcher((row["params"] or {}).get("provider")
-                               or "claude")
+    try:
+        runner = _channel_launcher((row["params"] or {}).get("provider")
+                                   or "claude")
+    except RunRefused as exc:
+        raise _refuse_launch(row, exc) from exc
     if runner is not None:
         return _start_channel(task, row, runner, kwargs)
     if tmux_runs.is_tmux(row["params"]):
@@ -508,14 +511,17 @@ def start_run(task_id: int) -> Optional[dict]:
 
 
 def _channel_launcher(provider_id: str):
-    """The provider's structured-channel launcher, or None when the provider
-    launches Claude-style (the sdk/tmux arms below). Feature #140's seam:
-    adding a channel-launched provider is an adapter override, not a branch
-    here."""
+    """The provider's structured-channel launcher, or None for Claude (the
+    sdk/tmux arms below). Feature #140's seam: adding a channel-launched
+    provider is an adapter override, not a branch here. Any other provider
+    without a channel is refused, never launched as Claude."""
     if provider_id == "claude":
         return None
     from lib.providers.registry import build_provider  # noqa: PLC0415
-    return build_provider(provider_id).channel_launcher()
+    runner = build_provider(provider_id).channel_launcher()
+    if runner is None:
+        raise RunRefused(f"{provider_id} has no task launch channel")
+    return runner
 
 
 def _start_channel(task: dict, row: dict, runner, kwargs: dict) -> dict:

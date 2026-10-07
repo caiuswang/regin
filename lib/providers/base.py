@@ -10,7 +10,7 @@ from __future__ import annotations
 import glob
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, TypedDict
 
 if TYPE_CHECKING:
     from hook_manager.core import HookPayload, HookResponse, PermissionRequestInfo
@@ -24,6 +24,21 @@ class ProviderCapabilities:
     hooks: bool = False
     sessions: bool = False
     transcript_usage: bool = False
+
+
+class LaunchCapabilities(TypedDict):
+    """How a task run may be launched through one provider.
+
+    `launch_modes` is the provider's own meaning of each value: `sdk` is its
+    structured channel (claude_agent_sdk, kimi's ACP), `tmux` a pane. Empty
+    means the provider cannot launch a task run at all.
+    """
+
+    launch_modes: list[Literal["sdk", "tmux"]]
+    fields: list[Literal["model", "permission_mode", "effort"]]
+    binary: str
+    pane_commands: list[str]
+    labels: dict[str, str]
 
 
 class AgentProvider:
@@ -110,6 +125,15 @@ class AgentProvider:
         None means the CLI could not be asked; see `live_session_ids`.
         """
         return None
+
+    def launch_capabilities(self) -> LaunchCapabilities:
+        """What a task run launched through this provider may carry.
+
+        The default declares no launch channel, so arming a provider that has
+        not opted in is refused rather than quietly launched as Claude.
+        """
+        return {"launch_modes": [], "fields": [], "binary": "",
+                "pane_commands": [], "labels": {}}
 
     def channel_launcher(self):
         """Callable launching a task run through this provider's structured

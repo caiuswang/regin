@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 from dataclasses import asdict
 
 from lib.providers.base import AgentProvider
@@ -57,6 +58,29 @@ def _provider_overrides(provider_id: str) -> dict:
 
 def list_provider_ids() -> list[str]:
     return sorted(_PROVIDER_BUILDERS.keys())
+
+
+def launch_provider_rows() -> list[dict]:
+    """Every provider that can launch a task run, as the launch sheet lists it.
+
+    `available` is whether the provider's CLI is on PATH: a provider the install
+    cannot start is still listed, so the sheet can say which binary is missing.
+    """
+    rows = []
+    for pid in list_provider_ids():
+        provider = build_provider(pid)
+        caps = provider.launch_capabilities()
+        if not caps["launch_modes"]:
+            continue
+        rows.append({
+            "id": pid,
+            "display_name": provider.display_name,
+            "available": shutil.which(caps["binary"]) is not None,
+            "launch_modes": list(caps["launch_modes"]),
+            "fields": list(caps["fields"]),
+            "labels": dict(caps["labels"]),
+        })
+    return rows
 
 
 def provider_session_id_env_vars() -> list[str]:

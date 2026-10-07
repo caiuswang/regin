@@ -6,7 +6,7 @@ import os
 import re
 from pathlib import Path
 
-from lib.providers.base import AgentProvider, ProviderCapabilities
+from lib.providers.base import AgentProvider, LaunchCapabilities, ProviderCapabilities
 from hook_manager.core import (
     HookPayload,
     HookResponse,
@@ -53,6 +53,15 @@ class ClaudeProvider(AgentProvider):
 
     def project_skills_subpath(self) -> tuple[str, ...]:
         return (".claude", "skills")
+
+    def launch_capabilities(self) -> LaunchCapabilities:
+        return {
+            "launch_modes": ["sdk", "tmux"],
+            "fields": ["model", "permission_mode", "effort"],
+            "binary": "claude",
+            "pane_commands": ["claude", "claude.exe", "node"],
+            "labels": {"sdk": "Agent SDK", "tmux": "tmux"},
+        }
 
     def client_version(self) -> str | None:
         from lib.trace.claude_version import current_claude_version
