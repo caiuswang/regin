@@ -81,9 +81,13 @@ const featureTitle = computed(() => feature.value?.title || task.value?.feature_
 // This page sits outside the Pipeline shell, whose dialogs it cannot reach,
 // so it owns its own report dialog — opened on the task's feature, if any.
 const reporting = ref(false)
-const reportFeature = computed(() => (task.value?.feature_id
-  ? { id: task.value.feature_id, title: featureTitle.value || `#${task.value.feature_id}` }
-  : null))
+const reportFeature = computed(() => {
+  const id = task.value?.feature_id
+  if (!id) return null
+  const named = { id, title: featureTitle.value || `#${id}` }
+  return feature.value && 'project_name' in feature.value
+    ? { ...named, project_name: feature.value.project_name } : named
+})
 const { flash } = useFlash()
 function defectReported({ defect, outcome }) {
   const where = defect.feature_id ? `on feature #${defect.feature_id}` : 'in triage'
@@ -334,7 +338,10 @@ onMounted(() => { ensureProjects(); load() })
         @changed="load"
       />
 
-      <FeatureDefects :feature="feature" :fix-task-id="task.id" :can-write="canWrite" />
+      <FeatureDefects
+        :feature="feature" :fix-task-id="task.id" :can-write="canWrite"
+        @report="reporting = true"
+      />
 
       <TaskComments :task-id="task.id" :can-write="canWrite" />
 

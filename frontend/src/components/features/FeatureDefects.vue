@@ -1,31 +1,24 @@
 <script setup>
-// The defects blamed on a feature — read, and reported.
+// The defects blamed on a feature — read here, reported through a dialog.
 //
-// Reports are always feature-scoped: it posts `feature_id`, and a task under
-// no feature has nothing to blame. The LIST is scoped by who is reading: the
+// The card draws no form of its own: `report` asks the page for the one defect
+// dialog (the shell's, or the task page's local copy), so a report filed from
+// this button carries the same fields — refs, suspect paths, images — as one
+// filed from anywhere else, and its outcome is told the same way. The LIST is
+// scoped by who is reading: the
 // feature page reads `?feature_id=`, the task page passes `fixTaskId` and reads
 // `?fix_item=` — a feature's defects are not every step's, and listing them on
 // each step made every task look like the one that fixes them.
 //
-// Mounting it here is what lets a feature with NO task report a bug at all: a
-// shape the model allows and can ship, and which had no browser control for it
-// while this card lived only on the task page.
-//
-// The list is the point. Reporting used to be write-only: the outcome line was
-// a local ref, so a reload left the operator with a defect they had been told
-// was saved and could not find anywhere. A report that cannot be read back on
-// the page that filed it is indistinguishable from one that was dropped.
+// The list is the point. A report that cannot be read back on the page that
+// filed it is indistinguishable from one that was dropped.
 import { computed, ref, watch } from 'vue'
 import api from '../../api'
 import Button from '../ui/Button.vue'
 import Card from '../Card.vue'
 import Icon from '../ui/Icon.vue'
-import Textarea from '../ui/Textarea.vue'
 import DefectRow from '../defects/DefectRow.vue'
-import TaskImageStrip from '../tasks/TaskImageStrip.vue'
-import { imageFilesFrom } from '../../utils/imageFiles'
 import { DEFECTS_ANCHOR, defectListLink, defectsLink } from '../../utils/featureLinks'
-import { useAttachedImages } from '../../composables/useAttachedImages.js'
 
 const props = defineProps({
   feature: { type: Object, default: null },
@@ -34,22 +27,9 @@ const props = defineProps({
 })
 // Any write here moves the page's figures (open/total, escapes, stage) and a
 // row's write can file a task, so the page re-reads both on this.
-const emit = defineEmits(['changed'])
+const emit = defineEmits(['changed', 'report'])
 
-const open = ref(false)
-const symptom = ref('')
-// Bound to no defect: the screenshot is pasted while the report is still being
-// typed, so it is held in the browser and flushed against the new id. Nothing
-// is staged server-side for a report that is abandoned mid-sentence, and there
-// is no orphan to sweep.
-const {
-  items: shots, busy: shotsBusy, error: shotsError,
-  add: addShots, remove: removeShot, flush: flushShots, reset: resetShots,
-} = useAttachedImages('defects')
-const busy = ref(false)
-const failed = ref('')
 const outcome = ref('')
-const outcomeId = ref(null)
 const items = ref([])
 const total = ref(0)
 const loading = ref(true)
@@ -65,7 +45,6 @@ const isFeature = computed(() => Boolean(props.feature))
 const byTask = computed(() => props.fixTaskId != null)
 const scopeParam = computed(() => byTask.value
   ? `fix_item=${props.fixTaskId}` : `feature_id=${props.feature.id}`)
-const canSubmit = computed(() => symptom.value.trim().length > 0 && !busy.value)
 const truncated = computed(() => total.value > items.value.length)
 
 // Re-read rather than patch: re-attributing a defect moves it off this
@@ -99,62 +78,10 @@ async function load() {
 // losing the notice a row's write just rendered.
 watch([() => props.feature?.id, () => props.fixTaskId],
       () => { items.value = []; load() }, { immediate: true })
-// The held blobs cannot survive a close: they belong to a report that was
-// never filed, and a thumbnail still there on the next open would be evidence
-// for a different bug.
-watch(open, (isOpen) => { if (!isOpen) resetShots() })
 defineExpose({ load })
 
-// A screenshot is what the sentence is usually describing. Paste and drop are
-// bound on the form rather than on the strip: a reporter pastes into the field
-// they are typing in, and the event bubbles to here.
-async function onPaste(e) {
-  if (!imageFilesFrom(e.clipboardData).length) return
-  e.preventDefault()
-  await addShots(e.clipboardData)
-}
-
-async function onDrop(e) {
-  if (!imageFilesFrom(e.dataTransfer).length) return
-  e.preventDefault()
-  await addShots(e.dataTransfer)
-}
-
-// `opened` and `deduped` are two different facts and say so: the second means
-// the ledger already held this complaint, and reading it as a fresh report is
-// how a defect goes unreported. Both re-read the list, because both changed it.
-async function submit() {
-  if (!canSubmit.value) return
-  busy.value = true
-  failed.value = ''
-  const body = await api.post('/defects', {
-    symptom: symptom.value.trim(), feature_id: props.feature.id,
-  })
-  busy.value = false
-  if (body?.ok === false || !body?.defect) {
-    failed.value = body?.msg || 'the report was refused'
-    return
-  }
-  // The screenshots land BEFORE the list reloads, so the row renders already
-  // carrying them. A dedup gets them too: the second reporter's picture is
-  // evidence for the same bug, and dropping it would lose the only thing the
-  // duplicate added.
-  await flushShots(body.defect.id)
-  outcomeId.value = body.defect.id
-  outcome.value = body.outcome === 'deduped'
-    ? `#${body.defect.id} already tracked this symptom — deduped, not reopened.`
-    : `#${body.defect.id} opened against ${props.feature.title}.`
-  symptom.value = ''
-  open.value = false
-  await load()
-  emit('changed')
-}
-
 async function onRowChanged(message) {
-  if (message) {
-    outcome.value = message
-    outcomeId.value = null
-  }
+  if (message) outcome.value = message
   await load()
   emit('changed')
 }
@@ -166,65 +93,19 @@ async function onRowChanged(message) {
       <h2 class="card-header">{{ byTask ? 'Defects this task fixes' : 'Defects' }}</h2>
       <span class="td-spacer" />
       <Button
-        v-if="canWrite && !open"
+        v-if="canWrite"
         variant="ghost" size="sm"
         data-testid="feature-report-defect"
         :aria-label="`Report a defect against ${feature.title}`"
-        @click="open = true"
+        @click="emit('report')"
       >
         <Icon name="alert-triangle" :size="12" />
         Report defect
       </Button>
     </div>
 
-    <form
-      v-if="open" class="td-form"
-      @submit.prevent="submit" @paste="onPaste" @dragover.prevent @drop="onDrop"
-    >
-      <label class="td-label" :for="`rd-symptom-${feature.id}`">
-        What went wrong — blamed on {{ feature.title }}
-      </label>
-      <Textarea
-        :id="`rd-symptom-${feature.id}`"
-        v-model="symptom" :rows="2" :disabled="busy"
-        placeholder="the symptom, in your words"
-        data-testid="feature-defect-symptom"
-      />
-      <p class="td-project" data-testid="feature-defect-project">
-        Project: {{ feature.project_name || 'No project' }}
-        <span class="td-optional">(the feature's — a defect has none of its own)</span>
-      </p>
-      <span class="td-label">Screenshots <span class="td-optional">(paste or drop)</span></span>
-      <TaskImageStrip
-        :items="shots"
-        :busy="shotsBusy"
-        :error="shotsError"
-        @pick="addShots"
-        @remove="removeShot"
-      />
-      <div class="td-actions">
-        <Button
-          type="submit" variant="secondary" size="sm" :disabled="!canSubmit"
-          data-testid="feature-defect-submit"
-        >{{ busy ? 'Reporting…' : 'Report' }}</Button>
-        <Button
-          type="button" variant="ghost" size="sm" :disabled="busy"
-          @click="open = false"
-        >Cancel</Button>
-      </div>
-    </form>
-
     <p v-if="outcome" class="td-note" role="status" data-testid="feature-defect-result">
       {{ outcome }}
-      <!-- On the task page a new report fixes nothing yet, so it is not in
-           this list: the link is how the page that filed it reads it back. -->
-      <router-link
-        v-if="byTask && outcomeId != null" class="td-key"
-        :to="`/defects/${outcomeId}`" data-testid="feature-defect-result-link"
-      >Open #{{ outcomeId }}</router-link>
-    </p>
-    <p v-if="failed" class="td-fail" role="status" data-testid="feature-defect-error">
-      {{ failed }}
     </p>
 
     <!-- Only before the first read: a re-read after a row's write keeps the
@@ -273,11 +154,6 @@ async function onRowChanged(message) {
 }
 .td-key:hover { text-decoration: underline; }
 .td-spacer { flex: 1 1 auto; }
-.td-form { display: flex; flex-direction: column; gap: 0.35rem; }
-.td-label { font-size: 11.5px; color: var(--color-fg-muted); }
-.td-optional { color: var(--color-fg-faint); }
-.td-project { margin: 0; font-size: 11.5px; color: var(--color-fg-muted); }
-.td-actions { display: flex; gap: 0.4rem; }
 .td-note {
     margin: 0.4rem 0 0; font-size: 11.5px; color: var(--color-fg-muted);
 }

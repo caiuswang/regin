@@ -57,6 +57,7 @@ test('Write spec creates the step with the instruction as its body',
     await page.goto('/features/242')
 
     await page.getByTestId('feature-verb-spec').click()
+    await expect(page.getByTestId('feature-step-dialog')).toBeVisible()
     await page.getByTestId('feature-step-body').fill('settle the key shape')
     await page.getByTestId('feature-step-submit').click()
 
@@ -180,7 +181,7 @@ test('unchecking Feature steps narrows to tasks under no feature',
     await expect(page.getByTestId('task-chip-unfeatured')).toHaveCount(0)
   })
 
-test('+ task declares its stage, and fix is not offered', async ({ page }) => {
+test('+ task opens the composer, declares its stage, and fix is not offered', async ({ page }) => {
   const posted = []
   await stubFeature(page, [])
   await page.route('**/api/projects**', (route) =>
@@ -194,16 +195,39 @@ test('+ task declares its stage, and fix is not offered', async ({ page }) => {
   await page.goto('/features/242')
 
   await page.getByTestId('feature-new-task').click()
-  await page.getByTestId('feature-task-title').fill('draft the API')
-  await page.getByTestId('feature-task-kind').click()
+  await page.getByTestId('task-title').fill('draft the API')
+  await page.getByTestId('task-composer-stage').click()
   const options = page.getByRole('option')
   await expect(options).toHaveText(['Task', 'Spec', 'Build'])
   await options.filter({ hasText: 'Spec' }).click()
-  await page.getByTestId('feature-task-submit').click()
+  await page.getByTestId('task-submit').click()
 
   await expect.poll(() => posted.length).toBe(1)
   expect(posted[0]).toMatchObject({ title: 'draft the API', kind: 'spec',
                                     feature_id: 242 })
+})
+
+test('a cleared feature takes the stage with it', async ({ page }) => {
+  const posted = []
+  await stubFeature(page, [])
+  await page.route('**/api/tasks', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    posted.push(route.request().postDataJSON())
+    await route.fulfill({ status: 201, json: { task: task({ id: 92, title: 'loose' }) } })
+  })
+  await page.goto('/features/242')
+
+  await page.getByTestId('feature-new-task').click()
+  await page.getByTestId('task-composer-stage').click()
+  await page.getByRole('option').filter({ hasText: 'Build' }).click()
+  await page.getByTestId('task-composer-feature-clear').click()
+  await expect(page.getByTestId('task-composer-stage')).toHaveCount(0)
+  await page.getByTestId('task-title').fill('loose')
+  await page.getByTestId('task-submit').click()
+
+  await expect.poll(() => posted.length).toBe(1)
+  expect(posted[0]).not.toHaveProperty('kind')
+  expect(posted[0]).not.toHaveProperty('feature_id')
 })
 
 // A step's title cites its feature as an @-reference, so a rename reads

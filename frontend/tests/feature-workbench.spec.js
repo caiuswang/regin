@@ -179,10 +179,11 @@ test('a task created here arrives under this feature', async ({ page }) => {
 
   await expect(page.getByTestId('feature-tasks-empty')).toBeVisible()
   await page.getByTestId('feature-new-task').click()
-  await page.getByTestId('feature-task-title').fill('wire the spec block')
-  await page.getByTestId('feature-task-submit').click()
+  await expect(page.getByTestId('task-composer-feature-chosen')).toContainText('#242')
+  await page.getByTestId('task-title').fill('wire the spec block')
+  await page.getByTestId('task-submit').click()
 
-  expect(posted).toHaveLength(1)
+  await expect.poll(() => posted.length).toBe(1)
   expect(posted[0].title).toBe('wire the spec block')
   expect(posted[0].feature_id).toBe(242)
   // The list is the record. A created task that does not appear in it is
@@ -225,11 +226,17 @@ test('a defect can be reported from a feature with no task', async ({ page }) =>
   await expect(page.getByTestId('feature-defects-empty')).toBeVisible()
 
   await page.getByTestId('feature-report-defect').click()
-  await page.getByTestId('feature-defect-symptom').fill('the gutter folds')
-  await page.getByTestId('feature-defect-submit').click()
+  // The shell's dialog, not a second form: it carries the fields every other
+  // report entry does.
+  await expect(page.getByTestId('new-defect-feature-chosen')).toContainText('#242')
+  await expect(page.getByTestId('new-defect-paths')).toBeVisible()
+  await expect(page.getByTestId('feature-defects').locator('form')).toHaveCount(0)
+  await page.getByTestId('new-defect-symptom').fill('the gutter folds')
+  await page.getByTestId('new-defect-submit').click()
 
-  expect(posted[0]).toEqual({ symptom: 'the gutter folds', feature_id: 242 })
-  await expect(page.getByTestId('feature-defect-result')).toContainText('#149')
+  await expect.poll(() => posted.length).toBe(1)
+  expect(posted[0]).toEqual({ symptom: 'the gutter folds', feature_id: 242, suspect_paths: [] })
+  await expect(page.getByTestId('flash')).toContainText('Defect #149 reported on feature #242')
   await expect(page.getByTestId('feature-defects-list'))
     .toContainText('the gutter folds')
 })

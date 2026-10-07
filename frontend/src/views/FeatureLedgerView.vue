@@ -112,15 +112,22 @@ async function load({ quiet = false } = {}) {
 watch(featureId, () => { taskCount.value = null; load() }, { immediate: true })
 // The cards read their own lists, so a write made through the shell's dialogs
 // (or anywhere else) reaches them only through this frame.
-usePipelineLive(() => Promise.all([
+const reloadAll = () => Promise.all([
   load({ quiet: true }), tasksCard.value?.load(), defectsCard.value?.load(),
-]))
+])
+usePipelineLive(reloadAll)
 
 // Every create this page opens is for this feature — still a chip the
-// operator can clear in the dialog.
-const createPrefill = computed(() => (ledger.value
-  ? { feature: { id: ledger.value.id, title: ledger.value.title } } : null))
-const { openCreate } = usePipelineCreate()
+// operator can clear in the dialog. Its project rides along: a task starts
+// there, and a defect names it.
+const createPrefill = computed(() => {
+  const l = ledger.value
+  if (!l) return null
+  return { feature: { id: l.id, title: l.title, project_id: l.project_id ?? null,
+                      project_name: l.project_name ?? null } }
+})
+const { openCreate, created } = usePipelineCreate()
+watch(created, (row) => { if (row) reloadAll() })
 const { isMdUp } = useBreakpoint()
 function create(kind) {
   if (canWrite.value && createPrefill.value) openCreate(kind, createPrefill.value)
@@ -416,10 +423,11 @@ function onDeclared() {
         :sessions="ledger.sessions.rows"
         :can-open-trace="canOpenTrace"
         @counted="taskCount = $event"
+        @new-task="create('task')"
       />
 
       <FeatureDefects ref="defectsCard" :feature="ledger" :can-write="canWrite"
-                      @changed="onDefectsChanged" />
+                      @changed="onDefectsChanged" @report="create('defect')" />
 
       <section class="card">
         <header class="mb-2 flex items-center justify-between gap-3">

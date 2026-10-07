@@ -170,13 +170,13 @@ test('New task on a feature page shows and sends the carried project',
 
     await page.goto('/features/242')
     await page.getByTestId('feature-new-task').click()
-    await expect(page.getByTestId('feature-task-project')).toContainText('regin')
+    await expect(page.getByTestId('task-composer-project')).toContainText('regin')
 
     // Editable: a multi-repo feature files a step under another repo.
-    await page.getByTestId('feature-task-project').click()
+    await page.getByTestId('task-composer-project').click()
     await page.getByRole('option', { name: 'atlas', exact: true }).click()
-    await page.getByTestId('feature-task-title').fill('elsewhere')
-    await page.getByTestId('feature-task-submit').click()
+    await page.getByTestId('task-title').fill('elsewhere')
+    await page.getByTestId('task-submit').click()
 
     await expect.poll(() => posted.length).toBe(1)
     expect(posted[0]).toMatchObject({ feature_id: 242, project_id: 9 })
@@ -201,12 +201,31 @@ test('New task opened before the repos load still starts at the carried project'
     await page.goto('/features/242')
     await page.getByTestId('feature-new-task').click()
     release()
-    await expect(page.getByTestId('feature-task-project')).toContainText('regin')
-    await page.getByTestId('feature-task-title').fill('raced')
-    await page.getByTestId('feature-task-submit').click()
+    await expect(page.getByTestId('task-composer-project')).toContainText('regin')
+    await page.getByTestId('task-title').fill('raced')
+    await page.getByTestId('task-submit').click()
 
     await expect.poll(() => posted.length).toBe(1)
     expect(posted[0].project_id).toBe(7)
+  })
+
+test('a half-typed task leaves its feature behind with the project that came with it',
+  async ({ page }) => {
+    await stubRepos(page)
+    await stubLedger(page)
+    await page.goto('/features/242')
+    await page.getByTestId('feature-new-task').click()
+    await expect(page.getByTestId('task-composer-project')).toContainText('regin')
+    await page.getByTestId('task-title').fill('half typed')
+    await page.keyboard.press('Escape')
+    await expect(page.getByTestId('task-composer')).toHaveCount(0)
+
+    // In-app: the shell and its dialog survive the move, as the draft does.
+    await page.getByTestId('pipeline-tab-tasks').click()
+    await page.getByTestId('task-new').click()
+    await expect(page.getByTestId('task-title')).toHaveValue('half typed')
+    await expect(page.getByTestId('task-composer-feature-chosen')).toHaveCount(0)
+    await expect(page.getByTestId('task-composer-project')).toContainText('No project')
   })
 
 test('Report defect names the feature project, read-only', async ({ page }) => {
@@ -214,7 +233,7 @@ test('Report defect names the feature project, read-only', async ({ page }) => {
   await stubLedger(page)
   await page.goto('/features/242')
   await page.getByTestId('feature-report-defect').click()
-  await expect(page.getByTestId('feature-defect-project')).toContainText('regin')
+  await expect(page.getByTestId('new-defect-project')).toContainText('regin')
 })
 
 // ── Tasks tab ────────────────────────────────────────────────

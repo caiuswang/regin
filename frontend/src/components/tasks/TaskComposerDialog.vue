@@ -34,13 +34,22 @@ const props = defineProps({
   projects: { type: Array, default: () => [] },
   // The Tasks toolbar's project — a repo id, `none`, or `''` for every one.
   project: { type: String, default: '' },
-  // `{ id, title }` of the feature the opening page names — a chip, not a lock.
+  // `{ id, title, project_id? }` of the feature the opening page names — a
+  // chip, not a lock. A `project_id` key, even null, is the feature's own
+  // project and outranks the toolbar's: a step is filed where its feature is.
   feature: { type: Object, default: null },
 })
 const emit = defineEmits(['created'])
 
 // A theme may draw these as keys, so each carries its bar glyph too.
 const PRIORITY_CHOICES = PRIORITIES.map(p => ({ value: p.value, label: p.label, glyph: `bars.${p.bars}` }))
+// A free-form step may declare any stage but fix: a fix step belongs to a
+// defect and is made from the defect, never typed here.
+const STAGE_CHOICES = [
+  { value: 'task', label: 'Task' },
+  { value: 'spec', label: 'Spec' },
+  { value: 'build', label: 'Build' },
+]
 
 const { saving, formError, create } = useTaskMutations()
 const { items: projectList, ensure: ensureProjects } = useProjects()
@@ -56,6 +65,7 @@ const {
 // The dialog outlives the page that prefilled it, so a prefill the operator
 // left untouched is withdrawn when a page naming no feature opens it again.
 let prefilled = ''
+let placedProject = null
 // The images cannot survive a close: they are browser blobs held against a
 // task id that does not exist yet, and a thumbnail still sitting there on the
 // next open would belong to an idea that was never captured.
@@ -64,27 +74,35 @@ watch(open, async (isOpen) => {
     resetImages()
     return
   }
+  const was = draft.value.feature_id
   if (props.feature?.id) {
     draft.value.feature_id = prefilled = String(props.feature.id)
   } else if (prefilled && draft.value.feature_id === prefilled) {
     draft.value.feature_id = prefilled = ''
   }
   const fresh = !draft.value.title && !draft.value.body
+  // A project this dialog chose follows the feature it was chosen for; one the
+  // operator picked stays theirs.
+  const ours = placedProject !== null && draft.value.project_id === placedProject
   await nextTick()
   titleInput.value?.focus()
-  // A starting value, and only on a fresh draft: a half-typed idea reopened
-  // keeps the project the operator already picked for it. Read off the list
-  // once it has loaded, as NewFeatureDialog does — a dialog opened before
-  // the repos answered would otherwise carry nothing, and its `@` would
-  // search every project.
-  if (!fresh) return
+  // A starting value: a half-typed idea reopened keeps the project the
+  // operator already picked for it. Read off the list once it has loaded, as
+  // NewFeatureDialog does — a dialog opened before the repos answered would
+  // otherwise carry nothing, and its `@` would search every project.
+  if (!fresh && !(draft.value.feature_id !== was && ours)) return
   const before = draft.value.project_id
+  const start = props.feature && 'project_id' in props.feature
+    ? props.feature.project_id : props.project
   await ensureProjects()
   // A pick made while the list was loading is the operator's, not ours.
   if (draft.value.project_id === before) {
-    draft.value.project_id = carriedProject(props.project, projectList.value)
+    draft.value.project_id = placedProject = carriedProject(start, projectList.value)
   }
 })
+// The stage is a step's place in ONE feature: moved to another, or cleared,
+// it would name a step nobody chose for it.
+watch(() => draft.value.feature_id, () => { draft.value.kind = 'task' })
 
 const bodyArea = ref(null)
 
@@ -204,6 +222,16 @@ function reset() {
         <FeaturePicker
           v-model="draft.feature_id" :current="feature"
           label="The feature this task is a step of" testid="task-composer-feature"
+        />
+      </div>
+      <div v-if="draft.feature_id" data-pl-part="field" data-pl-field="stage">
+        <span class="field-label" data-pl-part="field-label">Stage</span>
+        <PlSlot
+          v-model="draft.kind"
+          name="ChoiceField"
+          :options="STAGE_CHOICES"
+          aria-label="Stage"
+          data-testid="task-composer-stage"
         />
       </div>
       <div>

@@ -35,6 +35,12 @@ const {
   add: addImages, remove: removeImage, flush: flushImages, reset: resetImages,
 } = useAttachedImages('defects')
 
+// A defect has no project of its own; it is its feature's. Named only while
+// the chosen feature is the one the page handed over, whose project is known.
+const featureProject = computed(() => (props.feature && 'project_name' in props.feature
+  && featureId.value === String(props.feature.id)
+  ? props.feature.project_name || 'No project' : null))
+
 const suspectPaths = computed(() => paths.value.split('\n').map(p => p.trim()).filter(Boolean))
 
 function reset() {
@@ -113,6 +119,9 @@ async function submit() {
 
       <span class="nd-label" data-pl-part="field-label">Feature <span class="nd-optional">(optional — none sends it to triage)</span></span>
       <FeaturePicker v-model="featureId" :current="feature" label="The feature that caused this" testid="new-defect-feature" />
+      <p v-if="featureProject" class="nd-project" data-testid="new-defect-project">
+        Project: {{ featureProject }} <span class="nd-optional">(the feature's)</span>
+      </p>
 
       <label class="nd-label" for="nd-paths" data-pl-part="field-label">Suspect paths <span class="nd-optional">(one per line)</span></label>
       <Textarea
@@ -154,5 +163,6 @@ async function submit() {
 .nd-form { display: flex; flex-direction: column; gap: 0.35rem; }
 .nd-label { font-size: 11.5px; font-weight: 600; color: var(--color-fg-subtle); margin-top: 0.4rem; }
 .nd-optional { font-weight: 400; color: var(--color-fg-faint); }
+.nd-project { margin: 0; font-size: 11.5px; color: var(--color-fg-muted); }
 .nd-fail { margin-top: 0.5rem; font-size: 12px; color: var(--color-danger); }
 </style>

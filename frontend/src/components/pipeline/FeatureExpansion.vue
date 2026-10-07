@@ -39,9 +39,17 @@ usePipelineLive(load)
 
 const canWrite = computed(() => api.getStoredUser()?.role !== 'viewer')
 const { openCreate } = usePipelineCreate()
-function report() {
-  openCreate('defect', { feature: { id: props.feature.id, title: props.feature.title } })
+// The row's project rides along only when the row carries one: a missing key
+// would otherwise read as "No project" and override the shell's scope.
+function prefill() {
+  const f = props.feature
+  const named = { id: f.id, title: f.title }
+  if ('project_id' in f) named.project_id = f.project_id
+  if ('project_name' in f) named.project_name = f.project_name
+  return { feature: named }
 }
+const report = () => openCreate('defect', prefill())
+const newTask = () => openCreate('task', prefill())
 
 const open = computed(() => defects.value.filter(d => d.status === 'open'))
 const shown = computed(() => (props.compact ? open.value : defects.value))
@@ -58,7 +66,16 @@ function stateOf(d) {
 
 <template>
   <div class="fx" :class="{ 'fx--compact': compact }" data-pl-part="expansion" :data-pl-compact="compact ? '' : undefined" :data-testid="`feature-expansion-${feature.id}`">
-    <FeatureActiveTasks v-if="!compact" :feature-id="feature.id" />
+    <FeatureActiveTasks v-if="!compact" :feature-id="feature.id">
+      <template #actions>
+        <Button
+          v-if="canWrite" variant="ghost" size="sm" data-pl-part="key"
+          :aria-label="`New task under ${feature.title}`"
+          :data-testid="`feature-expansion-new-task-${feature.id}`"
+          @click="newTask"
+        ><Icon name="plus" :size="12" /> Task</Button>
+      </template>
+    </FeatureActiveTasks>
     <p v-if="!loaded" class="fx-muted" data-pl-part="note">Loading…</p>
     <p v-else-if="error" class="fx-muted" role="alert" data-pl-part="note">{{ error }}</p>
     <template v-else>

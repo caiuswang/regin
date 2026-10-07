@@ -241,8 +241,8 @@ test('reporting a defect re-reads the figures above it', async ({ page }) => {
   await expect(tile).toContainText('all 2 closed')
 
   await page.getByTestId('feature-report-defect').click()
-  await page.getByTestId('feature-defect-symptom').fill('it broke')
-  await page.getByTestId('feature-defect-submit').click()
+  await page.getByTestId('new-defect-symptom').fill('it broke')
+  await page.getByTestId('new-defect-submit').click()
 
   await expect(tile).toContainText('1 open of 3')
 })

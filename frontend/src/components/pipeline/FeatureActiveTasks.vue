@@ -67,7 +67,10 @@ function label(t) {
 
 <template>
   <section class="fa" :data-testid="`feature-active-${featureId}`">
-    <h3 class="fa-label" data-testid="feature-active-heading" data-pl-part="section-label"><PlGlyph kind="feature.building" />Active tasks<template v-if="heading"> · {{ heading }}</template></h3>
+    <div class="fa-head">
+      <h3 class="fa-label" data-testid="feature-active-heading" data-pl-part="section-label"><PlGlyph kind="feature.building" />Active tasks<template v-if="heading"> · {{ heading }}</template></h3>
+      <slot name="actions" />
+    </div>
     <p v-if="notArmed" class="fa-ideas" data-testid="feature-active-ideas">
       {{ notArmed }} not armed ·
       <router-link
@@ -98,6 +101,7 @@ function label(t) {
 
 <style scoped>
 .fa { min-width: 0; display: flex; flex-direction: column; gap: 0.4rem; }
+.fa-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
 .fa-label {
     font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em;
     text-transform: uppercase; color: var(--color-fg-faint);

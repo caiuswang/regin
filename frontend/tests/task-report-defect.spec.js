@@ -156,23 +156,26 @@ test('test_submitting_posts_the_feature_and_links_the_new_report',
     await page.goto('/tasks/7')
     await expect(page.getByTestId('feature-defects-empty')).toBeVisible()
     await page.getByTestId('feature-report-defect').click()
-    await page.getByTestId('feature-defect-symptom').fill('the gutter folds')
-    await page.getByTestId('feature-defect-submit').click()
+    // The card opens the page's one defect dialog, prefilled — no inline form.
+    await expect(page.getByTestId('new-defect-feature-chosen')).toContainText('#7')
+    await expect(page.getByTestId('feature-defects').locator('form')).toHaveCount(0)
+    await page.getByTestId('new-defect-symptom').fill('the gutter folds')
+    await page.getByTestId('new-defect-submit').click()
 
-    await expect(page.getByTestId('feature-defect-result')).toContainText('#41')
-    await expect(page.getByTestId('feature-defect-result')).toContainText('opened')
-    expect(posted[0]).toEqual({ symptom: 'the gutter folds', feature_id: 7 })
+    const flash = page.getByTestId('flash')
+    await expect(flash.filter({ hasText: 'Defect #41 reported' })).toBeVisible()
+    expect(posted[0]).toEqual({ symptom: 'the gutter folds', feature_id: 7, suspect_paths: [] })
     expect(posted[0].session_id).toBeUndefined()
     // A fresh report fixes nothing yet, so it is not this task's to list; the
-    // link is how the page that filed it reads it back.
-    await expect(page.getByTestId('feature-defect-result-link'))
+    // flash's link is how the page that filed it reads it back.
+    await expect(flash.filter({ hasText: 'Defect #41 reported' }).getByTestId('flash-link'))
       .toHaveAttribute('href', '/defects/41')
     await expect(page.getByTestId('feature-defects-empty')).toBeVisible()
 
     await page.getByTestId('feature-report-defect').click()
-    await page.getByTestId('feature-defect-symptom').fill('the gutter folds')
-    await page.getByTestId('feature-defect-submit').click()
-    await expect(page.getByTestId('feature-defect-result')).toContainText('already')
+    await page.getByTestId('new-defect-symptom').fill('the gutter folds')
+    await page.getByTestId('new-defect-submit').click()
+    await expect(flash.filter({ hasText: 'matched an open report' })).toBeVisible()
   })
 
 test('test_a_task_reports_against_the_feature_it_is_placed_under',
@@ -194,9 +197,10 @@ test('test_a_task_reports_against_the_feature_it_is_placed_under',
 
     await page.goto('/tasks/7')
     await page.getByTestId('feature-report-defect').click()
-    await page.getByTestId('feature-defect-symptom').fill('the gutter folds')
-    await page.getByTestId('feature-defect-submit').click()
+    await expect(page.getByTestId('new-defect-feature-chosen')).toContainText('#274')
+    await page.getByTestId('new-defect-symptom').fill('the gutter folds')
+    await page.getByTestId('new-defect-submit').click()
 
-    await expect(page.getByTestId('feature-defect-result')).toContainText('#41')
+    await expect(page.getByTestId('flash').filter({ hasText: 'Defect #41 reported' })).toBeVisible()
     expect(posted[0].feature_id).toBe(274)
   })

@@ -130,7 +130,7 @@ useTaskShortcuts({ p: () => picker.value?.open() })
 
 // The three create dialogs live here, not in the tabs, so every tab's "New ▾"
 // reaches every kind. Each prefills from the scope the strip names.
-const { creating, prefill, openCreate } = usePipelineCreate()
+const { creating, prefill, openCreate, announceCreated } = usePipelineCreate()
 const { flash } = useFlash()
 const canWrite = computed(() => api.getStoredUser()?.role !== 'viewer')
 const createProject = computed(() => (/^\d+$/.test(carried.value) ? carried.value : ''))
@@ -146,6 +146,7 @@ const defectOpen = dialog('defect')
 
 function taskCreated(task) {
   invalidatePipelineCounts()
+  announceCreated('task', task.id)
   // The Tasks feed already listens for a capture; a created task is one.
   window.dispatchEvent(new CustomEvent(TASK_CAPTURED_EVENT, { detail: { id: task.id } }))
   flash(`Task #${task.id} created`, 'success',
@@ -162,6 +163,7 @@ function featureDeclared(ledger) {
 
 function defectCreated({ defect, outcome }) {
   invalidatePipelineCounts()
+  announceCreated('defect', defect.id)
   const where = defect.feature_id ? `on feature #${defect.feature_id}` : 'in triage'
   const verb = outcome === 'deduped' ? 'matched an open report' : 'reported'
   flash(`Defect #${defect.id} ${verb} ${where}`, 'success',

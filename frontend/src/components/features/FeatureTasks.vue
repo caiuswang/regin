@@ -13,22 +13,21 @@
 // No Arm and no Run here, deliberately. Execution parameters and run control
 // stay on the task page — a second copy of the run machinery would be a second
 // writer of the same lifecycle. Each row is a link to where that work happens.
+//
+// No create form either: `+ task` asks the page for the shell's composer, so a
+// step captured here carries every field a capture anywhere else does.
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '../../api'
 import Button from '../ui/Button.vue'
 import Card from '../Card.vue'
+import FeatureStepDialog from './FeatureStepDialog.vue'
 import FeatureTaskSessions from './FeatureTaskSessions.vue'
 import Icon from '../ui/Icon.vue'
-import Input from '../ui/Input.vue'
-import Select from '../ui/Select.vue'
-import RefTextarea from '../refs/RefTextarea.vue'
 import TaskKindChip from '../tasks/TaskKindChip.vue'
 import TaskStatusIcon from '../tasks/TaskStatusIcon.vue'
 import { TASKS_ANCHOR } from '../../utils/featureLinks'
 import { sessionsByTask } from '../../utils/ledgerFormat'
-import { carriedProject, projectOptions, useProjects }
-  from '../../composables/useProjects.js'
 import { taskTitle } from '../../utils/taskTitle.js'
 
 const props = defineProps({
@@ -43,30 +42,15 @@ const props = defineProps({
   sessions: { type: Array, default: () => [] },
   canOpenTrace: { type: Boolean, default: true },
 })
-const emit = defineEmits(['counted'])
-const { items: projects, ensure: ensureProjects } = useProjects()
+const emit = defineEmits(['counted', 'new-task'])
 const router = useRouter()
 
 const items = ref([])
 const loading = ref(true)
 const loadError = ref('')
-const open = ref(false)
-const title = ref('')
-const busy = ref(false)
-const failed = ref('')
-const projectId = ref('')
-const stepKind = ref('')
-const stepBody = ref('')
-const newKind = ref('task')
+const stepOpen = ref(false)
+const stepKind = ref('spec')
 const byTask = computed(() => sessionsByTask(props.sessions))
-
-// A free-form step may declare any stage but fix: a fix step belongs to a
-// defect and is made from the defect, never typed here.
-const STAGE_OPTIONS = [
-  { value: 'task', label: 'Task' },
-  { value: 'spec', label: 'Spec' },
-  { value: 'build', label: 'Build' },
-]
 
 // Creation order, oldest first, and no regrouping by kind: grouping put a new
 // fix task after the build step but ahead of every free-form task, so the row
@@ -82,37 +66,8 @@ function startStep(kind) {
   const key = `feature:${props.featureId}:${kind}`
   const existing = items.value.find(t => t.external_id === key)
   if (existing) return router.push(`/tasks/${existing.id}`)
-  open.value = false
-  failed.value = ''
-  stepBody.value = ''
   stepKind.value = kind
-}
-
-async function submitStep() {
-  if (busy.value) return
-  busy.value = true
-  failed.value = ''
-  const res = await api.post(`/features/${props.featureId}/steps`, {
-    kind: stepKind.value, body: stepBody.value.trim() || null,
-  })
-  busy.value = false
-  if (res?.ok === false || !res?.task) {
-    failed.value = res?.msg || 'the step was refused'
-    return
-  }
-  stepKind.value = ''
-  router.push(`/tasks/${res.task.id}`)
-}
-
-// The feature's project is the starting value, not a rule: a feature that
-// spans repos files each step under its own, so the pick stays editable and
-// is always sent — "No project" included.
-async function startNew() {
-  stepKind.value = ''
-  newKind.value = 'task'
-  open.value = true
-  await ensureProjects()
-  projectId.value = carriedProject(props.projectId, projects.value)
+  stepOpen.value = true
 }
 
 async function load() {
@@ -134,27 +89,6 @@ async function load() {
 watch(() => props.featureId, load, { immediate: true })
 defineExpose({ load })
 
-// Re-read rather than splice the new row in: the list is ordered and filtered
-// by the server, and a row placed here by hand would sit wherever the client
-// guessed rather than where the next reload will put it.
-async function submit() {
-  const name = title.value.trim()
-  if (!name || busy.value) return
-  busy.value = true
-  failed.value = ''
-  const res = await api.post('/tasks', {
-    title: name, feature_id: props.featureId, kind: newKind.value,
-    project_id: projectId.value ? Number(projectId.value) : null,
-  })
-  busy.value = false
-  if (res?.ok === false || !res?.task) {
-    failed.value = res?.msg || 'the task was refused'
-    return
-  }
-  title.value = ''
-  open.value = false
-  await load()
-}
 </script>
 
 <template>
@@ -175,9 +109,8 @@ async function submit() {
           @click="startStep('build')"
         >Build</Button>
         <Button
-          v-if="!open"
           variant="ghost" size="sm" class="ft-free" data-testid="feature-new-task"
-          @click="startNew"
+          @click="emit('new-task')"
         >
           <Icon name="plus" :size="11" />
           task
@@ -185,67 +118,10 @@ async function submit() {
       </div>
     </div>
 
-    <form v-if="stepKind" class="ft-form" @submit.prevent="submitStep">
-      <label class="ft-label" :for="`ft-step-${featureId}`">
-        Instructions (optional)
-      </label>
-      <RefTextarea
-        :id="`ft-step-${featureId}`"
-        v-model="stepBody" :project="props.projectId" :feature="featureId" :rows="3" :disabled="busy"
-        :placeholder="stepKind === 'spec' ? 'what the spec must settle' : 'what the build must respect'"
-        data-testid="feature-step-body"
-      />
-      <div class="ft-actions">
-        <Button
-          type="submit" variant="primary" size="sm" :disabled="busy"
-          data-testid="feature-step-submit"
-        >{{ busy ? 'Creating…' : 'Create' }}</Button>
-        <Button
-          type="button" variant="ghost" size="sm" :disabled="busy"
-          @click="stepKind = ''"
-        >Cancel</Button>
-      </div>
-    </form>
-
-    <form v-if="open" class="ft-form" @submit.prevent="submit">
-      <label class="ft-label" :for="`ft-title-${featureId}`">
-        What this step does
-      </label>
-      <Input
-        :id="`ft-title-${featureId}`"
-        v-model="title" :disabled="busy"
-        placeholder="a step of this feature"
-        data-testid="feature-task-title"
-      />
-      <span class="ft-label">Stage</span>
-      <Select
-        v-model="newKind" block :disabled="busy"
-        :options="STAGE_OPTIONS"
-        aria-label="Stage"
-        data-testid="feature-task-kind"
-      />
-      <span class="ft-label">Project</span>
-      <Select
-        v-model="projectId" block :disabled="busy"
-        :options="projectOptions(projects)"
-        aria-label="Project"
-        data-testid="feature-task-project"
-      />
-      <div class="ft-actions">
-        <Button
-          type="submit" variant="secondary" size="sm"
-          :disabled="busy || !title.trim()" data-testid="feature-task-submit"
-        >{{ busy ? 'Capturing…' : 'Capture' }}</Button>
-        <Button
-          type="button" variant="ghost" size="sm" :disabled="busy"
-          @click="open = false"
-        >Cancel</Button>
-      </div>
-    </form>
-
-    <p v-if="failed" class="ft-fail" role="status" data-testid="feature-task-error">
-      {{ failed }}
-    </p>
+    <FeatureStepDialog
+      v-if="canWrite" v-model:open="stepOpen"
+      :feature-id="featureId" :project="props.projectId" :kind="stepKind"
+    />
 
     <!-- Only before the first read: a push re-read keeps the rows mounted. -->
     <p v-if="loading && !items.length" class="ft-note">Loading…</p>
@@ -286,9 +162,6 @@ async function submit() {
 .ft-verbs { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; min-width: 0; }
 .ft-free { font-size: 11px; color: var(--color-fg-muted); }
 .ft-sub { font-size: 11.5px; color: var(--color-fg-subtle); }
-.ft-form { display: flex; flex-direction: column; gap: 0.35rem; }
-.ft-label { font-size: 11.5px; color: var(--color-fg-muted); }
-.ft-actions { display: flex; gap: 0.4rem; }
 .ft-note { margin: 0.4rem 0 0; font-size: 11.5px; color: var(--color-fg-muted); }
 .ft-fail {
     margin: 0.4rem 0 0; font-size: 11.5px; color: var(--color-amber-800);

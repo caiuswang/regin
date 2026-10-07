@@ -24,6 +24,15 @@ async function api(request, method, path, data) {
 
 const newFeature = (request) => api(request, 'post', '/api/features', { title: unique('Entry') })
 
+// Classic draws the stage as a select, pixel as a row of radio keys.
+async function pickStage(page, label) {
+  const field = page.getByTestId('task-composer-stage')
+  const key = field.getByRole('radio', { name: label })
+  if (await key.count()) return key.click()
+  await field.click()
+  await page.getByRole('option').filter({ hasText: label }).click()
+}
+
 const scrollTop = (page) => page.evaluate(() => document.querySelector('.content-scroll').scrollTop)
 
 async function openLedger(page, feature) {
@@ -148,6 +157,87 @@ test('test_features_list_expanded_row_reports_prefilled', async ({ page, request
   await page.getByTestId(`feature-toggle-${feature.id}`).click()
   await page.getByTestId(`feature-expansion-report-${feature.id}`).click()
   await expect(page.getByTestId('new-defect-feature-chosen')).toContainText(`#${feature.id}`)
+})
+
+test('test_features_list_expanded_row_creates_a_task_on_the_feature', async ({ page, request }) => {
+  const feature = await newFeature(request)
+  await page.goto(`/features?stage=spec&q=${encodeURIComponent(feature.title)}`)
+  await page.getByTestId(`feature-toggle-${feature.id}`).click()
+  await page.getByTestId(`feature-expansion-new-task-${feature.id}`).click()
+  await expect(page.getByTestId('task-composer-feature-chosen')).toContainText(`#${feature.id}`)
+
+  await page.getByTestId('task-title').fill(unique('from the row'))
+  const created = page.waitForResponse(r => r.url().endsWith('/api/tasks') && r.request().method() === 'POST')
+  await page.getByTestId('task-submit').click()
+  const { task } = await (await created).json()
+  expect((await api(request, 'get', `/api/tasks/${task.id}`)).task.feature_id).toBe(feature.id)
+})
+
+test('test_a_stage_picked_for_one_feature_does_not_follow_to_another', async ({ page, request }) => {
+  const tag = unique('pair')
+  const a = await api(request, 'post', '/api/features', { title: `${tag} A` })
+  const b = await api(request, 'post', '/api/features', { title: `${tag} B` })
+  await page.goto(`/features?stage=spec&q=${encodeURIComponent(tag)}`)
+
+  await page.getByTestId(`feature-toggle-${a.id}`).click()
+  await page.getByTestId(`feature-expansion-new-task-${a.id}`).click()
+  await pickStage(page, 'Spec')
+  await page.keyboard.press('Escape')
+  await expect(page.getByTestId('task-composer')).toHaveCount(0)
+
+  await page.getByTestId(`feature-toggle-${b.id}`).click()
+  await page.getByTestId(`feature-expansion-new-task-${b.id}`).click()
+  await expect(page.getByTestId('task-composer-feature-chosen')).toContainText(`#${b.id}`)
+  await page.getByTestId('task-title').fill(unique('on B'))
+  const created = page.waitForResponse(r => r.url().endsWith('/api/tasks') && r.request().method() === 'POST')
+  await page.getByTestId('task-submit').click()
+  const sent = (await created).request().postDataJSON()
+  expect(sent.feature_id).toBe(b.id)
+  expect(sent).not.toHaveProperty('kind')
+})
+
+test('test_defects_card_reports_through_the_shell_dialog', async ({ page, request }) => {
+  const feature = await newFeature(request)
+  await openLedger(page, feature)
+  await page.evaluate(() => { window.__noReload = true })
+
+  await page.getByTestId('feature-report-defect').click()
+  await expect(page.getByTestId('new-defect-feature-chosen')).toContainText(`#${feature.id}`)
+  await expect(page.getByTestId('new-defect-paths')).toBeVisible()
+  await expect(page.getByTestId('feature-defects').locator('form')).toHaveCount(0)
+
+  const symptom = unique('card symptom')
+  await page.getByTestId('new-defect-symptom').fill(symptom)
+  await page.getByTestId('new-defect-submit').click()
+
+  await expect(page.getByTestId('flash').filter({ hasText: `on feature #${feature.id}` })).toBeVisible()
+  await expect(page.getByTestId('feature-defects-list')).toContainText(symptom)
+  await expect(page.getByTestId('section-nav-defects')).toContainText('1/1')
+  expect(await page.evaluate(() => window.__noReload)).toBe(true)
+})
+
+test('test_tasks_card_new_task_opens_the_composer_with_a_stage', async ({ page, request }) => {
+  const feature = await newFeature(request)
+  await openLedger(page, feature)
+
+  await page.getByTestId('feature-new-task').click()
+  const composer = page.getByTestId('task-composer')
+  await expect(page.getByTestId('task-composer-feature-chosen')).toContainText(`#${feature.id}`)
+  await expect(composer.locator('#task-body')).toBeVisible()
+  await expect(page.getByTestId('task-composer-priority')).toBeVisible()
+  await expect(page.getByTestId('feature-tasks').locator('form')).toHaveCount(0)
+
+  const title = unique('spec step')
+  await page.getByTestId('task-title').fill(title)
+  await pickStage(page, 'Spec')
+  const created = page.waitForResponse(r => r.url().endsWith('/api/tasks') && r.request().method() === 'POST')
+  await page.getByTestId('task-submit').click()
+  const { task } = await (await created).json()
+
+  const read = (await api(request, 'get', `/api/tasks/${task.id}`)).task
+  expect(read.feature_id).toBe(feature.id)
+  expect(read.kind).toBe('spec')
+  await expect(page.getByTestId('feature-tasks-list')).toContainText(title)
 })
 
 test('test_expanded_row_lists_a_defect_filed_elsewhere_without_reload', async ({ page, request }) => {

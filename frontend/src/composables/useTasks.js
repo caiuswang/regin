@@ -9,7 +9,7 @@ export { STATUS_FILTERS }
 
 export function emptyDraft() {
   return { title: '', body: '', tags: '', priority: 'none', project_id: '',
-           feature_id: '' }
+           feature_id: '', kind: 'task' }
 }
 
 function parseTags(raw) {
@@ -40,6 +40,9 @@ export function draftBody(draft) {
   // Captured already placed under its feature, rather than created and then
   // moved. The capture route accepts it, and it is one column either way.
   if (draft.feature_id) body.feature_id = Number(draft.feature_id)
+  // A stage names which step of a feature this is; with no feature it names
+  // nothing, so it is never sent alone.
+  if (draft.feature_id && draft.kind && draft.kind !== 'task') body.kind = draft.kind
   return body
 }
 
