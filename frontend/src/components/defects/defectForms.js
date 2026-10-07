@@ -73,3 +73,14 @@ export const FORMS = {
     done: 'pointed at its fix task',
   },
 }
+
+// A finished task cannot fix anything, so the picker offers only the ones
+// still in play; any other id stays reachable by typing it.
+const FINISHED = new Set(['done', 'archived'])
+const LINKABLE_MAX = 200
+
+export async function linkableTasks(featureId) {
+  if (!featureId) return []
+  const body = await api.get(`/tasks?feature_id=${featureId}&size=${LINKABLE_MAX}`)
+  return (body.items || []).filter(t => !FINISHED.has(t.status))
+}

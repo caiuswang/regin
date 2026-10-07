@@ -26,6 +26,7 @@ import FeaturePicker from '../pipeline/FeaturePicker.vue'
 import DefectActionForm from './DefectActionForm.vue'
 import DefectMergePicker from './DefectMergePicker.vue'
 import DefectRefusal from './DefectRefusal.vue'
+import DefectTaskPicker from './DefectTaskPicker.vue'
 import { FORMS } from './defectForms'
 
 const props = defineProps({
@@ -170,6 +171,14 @@ async function createFixTask() {
   emit('changed', `#${props.defect.id} will be fixed by task #${body.defect.fix_task_id}.`)
 }
 
+// The fix drift's two ways out: the task was not finished after all, or a
+// fresh one takes over. Neither touches the defect — it stays open either way.
+async function reopenFixTask() {
+  const taskId = props.defect.fix_task_id
+  const body = await call(() => api.patch(`/tasks/${taskId}`, { status: 'idea' }))
+  if (body) emit('changed', `Task #${taskId} reopened for #${props.defect.id}.`)
+}
+
 async function clearFixTask() {
   const ok = await confirm('Clear fix task',
     `Unpoint defect #${props.defect.id} from task #${props.defect.fix_task_id}? The task itself is kept.`)
@@ -252,6 +261,14 @@ async function onRemedy(remedy) {
                   :data-testid="`defect-more-${defect.id}`" data-pl-part="key">⋯</Button>
         </template>
       </DropdownMenu>
+      <template v-if="defect.fix_drift">
+        <Button variant="secondary" size="sm" :disabled="busy"
+                :data-testid="`defect-fix-reopen-${defect.id}`"
+                @click="reopenFixTask">Reopen fix task</Button>
+        <Button variant="secondary" size="sm" :disabled="busy"
+                :data-testid="`defect-fix-replace-${defect.id}`"
+                @click="createFixTask">Create fix task</Button>
+      </template>
       <span v-if="attributeNote" class="note" data-pl-part="hint"
             :data-testid="`defect-fix-create-blocked-${defect.id}`">{{ ATTRIBUTE_FIRST }}</span>
       <input
@@ -280,6 +297,11 @@ async function onRemedy(remedy) {
       </Button>
       <p class="hint">{{ FORMS.attribute.hint }}</p>
     </form>
+    <DefectTaskPicker
+      v-else-if="form === 'fix-item'"
+      v-model="value" :defect="defect" :busy="busy"
+      @submit="submit()"
+    />
     <DefectActionForm
       v-else-if="form"
       v-model="value"

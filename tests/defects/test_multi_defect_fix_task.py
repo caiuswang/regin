@@ -257,6 +257,26 @@ def test_create_on_a_defect_already_on_a_defect_sourced_task(feature_row):
     assert _task_count() == before
 
 
+@pytest.mark.parametrize("finished", ["done", "archived"])
+def test_create_on_a_drift_defect_files_a_new_task(feature_row, native_task,
+                                                   finished):
+    feature = feature_row()
+    row = store.record("ten", feature_id=feature.id)
+    old = native_task(title="hand-made", feature_id=feature.id)
+    store.set_fix_item(row.id, old)
+    with SessionLocal() as session:
+        session.get(AgentTask, old).status = finished
+        session.commit()
+
+    first = fix_items.create_for(row.id)
+    again = fix_items.create_for(row.id)
+
+    assert first.fix_task_id not in (None, old)
+    assert again.fix_task_id == first.fix_task_id
+    assert _task(first.fix_task_id).status == "idea"
+    assert _task(old).status == finished
+
+
 def test_create_still_refuses_a_task_not_created_from_a_defect(
         feature_row, native_task):
     feature = feature_row()

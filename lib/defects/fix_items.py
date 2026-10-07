@@ -46,6 +46,10 @@ def create_for(defect_id: int):
     human writers. `external_id` makes it one task per defect: a second click,
     a second tab or the CLI after the browser all resolve to the first task
     instead of filing a duplicate.
+
+    A defect still open over a task that reads finished (fix drift) gets a
+    NEW task and is re-pointed at it: the finished one's key is spent, so the
+    new one is keyed on the task it replaces.
     """
     row = store.get(defect_id)
     if row.feature_id is None:
@@ -54,6 +58,9 @@ def create_for(defect_id: int):
             f"under — `regin defects attribute {row.id} <ID>` first",
             remedy=store.remedy("attribute", row.id))
     if row.fix_task_id is not None:
+        if store.is_fix_drift(row, _status(row.fix_task_id)):
+            _create([row], replacing=row.fix_task_id)
+            return store.get(row.id)
         if _is_own_task(row):
             return row
         raise store.DefectError(
@@ -79,12 +86,14 @@ def create_batch(defect_ids) -> tuple[int, list]:
     return task_id, [store.get(i) for i in ids]
 
 
-def _create(rows) -> int:
+def _create(rows, replacing=None) -> int:
     from lib.tasks import store as task_store  # noqa: PLC0415
 
     lead = rows[0]
     external_id = f"defect:{lead.id}"
-    blocking = _blocking(rows, _task_keyed(external_id))
+    if replacing is not None:
+        external_id += f":after:{replacing}"
+    blocking = _blocking(rows, _task_keyed(external_id), replacing)
     if blocking:
         raise BatchRefused(
             "; ".join(f"#{i} {why}" for i, why in blocking.items())
@@ -118,7 +127,7 @@ def _task_keyed(external_id: str):
     return task.id if task is not None else None
 
 
-def _blocking(rows, task_id) -> dict[int, str]:
+def _blocking(rows, task_id, replacing=None) -> dict[int, str]:
     """`{defect_id: why}` for every row that cannot join `task_id`. The
     feature is the lowest attributed defect's, so one stray row is named
     rather than the whole selection."""
@@ -131,9 +140,18 @@ def _blocking(rows, task_id) -> dict[int, str]:
         elif row.feature_id != feature_id:
             why[row.id] = (f"belongs to feature #{row.feature_id}, "
                            f"not #{feature_id}")
-        elif row.fix_task_id is not None and row.fix_task_id != task_id:
+        elif row.fix_task_id not in (None, task_id, replacing):
             why[row.id] = f"already points at task #{row.fix_task_id}"
     return why
+
+
+def _status(task_id: int):
+    from lib.orm import SessionLocal  # noqa: PLC0415
+    from lib.orm.models.tasks import AgentTask  # noqa: PLC0415
+
+    with SessionLocal() as session:
+        task = session.get(AgentTask, task_id)
+    return task.status if task is not None else None
 
 
 def _is_own_task(row) -> bool:

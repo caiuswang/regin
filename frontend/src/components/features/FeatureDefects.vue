@@ -16,6 +16,7 @@ import { computed, ref, watch } from 'vue'
 import api from '../../api'
 import Button from '../ui/Button.vue'
 import Card from '../Card.vue'
+import Checkbox from '../ui/Checkbox.vue'
 import Icon from '../ui/Icon.vue'
 import DefectRow from '../defects/DefectRow.vue'
 import { DEFECTS_ANCHOR, defectListLink, defectsLink } from '../../utils/featureLinks'
@@ -47,6 +48,46 @@ const scopeParam = computed(() => byTask.value
   ? `fix_item=${props.fixTaskId}` : `feature_id=${props.feature.id}`)
 const truncated = computed(() => total.value > items.value.length)
 
+// Batching lives on this card and nowhere else: every row here is already
+// blamed on one feature, so a checkbox cannot assert a cause the way one on
+// the global list would. Only open, unlinked rows can join a new task.
+const selected = ref([])
+const blocking = ref([])
+const batchError = ref('')
+const batching = ref(false)
+const selectable = d => props.canWrite && d.status === 'open' && !d.fix_task_id
+const isSelected = id => selected.value.includes(id)
+
+function toggle(id, on) {
+  selected.value = on ? [...selected.value, id] : selected.value.filter(x => x !== id)
+  if (!on) blocking.value = blocking.value.filter(x => x !== id)
+}
+
+function clearBatch() {
+  selected.value = []
+  blocking.value = []
+  batchError.value = ''
+}
+
+async function createBatch() {
+  batching.value = true
+  batchError.value = ''
+  blocking.value = []
+  const ids = [...selected.value].sort((a, b) => a - b)
+  try {
+    const body = await api.post('/defects/fix-task', { defect_ids: ids })
+    if (body?.ok === false) {
+      batchError.value = body.msg
+      blocking.value = body.body?.blocking || []
+      return
+    }
+    selected.value = []
+    await onRowChanged(`${ids.map(i => `#${i}`).join(', ')} will be fixed by task #${body.task_id}.`)
+  } finally {
+    batching.value = false
+  }
+}
+
 // Re-read rather than patch: re-attributing a defect moves it off this
 // feature, and splicing the row back would leave it listed under "every defect
 // blamed on this feature" when it no longer is.
@@ -65,6 +106,9 @@ async function load() {
     if (want !== scopeParam.value) return
     items.value = body.items || []
     total.value = body.pagination?.total ?? items.value.length
+    const still = new Set(items.value.filter(selectable).map(d => d.id))
+    selected.value = selected.value.filter(id => still.has(id))
+    blocking.value = blocking.value.filter(id => still.has(id))
   } catch (e) {
     if (want === scopeParam.value) loadError.value = e?.message || String(e)
   } finally {
@@ -77,7 +121,7 @@ async function load() {
 // would fire on each same-id re-fetch of the feature and unmount the rows,
 // losing the notice a row's write just rendered.
 watch([() => props.feature?.id, () => props.fixTaskId],
-      () => { items.value = []; load() }, { immediate: true })
+      () => { items.value = []; clearBatch(); load() }, { immediate: true })
 defineExpose({ load })
 
 async function onRowChanged(message) {
@@ -104,6 +148,18 @@ async function onRowChanged(message) {
       </Button>
     </div>
 
+    <div v-if="selected.length" class="td-batch" data-testid="feature-defects-batch">
+      <Button
+        variant="secondary" size="sm" :disabled="batching"
+        data-testid="feature-defects-batch-create"
+        @click="createBatch"
+      >Create one fix task ({{ selected.length }})</Button>
+      <Button variant="ghost" size="sm" :disabled="batching"
+              @click="clearBatch">Clear</Button>
+    </div>
+    <p v-if="batchError" class="td-fail" role="alert"
+       data-testid="feature-defects-batch-error">{{ batchError }}</p>
+
     <p v-if="outcome" class="td-note" role="status" data-testid="feature-defect-result">
       {{ outcome }}
     </p>
@@ -125,7 +181,18 @@ async function onRowChanged(message) {
         hide-feature
         flat
         @changed="onRowChanged"
-      />
+      >
+        <template v-if="selectable(defect) || blocking.includes(defect.id)" #select>
+          <Checkbox
+            v-if="selectable(defect)"
+            :model-value="isSelected(defect.id)"
+            :data-testid="`defect-select-${defect.id}`"
+            @update:model-value="on => toggle(defect.id, on)"
+          ><span class="sr-only">Select defect #{{ defect.id }} for one fix task</span></Checkbox>
+          <span v-if="blocking.includes(defect.id)" class="td-blocking"
+                :data-testid="`defect-blocking-${defect.id}`">blocking</span>
+        </template>
+      </DefectRow>
     </ul>
     <p v-if="truncated" class="td-note" data-testid="feature-defects-truncated">
       Showing {{ items.length }} of {{ total }} —
@@ -156,6 +223,15 @@ async function onRowChanged(message) {
 .td-spacer { flex: 1 1 auto; }
 .td-note {
     margin: 0.4rem 0 0; font-size: 11.5px; color: var(--color-fg-muted);
+}
+.td-batch {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem;
+    margin-bottom: 0.4rem;
+}
+.td-blocking {
+    font-size: 11px; color: var(--color-red-700);
+    background: var(--color-red-50); border-radius: 0.3rem;
+    padding: 0 0.3rem;
 }
 .td-fail {
     margin: 0.4rem 0 0; font-size: 11.5px; color: var(--color-amber-800);

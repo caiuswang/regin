@@ -48,6 +48,7 @@ const unblamed = computed(() => props.defect.status === 'open' && !props.defect.
     :data-expanded="collapsible && open ? '' : undefined"
   >
     <div class="head" data-pl-part="card-head">
+      <slot name="select" />
       <PlGlyph :kind="defect.status === 'open' ? 'defect.wild' : 'defect.closed'" />
       <!-- The id is the row's address. A list is a predicate plus a page
            position, and neither survives being sent to someone else; a
@@ -61,6 +62,11 @@ const unblamed = computed(() => props.defect.status === 'open' && !props.defect.
             :class="defect.status === 'open' ? 'ledger-tag-amber' : 'ledger-tag-green'"
             data-pl-part="tag" :data-tone="defect.status === 'open' ? 'warn' : 'ship'"
       >{{ defect.status }}</span>
+      <!-- Open while its fix task reads finished: regin never writes one side
+           from the other, so this is the only place the gap shows. -->
+      <span v-if="defect.fix_drift" class="ledger-tag ledger-tag-amber"
+            data-pl-part="tag" data-tone="warn"
+            :data-testid="`defect-fix-drift-${defect.id}`">fix done · still open</span>
       <span v-if="reopenedLabel(defect.round)" class="ledger-tag" data-pl-part="tag" data-pl-dashed="">{{ reopenedLabel(defect.round) }}</span>
       <!-- Held out of the queue, and only while it is. Separate from `status`
            because a declined report and a fixed bug are both closed, and only
