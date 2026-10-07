@@ -485,6 +485,8 @@ def start_run(task_id: int) -> Optional[dict]:
     _refuse_unrunnable(task)
     row = open_attempt(task_id)
     kwargs = _launch_kwargs(row["params"])
+    if tmux_runs.is_tmux(row["params"]):
+        return _start_tmux(task, row, kwargs)
     try:
         runner = _channel_launcher((row["params"] or {}).get("provider")
                                    or "claude")
@@ -492,8 +494,6 @@ def start_run(task_id: int) -> Optional[dict]:
         raise _refuse_launch(row, exc) from exc
     if runner is not None:
         return _start_channel(task, row, runner, kwargs)
-    if tmux_runs.is_tmux(row["params"]):
-        return _start_tmux(task, row, kwargs)
     try:
         handle = supervisor.launch_run(_prompt(task, row["id"],
                                                row["params"]),
@@ -513,7 +513,7 @@ def start_run(task_id: int) -> Optional[dict]:
 
 def _channel_launcher(provider_id: str):
     """The provider's structured-channel launcher, or None for Claude (the
-    sdk/tmux arms below). Feature #140's seam: adding a channel-launched
+    sdk arm below). Feature #140's seam: adding a channel-launched
     provider is an adapter override, not a branch here. Any other provider
     without a channel is refused, never launched as Claude."""
     if provider_id == "claude":

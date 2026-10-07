@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import re
 import time
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 from lib.agent_bridge import mod_channel, store
 from lib.agent_bridge.answer_delivery import (
@@ -55,6 +55,9 @@ from lib.agent_bridge.pane_io import (
     sanitize_text,
 )
 from lib.settings import settings
+
+if TYPE_CHECKING:
+    from lib.providers.base import PaneInput
 
 
 class CaptureResult(NamedTuple):
@@ -222,6 +225,63 @@ def deliver(trace_id: str, text: str,
     result = _type_and_ack(row, clean, identity["in_mode"], as_command)
     log.write("bridge_delivery_outcome", trace_id=trace_id,
               delivered=result.delivered, detail=result.detail)
+    return result
+
+
+# The probed kimi drew its composer ~1.7s after spawn; MCP servers it connects
+# at startup add to that. Past the budget the turn is refused, never typed blind.
+_READY_ATTEMPTS = 60
+_READY_INTERVAL_SEC = 0.25
+
+
+def _await_composer(socket: str | None, pane: str,
+                    ready: re.Pattern) -> str | None:
+    """The first capture showing the composer, or None if none ever does."""
+    for attempt in range(_READY_ATTEMPTS):
+        if attempt:
+            time.sleep(_READY_INTERVAL_SEC)
+        capture = _tmux(socket, "capture-pane", "-pt", pane, "-S", "-40")
+        if capture.returncode == 0 and ready.search(capture.stdout or ""):
+            return capture.stdout
+    return None
+
+
+def deliver_first_turn(trace_id: str, text: str,
+                       typing: "PaneInput") -> DeliveryResult:
+    """Type a just-launched pane session's first turn, for a CLI whose argv
+    cannot carry one, the way `typing` says its composer takes input.
+
+    Uncapped, unlike `deliver`: this is a task prompt, whose finish
+    instruction comes last, not an operator message. Refused (never raised)
+    when the pane is not the registered CLI, the composer never draws, or the
+    paste is not seen landing — and then nothing is submitted.
+    """
+    row = store.get_reachable_pane(trace_id)
+    if row is None:
+        return _refuse(trace_id, "no reachable session")
+    identity = _verify_identity(row)
+    if not identity["ok"]:
+        return _refuse(trace_id, identity["detail"])
+    socket, pane = row.get("tmux_socket"), row["pane_id"]
+    screen = _await_composer(socket, pane, re.compile(typing.ready))
+    if screen is None:
+        return _refuse(trace_id, "composer never appeared")
+    chip = re.compile(typing.paste_chip)
+    clean = sanitize_body(text, capped=False)
+    r = _tmux(socket, "send-keys", "-l", "-t", pane, "--",
+              _pasted_payload(clean))
+    if r.returncode != 0:
+        return _refuse(trace_id, f"send-keys failed: {r.stderr.strip()}")
+    refusal = _composer_ack_refusal(socket, pane, clean,
+                                    _paste_chip_high_water(screen, chip), chip)
+    if refusal:
+        return _refuse(trace_id, f"typed text {refusal}")
+    r = _tmux(socket, "send-keys", "-t", pane, typing.submit_key)
+    if r.returncode != 0:
+        return _refuse(trace_id, f"submit failed: {r.stderr.strip()}")
+    result = DeliveryResult(True, f"delivered to {pane}")
+    log.write("bridge_delivery_outcome", trace_id=trace_id, delivered=True,
+              detail=result.detail, op="first_turn")
     return result
 
 

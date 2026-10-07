@@ -21,6 +21,8 @@ from dataclasses import dataclass
 
 from lib.activity_log import get_activity_logger
 from lib.agent_bridge import attach
+from lib.agent_bridge.pane_io import allowed_pane_commands
+from lib.providers.registry import build_provider
 from lib.settings import settings
 
 log = get_activity_logger("agent_bridge")
@@ -52,8 +54,8 @@ def unavailable_reason(role: str | None) -> str:
     return _binaries_missing()
 
 
-def detached_unavailable_reason() -> str:
-    """Why a detached run cannot start here, or "".
+def detached_unavailable_reason(binary: str = "claude") -> str:
+    """Why a detached run of `binary` cannot start here, or "".
 
     Narrower than `unavailable_reason`: `terminal_enabled` gates the browser
     shell onto a pane, and the role is the caller's — a task run fired by a
@@ -61,11 +63,11 @@ def detached_unavailable_reason() -> str:
     """
     if not settings.agent_bridge.enabled:
         return "bridge disabled"
-    return _binaries_missing()
+    return _binaries_missing(binary)
 
 
-def _binaries_missing() -> str:
-    missing = [b for b in ("tmux", "claude") if shutil.which(b) is None]
+def _binaries_missing(binary: str = "claude") -> str:
+    missing = [b for b in ("tmux", binary) if shutil.which(b) is None]
     if missing:
         return f"{' and '.join(missing)} not found on the server's PATH"
     return ""
@@ -73,25 +75,6 @@ def _binaries_missing() -> str:
 
 def _session_name(trace_id: str) -> str:
     return f"term-{trace_id[:8]}"
-
-
-def _argv(trace_id: str, *, model: str, effort: str, permission_mode: str,
-          prompt: str, resume: bool) -> list[str]:
-    # Absolute: the tmux server may predate this process and does not carry
-    # its PATH, and an nvm-installed claude is on no system path.
-    # `--resume` without `--fork-session` keeps the session's own id, so the
-    # id is still regin's to name — it is just not a fresh one.
-    argv = [shutil.which("claude") or "claude",
-            "--resume" if resume else "--session-id", trace_id]
-    for flag, value in (("--model", model), ("--effort", effort),
-                        ("--permission-mode", permission_mode)):
-        if value:
-            argv += [flag, value]
-    if prompt:
-        # `--` ends option parsing: a prompt opening with `-` (a markdown
-        # bullet, or `--dangerously-skip-permissions`) is a first turn, never a flag.
-        argv += ["--", prompt]
-    return argv
 
 
 def _resumed_id(resume: str) -> str:
@@ -131,20 +114,14 @@ def launch_terminal(*, role: str | None, cwd: str | None, model: str = "",
     trace_id = _resumed_id(resume) if resume else str(uuid.uuid4())
     launched = spawn_detached(
         _session_name(trace_id), trace_id, cwd=cwd,
-        argv=_argv(trace_id, model=model, effort=effort,
-                   permission_mode=permission_mode, prompt=prompt,
-                   resume=bool(resume)))
+        argv=build_provider("claude").pane_argv(
+            trace_id, model=model, effort=effort,
+            permission_mode=permission_mode, prompt=prompt,
+            resume=bool(resume)))
     log.write("bridge_terminal_launched", trace_id=trace_id,
               pane_id=launched.pane_id, resumed=bool(resume),
               tmux_socket=settings.agent_bridge.attach_socket)
     return launched
-
-
-def claude_argv(trace_id: str, *, model: str = "", effort: str = "",
-                permission_mode: str = "", prompt: str = "") -> list[str]:
-    """A fresh `claude --session-id <trace_id>` command line."""
-    return _argv(trace_id, model=model, effort=effort,
-                 permission_mode=permission_mode, prompt=prompt, resume=False)
 
 
 def spawn_detached(name: str, trace_id: str, *, cwd: str | None,
@@ -172,9 +149,10 @@ def spawn_detached(name: str, trace_id: str, *, cwd: str | None,
     identity = attach._pane_identity(name)
     if identity is None:
         attach.release_session(name, trace_id)
-        raise TerminalLaunchRefused("claude exited before its pane could be read")
+        raise TerminalLaunchRefused(
+            f"{os.path.basename(argv[0])} exited before its pane could be read")
     pane_id, server_pid, pane_pid, command = identity
-    if command not in settings.agent_bridge.allowed_pane_commands:
+    if command not in allowed_pane_commands():
         attach.release_session(name, trace_id)
         raise TerminalLaunchRefused(f"pane is running {command!r}, not the CLI")
     attach._record(trace_id, pane_id, server_pid, pane_pid, cwd=workdir)

@@ -35,6 +35,7 @@ import subprocess
 from dataclasses import dataclass
 
 from lib.activity_log import get_activity_logger
+from lib.agent_bridge.pane_io import allowed_pane_commands
 from lib.orm.engine import get_connection
 from lib.settings import settings
 
@@ -147,7 +148,7 @@ def take_over(trace_id: str) -> AttachResult:
     pane_id, server_pid, pane_pid, command = existing
     # The same guard the hook applies, for the same reason: a pane that has
     # fallen back to a shell would run a delivered message as a command.
-    if command not in settings.agent_bridge.allowed_pane_commands:
+    if command not in allowed_pane_commands():
         release(trace_id)
         return AttachResult(
             False, f"pane is running {command!r}, not the CLI")

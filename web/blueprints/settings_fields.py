@@ -410,10 +410,12 @@ _AGENT_BRIDGE_FIELDS = [
     {"key": "allowed_pane_commands", "group": "Steering", "type": "list",
      "label": "Allowed pane commands",
      "description": "A pane only accepts delivery when its foreground process "
-                    "is one of these. The guard that stops a message typed at "
-                    "a fallen-back shell from executing as a shell command "
-                    "(native builds report claude.exe; NVM installs report "
-                    "claude or node)."},
+                    "is one of these, or one a provider declares for its CLI. "
+                    "The guard that stops a message typed at a fallen-back "
+                    "shell from executing as a shell command (native builds "
+                    "report claude.exe; NVM installs report claude or node; "
+                    "kimi reports node). Adds to the providers' commands; "
+                    "cannot remove one."},
     {"key": "terminal_enabled", "group": "Pane terminal", "type": "bool",
      "label": "Pane terminal enabled (full shell access)",
      "description": "Serves a real terminal on the trace page over a "

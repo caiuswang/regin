@@ -48,7 +48,7 @@ def test_provider_declares_launch_capabilities():
     assert claude["binary"] == "claude"
 
     kimi = build_provider("kimi").launch_capabilities()
-    assert kimi["launch_modes"] == ["sdk"]
+    assert kimi["launch_modes"] == ["sdk", "tmux"]
     assert kimi["fields"] == ["model"]
     assert kimi["binary"] == "kimi"
     assert kimi["labels"]["sdk"] == "ACP"
@@ -69,16 +69,17 @@ def test_arm_rejects_provider_without_launch_channel(provider_id):
     assert provider_id in str(err.value)
 
 
-def test_arm_rejects_launch_mode_provider_does_not_declare():
+def test_arm_rejects_launch_mode_provider_does_not_declare(sdk_only):
     with pytest.raises(CaptureRejected) as err:
-        parse_arm({"provider": "kimi", "launch": "tmux"})
+        parse_arm({"provider": "sdkonly", "launch": "tmux"})
     assert err.value.field == "launch"
-    assert "kimi" in str(err.value) and "tmux" in str(err.value)
+    assert "sdkonly" in str(err.value) and "tmux" in str(err.value)
 
 
 def test_arm_accepts_launch_mode_provider_declares():
-    fields = parse_arm({"provider": "kimi", "launch": "sdk"})
-    assert fields["params"]["launch"] == "sdk"
+    for mode in ("sdk", "tmux"):
+        fields = parse_arm({"provider": "kimi", "launch": mode})
+        assert fields["params"]["launch"] == mode
 
 
 def test_arm_rejects_field_provider_does_not_declare(sdk_only):
@@ -119,8 +120,9 @@ def test_launch_options_lists_providers_with_availability(flask_client,
     assert set(rows) == {"claude", "kimi"}
     assert rows["kimi"] == {
         "id": "kimi", "display_name": "Kimi Code", "binary": "kimi",
-        "available": True, "launch_modes": ["sdk"], "fields": ["model"],
-        "labels": {"sdk": "ACP"}, "models": [], "default_model": ""}
+        "available": True, "launch_modes": ["sdk", "tmux"],
+        "fields": ["model"], "labels": {"sdk": "ACP", "tmux": "tmux"},
+        "models": [], "default_model": ""}
     assert rows["claude"]["available"] is False
     assert rows["claude"]["launch_modes"] == ["sdk", "tmux"]
     assert rows["claude"]["binary"] == "claude"
