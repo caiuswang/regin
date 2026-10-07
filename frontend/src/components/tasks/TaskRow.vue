@@ -69,13 +69,14 @@ const runCount = computed(() => props.task.run_count || 0)
     data-pl-part="row"
     :class="{ 'task-row-selected': selected, 'task-row-archived': archived }"
     :data-status="task.status"
+    :data-selected="selected || undefined"
     :data-feature="task.feature_id ?? undefined"
     data-testid="task-row"
   >
     <!-- No expand control: a task has attempts, not child tasks, and the
          attempts open from the row's own page. The gap keeps every row's
          checkbox on the column the group header's chevron sits in. -->
-    <span class="task-expand-gap" aria-hidden="true" />
+    <span class="task-expand-gap" data-pl-part="row-gap" aria-hidden="true" />
 
     <Checkbox
       v-if="selectable && canWrite"
@@ -118,6 +119,7 @@ const runCount = computed(() => props.task.run_count || 0)
         variant="ghost"
         size="sm"
         class="task-attempts"
+        data-pl-part="tag"
         :aria-label="`Run history of ${ref_}`"
         data-testid="task-run-count"
         @click="$emit('open', 'runs', task)"
@@ -128,20 +130,24 @@ const runCount = computed(() => props.task.run_count || 0)
         v-if="answered"
         :color="live ? 'green' : 'red'"
         :label="live ? 'live' : 'not live'"
+        data-pl-part="tag"
+        :data-tone="live ? 'run' : 'fail'"
         :data-testid="live ? 'task-live' : 'task-not-live'"
       />
       <Badge
         v-if="project"
         color="cyan"
         :label="project.name"
+        data-pl-part="tag"
         data-testid="task-project"
       />
-      <Badge v-for="tag in task.tags" :key="tag" color="purple" :label="tag" />
+      <Badge v-for="tag in task.tags" :key="tag" color="purple" :label="tag" data-pl-part="tag" />
       <!-- A count, not thumbnails: a 50-row page would otherwise pull one
            authenticated blob per image just to render the list. -->
       <Badge
         v-if="imageCount"
         color="blue"
+        data-pl-part="tag"
         :label="imageCount === 1 ? '1 image' : `${imageCount} images`"
         data-testid="task-image-count"
       />
@@ -149,7 +155,7 @@ const runCount = computed(() => props.task.run_count || 0)
 
     <!-- Its own column, not the tail of the badge row: a date that starts
          wherever the tags happened to end cannot be scanned down. -->
-    <span class="task-day" :title="dayTitle" data-testid="task-day">{{ day }}</span>
+    <span class="task-day" :title="dayTitle" data-pl-part="meta-label" data-testid="task-day">{{ day }}</span>
 
     <div class="task-actions">
       <span class="task-primary">

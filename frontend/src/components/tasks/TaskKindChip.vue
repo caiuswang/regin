@@ -13,5 +13,5 @@ const color = computed(() => COLOR[props.kind] || '')
 </script>
 
 <template>
-  <Badge v-if="color" :color="color" :label="kind" data-testid="task-kind-chip" />
+  <Badge v-if="color" :color="color" :label="kind" data-pl-part="tag" data-testid="task-kind-chip" />
 </template>

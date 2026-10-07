@@ -182,6 +182,12 @@ export function statusGlyph(status) {
   return STATUS_GLYPH[status] || 'task.idea'
 }
 
+export function groupGlyph(group) {
+  if (group.param === 'status') return statusGlyph(group.key)
+  if (group.param === 'priority') return `priority.${group.key}`
+  return group.key === BACKLOG.key ? 'project.none' : 'project'
+}
+
 export function nextStepGlyph(key) {
   return NEXT_STEP_GLYPH[key] || 'task.ready'
 }

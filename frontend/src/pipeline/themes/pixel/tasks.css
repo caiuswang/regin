@@ -39,6 +39,22 @@ html[data-pl-theme="pixel"] [data-pl-part="tag"][data-tone="warn"] {
     color: var(--pl-warn);
 }
 
+html[data-pl-theme="pixel"] [data-pl-part="tag"][data-tone="run"] {
+    box-shadow: inset 0 0 0 1px var(--pl-run-line);
+    color: var(--pl-run);
+}
+
+/* The attempts count is a button drawn as a tag: classic's ghost key height. */
+html[data-pl-theme="pixel"] [data-pl-part="tag"]:is(button) {
+    height: auto;
+    border: 0;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="tag"]:is(button):hover {
+    color: var(--pl-text);
+    box-shadow: inset 0 0 0 1px var(--pl-frame);
+}
+
 html[data-pl-theme="pixel"] [data-pl-part="tag"] button {
     border-radius: 0;
 }
@@ -160,9 +176,76 @@ html[data-pl-theme="pixel"] [data-pl-part="group-rows"] {
     border-left: 1px solid var(--pl-rule);
 }
 
+/* ── Status / priority / project groups and the flat list ────────────── */
+/* Classic boxes each group and the flat list in a rounded card with a shaded
+   head bar; the quest log draws them as the next-step list does — a bare
+   chapter head with its rows hanging under it, on the panel's own paper. */
+html[data-pl-theme="pixel"] [data-pl-part="group"],
+html[data-pl-theme="pixel"] [data-pl-part="list"] {
+    border: 0;
+    border-radius: 0;
+    background: none;
+    overflow: visible;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="group"] > [data-pl-part="group-head"] {
+    gap: 0.625rem;
+    padding: 0.625rem 0.5rem 0.25rem;
+    border-bottom: 0;
+    background: none;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="group"] > [data-pl-part="group-head"]:hover {
+    background: var(--pl-paper-2);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="group"] [data-pl-part="more"] {
+    border: 0;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="group"] [data-pl-part="group-foot"] {
+    border-top-color: var(--pl-rule);
+}
+
+/* The date closes the row, after the keys, as on a next-step row; the head
+   over it moves with it. */
+html[data-pl-theme="pixel"] [data-pl-part="list"] > [data-pl-part="list-head"] {
+    padding-right: 0.75rem;
+    border-bottom-color: var(--pl-rule);
+    background: none;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="row"] [data-testid="task-day"] {
+    order: 1;
+}
+
+/* Under a group head the rows already hang from the head's rule, so the
+   chevron-wide gap classic keeps would push the checkbox off the sprite. */
+html[data-pl-theme="pixel"] [data-pl-part="group-rows"] [data-pl-part="row-gap"] {
+    display: none;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="group-rows"] [data-pl-part="row"][data-testid="task-row"] {
+    padding-left: 0;
+}
+
 /* ── List rows ───────────────────────────────────────────────────────── */
 html[data-pl-theme="pixel"] [data-pl-part="row"] {
     border-color: var(--pl-rule);
+}
+
+/* TaskRow's own surface: paper, never classic's tinted hover or selection. */
+html[data-pl-theme="pixel"] [data-pl-part="row"][data-testid="task-row"] {
+    background: var(--pl-paper);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="row"][data-testid="task-row"]:hover {
+    background: var(--pl-paper-2);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="row"][data-testid="task-row"][data-selected] {
+    background: var(--pl-paper-2);
+    box-shadow: inset 2px 0 0 var(--pl-frame);
 }
 
 /* Silkscreen keys outgrow classic's 8.5rem action slot (WATCH + STOP,

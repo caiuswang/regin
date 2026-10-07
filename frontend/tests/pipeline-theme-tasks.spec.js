@@ -252,6 +252,68 @@ test.describe('pixel theme — tasks', () => {
     expect(lanes.some(l => l.endsWith('no feature'))).toBe(true)
   })
 
+  // The prototype draws only the next-step grouping; every other list shape
+  // has to read as the same quest log, not as classic's rounded cards.
+  for (const appearance of ['light', 'dark']) {
+    test(`every grouping reads as the quest log (${appearance})`, async ({ page }) => {
+      await page.setViewportSize({ width: 1440, height: 900 })
+      const tag = mark()
+      const ids = seed(tag)
+      await page.addInitScript((t) => {
+        localStorage.setItem('regin_theme', t)
+        localStorage.setItem('regin_pipeline_theme', 'pixel')
+      }, appearance)
+
+      const SPRITES = {
+        status: { idea: 'bulb', armed: 'bot', running: 'bot.running', failed: 'bot.failed', done: 'check' },
+        priority: { urgent: 'bars.4', high: 'bars.3', medium: 'bars.2', low: 'bars.1', none: 'bars.0' },
+        project: { none: 'tray' },
+      }
+      const failures = []
+      for (const group of ['none', 'status', 'priority', 'project']) {
+        await page.goto(`/tasks?tag=${tag}&view=list&group=${group}`)
+        await expect(page.locator(`#task-${ids.ready}`)).toBeVisible()
+        await pixelReady(page)
+        await page.mouse.move(0, 0)
+
+        const boxes = await page.locator('[data-pl-part="group"], [data-pl-part="list"]').evaluateAll(els =>
+          els.map((el) => {
+            const cs = getComputedStyle(el)
+            const head = el.querySelector(':scope > [data-pl-part="group-head"], :scope > [data-pl-part="list-head"]')
+            return [cs.borderTopWidth, cs.borderTopLeftRadius, head ? getComputedStyle(head).backgroundColor : 'none']
+          }))
+        expect(boxes.length, group).toBeGreaterThan(0)
+        for (const box of boxes) expect(box, group).toEqual(['0px', '0px', 'rgba(0, 0, 0, 0)'])
+
+        if (group === 'none') {
+          const head = await page.getByTestId('task-day-head').boundingBox()
+          const day = await page.locator(`#task-${ids.running}`).getByTestId('task-day').boundingBox()
+          expect(Math.abs((head.x + head.width) - (day.x + day.width)), 'date head over the date column').toBeLessThan(2)
+        } else {
+          const heads = await page.locator('[data-testid^="task-group-toggle-"]').evaluateAll(hs => hs.map(h => [
+            h.getAttribute('data-testid').replace('task-group-toggle-', ''),
+            h.querySelector('[data-pl-glyph]')?.getAttribute('data-sprite') ?? null,
+            getComputedStyle(h.querySelector('[data-pl-part="group-label"]')).fontFamily,
+          ]))
+          for (const [key, sprite, font] of heads) {
+            expect(sprite, `${group}/${key}`).not.toBeNull()
+            expect(font).toMatch(/^"?Silkscreen/)
+          }
+          expect(Object.fromEntries(heads.map(([k, s]) => [k, s]))).toMatchObject(SPRITES[group])
+        }
+
+        const row = page.locator(`#task-${ids.running}`)
+        for (const part of [row.getByTestId('task-day'), row.getByTestId('task-run-count'), row.locator('.badge').first()]) {
+          expect(await part.evaluate(el => getComputedStyle(el).fontFamily), group).toMatch(/^"?Silkscreen/)
+        }
+
+        const audit = await page.evaluate(colourAudit)
+        failures.push(...audit.failures.map(f => `group=${group}: ${f}`))
+      }
+      expect(failures).toEqual([])
+    })
+  }
+
   test('classic draws no chapters and no sprites', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
     const tag = mark()

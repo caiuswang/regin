@@ -11,7 +11,7 @@ import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
 import PlGlyph from '../pipeline/PlGlyph.vue'
 import TaskRows from './TaskRows.vue'
-import { groupChapter, statusGlyph } from '../../utils/taskMeta.js'
+import { groupChapter, groupGlyph } from '../../utils/taskMeta.js'
 import { useTaskFeed } from '../../composables/useTasks.js'
 
 const props = defineProps({
@@ -74,7 +74,7 @@ defineExpose({ reload: () => { fetched.value = false; if (open.value) load() } }
 </script>
 
 <template>
-  <section class="tg" :data-testid="`task-group-${group.key}`">
+  <section class="tg" data-pl-part="group" :data-testid="`task-group-${group.key}`">
     <Button
       variant="ghost"
       class="tg-head"
@@ -86,14 +86,14 @@ defineExpose({ reload: () => { fetched.value = false; if (open.value) load() } }
       @click="open = !open"
     >
       <Icon :name="open ? 'chevron-down' : 'chevron-right'" :size="14" />
-      <PlGlyph v-if="group.param === 'status'" :kind="statusGlyph(group.key)" :scale="2" />
+      <PlGlyph :kind="groupGlyph(group)" :scale="2" />
       <span class="tg-label" data-pl-part="group-label" :data-pl-chapter="groupChapter(index)">{{ group.label }}</span>
       <span class="tg-count" data-pl-part="count" :data-testid="`task-group-count-${group.key}`">
         {{ group.count }}
       </span>
     </Button>
 
-    <div v-if="open" class="tg-body">
+    <div v-if="open" class="tg-body" data-pl-part="group-rows">
       <div v-if="feed.loading.value" class="tg-note">Loading…</div>
       <div v-else-if="feed.error.value" class="tg-note" role="alert">
         {{ feed.error.value }}
@@ -116,10 +116,11 @@ defineExpose({ reload: () => { fetched.value = false; if (open.value) load() } }
           @focus="id => emit('focus', id)"
           @select="t => emit('select', t)"
         />
-        <div v-if="feed.hasNext.value" class="tg-more">
+        <div v-if="feed.hasNext.value" class="tg-more" data-pl-part="group-foot">
           <Button
             variant="ghost"
             size="sm"
+            data-pl-part="more"
             :disabled="feed.loadingMore.value"
             :data-testid="`task-group-more-${group.key}`"
             @click="more()"

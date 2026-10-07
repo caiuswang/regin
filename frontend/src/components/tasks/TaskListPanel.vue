@@ -254,7 +254,7 @@ defineExpose({ reload: afterWrite })
 
     <BulkRejected v-if="bulkRejected.length" :rows="bulkRejected" @dismiss="bulkRejected = []" />
 
-    <div v-if="canWrite && selection.visible.value.length" class="tl-selectall">
+    <div v-if="canWrite && selection.visible.value.length" class="tl-selectall" data-pl-part="meta-label">
       <Checkbox
         :model-value="selection.allVisibleSelected.value"
         :indeterminate="selection.someVisibleSelected.value"
@@ -309,9 +309,9 @@ defineExpose({ reload: afterWrite })
     </template>
 
     <template v-else-if="status === 'rows'">
-      <div class="tl-list" :class="{ 'is-busy': flat.loading.value }" :aria-busy="flat.loading.value" data-testid="task-list">
-        <div class="tl-head" :class="{ 'can-write': canWrite }" aria-hidden="true">
-          <span class="tl-head-day" data-testid="task-day-head">{{ dateField === 'updated_at' ? 'Updated' : 'Created' }}</span>
+      <div class="tl-list" data-pl-part="list" :class="{ 'is-busy': flat.loading.value }" :aria-busy="flat.loading.value" data-testid="task-list">
+        <div class="tl-head" data-pl-part="list-head" :class="{ 'can-write': canWrite }" aria-hidden="true">
+          <span class="tl-head-day" data-pl-part="meta-label" data-testid="task-day-head">{{ dateField === 'updated_at' ? 'Updated' : 'Created' }}</span>
         </div>
         <TaskRows
           :tasks="flat.items.value"
