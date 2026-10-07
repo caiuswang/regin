@@ -1,14 +1,10 @@
 import { computed, ref } from 'vue'
 import api from '../api'
+import {
+  CUSTOM_MODEL, DEFAULT_PROVIDER, declares, deferOption, launchDeclared, useLaunchProviders,
+} from './useLaunchProviders.js'
 
-// Sentinel for "not one of the offered aliases" — the same escape hatch the
-// /live launch sheet keeps, because the arm allowlist accepts any model string
-// and an operator pinning an exact id must stay able to say so.
-export const CUSTOM_MODEL = '__custom__'
-
-// D1 of #140: an arm that names no provider runs on claude, whatever the
-// install's active provider is.
-export const DEFAULT_PROVIDER = 'claude'
+export { CUSTOM_MODEL, DEFAULT_PROVIDER, declares }
 
 const LAUNCH_MODES = ['sdk', 'tmux']
 const LAUNCH_HINTS = { sdk: 'ends if the server restarts', tmux: 'survives a server restart' }
@@ -55,16 +51,6 @@ export function armDraft(task) {
   }
 }
 
-// No row means a server that serves no capabilities: every field is offered,
-// exactly as before providers were declared.
-export function declares(row, field) {
-  return !row || row.fields.includes(field)
-}
-
-function launchDeclared(row, mode) {
-  return !row || row.launch_modes.includes(mode)
-}
-
 // Invariant 4: a field the provider does not declare is not sent at all —
 // the server refuses an undeclared model, and an absent key is the only
 // honest way to say "this provider has no such setting".
@@ -95,13 +81,6 @@ function armBody(draft, row) {
     if (also.length) body.skill.also = also
   }
   return body
-}
-
-function deferOption(configured, noun) {
-  return {
-    value: '',
-    label: configured ? `use server setting (${configured})` : `${noun} default`,
-  }
 }
 
 /**
@@ -199,25 +178,9 @@ export function useTaskArm() {
     return skillsLoaded.value && !skillNames.value.has(name)
   }
 
-  const providers = computed(() => options.value?.providers || [])
-
-  function providerRow(id) {
-    return providers.value.find(p => p.id === (id || DEFAULT_PROVIDER)) || null
-  }
-
-  // A provider whose CLI is not on PATH stays listed, disabled, naming the
-  // binary — the operator learns what to install instead of wondering why
-  // kimi is not offered.
-  const providerOptions = computed(() => providers.value.map(p => ({
-    value: p.id,
-    label: p.available ? p.display_name : `${p.display_name} — ${p.binary || p.id} not on PATH`,
-    disabled: !p.available,
-  })))
-
-  function providerModels(id) {
-    const row = providerRow(id)
-    return row ? row.models || [] : options.value?.models || []
-  }
+  const {
+    providers, providerRow, providerOptions, providerModels, modelOptions,
+  } = useLaunchProviders(options)
 
   function launchOptions(id) {
     const row = providerRow(id)
@@ -229,16 +192,6 @@ export function useTaskArm() {
         hint: LAUNCH_HINTS[mode],
       }
     })
-  }
-
-  function modelOptions(id) {
-    const row = providerRow(id)
-    const configured = row ? row.default_model : options.value?.default_model
-    return [
-      deferOption(configured, 'CLI'),
-      ...providerModels(id).map(m => ({ value: m, label: m })),
-      { value: CUSTOM_MODEL, label: 'custom…' },
-    ]
   }
 
   const cwdOptions = computed(() => [

@@ -180,7 +180,7 @@ def resume_refusal(session_id: str) -> str:
     which of those it is decides whether that emptiness is a dead conversation
     or one the CLI is still holding.
     """
-    from lib.providers import get_active_provider
+    from lib.providers.base import provider_for_trace
     from lib.settings import settings
 
     if not session_id or session_id.startswith(_SYNTHETIC_PREFIX):
@@ -189,13 +189,13 @@ def resume_refusal(session_id: str) -> str:
         return 'tier_off'
     from lib.agent_sdk import store
 
-    provider = get_active_provider()
+    provider = provider_for_trace(session_id)
     run = store.find_run(session_id)
     return _refusal(session_id, run["trace_id"] if run else None,
                     provider, provider.live_session_ids)
 
 
-def _entry(row, run: tuple[str, str] | None) -> dict:
+def _entry(row, run: tuple[str, str] | None, provider: str) -> dict:
     """One picker row. `title`/`cwd` are normalised to strings so the client
     renders a missing one as blank rather than the word "None".
 
@@ -208,6 +208,9 @@ def _entry(row, run: tuple[str, str] | None) -> dict:
     instead of silently dropping to the install default — a change of model
     mid-conversation is not something the operator asked for or would see.
     Blank for a terminal session, which regin recorded no model for.
+
+    `provider` is the CLI that recorded the session, which is the one that
+    can reopen it — the launch route resumes on it whatever is active.
     """
     run_trace, model = run or ('', '')
     return {
@@ -219,6 +222,7 @@ def _entry(row, run: tuple[str, str] | None) -> dict:
         'kind': 'run' if run_trace else 'session',
         'run_trace_id': run_trace,
         'model': model,
+        'provider': provider,
     }
 
 
@@ -233,20 +237,35 @@ def list_resumable(query: str = "", limit: int = 30) -> list[dict]:
     run route — whether a pick continues the trace or opens a new one is the
     launch route's rule, and a client re-deriving it would drift.
     """
-    from lib.providers import get_active_provider
+    from lib.providers.base import provider_for_agent_type
 
     rows = _candidate_rows(query.strip(), max(1, limit))
     runs = _runs_by_child([r.trace_id for r in rows])
-    provider = get_active_provider()
-    # Memoized for the page, not asked once per candidate: the probe shells out
-    # to the CLI, and this loop runs over the whole overfetched window.
-    held = functools.lru_cache(maxsize=1)(provider.live_session_ids)
+    providers = _ProviderCache()
 
     out: list[dict] = []
     for row in rows:
         if len(out) >= limit:
             break
         run = runs.get(row.trace_id)
-        if _offerable(row.trace_id, run[0] if run else None, provider, held):
-            out.append(_entry(row, run))
+        provider = provider_for_agent_type(row.agent_type)
+        if _offerable(row.trace_id, run[0] if run else None, provider,
+                      providers.held(provider)):
+            out.append(_entry(row, run, provider.provider_id))
     return out
+
+
+class _ProviderCache:
+    """One held-ids probe per provider for the page, not one per candidate:
+    the probe shells out to the CLI, and the loop runs over the whole
+    overfetched window."""
+
+    def __init__(self) -> None:
+        self._held: dict[str, object] = {}
+
+    def held(self, provider):
+        pid = provider.provider_id
+        if pid not in self._held:
+            self._held[pid] = functools.lru_cache(maxsize=1)(
+                provider.live_session_ids)
+        return self._held[pid]

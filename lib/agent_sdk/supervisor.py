@@ -353,6 +353,41 @@ def launch(prompt: str, *, cwd: str | None = None,
                       resume=resume, trace_id=trace_id).trace_id
 
 
+def launch_channel(runner, prompt: str, *, cwd: str | None = None,
+                   model: str = "", one_shot: bool = False,
+                   resume: str | None = None) -> str:
+    """`launch` for a provider whose session runs over its own structured
+    channel (`AgentProvider.channel_launcher`, kimi's ACP).
+
+    The channel answers with the real session id before the first turn, so
+    there is no `sdk-…` placeholder: a fresh run is traced under that id, and
+    a resume is taken over under the id it continues. A resume is reserved for
+    the handshake — the channel registers the handle only once the session is
+    loaded, and two clicks inside that window would load one session twice —
+    and its trace row is revived up front for the same reason `launch_run`
+    revives one.
+    """
+    _refuse_unless_launchable(prompt, one_shot)
+    token = object()
+    if resume and not registry.reserve_run(resume, token):
+        raise LaunchRefused("that session is already starting")
+    revived = store.revive_trace_session(resume) if resume else []
+    try:
+        handle = runner(prompt, cwd=cwd, model=model, one_shot=one_shot,
+                        resume=resume)
+    except BaseException:
+        registry.release_run(resume or "", token)
+        _undo_revive(resume or "", revived)
+        raise
+    registry.hand_over_reservation(resume or "", token, handle)
+    # On close, not on the handle's settle: an interrupted turn settles it
+    # while the session is still open, which would spend the undo early.
+    handle.add_close_callback(lambda: _undo_revive(handle.trace_id, revived))
+    log.write("sdk_run_launched", trace_id=handle.trace_id, cwd=cwd,
+              one_shot=one_shot, resumed_from=resume, launch="channel")
+    return handle.trace_id
+
+
 def end_after_turn(trace_id: str) -> tuple[bool, str]:
     """End a run once the turn now running has finished. Any thread.
 

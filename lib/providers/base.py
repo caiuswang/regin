@@ -196,9 +196,11 @@ class AgentProvider:
         sdk/tmux arms).
 
         A channel launcher matches `supervisor.launch_run`'s contract: it
-        takes the prompt plus the launch-parameter subset and returns a
-        handle with `trace_id` and `add_done_callback`. Providers whose CLI
-        speaks a structured wire protocol (Kimi's ACP) override this; the
+        takes the prompt plus the launch-parameter subset (and `resume`, a
+        session id to take over under its own id) and returns a handle with
+        `trace_id`, `add_done_callback`, `add_close_callback` and `enqueue`.
+        Providers whose CLI speaks a structured wire protocol (Kimi's ACP)
+        override this; the
         import stays inside the override so the channel module loads only
         when the provider is actually asked to launch.
         """
