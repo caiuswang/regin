@@ -6,6 +6,9 @@ as a JSONL event stream (protocol_version 1.4). Unlike Claude's transcript,
 it is event-sourced rather than message-per-line; the load-bearing records are:
 
 * ``turn.prompt``      — a user prompt (``input: [{type:text,text}]``, ``time``).
+  Protocol 1.5 adds ``promptId``/``turnId`` and an ``origin.kind``: only
+  ``user`` prompts are the operator's own words — ``skill_activation`` and
+  other kinds are harness injections and are not recorded as prompts.
 * ``context.append_loop_event`` — the assistant work stream, keyed by event
   ``type``: ``step.begin`` / ``step.end`` bracket one model inference (a *step*,
   which maps to a regin *turn*), ``content.part`` carries ``think`` / ``text``
@@ -19,9 +22,14 @@ it is event-sourced rather than message-per-line; the load-bearing records are:
   ``task_reminder`` attachments.
 * ``tools.set_active_tools`` / ``llm.tools_snapshot`` — the active tool
   surface, diffed into ``deferred_tools_delta`` attachments.
-* ``turn.steer``      — input submitted *while a turn is running*. Only
-  ``origin.kind=user`` steers are the user's own words (the rest are
-  background-task notifications the CLI feeds back in).
+* ``turn.steer``      — input submitted *while a turn is running* (protocol
+  1.4). Only ``origin.kind=user`` steers are the user's own words (the rest
+  are background-task notifications the CLI feeds back in). Protocol 1.5
+  dropped ``turn.steer``: the same act is a user ``turn.prompt`` /
+  ``agent.message.appended`` (``meta.source='input'``) arriving while a
+  turn is still open — its own ``agent.turn.started`` comes only after the
+  interrupted turn's ``turn.ended``. Both shapes become the same
+  ``queued_command`` attachment.
 * ``turn.cancel``     — the user interrupted the turn; tool calls still
   awaiting a ``tool.result`` at that point never ran to completion.
 
@@ -118,6 +126,40 @@ def _tool_names(names: list) -> list[str]:
 
 def _is_image_blurb(text: str) -> bool:
     return text.startswith(_IMAGE_BLURB_PREFIX) and text.rstrip().endswith('</system>')
+
+
+def _tracked_input_meta(message: object) -> dict | None:
+    """The meta dict when `message` is a tracked operator-typed input."""
+    if not isinstance(message, dict):
+        return None
+    meta = message.get('meta')
+    if not isinstance(meta, dict) or meta.get('source') != 'input':
+        return None
+    if meta.get('tracked') is not True:
+        return None
+    origin = meta.get('origin')
+    if not isinstance(origin, dict) or origin.get('kind') != 'user':
+        return None
+    return meta
+
+
+def _tracked_user_input(message: object) -> tuple[str, str] | None:
+    """`(promptId, text)` of an operator-typed 1.5 input record, else None.
+
+    `tracked` separates the operator's typed input from tool feeds: a Skill
+    invocation's body arrives as an untracked `input` record (it even
+    carries `origin.inTurn`) and must not read as something the operator
+    queued or typed."""
+    meta = _tracked_input_meta(message)
+    if meta is None or not isinstance(message, dict):
+        return None
+    prompt_id = meta.get('promptId')
+    inner = message.get('message')
+    content = inner.get('content') if isinstance(inner, dict) else None
+    text = _message_text(content).strip()
+    if not (isinstance(prompt_id, str) and prompt_id and text):
+        return None
+    return prompt_id, text
 
 
 def _parse_blobref(url: object) -> tuple[str, str] | None:
@@ -221,6 +263,13 @@ class _Scan:
         self.attachments: list[TranscriptAttachment] = []
         self.prompt_images: dict[str, list] = {}
         self.active_tools: set[str] = set()
+        # Protocol 1.5 turn lifecycle: turnId → queueItemId for every open
+        # turn. A user input naming no open turn's queueItemId is a steer,
+        # whatever record shape carries it (turn.steer in 1.4, turn.prompt /
+        # agent.message.appended in 1.5). 1.4 wires have none of these
+        # records, so the set stays empty and prompts are never misread.
+        self.open_turns: dict[str, str] = {}
+        self.handled_steers: set[str] = set()
 
     def _step(self, uuid: str | None) -> _Step | None:
         if not isinstance(uuid, str) or not uuid:
@@ -292,27 +341,68 @@ class _Scan:
             {'added_names': added, 'removed_names': removed}, ms,
         )
 
+    def _steer(self, text: str, ms: object, prompt_id: object = None) -> None:
+        """Record one mid-turn user input (any protocol shape).
+
+        A steer ends the current turn: every step that begins after this
+        record is the steer's response, not the interrupted prompt's. The
+        wire log has no separate prompt record for a consumed 1.4 steer, so
+        without advancing the anchor those steps keep the stale prompt_uuid
+        and group under the previous prompt in the trace UI. The minted
+        attachment uuid doubles as the anchor id (`prompt-katt-N`). In 1.5
+        the same input is ALSO logged as a turn.prompt when its turn
+        starts; `handled_steers` dedupes that second record by promptId.
+        """
+        att = self._add_attachment(
+            'queued_command',
+            {'command_mode': 'prompt', 'prompt': text}, ms,
+        )
+        self.current_prompt = att.uuid
+        if isinstance(prompt_id, str) and prompt_id:
+            self.handled_steers.add(prompt_id)
+
     def _on_steer(self, rec: dict) -> None:
-        """A mid-turn submission. Only the user's own words become a prompt;
-        `background_task` steers are CLI notifications fed back into the
-        context, and already show up as the task's own spans."""
+        """A 1.4 mid-turn submission. Only the user's own words become a
+        prompt; `background_task` steers are CLI notifications fed back into
+        the context, and already show up as the task's own spans."""
         origin = rec.get('origin')
         if not isinstance(origin, dict) or origin.get('kind') != 'user':
             return
         text = _typed_text(rec.get('input'))
         if not text:
             return
-        att = self._add_attachment(
-            'queued_command',
-            {'command_mode': 'prompt', 'prompt': text}, rec.get('time'),
-        )
-        # A steer ends the current turn: every step that begins after this
-        # record is the steer's response, not the interrupted prompt's. The
-        # wire log has no `turn.prompt` for a consumed steer, so without
-        # advancing the anchor those steps keep the stale prompt_uuid and
-        # group under the previous prompt in the trace UI. The minted
-        # attachment uuid doubles as the anchor id (`prompt-katt-N`).
-        self.current_prompt = att.uuid
+        self._steer(text, rec.get('time'))
+
+    def _on_turn_started(self, rec: dict) -> None:
+        turn_id = rec.get('turnId')
+        if turn_id is None:
+            return
+        queue_item = rec.get('queueItemId')
+        self.open_turns[str(turn_id)] = \
+            queue_item if isinstance(queue_item, str) else ''
+
+    def _on_turn_ended(self, rec: dict) -> None:
+        turn_id = rec.get('turnId')
+        if turn_id is not None:
+            self.open_turns.pop(str(turn_id), None)
+
+    def _on_message_appended(self, rec: dict) -> None:
+        """A 1.5 context message. `meta.source='input'` + user origin +
+        `tracked` is the operator's typed input; mid-turn it IS the steer
+        (there is no turn.steer in 1.5). Untracked inputs are tool feeds —
+        a Skill invocation's body arrives exactly like this (it even carries
+        `origin.inTurn`) and must not read as something the operator queued.
+        Its own turn's record arrives with the turn closed (or names the
+        open turn's queueItemId), so an input seen while no turn is open is
+        the upcoming turn's own prompt — turn.prompt records that one and
+        this record stays out of the prompt list."""
+        found = _tracked_user_input(rec.get('message'))
+        if found is None:
+            return
+        prompt_id, text = found
+        if prompt_id in self.handled_steers or not self.open_turns:
+            return
+        self._steer(text, rec.get('time'), prompt_id)
 
     def _on_cancel(self, rec: dict) -> None:
         """Flag every tool call still awaiting a result — the interrupt
@@ -345,7 +435,31 @@ class _Scan:
             'timestamp': _iso(rec.get('time')),
         })
 
+    def _mid_turn_steer_text(self, rec: dict, prompt_id: object) -> str | None:
+        """The text when this turn.prompt IS a 1.5 mid-turn steer (its
+        promptId names no open turn's queueItemId), else None."""
+        if not (isinstance(prompt_id, str) and prompt_id and self.open_turns
+                and prompt_id not in self.open_turns.values()):
+            return None
+        return _typed_text(rec.get('input')) or None
+
     def _on_prompt(self, rec: dict) -> None:
+        origin = rec.get('origin')
+        kind = origin.get('kind') if isinstance(origin, dict) else None
+        if kind not in (None, 'user'):
+            # 1.5 logs harness injections (slash-command skill activations,
+            # ...) as turn.prompt records. They are not the operator's
+            # words: recording one as a prompt plants a bogus anchor.
+            return
+        prompt_id = rec.get('promptId')
+        if isinstance(prompt_id, str) and prompt_id in self.handled_steers:
+            # The turn.prompt record of an input already recorded as a
+            # steer (1.5): the attachment IS its prompt representation.
+            return
+        steer_text = self._mid_turn_steer_text(rec, prompt_id)
+        if steer_text is not None:
+            self._steer(steer_text, rec.get('time'), prompt_id)
+            return
         parts = rec.get('input')
         uuid = f'kprompt-{len(self.prompts)}'
         self.prompts.append((uuid, _typed_text(parts), _iso(rec.get('time'))))
@@ -452,6 +566,10 @@ _RECORD_HANDLERS = {
     'llm.tools_snapshot': _Scan._on_tools_snapshot,
     'turn.steer': _Scan._on_steer,
     'turn.cancel': _Scan._on_cancel,
+    'agent.turn.started': _Scan._on_turn_started,
+    'agent.turn.ended': _Scan._on_turn_ended,
+    'turn.ended': _Scan._on_turn_ended,
+    'agent.message.appended': _Scan._on_message_appended,
 }
 
 

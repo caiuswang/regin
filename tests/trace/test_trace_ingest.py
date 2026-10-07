@@ -1745,6 +1745,30 @@ def test_turn_usage_counters_sum_across_turns(client, trace_db):
     assert t['context_window_tokens'] == 1_000_000
 
 
+def test_turn_usage_window_comes_from_the_catalogue_not_the_peak(
+        client, trace_db, monkeypatch):
+    """A peak past the 200K default must not bake itself into the window
+    column when the model's window is resolvable. The legacy
+    session_113dcdf9 row kept `context_window_tokens == peak` (230,328 — a
+    permanent ctx% of 100) because the snapshot was taken while the model
+    was still unknown; any later ingest must re-infer from the model."""
+    monkeypatch.setattr(
+        'lib.tokens.model_windows._catalogue_window',
+        lambda bare, base: 262_144 if 'kimi-for-coding' in bare else None)
+    client.post('/api/session-spans', json=_make_span(
+        span_id='s0', name='session.start',
+        attributes={'source': 'startup',
+                    'model': 'kimi-code/kimi-for-coding'},
+    ))
+    client.post('/api/turn-usage', json=_turn_row(
+        model='kimi-code/kimi-for-coding',
+        cache_read_tokens=230_000,
+        context_used_tokens=230_328,
+    ))
+    t = _session_tokens(trace_db, 't1')
+    assert t['context_window_tokens'] == 262_144
+
+
 def test_peak_main_excludes_server_side_turns(client, trace_db):
     """A turn whose API call rolled in a server-side sub-call (advisor)
     has its tokens charged to the parent turn's `usage` block, inflating

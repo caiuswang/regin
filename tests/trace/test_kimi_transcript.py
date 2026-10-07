@@ -392,3 +392,161 @@ def test_max_text_bytes_truncates(tmp_path: Path):
     # captured body (minus marker) is bounded and the marker is present.
     assert text.endswith(marker)
     assert len(text[: -len(marker)].encode("utf-8")) <= 100
+
+
+# --- protocol 1.5 (wire schema drift) -------------------------------------
+
+def _started(turn_id, prompt_id, time=0):
+    return {"type": "agent.turn.started", "turnId": turn_id,
+            "queueItemId": prompt_id, "time": time}
+
+
+def _ended(turn_id, time=0):
+    return {"type": "turn.ended", "turnId": turn_id, "time": time}
+
+
+def _completed(prompt_id, time=0):
+    return {"type": "prompt.completed", "promptId": prompt_id, "time": time}
+
+
+def _appended_input(prompt_id, text, time=0, tracked=True, in_turn=False):
+    origin = {"kind": "user"}
+    if in_turn:
+        origin["inTurn"] = True
+    meta = {"source": "input", "promptId": prompt_id, "origin": origin}
+    if tracked:
+        meta["tracked"] = True
+    return {"type": "agent.message.appended", "kind": "event", "time": time,
+            "message": {"message": {"role": "user",
+                                    "content": [{"type": "text", "text": text}]},
+                        "meta": meta}}
+
+
+def _prompt_15(prompt_id, turn_id, text, kind="user", time=0):
+    return {"type": "turn.prompt", "promptId": prompt_id, "turnId": turn_id,
+            "time": time, "origin": {"kind": kind},
+            "input": [{"type": "text", "text": text}]}
+
+
+def test_15_skill_activation_prompt_is_not_a_user_prompt(tmp_path):
+    # 1.5 logs a slash-command activation as a turn.prompt whose origin is
+    # `skill_activation` and whose body is the skill text — an injection,
+    # not something the operator typed. Recording it as a prompt plants a
+    # bogus anchor (and counts it in the session's prompt totals).
+    recs = [
+        {"type": "metadata", "protocol_version": "1.5"},
+        _prompt_15("msg-act", 0, "User activated the skill. Follow the "
+                   "loaded skill instructions.", kind="skill_activation"),
+        _started(0, "msg-act"),
+        _ended(0),
+        _completed("msg-act"),
+        _prompt_15("msg-user", 1, "do the thing"),
+        _started(1, "msg-user"),
+        _loop({"type": "step.begin", "uuid": "s1"}),
+        _loop({"type": "step.end", "uuid": "s1",
+               "usage": {"output": 1}}),
+        _ended(1),
+        _completed("msg-user"),
+    ]
+    u = read_usage_kimi(_wire(tmp_path / "w.jsonl", recs))
+    assert list(u.prompt_texts.values()) == ["do the thing"]
+    assert [t.prompt_uuid for t in u.turns] == ["kprompt-0"]
+
+
+def test_15_mid_turn_user_input_is_a_queued_steer(tmp_path):
+    # 1.5 has no turn.steer: a user input appended while a turn is open is
+    # the steer. It is recorded by promptId; its own turn starts only after
+    # the interrupted turn ends. The parser must surface it exactly like a
+    # 1.4 turn.steer: a queued_command attachment the response re-anchors to.
+    recs = [
+        {"type": "metadata", "protocol_version": "1.5"},
+        _started(0, "msg-1", time=1),
+        _prompt_15("msg-1", 0, "go", time=1),
+        _loop({"type": "step.begin", "uuid": "s1"}),
+        _appended_input("msg-2", "actually, use ripgrep", time=2),
+        _loop({"type": "step.end", "uuid": "s1", "usage": {"output": 1}}),
+        _ended(0, time=3),
+        _completed("msg-1", time=3),
+        _started(1, "msg-2", time=4),
+        _prompt_15("msg-2", 1, "actually, use ripgrep", time=4),
+        _loop({"type": "step.begin", "uuid": "s2"}),
+        _loop({"type": "tool.call", "stepUuid": "s2", "toolCallId": "c2",
+               "name": "Grep", "args": {"pattern": "x"}}, time=5),
+        _loop({"type": "step.end", "uuid": "s2", "usage": {"output": 1}}),
+        _ended(1, time=6),
+        _completed("msg-2", time=6),
+    ]
+    u = read_usage_kimi(_wire(tmp_path / "w.jsonl", recs))
+    (att,) = [a for a in u.attachments if a.kind == "queued_command"]
+    assert att.payload == {"command_mode": "prompt",
+                           "prompt": "actually, use ripgrep"}
+    assert [t.prompt_uuid for t in u.turns] == ["kprompt-0", "katt-0"]
+    (call,) = u.turns[1].tool_calls
+    assert call["source_prompt_id"] == "katt-0"
+    # The steer's own turn.prompt record names an already-handled promptId:
+    # it must not mint a second prompt.
+    assert list(u.prompt_texts.values()) == ["go"]
+
+
+def test_15_steer_turn_prompt_without_message_appended(tmp_path):
+    # Some 1.5 builds may log only the turn.prompt for a mid-turn input; the
+    # steer detection must not depend on agent.message.appended.
+    recs = [
+        {"type": "metadata", "protocol_version": "1.5"},
+        _started(0, "msg-1", time=1),
+        _prompt_15("msg-1", 0, "go", time=1),
+        _loop({"type": "step.begin", "uuid": "s1"}),
+        _prompt_15("msg-2", 1, "wait, also check the tests", time=2),
+        _loop({"type": "step.end", "uuid": "s1", "usage": {"output": 1}}),
+        _ended(0, time=3),
+        _completed("msg-1", time=3),
+        _started(1, "msg-2", time=4),
+        _loop({"type": "step.begin", "uuid": "s2"}),
+        _loop({"type": "step.end", "uuid": "s2", "usage": {"output": 1}}),
+        _ended(1, time=5),
+        _completed("msg-2", time=5),
+    ]
+    u = read_usage_kimi(_wire(tmp_path / "w.jsonl", recs))
+    (att,) = [a for a in u.attachments if a.kind == "queued_command"]
+    assert att.payload["prompt"] == "wait, also check the tests"
+    assert [t.prompt_uuid for t in u.turns] == ["kprompt-0", "katt-0"]
+
+
+def test_15_own_prompt_is_not_a_steer_despite_open_turn(tmp_path):
+    # agent.turn.started opens the turn BEFORE its own turn.prompt lands; a
+    # prompt that names the open turn's queueItemId is the turn's own
+    # prompt, not a steer.
+    recs = [
+        {"type": "metadata", "protocol_version": "1.5"},
+        _started(0, "msg-1", time=1),
+        _prompt_15("msg-1", 0, "go", time=2),
+        _loop({"type": "step.begin", "uuid": "s1"}),
+        _loop({"type": "step.end", "uuid": "s1", "usage": {"output": 1}}),
+        _ended(0, time=3),
+        _completed("msg-1", time=3),
+    ]
+    u = read_usage_kimi(_wire(tmp_path / "w.jsonl", recs))
+    assert [a for a in u.attachments if a.kind == "queued_command"] == []
+    assert list(u.prompt_texts.values()) == ["go"]
+    assert [t.prompt_uuid for t in u.turns] == ["kprompt-0"]
+
+
+def test_15_untracked_tool_feed_is_not_a_steer(tmp_path):
+    # A model-invoked Skill tool feeds its body as an agent.message.appended
+    # with source=input and origin user — even inTurn — but UNTRACKED. It
+    # must not become a queued steer (seen on a real 1.5 wire: the skill
+    # body surfaced as a phantom queued prompt).
+    recs = [
+        {"type": "metadata", "protocol_version": "1.5"},
+        _started(0, "msg-1", time=1),
+        _prompt_15("msg-1", 0, "go", time=1),
+        _loop({"type": "step.begin", "uuid": "s1"}),
+        _appended_input("msg-skill", "Skill tool loaded instructions ...",
+                        time=2, tracked=False, in_turn=True),
+        _loop({"type": "step.end", "uuid": "s1", "usage": {"output": 1}}),
+        _ended(0, time=3),
+        _completed("msg-1", time=3),
+    ]
+    u = read_usage_kimi(_wire(tmp_path / "w.jsonl", recs))
+    assert [a for a in u.attachments if a.kind == "queued_command"] == []
+    assert [t.prompt_uuid for t in u.turns] == ["kprompt-0"]

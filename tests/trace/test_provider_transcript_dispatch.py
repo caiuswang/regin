@@ -10,6 +10,9 @@ the store) resolves exactly as it did before.
 
 from __future__ import annotations
 
+import json
+from datetime import datetime
+
 import pytest
 
 import lib.trace.live_rescan as lr
@@ -109,17 +112,24 @@ def test_claude_default_root_is_still_dot_claude_projects(tmp_path, monkeypatch)
 
 def test_kimi_queued_prompt_replay_reads_the_kimi_path(transcript_roots):
     """The queued-prompt banner is derived from whatever
-    `_find_main_transcript` returns; for Kimi it used to be None (so always an
-    empty banner)."""
+    `_find_main_transcript` returns; a Kimi wire has no `queue-operation`
+    entries — its queued inputs are the 1.5 promptId lifecycle (here: a
+    tracked input with no turn start yet)."""
     from lib.trace.queued_prompts import current_queued_prompts
 
     _record_session(KIMI_TRACE, 'kimi')
     with open(transcript_roots['kimi'], 'w') as f:
-        f.write('{"type":"queue-operation","operation":"enqueue",'
-                '"content":"do the thing","timestamp":"2026-07-26T01:00:00Z"}\n')
+        f.write(json.dumps({
+            "type": "agent.message.appended", "kind": "event", "time": 1,
+            "message": {"message": {"role": "user", "content": [
+                {"type": "text", "text": "do the thing"}]},
+                "meta": {"source": "input", "promptId": "msg-1",
+                         "tracked": True,
+                         "origin": {"kind": "user"}}}}) + '\n')
 
     assert current_queued_prompts(KIMI_TRACE) == [
-        {'content': 'do the thing', 'enqueued_at': '2026-07-26T01:00:00Z'},
+        {'content': 'do the thing', 'enqueued_at':
+         datetime.fromtimestamp(1 / 1000).isoformat()},
     ]
 
 

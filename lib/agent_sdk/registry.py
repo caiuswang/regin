@@ -122,6 +122,20 @@ _ANSWER_KINDS = frozenset({'question'})
 _DECISION_KINDS = frozenset({'plan', 'tool'})
 
 
+def _acp_handle(trace_id: str):
+    """The live ACP run holding `trace_id`, when this process owns one.
+
+    The channel arm (feature #141 — kimi over ACP) registers its handles in
+    `lib.agent_acp.registry`, and the public entry points below delegate to
+    it before touching the SDK runners. Imported lazily, not at module
+    level: `agent_acp` never imports this module, so keeping the import
+    inside the call is what leaves the dependency one-directional.
+    """
+    from lib.agent_acp import registry as acp_registry
+
+    return acp_registry.get(trace_id)
+
+
 def reserve_run(trace_id: str, token: object = None) -> bool:
     """Claim `trace_id` for a launch whose runner does not exist yet.
 
@@ -461,6 +475,8 @@ def is_sdk_owned(trace_id: str) -> bool:
     """True when this process holds a live typed channel for `trace_id`, or is
     starting one: a reserved id belongs to a launch already under way, and a
     caller asking who owns it is deciding whether to launch another."""
+    if _acp_handle(trace_id) is not None:
+        return True
     trace_id = owning_run(trace_id)
     with _lock:
         return trace_id in _runs or trace_id in _reserved
@@ -618,7 +634,19 @@ def submit_prompt(trace_id: str, text: str, images: list | None = None,
     reservation), so the composer is on screen for the whole of a launch's
     startup and "no live agent session" was the wrong answer to a send made
     there. `register_run` drains what was parked as the run's next turn.
+
+    A channel-launched (ACP) run answers through its handle's queue instead;
+    a steer that reaches it after close is refused, not misrouted.
     """
+    handle = _acp_handle(trace_id)
+    if handle is not None:
+        if handle.enqueue(text):
+            log.write("sdk_prompt_queued", trace_id=trace_id, row_id=row_id)
+            return True, "prompt queued"
+        return False, "agent session is no longer running"
+    from lib.agent_acp import registry as acp_registry
+    if acp_registry.was_owned(trace_id):
+        return False, "agent session is no longer running"
     run_id = owning_run(trace_id)
     if _park_if_starting(run_id, _Parked(text, list(images or []), row_id)):
         log.write("sdk_prompt_parked", trace_id=run_id, row_id=row_id,
@@ -649,6 +677,9 @@ def queued_prompts(trace_id: str) -> list[dict]:
     ever run — reporting them is more honest than an empty queue, and the
     caller is a status poll, not a delivery.
     """
+    handle = _acp_handle(trace_id)
+    if handle is not None:
+        return handle.queued_prompts()
     trace_id = owning_run(trace_id)
     with _lock:
         runner = _runs.get(trace_id)
@@ -664,6 +695,13 @@ def edit_queued(trace_id: str, prompt_id: str, text: str) -> tuple[bool, str]:
     uses: a read of a dead session's leftover queue is honest, but *editing* it
     would report success for a change nothing will ever run.
     """
+    handle = _acp_handle(trace_id)
+    if handle is not None:
+        ok, detail = handle.edit_queued(prompt_id, text)
+        if ok:
+            log.write("sdk_prompt_edited", trace_id=trace_id,
+                      prompt_id=prompt_id)
+        return ok, detail
     runner, refusal = _live_runner(trace_id)
     if runner is None:
         return False, refusal
@@ -676,6 +714,13 @@ def edit_queued(trace_id: str, prompt_id: str, text: str) -> tuple[bool, str]:
 def cancel_queued(trace_id: str, prompt_id: str) -> tuple[bool, str]:
     """Drop a prompt still waiting behind this run's current turn. The turn in
     flight is untouched — cancelling that is `interrupt_run`."""
+    handle = _acp_handle(trace_id)
+    if handle is not None:
+        ok, detail = handle.cancel_queued(prompt_id)
+        if ok:
+            log.write("sdk_prompt_cancelled", trace_id=trace_id,
+                      prompt_id=prompt_id)
+        return ok, detail
     runner, refusal = _live_runner(trace_id)
     if runner is None:
         return False, refusal
@@ -706,7 +751,14 @@ def run_phase(trace_id: str) -> str | None:
     `idle` needs both no turn open AND no delegated background agent still
     running: a background subagent outlives the turn that launched it, and
     the session is busy until it reports back.
+
+    A channel-launched (ACP) run has no runner, parked asks, or retry state
+    — its phase is exactly whether the pump is mid-prompt or only waiting
+    on the steer queue.
     """
+    handle = _acp_handle(trace_id)
+    if handle is not None:
+        return 'working' if handle.turn_in_flight else 'idle'
     trace_id = owning_run(trace_id)
     with _lock:
         runner = _runs.get(trace_id)
@@ -795,6 +847,10 @@ def stop_run(trace_id: str) -> tuple[bool, str]:
     so this can't return "stopping" for a session that will in fact keep
     running until the server restarts.
     """
+    handle = _acp_handle(trace_id)
+    if handle is not None:
+        log.write("sdk_run_stop_requested", trace_id=trace_id)
+        return handle.stop()
     runner, refusal = _live_runner(trace_id)
     if runner is None:
         return False, refusal
@@ -806,7 +862,23 @@ def stop_run(trace_id: str) -> tuple[bool, str]:
 
 
 def interrupt_run(trace_id: str) -> tuple[bool, str]:
-    """Cancel the turn in flight, leaving the session open for the next one."""
+    """Cancel the turn in flight, leaving the session open for the next one.
+
+    On the ACP channel that distinction is load-bearing: `stop()` there
+    also closes the session and drops its queue, so an interrupt has to
+    send session/cancel alone — the session and everything queued on it
+    must survive, same as the SDK arm's contract.
+    """
+    handle = _acp_handle(trace_id)
+    if handle is not None:
+        try:
+            handle._client.session_cancel(handle._session_id)
+        except Exception:  # noqa: BLE001 — a refused interrupt is a refusal
+            log.error("sdk_run_interrupt_failed", trace_id=trace_id,
+                      exc_info=True)
+            return False, "cancel failed"
+        log.write("sdk_run_interrupt_requested", trace_id=trace_id)
+        return True, "cancelled"
     runner, refusal = _live_runner(trace_id)
     if runner is None:
         return False, refusal

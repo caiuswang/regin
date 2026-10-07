@@ -332,6 +332,17 @@ def _consumed_turns(path: str) -> dict:
     return turns
 
 
+def _kimi_session(trace_id: str) -> bool:
+    """True when the session's transcript is Kimi-format (the dispatch for
+    the format-specific readers)."""
+    from lib.trace.live_rescan import _session_provider
+    try:
+        return getattr(_session_provider(trace_id),
+                       'transcript_format', 'claude') == 'kimi'
+    except Exception:
+        return False
+
+
 def consumed_prompt_texts(trace_id: str) -> set[str]:
     """Normalized bodies of user prompts the transcript has already PROCESSED
     — the counterpart to `current_queued_prompts` (still-pending). A bridge
@@ -342,6 +353,9 @@ def consumed_prompt_texts(trace_id: str) -> set[str]:
     path = _find_main_transcript(trace_id)
     if not path:
         return set()
+    if _kimi_session(trace_id):
+        from lib.trace import kimi_queued_prompts
+        return kimi_queued_prompts.consumed_prompt_texts(path)
     return set(_consumed_turns(path))
 
 
@@ -352,6 +366,9 @@ def current_queued_prompts(trace_id: str) -> list[dict]:
     path = _find_main_transcript(trace_id)
     if not path:
         return []
+    if _kimi_session(trace_id):
+        from lib.trace import kimi_queued_prompts
+        return kimi_queued_prompts.current_queued_prompts(path)
     still_queued, enqueued = _replay_queue_ops(path)
     if still_queued:
         ran = _consumed_enqueue_ids(enqueued, _consumed_turns(path))
