@@ -18,6 +18,7 @@ from flask import Blueprint, request, jsonify
 from lib.auth import get_current_user, require_editor
 from lib.agent_bridge import launch as terminal_launch
 from lib.agent_sdk import client, resumable, store, supervisor, worktree
+from lib.providers import registry as provider_registry
 from lib.settings import settings
 from lib.tasks import skill_catalog
 
@@ -232,6 +233,7 @@ def api_launch_options():
         "terminal_available": not terminal_reason,
         "terminal_detail": terminal_reason,
         "detached_detail": terminal_launch.detached_unavailable_reason(),
+        "providers": provider_registry.launch_provider_rows(),
     })
 
 

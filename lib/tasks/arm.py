@@ -179,44 +179,64 @@ def _also(value, first: str) -> list[str]:
     return names
 
 
-def _launch_choice(payload: dict, provider: str) -> str:
-    """The `launch` value, scoped by provider.
+def _launch_choice(payload: dict, provider: str, caps: dict) -> str:
+    """The `launch` value, held to the modes the provider declares.
 
-    Launch modes are Claude vocabulary for now: an explicit one on a
-    non-Claude arm is a rejection naming it, not a silent drop, and an absent
-    one stays the SDK default.
+    An explicit mode the provider does not declare is a rejection naming it,
+    not a silent drop; an absent one stays the provider's structured channel.
     """
-    if provider != "claude":
-        if payload.get("launch"):
-            raise CaptureRejected("launch modes are Claude-only for now",
-                                  "launch")
-        return LAUNCH_SDK
-    return _choice(payload, "launch", LAUNCH_MODES) or LAUNCH_SDK
+    value = _choice(payload, "launch", LAUNCH_MODES)
+    if value and value not in caps["launch_modes"]:
+        raise CaptureRejected(
+            f"{provider} does not declare launch mode {value!r}", "launch")
+    return value or LAUNCH_SDK
 
 
-def _params(payload: dict, provider: str) -> dict:
-    """The launch parameters in the launcher's own vocabulary.
+def _model(payload: dict, provider: str, caps: dict) -> str:
+    value = _string(payload, "model", _ID_MAX)
+    if value and "model" not in caps["fields"]:
+        raise CaptureRejected(f"{provider} does not accept a model", "model")
+    return value
 
-    permission_mode/effort mirror `claude_agent_sdk`'s enums, so a non-Claude
-    provider cannot mean them: its arms drop the values instead of dying on
-    words that have no use there (feature #140).
+
+def _vocabulary_field(payload: dict, key: str, allowed, caps: dict) -> str:
+    """A field in the CLI's own enum vocabulary, or "" when the provider does
+    not declare it.
+
+    These mirror `claude_agent_sdk`'s enums, so a provider without them drops
+    the values instead of dying on words that have no use there (feature #140).
     """
-    claude_params = provider == "claude"
+    if key not in caps["fields"]:
+        return ""
+    return _choice(payload, key, allowed)
+
+
+def _params(payload: dict, provider: str, caps: dict) -> dict:
+    """The launch parameters in the launcher's own vocabulary."""
     return {
         "cwd": _string(payload, "cwd", _PATH_MAX),
-        "model": _string(payload, "model", _ID_MAX),
-        "permission_mode": _choice(payload, "permission_mode",
-                                   client.PERMISSION_MODES)
-        if claude_params else "",
-        "effort": _choice(payload, "effort", client.EFFORT_LEVELS)
-        if claude_params else "",
+        "model": _model(payload, provider, caps),
+        "permission_mode": _vocabulary_field(
+            payload, "permission_mode", client.PERMISSION_MODES, caps),
+        "effort": _vocabulary_field(
+            payload, "effort", client.EFFORT_LEVELS, caps),
         "one_shot": _flag(payload, "one_shot"),
         "env": _env(payload),
         "worktree": _worktree(payload),
         "skill": _skill(payload),
-        "launch": _launch_choice(payload, provider),
+        "launch": _launch_choice(payload, provider, caps),
         "provider": provider,
     }
+
+
+def _launch_capabilities(provider: str) -> dict:
+    """The provider's launch declaration, or a rejection when it has none: a
+    provider without a launch channel must not arm and then run as Claude."""
+    caps = registry.build_provider(provider).launch_capabilities()
+    if not caps["launch_modes"]:
+        raise CaptureRejected(
+            f"{provider} has no task launch channel", "provider")
+    return caps
 
 
 def parse_arm(payload) -> dict:
@@ -235,7 +255,7 @@ def parse_arm(payload) -> dict:
     provider = _choice(payload, "provider",
                        registry.list_provider_ids()) or "claude"
     return {
-        "params": _params(payload, provider),
+        "params": _params(payload, provider, _launch_capabilities(provider)),
         "verify_cmd": _string(payload, "verify_cmd", _CMD_MAX) or None,
         "autorun": int(_flag(payload, "autorun")),
     }
