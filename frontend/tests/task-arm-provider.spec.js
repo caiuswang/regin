@@ -125,6 +125,7 @@ test('test_arm_prefs_drop_model_on_provider_switch', async ({ page }) => {
   await page.getByTestId('task-arm-submit').click()
   await expect.poll(() => posted.length).toBe(1)
   expect(posted[0].model).toBe('')
+  await expect(page.getByTestId('task-arm')).toHaveCount(0)
 
   // The switch is what is remembered, so the next sheet opens on kimi.
   const stored = await page.evaluate(
