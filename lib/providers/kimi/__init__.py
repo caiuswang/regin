@@ -250,6 +250,8 @@ class KimiProvider(AgentProvider):
             "binary": "kimi",
             "pane_commands": ["kimi"],
             "labels": {"sdk": "ACP"},
+            "models": [],
+            "default_model": "",
         }
 
     def channel_launcher(self):

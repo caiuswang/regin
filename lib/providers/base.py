@@ -49,6 +49,8 @@ class LaunchCapabilities(TypedDict):
     binary: str
     pane_commands: list[str]
     labels: dict[str, str]
+    models: list[str]
+    default_model: str
 
 
 class AgentProvider:
@@ -143,7 +145,8 @@ class AgentProvider:
         not opted in is refused rather than quietly launched as Claude.
         """
         return {"launch_modes": [], "fields": [], "binary": "",
-                "pane_commands": [], "labels": {}}
+                "pane_commands": [], "labels": {}, "models": [],
+                "default_model": ""}
 
     def channel_launcher(self):
         """Callable launching a task run through this provider's structured

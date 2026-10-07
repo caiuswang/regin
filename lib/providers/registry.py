@@ -75,10 +75,13 @@ def launch_provider_rows() -> list[dict]:
         rows.append({
             "id": pid,
             "display_name": provider.display_name,
+            "binary": caps["binary"],
             "available": shutil.which(caps["binary"]) is not None,
             "launch_modes": list(caps["launch_modes"]),
             "fields": list(caps["fields"]),
             "labels": dict(caps["labels"]),
+            "models": list(caps.get("models", [])),
+            "default_model": caps.get("default_model", ""),
         })
     return rows
 
