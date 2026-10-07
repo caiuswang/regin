@@ -266,6 +266,71 @@ html[data-pl-theme="pixel"] [data-pl-part="row"] {
     border-top-color: var(--pl-rule);
 }
 
+/* Three columns, the design's: FEATURE · LEVEL · STATS (slots FeatureTableHead,
+   FeatureStats). The feature column stops at 19rem and the level takes the
+   rest, so a wide table (triage folded) leaves no gap after the title.
+   Outranks every width tier of classic's six-column grid. */
+html[data-pl-theme="pixel"] [data-pl-part="table-head"],
+html[data-pl-theme="pixel"] [data-pl-part="row-line"] {
+    grid-template-columns: minmax(0, 19rem) minmax(5rem, 1fr) minmax(6.5rem, 9rem);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="row-line"] [data-pl-part="level"] {
+    max-width: 24rem;
+}
+
+/* Classic's narrow tiers hide its 3rd column by position; here that is STATS. */
+html[data-pl-theme="pixel"] [data-pl-part="table-head"] > [data-pl-part="stats-head"] {
+    display: block;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="row-line"] > [data-pl-part="stats"] {
+    display: flex;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="stats"] {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    min-width: 0;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="stat-line"] {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    font-family: var(--pl-font);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    color: var(--pl-text);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="stat-line"][data-warn] {
+    color: var(--pl-warn);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="stat-mark"] {
+    flex: none;
+    width: 1em;
+    text-align: center;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="stat-link"] {
+    color: inherit;
+    text-decoration: none;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="stat-link"]:hover {
+    text-decoration: underline;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="stat-link"]:focus-visible {
+    outline: 2px solid var(--pl-focus);
+    outline-offset: 2px;
+}
+
 html[data-pl-theme="pixel"] [data-pl-part="row"][data-expanded] {
     background: var(--pl-paper-2);
 }

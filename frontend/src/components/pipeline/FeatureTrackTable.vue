@@ -37,11 +37,13 @@ function cost(row) {
   <div class="ftt" data-testid="feature-table" data-pl-part="table" role="table" aria-label="Features">
     <div class="ftt-head" data-pl-part="table-head" role="row">
       <span role="columnheader">Feature</span>
-      <span role="columnheader">Stage</span>
-      <span role="columnheader">Tasks</span>
-      <span role="columnheader">Rounds</span>
-      <span role="columnheader" class="num">Defects</span>
-      <span role="columnheader" class="num">Active</span>
+      <PlSlot name="FeatureTableHead">
+        <span role="columnheader">Stage</span>
+        <span role="columnheader">Tasks</span>
+        <span role="columnheader">Rounds</span>
+        <span role="columnheader" class="num">Defects</span>
+        <span role="columnheader" class="num">Active</span>
+      </PlSlot>
     </div>
     <div class="ftt-body" data-pl-part="rows">
       <div
@@ -53,7 +55,7 @@ function cost(row) {
         :data-expanded="expanded.has(row.id) ? '' : undefined"
         role="rowgroup"
       >
-        <div class="ftt-row" role="row" :data-testid="`feature-row-${row.id}`">
+        <div class="ftt-row" role="row" data-pl-part="row-line" :data-testid="`feature-row-${row.id}`">
           <span class="ftt-feature" role="cell">
             <Button
               variant="ghost"
@@ -79,29 +81,31 @@ function cost(row) {
               <StageSegments :stage="row.stage" />
             </PlSlot>
           </span>
-          <span role="cell" class="ftt-tasks" data-pl-part="stat">
-            <router-link
-              v-if="row.tasks"
-              :to="tasksLink(row.id)"
-              class="ftt-link focus-visible:outline-2 focus-visible:outline-blue-500"
-              :data-testid="`feature-tasks-link-${row.id}`"
-            >{{ row.tasks_done }} / {{ row.tasks }}</router-link>
-            <span v-else>0 / 0</span>
-            <span class="ftt-track" data-pl-part="meter"><span class="ftt-fill tone-success" data-pl-part="meter-fill" :style="{ width: `${row.tasks ? (100 * row.tasks_done) / row.tasks : 0}%` }" /></span>
-          </span>
-          <span role="cell" class="ftt-pips" data-testid="feature-rounds" data-pl-part="pips" :aria-label="`${row.rounds} rounds`">
-            <span v-for="i in pips(row)" :key="i" class="ftt-pip" data-pl-part="pip" />
-          </span>
-          <span role="cell" class="num" :class="{ 'is-warn': row.defects.open }" data-pl-part="stat" :data-warn="row.defects.open ? '' : undefined">
-            <router-link
-              v-if="row.defects.total"
-              :to="defectsLink(row.id)"
-              class="ftt-link focus-visible:outline-2 focus-visible:outline-blue-500"
-              :data-testid="`feature-defects-link-${row.id}`"
-            >{{ defectTally(row.defects) }}</router-link>
-            <span v-else>{{ defectTally(row.defects) }}</span>
-          </span>
-          <span role="cell" class="num muted" data-pl-part="stat">{{ ago(row.last_activity) }}</span>
+          <PlSlot name="FeatureStats" :row="row">
+            <span role="cell" class="ftt-tasks" data-pl-part="stat">
+              <router-link
+                v-if="row.tasks"
+                :to="tasksLink(row.id)"
+                class="ftt-link focus-visible:outline-2 focus-visible:outline-blue-500"
+                :data-testid="`feature-tasks-link-${row.id}`"
+              >{{ row.tasks_done }} / {{ row.tasks }}</router-link>
+              <span v-else>0 / 0</span>
+              <span class="ftt-track" data-pl-part="meter"><span class="ftt-fill tone-success" data-pl-part="meter-fill" :style="{ width: `${row.tasks ? (100 * row.tasks_done) / row.tasks : 0}%` }" /></span>
+            </span>
+            <span role="cell" class="ftt-pips" data-testid="feature-rounds" data-pl-part="pips" :aria-label="`${row.rounds} rounds`">
+              <span v-for="i in pips(row)" :key="i" class="ftt-pip" data-pl-part="pip" />
+            </span>
+            <span role="cell" class="num" :class="{ 'is-warn': row.defects.open }" data-pl-part="stat" :data-warn="row.defects.open ? '' : undefined">
+              <router-link
+                v-if="row.defects.total"
+                :to="defectsLink(row.id)"
+                class="ftt-link focus-visible:outline-2 focus-visible:outline-blue-500"
+                :data-testid="`feature-defects-link-${row.id}`"
+              >{{ defectTally(row.defects) }}</router-link>
+              <span v-else>{{ defectTally(row.defects) }}</span>
+            </span>
+            <span role="cell" class="num muted" data-pl-part="stat">{{ ago(row.last_activity) }}</span>
+          </PlSlot>
         </div>
         <div v-if="expanded.has(row.id)" class="ftt-expansion">
           <FeatureExpansion :feature="row" />

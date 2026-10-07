@@ -9,6 +9,8 @@ import ChoiceField from './slots/ChoiceField.vue'
 import MenuField from './slots/MenuField.vue'
 import SecretStage from './slots/SecretStage.vue'
 import DefectsHead from './slots/DefectsHead.vue'
+import FeatureTableHead from './slots/FeatureTableHead.vue'
+import FeatureStats from './slots/FeatureStats.vue'
 import './tokens.css'
 import './features.css'
 import './tasks.css'
@@ -38,6 +40,8 @@ export default {
     MenuField,
     SecretStage,
     DefectsHead,
+    FeatureTableHead,
+    FeatureStats,
   },
   glyphs: {
     portfolio: glyph('grid'),

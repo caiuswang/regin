@@ -252,6 +252,28 @@ test.describe('pixel theme — Features', () => {
     await expect(page.getByTestId('feature-defect-88').locator('svg[data-sprite="bug"]')).toBeVisible()
   })
 
+  // The design's three columns: FEATURE · LEVEL · STATS, the stats stacked
+  // in one cell from the same row fields and links classic spreads over four.
+  test('test_features_table_has_level_and_stats_columns', async ({ page }) => {
+    await stubFeatures(page)
+    await usePixel(page)
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await openFeatures(page, 'pixel')
+    const head = page.getByTestId('feature-table').locator('[data-pl-part="table-head"] [role="columnheader"]')
+    await expect(head).toHaveText(['Feature', 'Level · Spec → Build → Ship', 'Stats'])
+
+    const row = id => page.getByTestId(`feature-row-${id}`)
+    await expect(row(129).getByRole('cell')).toHaveCount(3)
+    const stats = row(129).locator('[data-pl-part="stats"] [data-pl-part="stat-line"]')
+    await expect(stats).toHaveText([/^◎\s*2\/4 tasks$/, /^↻\s*2 rounds · \d+[a-z]+/, /^✱\s*1 open of 2$/])
+    await expect(stats.nth(2)).toHaveAttribute('data-warn', '')
+    await expect(row(129).getByTestId('feature-tasks-link-129')).toHaveAttribute('href', /\/tasks/)
+    await expect(row(129).getByTestId('feature-defects-link-129')).toHaveAttribute('href', '/features/129#feature-defects')
+    await expect(row(129).getByTestId('feature-rounds')).toHaveAttribute('aria-label', '2 rounds')
+    // No defect blamed: no defect line at all.
+    await expect(row(133).locator('[data-pl-part="stat-line"]')).toHaveCount(2)
+  })
+
   // The narrowest tier with the rail open: a station is ~32px, narrower than
   // a 2x bot + flag + bug, and the track must still stay inside its cell.
   for (const width of [1024, 1280, 1440]) {

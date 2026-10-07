@@ -632,10 +632,15 @@ test('test_features_stage_tabs_expand_and_triage_keys', async ({ page, pipelineT
     await expect(stageOf(31).locator('.ss-seg--success')).toHaveCount(2)
     await expect(stageOf(31).locator('.ss-seg--warning')).toHaveCount(1)
   }
-  const pips = page.getByTestId('feature-row-31').getByTestId('feature-rounds').locator('.ftt-pip')
-  await expect(pips).toHaveCount(5)
-  const pipColours = new Set(await pips.evaluateAll(els => els.map(e => getComputedStyle(e).backgroundColor)))
-  expect(pipColours.size).toBe(1)
+  // Pixel folds rounds into its STATS cell as "5 rounds · <ago>".
+  const rounds = page.getByTestId('feature-row-31').getByTestId('feature-rounds')
+  await expect(rounds).toHaveAttribute('aria-label', '5 rounds')
+  if (pipelineTheme !== 'pixel') {
+    const pips = rounds.locator('.ftt-pip')
+    await expect(pips).toHaveCount(5)
+    const pipColours = new Set(await pips.evaluateAll(els => els.map(e => getComputedStyle(e).backgroundColor)))
+    expect(pipColours.size).toBe(1)
+  }
 
   // Stage tabs are one neutral surface; only the active tab is filled. Read
   // once the theme chunk is in, or the first tab is measured on a shell the
@@ -849,7 +854,7 @@ test('test_features_table_rows_fit_their_own_width', async ({ page }) => {
     const clipped = await page.$$eval('.ftt-head, .ftt-row', els =>
       els.filter(e => e.scrollWidth > e.clientWidth + 1).map(e => `${e.scrollWidth}>${e.clientWidth}`))
     expect(clipped, `viewport ${width}`).toEqual([])
-    await expect(page.locator('.ftt-head .num').last()).toBeVisible()
+    await expect(page.locator('.ftt-head [role="columnheader"]').last()).toBeVisible()
   }
 })
 
