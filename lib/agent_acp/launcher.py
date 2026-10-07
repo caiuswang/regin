@@ -95,6 +95,8 @@ class AcpRunHandle:
         self._ending = False
         self._settled = False
         self._in_flight = False
+        self._close_callbacks: list = []
+        self._torn_down = False
 
     # ── completion: settles once, on a failed turn or the close (D6) ──
 
@@ -114,6 +116,16 @@ class AcpRunHandle:
             lambda f: callback(f.result() if not f.cancelled()
                                else RunOutcome(self.trace_id, "failed",
                                                "cancelled")))
+
+    def add_close_callback(self, callback) -> None:
+        """Call `callback()` once the channel is closed — later than the done
+        callbacks, which fire on the first failed turn while an interrupted
+        session is still open. Runs at once on a handle already closed."""
+        with self._cond:
+            if not self._torn_down:
+                self._close_callbacks.append(callback)
+                return
+        callback()
 
     def _settle(self, outcome: RunOutcome) -> None:
         """Settle the future once. The flag is taken under the lock and the
@@ -226,6 +238,11 @@ class AcpRunHandle:
             self._queue.clear()
             self._cond.notify_all()
         acp_registry.unregister(self.trace_id)
+        # Taken only once unregistered, so a callback added mid-close still
+        # runs here rather than at once while the id reads as owned.
+        with self._cond:
+            self._torn_down = True
+            callbacks, self._close_callbacks = self._close_callbacks, []
         try:
             self._client.close()
         except Exception:  # noqa: BLE001 — teardown must not raise
@@ -234,6 +251,12 @@ class AcpRunHandle:
         _record_run_closed(self)
         self._settle(RunOutcome(self.trace_id, "failed",
                                 f"channel closed: {reason}"))
+        for callback in callbacks:
+            try:
+                callback()
+            except Exception:  # noqa: BLE001 — teardown must not raise
+                log.error("acp_close_callback_failed", trace_id=self.trace_id,
+                          exc_info=True)
 
     # Pump-side helpers, not part of the public surface.
 
@@ -259,9 +282,26 @@ def _accepts_images(init: dict) -> bool:
     return bool((caps or {}).get("image"))
 
 
+def _start_session(client: AcpClient, init: dict, cwd: str,
+                   resume: str | None) -> str:
+    """A fresh session, or `resume` taken over under its own id — the trace
+    keeps landing on the conversation it continues (Invariant 2)."""
+    if not resume:
+        return client.session_new(cwd)
+    if not (init.get("agentCapabilities") or {}).get("loadSession"):
+        raise LaunchRefused("the agent does not declare loadSession, so "
+                            f"{resume} cannot be resumed over ACP")
+    try:
+        client.session_load(resume, cwd)
+    except AcpError as exc:
+        raise LaunchRefused(f"the agent could not load {resume}: {exc}") from exc
+    return resume
+
+
 def _open_session(client: AcpClient, cwd: str, model: str,
-                  images: list | None) -> str:
-    """Handshake + session/new + the unattended mode tier + the armed model.
+                  images: list | None, resume: str | None = None) -> str:
+    """Handshake + session/new (or session/load) + the unattended mode tier +
+    the armed model.
 
     yolo ("Ask When Needed") is the phase-1 equivalent of an operator-armed
     run: routine calls never reach the wire, and what does is answered with
@@ -274,7 +314,7 @@ def _open_session(client: AcpClient, cwd: str, model: str,
             f"the task has {len(images)} image(s) but the agent does not "
             "declare image prompts (promptCapabilities.image); remove the "
             "images or arm a provider that accepts them")
-    session_id = client.session_new(cwd)
+    session_id = _start_session(client, init, cwd, resume)
     try:
         client.session_set_mode(session_id, "yolo")
     except AcpError:
@@ -328,7 +368,8 @@ def launch_run(prompt: str, *, cwd: str | None = None,
                env: dict | None = None, model: str = "",
                one_shot: bool = False, images: list | None = None,
                client: AcpClient | None = None,
-               cmd: list[str] | None = None) -> AcpRunHandle:
+               cmd: list[str] | None = None,
+               resume: str | None = None) -> AcpRunHandle:
     """Open an ACP session and schedule the prompt turn on a worker thread.
 
     Registered before the turn thread starts, so `is_owned` is true for the
@@ -336,13 +377,17 @@ def launch_run(prompt: str, *, cwd: str | None = None,
     turn ends and the queue drains, the rest live until `close()`/`stop()`/
     `end_after_turn()`. ACP requires an absolute `cwd`; an unset one is the
     project root.
+
+    `resume` loads that session instead of opening a new one. A blank prompt
+    runs no launch turn: the session comes up and waits for its first steer,
+    as a bare `kimi` does at a terminal.
     """
     cwd = os.path.abspath(cwd or settings.project_root)
     own = client is None
     if client is None:
         client = _spawn_client(env, cwd, cmd)
     try:
-        session_id = _open_session(client, cwd, model, images)
+        session_id = _open_session(client, cwd, model, images, resume)
     except Exception:
         if own:
             client.close()
@@ -388,7 +433,7 @@ def _pump(handle: AcpRunHandle, prompt: str, one_shot: bool,
     """
     client, session_id = handle._client, handle._session_id
     backoff = _BUSY_RETRY_SEC
-    launch_pending = True
+    launch_pending = bool(prompt.strip())
     while True:
         if launch_pending:
             entry, text, turn_images = None, prompt, images

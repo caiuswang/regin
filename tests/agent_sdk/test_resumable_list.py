@@ -53,6 +53,8 @@ def provider(monkeypatch):
                             answers_live=True, live_calls=0)
 
     class _Provider:
+        provider_id = "claude"
+
         def find_session_transcript(self, session_id):
             return f"/t/{session_id}.jsonl" if session_id in transcripts else None
 
@@ -60,8 +62,10 @@ def provider(monkeypatch):
             state.live_calls += 1
             return frozenset(live) if state.answers_live else None
 
-    monkeypatch.setattr("lib.providers.get_active_provider",
-                        lambda *a, **k: _Provider())
+    # Resume resolves each session's own provider, never the active one.
+    for resolver in ("provider_for_trace", "provider_for_agent_type"):
+        monkeypatch.setattr(f"lib.providers.base.{resolver}",
+                            lambda *a, **k: _Provider())
     return state
 
 

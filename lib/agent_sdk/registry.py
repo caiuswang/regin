@@ -188,6 +188,28 @@ def register_run(trace_id: str, runner) -> None:
         _release_parked(trace_id, runner, item)
 
 
+def hand_over_reservation(trace_id: str, token: object, handle) -> None:
+    """Release a claim whose run came up as a channel handle rather than a
+    runner here, moving what was parked under it onto that handle's queue —
+    `release_run` would drop it, and the composer already cleared the text."""
+    with _lock:
+        if _reserved.get(trace_id, _MISSING) is not token:
+            return
+        _reserved.pop(trace_id, None)
+        parked = _reserved_prompts.pop(trace_id, [])
+        _drop_aliases(trace_id)
+    log.write("sdk_run_released", trace_id=trace_id)
+    for item in parked:
+        if item.images:
+            log.error("sdk_parked_images_dropped", trace_id=trace_id,
+                      row_id=item.row_id, count=len(item.images))
+        if handle.enqueue(item.text):
+            log.write("sdk_parked_prompt_released", trace_id=trace_id,
+                      row_id=item.row_id, chars=len(item.text))
+        else:
+            _abandon_parked(trace_id, [item], "channel_closed_at_handover")
+
+
 def _drop_aliases(trace_id: str) -> None:
     """Forget every CLI session id pointing at `trace_id`. Caller holds
     `_lock`."""
@@ -644,14 +666,16 @@ def submit_prompt(trace_id: str, text: str, images: list | None = None,
             log.write("sdk_prompt_queued", trace_id=trace_id, row_id=row_id)
             return True, "prompt queued"
         return False, "agent session is no longer running"
-    from lib.agent_acp import registry as acp_registry
-    if acp_registry.was_owned(trace_id):
-        return False, "agent session is no longer running"
+    # Parked before the closed-channel refusal: resuming a session this
+    # process once ran reserves an id that `was_owned` still names.
     run_id = owning_run(trace_id)
     if _park_if_starting(run_id, _Parked(text, list(images or []), row_id)):
         log.write("sdk_prompt_parked", trace_id=run_id, row_id=row_id,
                   chars=len(text))
         return True, _PARKED_DETAIL
+    from lib.agent_acp import registry as acp_registry
+    if acp_registry.was_owned(trace_id):
+        return False, "agent session is no longer running"
     runner, refusal = _live_runner(trace_id)
     if runner is None:
         return False, refusal

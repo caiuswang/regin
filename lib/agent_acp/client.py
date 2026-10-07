@@ -136,6 +136,14 @@ class AcpClient:
                                timeout=timeout)
         return result["sessionId"]
 
+    def session_load(self, session_id: str, cwd: str,
+                     timeout: float = DEFAULT_HANDSHAKE_TIMEOUT) -> None:
+        """Take over an existing session under its own id. The agent replays
+        the conversation as `session/update` notifications before answering;
+        only an agent declaring `loadSession` serves this."""
+        self._request("session/load", {"sessionId": session_id, "cwd": cwd,
+                                       "mcpServers": []}, timeout=timeout)
+
     def session_set_mode(self, session_id: str, mode: str,
                          timeout: float = DEFAULT_HANDSHAKE_TIMEOUT) -> None:
         self._request("session/set_mode",
