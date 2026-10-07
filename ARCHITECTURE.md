@@ -468,6 +468,56 @@ The two payload shapes never cross. An **answer** (which options were picked) re
 
 The tier as a whole is gated off by default (`settings.agent_sdk.enabled = False` — the single switch an operator turns on; `proposal_sdk_runner` above only decides whether drafting rides it once it is), and the SDK is an optional extra (`pip install -e ".[agent-sdk]"`) since observing sessions needs nothing from it.
 
+## Provider launch capabilities (task runs on a non-Claude agent)
+
+Collection (hooks, transcripts, skills) was provider-neutral first; the *launch* side — arming a task, `/live` new sessions and Resume, the bridge pane guard — reads one declaration per provider instead of branching on a provider id. Shared code (`lib/tasks/arm.py`, `lib/tasks/runs.py`, `lib/tasks/tmux_runs.py`, `web/blueprints/agent_runs.py`, the arm and launch sheets) holds no `== "kimi"` branch; a difference lives in the adapter under `lib/providers/`.
+
+**`AgentProvider.launch_capabilities()`** returns a `LaunchCapabilities` (`lib/providers/base.py`):
+
+| Field | Meaning | Read by |
+|---|---|---|
+| `launch_modes` | `sdk` = the provider's structured channel (Claude: the Agent SDK; kimi: ACP), `tmux` = a pane. Empty = the provider cannot launch a run, and arming it is a 400 (never a silent fall-back to Claude) | `arm.py`, `runs._channel_launcher`, `tmux_runs._pane_provider`, `agent_runs._refuse_undeclared` |
+| `fields` | Which of `model`, `permission_mode`, `effort` the provider accepts. An undeclared field is a 400 naming it | `arm.py`, `agent_runs._refuse_undeclared`, the arm sheets |
+| `binary` | The executable `which` must find for the provider to be `available` | launch-options, `lib/doctor.py`, `tmux_runs._pane_provider` |
+| `pane_commands` | Foreground process names a pane running this provider reports (kimi is a node script, so `node`); the bridge pane guard admits them next to `settings.agent_bridge.allowed_pane_commands` | `lib/providers/registry.py`, bridge registration |
+| `labels` | UI names for each launch mode (`sdk` → "ACP" for kimi) | arm and launch sheets |
+| `models` | Model aliases offered in the menu; empty means a free-text model id | arm and launch sheets |
+| `default_model` | The server-configured default model | arm and launch sheets |
+
+`GET /api/agent-runs/launch-options` publishes the declarations per provider plus `available`; the arm and `/live` launch sheets render from it, and `regin doctor` reports a *Task launch providers* group from the same data. A request without a `provider` arms Claude — `active_provider` is not consulted; Resume uses the provider that recorded the session.
+
+### Two launch arms
+
+| | Channel arm (`sdk`) | Pane arm (`tmux`) |
+|---|---|---|
+| Process lives under | the `regin serve` process (Claude: `lib/agent_sdk/`; kimi: `lib/agent_acp/`) | regin's own tmux server (`settings.agent_bridge.attach_socket`), session `task-<task id>-a<attempt>` |
+| Survives a `serve` restart | no | yes |
+| Argv | built by the channel | `provider.pane_argv(...)` |
+| Session id | known before the first prompt (see D5 below) | `provider.pane_session_id(...)`, fixed before the pane starts |
+| First turn | the channel's prompt call | argv, or — when `provider.pane_input()` is set — typed into the composer |
+
+An attempt's `trace_id` is always the real session id the provider's hooks report; there is no placeholder and no alias.
+
+**Session anchoring (D5).** A provider that cannot be told a session id on argv mints its own: kimi's `--session` only resumes one that exists. `KimiProvider.pane_session_id` therefore opens a short ACP channel, calls `session/new` with the realpath of the working directory (a session made under `/tmp/x` is refused from a pane whose cwd resolves to `/private/tmp/x`), closes it, and the pane runs `kimi --session=<id> --yolo`, resuming the empty session under the same id. A provider whose argv takes an id (Claude) returns a fresh uuid.
+
+**Typed first turn (`PaneInput`).** For a pane whose argv cannot carry the prompt, delivery waits for `ready` on the raw capture, pastes the prompt as a bracketed paste, confirms it landed by the echo or a new `paste_chip` counter, then sends `submit_key` (kimi: `C-m` — plain Enter lands in the box without submitting). If the paste cannot be confirmed nothing is submitted: the session is released and the attempt fails.
+
+**Run lifecycle (D6).** A launch turn ending is not the work being done — the agent's `task finish` report is. A channel run (`lib/agent_acp/launcher.py`) therefore settles only on a failure:
+
+| Event | Attempt |
+|---|---|
+| `task finish` report | settled by the report |
+| Turn ends `end_turn`, no report | stays running — steerable until a report or a close |
+| Turn ends with another stopReason, no report | `failed` |
+| Channel closes (Stop, child exit), no report | `failed` |
+| `one_shot`: first turn ends | channel closes, then the rows above apply |
+
+A report written first always wins over the failure the handle would settle. A pane run settles the same way, through `task finish` or its session ending.
+
+**Workspace and skills.** Before either arm starts, `provider.prepare_workspace(cwd)` runs (kimi pre-writes its workspace-trust record, since an untrusted directory blocks an unattended launch behind a Trust dialog); `provider.skill_invocation` renders a task's skill line and `skill_catalog_layout` / `project_config_dir` say where its skills live and which directory a worktree must carry over.
+
+**Not covered.** `codex` and `generic` declare no launch mode. The ACP wire has no real steer, so a steer is cancel then re-prompt. kimi has no `permission_mode` or `effort`; its panes run `--yolo` and its channel runs `yolo` mode, with approval and question requests answered `cancelled`. A `/live` terminal session still opens only a Claude pane. Walkthrough for operators: *Run a task with Kimi* in `README.md`.
+
 ## Feature pipeline (features, defects, slices)
 
 One number justifies this subsystem: **rounds-to-done** per feature, meaning one build plus each time the work was called done and then walked back. The pipeline is worth keeping only if that number falls for features that go through it compared with features that don't. `lib/experiments.py` is the tool for that comparison. If the number doesn't move, delete the pipeline rather than tune it. The procedure lives in the `feature-pipeline` skill, and the ledger's data model, invariants and acceptance tests are in [`docs/feature-ledger-redesign.md`](docs/feature-ledger-redesign.md).
