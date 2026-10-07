@@ -52,7 +52,15 @@ html[data-pl-theme="pixel"] [data-pl-part="tag"]:is(button) {
 
 html[data-pl-theme="pixel"] [data-pl-part="tag"]:is(button):hover {
     color: var(--pl-text);
-    box-shadow: inset 0 0 0 1px var(--pl-frame);
+}
+
+/* A task row's chips (kind, attempts, live, project, tags, images) are bare
+   words, as a next-step row's subline is: an outline on each read as a row
+   of boxes. Filter chips and FIXES D-n keep theirs. */
+html[data-pl-theme="pixel"] [data-pl-part="row"][data-testid="task-row"] [data-pl-part="tag"] {
+    padding-inline: 0.25rem;
+    background: none;
+    box-shadow: none;
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="tag"] button {
@@ -234,17 +242,16 @@ html[data-pl-theme="pixel"] [data-pl-part="row"] {
     border-color: var(--pl-rule);
 }
 
-/* TaskRow's own surface: paper, never classic's tinted hover or selection. */
-html[data-pl-theme="pixel"] [data-pl-part="row"][data-testid="task-row"] {
-    background: var(--pl-paper);
-}
-
-html[data-pl-theme="pixel"] [data-pl-part="row"][data-testid="task-row"]:hover {
-    background: var(--pl-paper-2);
+/* TaskRow sits on the shell's ground, as a next-step row does: classic's
+   own surface, hover and selection tints would paint a second ground. */
+html[data-pl-theme="pixel"] [data-pl-part="row"][data-testid="task-row"],
+html[data-pl-theme="pixel"] [data-pl-part="row"][data-testid="task-row"]:hover,
+html[data-pl-theme="pixel"] [data-pl-part="row-note"] {
+    background: none;
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="row"][data-testid="task-row"][data-selected] {
-    background: var(--pl-paper-2);
+    background: none;
     box-shadow: inset 2px 0 0 var(--pl-frame);
 }
 

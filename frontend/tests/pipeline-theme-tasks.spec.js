@@ -304,8 +304,33 @@ test.describe('pixel theme — tasks', () => {
 
         const row = page.locator(`#task-${ids.running}`)
         for (const part of [row.getByTestId('task-day'), row.getByTestId('task-run-count'), row.locator('.badge').first()]) {
-          expect(await part.evaluate(el => getComputedStyle(el).fontFamily), group).toMatch(/^"?Silkscreen/)
+          // Polled: the row re-renders when its liveness answer lands.
+          await expect.poll(() => part.evaluate(el => getComputedStyle(el).fontFamily), { message: group })
+            .toMatch(/^"?Silkscreen/)
         }
+
+        // A row's chips are bare words, not a run of outlined boxes.
+        const boxed = await page.locator('[data-testid="task-row"] [data-pl-part="tag"]').evaluateAll(tags => tags
+          .filter((el) => {
+            const cs = getComputedStyle(el)
+            return cs.boxShadow !== 'none' || cs.borderTopWidth !== '0px'
+          })
+          .map(el => el.textContent.trim()))
+        expect(boxed, group).toEqual([])
+
+        // One ground, the shell's, as under next step: nothing between a row
+        // and the shell paints a background of its own.
+        const grounds = await page.locator('[data-testid="task-row"]').evaluateAll(rows => rows.flatMap((row) => {
+          const painted = []
+          for (let n = row; n && !n.classList.contains('pl-shell'); n = n.parentElement) {
+            const cs = getComputedStyle(n)
+            if (cs.backgroundColor !== 'rgba(0, 0, 0, 0)' || cs.backgroundImage !== 'none') {
+              painted.push(`${n.getAttribute('data-pl-part') ?? n.className} ${cs.backgroundColor}`)
+            }
+          }
+          return painted
+        }))
+        expect(grounds, group).toEqual([])
 
         const audit = await page.evaluate(colourAudit)
         failures.push(...audit.failures.map(f => `group=${group}: ${f}`))

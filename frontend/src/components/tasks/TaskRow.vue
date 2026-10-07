@@ -171,7 +171,7 @@ const runCount = computed(() => props.task.run_count || 0)
     </div>
   </div>
 
-  <p v-if="answered && !live" class="task-stale" data-testid="task-stale">
+  <p v-if="answered && !live" class="task-stale" data-pl-part="row-note" data-testid="task-stale">
     {{ ref_ }} — nothing is behind this run; the runner is gone, so it can be
     started again.
   </p>
