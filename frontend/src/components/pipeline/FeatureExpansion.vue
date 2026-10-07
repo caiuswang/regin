@@ -42,7 +42,7 @@ function stateOf(d) {
 </script>
 
 <template>
-  <div class="fx" :class="{ 'fx--compact': compact }" :data-testid="`feature-expansion-${feature.id}`">
+  <div class="fx" :class="{ 'fx--compact': compact }" data-pl-part="expansion" :data-pl-compact="compact ? '' : undefined" :data-testid="`feature-expansion-${feature.id}`">
     <FeatureActiveTasks v-if="!compact" :feature-id="feature.id" />
     <p v-if="!loaded" class="fx-muted" data-pl-part="note">Loading…</p>
     <p v-else-if="error" class="fx-muted" role="alert" data-pl-part="note">{{ error }}</p>

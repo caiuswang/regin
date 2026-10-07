@@ -164,17 +164,18 @@ defineExpose({ load: reload })
       ref="unfoldButton"
       variant="ghost"
       class="tr-strip"
+      data-pl-part="strip"
       data-testid="triage-unfold"
       aria-expanded="false"
       :aria-label="stripCaption ? `Show triage, ${stripCaption}` : 'Show triage'"
       title="Show triage ( ] )"
       @click="emit('update:folded', false)"
     >
-      <span class="tr-strip__icon"><Icon name="panel-right-open" :size="15" /></span>
+      <span class="tr-strip__icon" data-pl-part="strip-key"><Icon name="panel-right-open" :size="15" /></span>
       <span v-if="!loading && total" class="tr-strip__badge" data-testid="triage-fold-count" data-pl-part="badge">{{ total }}</span>
-      <span class="tr-strip__label">Triage</span>
-      <span v-if="stripCaption" class="tr-strip__caption">{{ stripCaption }}</span>
-      <kbd class="tr-strip__kbd">]</kbd>
+      <span class="tr-strip__label" data-pl-part="strip-label">Triage</span>
+      <span v-if="stripCaption" class="tr-strip__caption" data-pl-part="strip-caption">{{ stripCaption }}</span>
+      <kbd class="tr-strip__kbd" data-pl-part="strip-kbd">]</kbd>
     </Button>
     <template v-else>
     <header class="tr-head" data-pl-part="panel-head" data-pl-chapter="3-2">
@@ -190,6 +191,7 @@ defineExpose({ load: reload })
         size="icon"
         class="tr-fold"
         data-pl-part="key"
+        data-pl-fold
         data-testid="triage-fold"
         aria-expanded="true"
         aria-label="Fold triage to the side"

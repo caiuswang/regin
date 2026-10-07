@@ -107,6 +107,7 @@ html[data-pl-theme="pixel"] [data-pl-part="level"][data-pl-compact] {
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="level-track"] {
+    position: relative;
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     width: 100%;
@@ -116,6 +117,23 @@ html[data-pl-theme="pixel"] [data-pl-part="level"][data-pl-compact] [data-pl-par
     width: 5.5rem;
 }
 
+/* One dashed line under all three stations, running past the end ticks: a
+   dash per station would restart its pattern at every station edge. Its top
+   is the actors' height, so sprites stand on it. */
+html[data-pl-theme="pixel"] [data-pl-part="level-track"]::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 36px;
+    height: 2px;
+    background: repeating-linear-gradient(90deg, var(--pl-track) 0 4px, transparent 4px 8px);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="level"][data-pl-compact] [data-pl-part="level-track"]::before {
+    top: 13px;
+}
+
 html[data-pl-theme="pixel"] [data-pl-part="level-station"] {
     display: flex;
     flex-direction: column;
@@ -123,24 +141,26 @@ html[data-pl-theme="pixel"] [data-pl-part="level-station"] {
     min-width: 0;
 }
 
+/* Actors centre on their tick, but a group wider than its station (at 2x a
+   bot, flag and bug outgrow a station in the table's narrow tiers) must spill
+   onto an empty neighbouring station, never into the next column. Auto
+   margins centre the group while there is room and collapse to zero when it
+   overflows, leaving the end stations' outer-edge alignment in charge. */
 html[data-pl-theme="pixel"] [data-pl-part="level-actors"] {
     display: flex;
     align-items: flex-end;
     justify-content: center;
     gap: 2px;
+    align-self: stretch;
     height: 36px;
 }
 
-/* The end stations sit on the track's edges and their actors lean inward: a
-   bot, flag and bug at 2x are wider than a station in the table's narrow
-   tiers, and an overflow must land on an empty neighbouring station, never in
-   the next column. */
-html[data-pl-theme="pixel"] [data-pl-part="level-station"]:first-child {
-    align-items: flex-start;
+html[data-pl-theme="pixel"] [data-pl-part="level-actors"] > :first-child {
+    margin-left: auto;
 }
 
-html[data-pl-theme="pixel"] [data-pl-part="level-station"]:last-child {
-    align-items: flex-end;
+html[data-pl-theme="pixel"] [data-pl-part="level-actors"] > :last-child {
+    margin-right: auto;
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="level-station"]:first-child [data-pl-part="level-actors"] {
@@ -173,40 +193,27 @@ html[data-pl-theme="pixel"] [data-pl-part="level-agent"] {
     box-shadow: inset 0 0 0 1px var(--pl-run-line);
 }
 
-/* The dashed line runs through every station; the tick marks the station. */
+/* The tick crosses the line: 2px above, the line's 2px, 2px below. */
 html[data-pl-theme="pixel"] [data-pl-part="level-tick"] {
     position: relative;
     display: block;
-    align-self: stretch;
-    height: 4px;
-    margin-top: 3px;
-    border-top: 1px dashed var(--pl-rule);
+    width: 2px;
+    height: 2px;
+    margin-bottom: 2px;
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="level-tick"]::after {
     content: "";
     position: absolute;
-    left: 50%;
-    top: -3px;
-    width: 2px;
-    height: 5px;
-    margin-left: -1px;
-    background: var(--pl-rule);
-}
-
-html[data-pl-theme="pixel"] [data-pl-part="level-station"]:first-child [data-pl-part="level-tick"]::after {
     left: 0;
-    margin-left: 0;
-}
-
-html[data-pl-theme="pixel"] [data-pl-part="level-station"]:last-child [data-pl-part="level-tick"]::after {
-    left: auto;
-    right: 0;
-    margin-left: 0;
+    top: -2px;
+    width: 2px;
+    height: 6px;
+    background: var(--pl-track);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="level-station"][data-reached] [data-pl-part="level-tick"]::after {
-    background: var(--pl-frame);
+    background: var(--pl-text);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="level-name"] {
@@ -216,6 +223,10 @@ html[data-pl-theme="pixel"] [data-pl-part="level-name"] {
     letter-spacing: 0.1em;
     text-transform: uppercase;
     color: var(--pl-muted);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="level-station"][data-reached] [data-pl-part="level-name"] {
+    color: var(--pl-text);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="level-station"][data-current] [data-pl-part="level-name"] {
@@ -259,11 +270,45 @@ html[data-pl-theme="pixel"] [data-pl-part="row"][data-expanded] {
     background: var(--pl-paper-2);
 }
 
+/* A 2px key with a bevel: a quiet outline while folded, the ink frame while
+   its row is open. The icon gives way to a drawn ▸ / ▾, as crisp as the font. */
 html[data-pl-theme="pixel"] [data-pl-part="row-toggle"] {
-    border: 1px solid var(--pl-frame);
+    border: 2px solid var(--pl-rule);
     border-radius: 0;
     background: var(--pl-paper);
     color: var(--pl-text);
+    box-shadow: inset -2px -2px 0 var(--pl-bevel);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="row-toggle"]:hover {
+    background: var(--pl-paper-2);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="row-toggle"][aria-expanded="true"] {
+    border-color: var(--pl-frame);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="row-toggle"]:focus-visible {
+    outline: 2px solid var(--pl-focus);
+    outline-offset: 2px;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="row-toggle"] svg {
+    display: none;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="row-toggle"]::before {
+    content: "";
+    border-left: 4px solid currentColor;
+    border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="row-toggle"][aria-expanded="true"]::before {
+    border-top: 4px solid currentColor;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-bottom: 0;
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="row-id"] {
@@ -305,7 +350,8 @@ html[data-pl-theme="pixel"] [data-pl-part="pip"] {
 html[data-pl-theme="pixel"] [data-pl-part="section-label"] {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
+    margin: 12px 0 10px;
     font-family: var(--pl-font);
     font-size: 10px;
     font-weight: 400;
@@ -313,15 +359,32 @@ html[data-pl-theme="pixel"] [data-pl-part="section-label"] {
     color: var(--pl-muted);
 }
 
+/* Sub-rows sit in the row as recessed slots: a 2px bevel edge and a bottom
+   shade, not the ink frame of a panel; only the running one is outlined. */
 html[data-pl-theme="pixel"] [data-pl-part="sub-row"] {
-    border-color: var(--pl-frame);
+    border: 2px solid var(--pl-bevel);
     border-radius: 0;
     background: var(--pl-paper);
+    box-shadow: inset 0 -2px 0 var(--pl-paper-2);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="sub-row"][data-status="running"] {
     border-color: var(--pl-run-line);
-    box-shadow: inset 0 0 0 1px var(--pl-run-line);
+    box-shadow: none;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="section-label"] [data-pl-glyph],
+html[data-pl-theme="pixel"] [data-pl-part="sub-row"] [data-pl-glyph] {
+    zoom: 2;
+}
+
+/* The phone card keeps classic's flat list rows (R9). */
+html[data-pl-theme="pixel"] [data-pl-part="expansion"][data-pl-compact] [data-pl-part="sub-row"] {
+    box-shadow: none;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="expansion"][data-pl-compact] [data-pl-part="sub-row"] [data-pl-glyph] {
+    zoom: 1;
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="state"] {
@@ -359,6 +422,78 @@ html[data-pl-theme="pixel"] [data-pl-part="alert"] {
 }
 
 /* ── Triage rail ─────────────────────────────────────────────────────── */
+/* Folded, the rail is a framed strip: a ◀ key, then TRIAGE and the waiting
+   count read downwards. The count badge and ] hint repeat the caption and the
+   key's title, so the design drops them. */
+html[data-pl-theme="pixel"] [data-pl-part="strip"] {
+    gap: 16px;
+    border: 2px solid var(--pl-frame);
+    border-radius: 0;
+    background: var(--pl-paper);
+    color: var(--pl-text);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="strip"]:hover {
+    background: var(--pl-paper-2);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="strip"]:focus-visible {
+    outline: 2px solid var(--pl-focus);
+    outline-offset: 2px;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="strip-key"],
+html[data-pl-theme="pixel"] [data-pl-part="key"][data-pl-fold] {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid var(--pl-frame);
+    border-radius: 0;
+    background: var(--pl-paper);
+    color: var(--pl-action-text);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="strip-key"] svg,
+html[data-pl-theme="pixel"] [data-pl-part="key"][data-pl-fold] svg {
+    display: none;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="strip-key"]::before {
+    content: "";
+    border-right: 6px solid currentColor;
+    border-top: 5px solid transparent;
+    border-bottom: 5px solid transparent;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="key"][data-pl-fold]::before {
+    content: "";
+    border-left: 6px solid currentColor;
+    border-top: 5px solid transparent;
+    border-bottom: 5px solid transparent;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="strip-label"],
+html[data-pl-theme="pixel"] [data-pl-part="strip-caption"] {
+    font-family: var(--pl-font);
+    font-size: 10px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="strip-label"] {
+    font-weight: 700;
+    color: var(--pl-text);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="strip-caption"] {
+    color: var(--pl-warn);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="strip"] [data-pl-part="badge"],
+html[data-pl-theme="pixel"] [data-pl-part="strip-kbd"] {
+    display: none;
+}
+
 html[data-pl-theme="pixel"] [data-pl-part="card"] {
     border-color: var(--pl-frame);
     border-radius: 0;

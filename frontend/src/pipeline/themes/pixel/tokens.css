@@ -49,6 +49,7 @@ html[data-pl-theme="pixel"] {
     --pl-frame: #10131a;
     --pl-hair: #d5dae3;
     --pl-rule: #aeb6c4;
+    --pl-track: #94a3b8;
     --pl-bevel: #d5dae3;
     --pl-bevel-in: #cbd5e1;
     --pl-drop: #10131a;
@@ -112,6 +113,7 @@ html[data-pl-theme="pixel"][data-theme="dark"] {
     --pl-frame: #6f7f9c;
     --pl-hair: #2b3548;
     --pl-rule: #3a4760;
+    --pl-track: #5b6781;
     --pl-bevel: #0b0f18;
     --pl-bevel-in: #080b12;
     --pl-drop: #03050a;
