@@ -189,7 +189,7 @@ const pct = computed(() => (props.head.shipped_pct == null ? null : `${props.hea
     font-family: var(--pl-font); letter-spacing: 0.08em; text-transform: uppercase;
 }
 .px-ps__pct { font-size: 10px; color: var(--pl-muted); }
-.px-ps__pct b { margin-right: 0.4em; font-size: 14px; font-weight: 700; color: var(--pl-ship); }
+.px-ps__pct b { margin-right: 0.4em; font-size: 14px; font-weight: 400; letter-spacing: 0.08em; color: var(--pl-ship); }
 
 .px-ps__cells { display: flex; flex-wrap: wrap; gap: 3px; min-height: 14px; }
 .px-ps__legend { display: flex; flex-wrap: wrap; gap: 0.4rem 1.25rem; font-size: 10px; color: var(--pl-muted); }
@@ -219,7 +219,7 @@ const pct = computed(() => (props.head.shipped_pct == null ? null : `${props.hea
 .px-fig--still { border-color: var(--pl-rule); }
 .px-fig__label { font-size: 9px; color: var(--pl-muted); }
 .px-fig[data-tone="warn"] .px-fig__label, .px-fig[data-tone="warn"] .px-fig__value { color: var(--pl-warn); }
-.px-fig__value { font-size: 16px; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
+.px-fig__value { font-size: 16px; font-weight: 400; letter-spacing: 0.08em; text-align: right; font-variant-numeric: tabular-nums; }
 
 .px-ps__table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .px-ps__table th {

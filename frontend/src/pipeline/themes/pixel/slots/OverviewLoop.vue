@@ -162,7 +162,7 @@ const note = computed(() => loopNote(props.loop.fix_tasks))
 }
 .px-stage__label { color: var(--pl-text); }
 .px-stage__total {
-    margin-left: auto; font-family: var(--pl-font); font-size: 32px; font-weight: 700; line-height: 1;
+    margin-left: auto; font-family: var(--pl-font); font-size: 32px; font-weight: 400; letter-spacing: 0.08em; line-height: 1;
     color: var(--pl-text); font-variant-numeric: tabular-nums;
 }
 
@@ -174,7 +174,7 @@ const note = computed(() => loopNote(props.loop.fix_tasks))
     display: inline-flex; align-items: center; gap: 0.4em; height: 1.75rem; padding: 0 0.6rem;
     border: 1px solid; font-size: 10px; text-decoration: none; white-space: nowrap;
 }
-.px-fact b { font-weight: 700; }
+.px-fact b { font-weight: 400; letter-spacing: 0.08em; }
 
 .px-loop__note { display: flex; align-items: center; gap: 0.75rem; padding: 0.6rem 1.1rem; }
 .px-loop__back { flex: none; color: var(--pl-action-text); }

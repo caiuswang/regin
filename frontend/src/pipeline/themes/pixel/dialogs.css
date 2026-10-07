@@ -446,7 +446,8 @@ html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="score-row"] {
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="score-row"] dd {
-    font-weight: 700;
+    font-weight: 400;
+    letter-spacing: 0.08em;
     font-variant-numeric: tabular-nums;
 }
 

@@ -610,7 +610,8 @@ html[data-pl-theme="pixel"] [data-pl-part="card-head"] {
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="card"] [data-pl-part="row-id"] {
-    font-weight: 700;
+    font-weight: 400;
+    letter-spacing: 0.08em;
     color: var(--pl-text);
 }
 
