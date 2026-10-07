@@ -169,6 +169,10 @@ class AgentTask(Base, table=True):
         default=TASK_KIND_TASK,
         sa_column=Column("kind", String, nullable=False,
                          server_default=text("'task'")))
+    # The title regin last generated. `title == auto_title` is what keeps a
+    # title regin's to recompute; a hand edit breaks the equality and freezes it.
+    auto_title: Optional[str] = Field(
+        default=None, sa_column=Column("auto_title", Text))
 
 
 class AgentTaskRun(Base, table=True):

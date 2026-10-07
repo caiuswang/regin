@@ -120,6 +120,10 @@ class Feature(Base, table=True):
     #: for — rather than "we have not worked it out yet".
     project_id: Optional[int] = Field(
         default=None, sa_column=Column("project_id", Integer, index=True))
+    #: The integration branch, operator-set. `None` defers to the
+    #: `f{id}/integration` convention, resolved against git on read.
+    branch: Optional[str] = Field(
+        default=None, sa_column=Column("branch", Text))
 
 
 class FeatureEvent(Base, table=True):

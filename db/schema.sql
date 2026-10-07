@@ -947,6 +947,10 @@ CREATE TABLE IF NOT EXISTS features (
     -- agree column-for-column, order included.
     project_id   INTEGER,
     image_high_water INTEGER NOT NULL DEFAULT 0,
+    -- The feature's integration branch, operator-set. NULL means "use the
+    -- f{id}/integration convention if that ref exists" — resolved on read
+    -- against git, never written back here.
+    branch       TEXT,
     CONSTRAINT uq_features_origin_ref UNIQUE (origin, external_ref)
 );
 CREATE INDEX IF NOT EXISTS idx_features_project ON features(project_id);
@@ -1040,6 +1044,9 @@ CREATE TABLE IF NOT EXISTS agent_tasks (
     -- Declared at create, never inferred from the title.
     kind          TEXT NOT NULL DEFAULT 'task',
     image_high_water INTEGER NOT NULL DEFAULT 0,
+    -- The title regin last generated. title == auto_title is what says the
+    -- title is still regin's to recompute; a hand edit breaks the equality.
+    auto_title    TEXT,
     CONSTRAINT uq_agent_tasks_source_external UNIQUE (source, external_id)
 );
 
