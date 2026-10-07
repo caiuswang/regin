@@ -6,6 +6,13 @@ import api from '../api'
 // and an operator pinning an exact id must stay able to say so.
 export const CUSTOM_MODEL = '__custom__'
 
+// D1 of #140: an arm that names no provider runs on claude, whatever the
+// install's active provider is.
+export const DEFAULT_PROVIDER = 'claude'
+
+const LAUNCH_MODES = ['sdk', 'tmux']
+const LAUNCH_HINTS = { sdk: 'ends if the server restarts', tmux: 'survives a server restart' }
+
 /** Every skill a task was armed with, in invocation order. */
 export function armedSkills(skill) {
   if (!skill?.name) return []
@@ -28,6 +35,9 @@ export function armDraft(task) {
     // named after it — so selection order is part of the value.
     skills: armedSkills(skill),
     skillArgs: skill.args || '',
+    // '' until a source names one, so the prefill can tell "unset" from a
+    // pick; `prefilledArmDraft` settles it to DEFAULT_PROVIDER.
+    provider: params.provider || '',
     cwd: params.cwd || '',
     model: params.model || '',
     modelCustom: '',
@@ -45,17 +55,34 @@ export function armDraft(task) {
   }
 }
 
-function armBody(draft) {
+// No row means a server that serves no capabilities: every field is offered,
+// exactly as before providers were declared.
+export function declares(row, field) {
+  return !row || row.fields.includes(field)
+}
+
+function launchDeclared(row, mode) {
+  return !row || row.launch_modes.includes(mode)
+}
+
+// Invariant 4: a field the provider does not declare is not sent at all —
+// the server refuses an undeclared model, and an absent key is the only
+// honest way to say "this provider has no such setting".
+function armBody(draft, row) {
   const body = {
+    provider: draft.provider || DEFAULT_PROVIDER,
     cwd: draft.cwd,
-    model: draft.model === CUSTOM_MODEL ? draft.modelCustom.trim() : draft.model,
-    permission_mode: draft.permission_mode,
-    effort: draft.effort,
     one_shot: draft.one_shot,
     verify_cmd: draft.verify_cmd.trim(),
     autorun: draft.autorun,
-    launch: draft.launch || 'sdk',
   }
+  if (declares(row, 'model')) {
+    body.model = draft.model === CUSTOM_MODEL ? draft.modelCustom.trim() : draft.model
+  }
+  if (declares(row, 'permission_mode')) body.permission_mode = draft.permission_mode
+  if (declares(row, 'effort')) body.effort = draft.effort
+  const launch = draft.launch || 'sdk'
+  if (launchDeclared(row, launch)) body.launch = launch
   if (draft.useWorktree && draft.worktreeBranch.trim()) {
     body.worktree = {
       branch: draft.worktreeBranch.trim(),
@@ -116,6 +143,10 @@ export function useTaskArm() {
   // draft — a value the TASK itself carries is a deliberate pick that must keep
   // showing, stale or not.
   function pruneUnlisted(draft) {
+    if (providers.value.length && !providerRow(draft.provider)) {
+      draft.provider = DEFAULT_PROVIDER
+      draft.model = ''
+    }
     const offered = {
       cwd: options.value?.cwds || [],
       permission_mode: options.value?.permission_modes || [],
@@ -130,7 +161,7 @@ export function useTaskArm() {
   // carry; adopting it into the custom slot keeps it visible instead of
   // silently resetting the picker to the default.
   function adoptUnlisted(draft) {
-    const models = options.value?.models || []
+    const models = providerModels(draft.provider)
     if (draft.model && !models.includes(draft.model)) {
       draft.modelCustom = draft.model
       draft.model = CUSTOM_MODEL
@@ -139,9 +170,14 @@ export function useTaskArm() {
 
   // A cwd change can land after a newer one was asked for; only the latest
   // answer may describe the menu.
-  async function loadSkills(cwd) {
+  // Keyed on the provider too: each CLI reads its own skill dirs, so a skill
+  // claude resolves can be a dead slash command under kimi.
+  async function loadSkills(cwd, provider = '') {
     const asked = ++skillsAsked
-    const query = cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''
+    const params = new URLSearchParams()
+    if (cwd) params.set('cwd', cwd)
+    if (provider) params.set('provider', provider)
+    const query = params.toString() ? `?${params}` : ''
     const res = await api.get(`/agent-runs/skill-options${query}`).catch(() => null)
     if (asked !== skillsAsked) return
     skillCatalog.value = res?.skills || []
@@ -163,6 +199,48 @@ export function useTaskArm() {
     return skillsLoaded.value && !skillNames.value.has(name)
   }
 
+  const providers = computed(() => options.value?.providers || [])
+
+  function providerRow(id) {
+    return providers.value.find(p => p.id === (id || DEFAULT_PROVIDER)) || null
+  }
+
+  // A provider whose CLI is not on PATH stays listed, disabled, naming the
+  // binary — the operator learns what to install instead of wondering why
+  // kimi is not offered.
+  const providerOptions = computed(() => providers.value.map(p => ({
+    value: p.id,
+    label: p.available ? p.display_name : `${p.display_name} — ${p.binary || p.id} not on PATH`,
+    disabled: !p.available,
+  })))
+
+  function providerModels(id) {
+    const row = providerRow(id)
+    return row ? row.models || [] : options.value?.models || []
+  }
+
+  function launchOptions(id) {
+    const row = providerRow(id)
+    return LAUNCH_MODES.filter(mode => launchDeclared(row, mode)).map(mode => {
+      const name = row?.labels?.[mode] || (mode === 'sdk' ? 'SDK' : mode)
+      return {
+        value: mode === 'sdk' ? '' : mode,
+        label: mode === 'sdk' ? `${name} (default)` : name,
+        hint: LAUNCH_HINTS[mode],
+      }
+    })
+  }
+
+  function modelOptions(id) {
+    const row = providerRow(id)
+    const configured = row ? row.default_model : options.value?.default_model
+    return [
+      deferOption(configured, 'CLI'),
+      ...providerModels(id).map(m => ({ value: m, label: m })),
+      { value: CUSTOM_MODEL, label: 'custom…' },
+    ]
+  }
+
   const cwdOptions = computed(() => [
     { value: '', label: 'server working directory' },
     ...(options.value?.cwds || []).map(p => ({ value: p, label: p })),
@@ -174,11 +252,6 @@ export function useTaskArm() {
       ...(options.value?.permission_modes || []).map(m => ({ value: m, label: m })),
     ]
   })
-  const modelOptions = computed(() => [
-    deferOption(options.value?.default_model, 'CLI'),
-    ...(options.value?.models || []).map(m => ({ value: m, label: m })),
-    { value: CUSTOM_MODEL, label: 'custom…' },
-  ])
   const effortOptions = computed(() => [
     deferOption(options.value?.default_effort, 'CLI'),
     ...(options.value?.efforts || []).map(e => ({ value: e, label: e })),
@@ -186,7 +259,8 @@ export function useTaskArm() {
 
   async function arm(task, draft) {
     saving.value = true
-    const result = await api.post(`/tasks/${task.id}/arm`, armBody(draft))
+    const result = await api.post(`/tasks/${task.id}/arm`,
+                                  armBody(draft, providerRow(draft.provider)))
     saving.value = false
     if (result.ok === false) {
       armError.value = {
@@ -203,6 +277,7 @@ export function useTaskArm() {
     options, loading, error, saving, armError,
     skillCatalog, skillsLoaded, loadSkills, pruneUnavailableSkills, skillMissing,
     cwdOptions, modeOptions, modelOptions, effortOptions,
+    providers, providerRow, providerOptions, launchOptions,
     loadOptions, adoptUnlisted, pruneUnlisted, arm,
   }
 }

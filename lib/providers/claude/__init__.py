@@ -61,12 +61,16 @@ class ClaudeProvider(AgentProvider):
                                   plugins=True)
 
     def launch_capabilities(self) -> LaunchCapabilities:
+        from lib.agent_sdk import client
+        from lib.settings import settings
         return {
             "launch_modes": ["sdk", "tmux"],
             "fields": ["model", "permission_mode", "effort"],
             "binary": "claude",
             "pane_commands": ["claude", "claude.exe", "node"],
             "labels": {"sdk": "Agent SDK", "tmux": "tmux"},
+            "models": list(client.MODEL_CHOICES),
+            "default_model": settings.agent_sdk.model or "",
         }
 
     def client_version(self) -> str | None:

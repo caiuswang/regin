@@ -13,7 +13,7 @@ import Select from '../ui/Select.vue'
 import PlGlyph from '../pipeline/PlGlyph.vue'
 import PlSlot from '../pipeline/PlSlot.vue'
 import TaskArmSkills from './TaskArmSkills.vue'
-import { CUSTOM_MODEL, useTaskArm } from '../../composables/useTaskArm.js'
+import { CUSTOM_MODEL, declares, useTaskArm } from '../../composables/useTaskArm.js'
 import api from '../../api'
 import {
   blankArmDraft, cwdWithin, forgetArm, hasRecalledValues, prefilledArmDraft,
@@ -28,17 +28,11 @@ const props = defineProps({
 })
 const emit = defineEmits(['close', 'armed'])
 
-// Per slice, never remembered (D1 of #120): only a slice that restarts the
-// server needs a run that outlives it.
-const LAUNCH_OPTIONS = [
-  { value: '', label: 'SDK (default)', hint: 'ends if the server restarts' },
-  { value: 'tmux', label: 'tmux', hint: 'survives a server restart' },
-]
-
 const {
   options, loading, error, saving, armError,
   skillCatalog, loadSkills, pruneUnavailableSkills, skillMissing,
   cwdOptions, modeOptions, modelOptions, effortOptions,
+  providerRow, providerOptions, launchOptions,
   loadOptions, adoptUnlisted, pruneUnlisted, arm,
 } = useTaskArm()
 
@@ -92,7 +86,26 @@ async function layerHigherSources() {
 // Registered in setup so it stops with the sheet; it starts answering only
 // after mount, whose own load has already read the first cwd.
 let skillsFollowCwd = false
-watch(() => draft.cwd, cwd => { if (skillsFollowCwd) loadSkills(cwd) })
+watch(() => draft.cwd, cwd => { if (skillsFollowCwd) loadSkills(cwd, draft.provider) })
+
+// Launch mode is per slice, never remembered (D1 of #120), and offered only
+// as the picked provider declares it.
+const provider = computed(() => providerRow(draft.provider))
+const shows = field => declares(provider.value, field)
+const launchChoices = computed(() => launchOptions(draft.provider))
+const missingBinary = computed(() => provider.value && !provider.value.available
+  ? provider.value.binary || provider.value.id : '')
+
+// A model is one CLI's id, so a switch drops it rather than send `opus` to
+// kimi; a launch mode the new provider does not declare goes back to its
+// structured channel.
+watch(() => draft.provider, () => {
+  if (prefilling.value) return
+  draft.model = ''
+  draft.modelCustom = ''
+  if (!launchChoices.value.some(o => o.value === draft.launch)) draft.launch = ''
+  loadSkills(draft.cwd, draft.provider)
+})
 
 onMounted(async () => {
   try {
@@ -111,7 +124,7 @@ async function settleDraft() {
   }
   seedProjectCwd()
   adoptUnlisted(draft)
-  await loadSkills(draft.cwd)
+  await loadSkills(draft.cwd, draft.provider)
   if (recalledFields.includes('skills')) {
     pruneUnavailableSkills(draft)
     recalled.value = hasRecalledValues(draft)
@@ -210,8 +223,26 @@ async function submit() {
       </div>
 
       <div class="task-arm-sec" data-pl-part="dialog-section" data-pl-section="Agent">
-        <label class="live-launch-lbl" for="task-arm-mode" data-pl-part="field-label" data-pl-field="mode">permission mode</label>
+        <template v-if="providerOptions.length">
+          <label class="live-launch-lbl" for="task-arm-provider" data-pl-part="field-label" data-pl-field="provider">agent</label>
+          <Select
+            id="task-arm-provider"
+            v-model="draft.provider"
+            block
+            :options="providerOptions"
+            data-pl-part="input"
+            data-pl-field="provider"
+            data-testid="task-arm-provider"
+            aria-label="Agent provider"
+          />
+          <p v-if="missingBinary" class="task-arm-note" role="status" data-testid="task-arm-provider-missing">
+            <code>{{ missingBinary }}</code> is not on the server's PATH, so this run will be refused until it is installed.
+          </p>
+        </template>
+
+        <label v-if="shows('permission_mode')" class="live-launch-lbl" for="task-arm-mode" data-pl-part="field-label" data-pl-field="mode">permission mode</label>
         <Select
+          v-if="shows('permission_mode')"
           id="task-arm-mode"
           v-model="draft.permission_mode"
           block
@@ -222,19 +253,20 @@ async function submit() {
           aria-label="Permission mode"
         />
 
-        <label class="live-launch-lbl" for="task-arm-model" data-pl-part="field-label" data-pl-field="model">model</label>
+        <label v-if="shows('model')" class="live-launch-lbl" for="task-arm-model" data-pl-part="field-label" data-pl-field="model">model</label>
         <Select
+          v-if="shows('model')"
           id="task-arm-model"
           v-model="draft.model"
           block
-          :options="modelOptions"
+          :options="modelOptions(draft.provider)"
           data-pl-part="input"
           data-pl-field="model"
           data-testid="task-arm-model"
           aria-label="Model"
         />
         <Input
-          v-if="draft.model === CUSTOM_MODEL"
+          v-if="shows('model') && draft.model === CUSTOM_MODEL"
           v-model="draft.modelCustom"
           data-pl-part="input"
           data-pl-field="custom"
@@ -243,8 +275,9 @@ async function submit() {
           aria-label="Custom model id"
         />
 
-        <label class="live-launch-lbl" for="task-arm-effort" data-pl-part="field-label" data-pl-field="effort">effort</label>
+        <label v-if="shows('effort')" class="live-launch-lbl" for="task-arm-effort" data-pl-part="field-label" data-pl-field="effort">effort</label>
         <Select
+          v-if="shows('effort')"
           id="task-arm-effort"
           v-model="draft.effort"
           block
@@ -285,7 +318,7 @@ async function submit() {
           id="task-arm-launch"
           v-model="draft.launch"
           name="ChoiceField"
-          :options="LAUNCH_OPTIONS"
+          :options="launchChoices"
           data-testid="task-arm-launch"
           aria-label="Launch mode"
         />

@@ -12,7 +12,7 @@ import Button from '../ui/Button.vue'
 import Dialog from '../ui/Dialog.vue'
 import Input from '../ui/Input.vue'
 import Select from '../ui/Select.vue'
-import { useTaskArm } from '../../composables/useTaskArm.js'
+import { DEFAULT_PROVIDER, useTaskArm } from '../../composables/useTaskArm.js'
 import { useProjects } from '../../composables/useProjects.js'
 
 const props = defineProps({
@@ -23,11 +23,11 @@ const props = defineProps({
 })
 const emit = defineEmits(['close', 'armed'])
 
-const { loading, error, cwdOptions, loadOptions } = useTaskArm()
+const { loading, error, cwdOptions, providerOptions, loadOptions } = useTaskArm()
 const { ensure: ensureProjects, byId } = useProjects()
 
 const drafts = ref([])
-const shared = reactive({ cwd: '' })
+const shared = reactive({ cwd: '', provider: DEFAULT_PROVIDER })
 const reasons = ref({})
 const saving = ref(false)
 const failed = ref('')
@@ -52,7 +52,10 @@ onMounted(async () => {
 })
 
 function item(d) {
-  const body = { task_id: d.task_id, cwd: shared.cwd, verify_cmd: d.verify_cmd.trim() }
+  const body = {
+    task_id: d.task_id, provider: shared.provider, cwd: shared.cwd,
+    verify_cmd: d.verify_cmd.trim(),
+  }
   if (d.branch.trim()) body.worktree = { branch: d.branch.trim(), base: d.base.trim() }
   if (d.skill.trim()) body.skill = { name: d.skill.trim() }
   return body
@@ -95,6 +98,13 @@ function close() {
         id="slice-arm-cwd" v-model="shared.cwd" block :options="cwdOptions"
         aria-label="Working directory" data-testid="slice-arm-cwd"
       />
+      <template v-if="providerOptions.length">
+        <label class="sa-lbl" for="slice-arm-provider">agent (every slice)</label>
+        <Select
+          id="slice-arm-provider" v-model="shared.provider" block :options="providerOptions"
+          aria-label="Agent provider" data-testid="slice-arm-provider"
+        />
+      </template>
       <fieldset
         v-for="d in drafts" :key="d.task_id" class="sa-row"
         :data-testid="`slice-arm-row-${d.n}`"

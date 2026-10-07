@@ -12,6 +12,7 @@ import shutil
 import pytest
 
 from lib import doctor
+from lib.agent_sdk import client
 from lib.providers import registry
 from lib.providers.base import AgentProvider
 from lib.providers.registry import build_provider
@@ -117,11 +118,13 @@ def test_launch_options_lists_providers_with_availability(flask_client,
     rows = {row["id"]: row for row in body["providers"]}
     assert set(rows) == {"claude", "kimi"}
     assert rows["kimi"] == {
-        "id": "kimi", "display_name": "Kimi Code", "available": True,
-        "launch_modes": ["sdk"], "fields": ["model"],
-        "labels": {"sdk": "ACP"}}
+        "id": "kimi", "display_name": "Kimi Code", "binary": "kimi",
+        "available": True, "launch_modes": ["sdk"], "fields": ["model"],
+        "labels": {"sdk": "ACP"}, "models": [], "default_model": ""}
     assert rows["claude"]["available"] is False
     assert rows["claude"]["launch_modes"] == ["sdk", "tmux"]
+    assert rows["claude"]["binary"] == "claude"
+    assert rows["claude"]["models"] == list(client.MODEL_CHOICES)
 
 
 def test_doctor_reports_task_launch_providers(monkeypatch):
