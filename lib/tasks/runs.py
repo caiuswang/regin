@@ -941,6 +941,7 @@ def _settle_and_fire(task_id: int, run_id: int, status: str, reason: str,
         status, reason, verdict = _apply_verdict(command, params, status,
                                                  reason)
         code = verdict if command else code
+        status, reason = _held_by_open_defects(task_id, run_id, status, reason)
     finally:
         ended = complete_run(run_id, status=status, exit_reason=reason,
                              task_status=_TASK_STATUS_FOR[status],
@@ -950,6 +951,32 @@ def _settle_and_fire(task_id: int, run_id: int, status: str, reason: str,
     if resync:
         _resync_feature(task_id)
     return True, fire_ready_dependents(task_id, in_server=in_server)
+
+
+def _held_by_open_defects(task_id: int, run_id: int, status: str,
+                          reason: str) -> tuple[str, str]:
+    """A settle that would write `done` over an open fix defect writes
+    `failed` instead.
+
+    `finish_run` refuses the agent's own report, but a clean exit, a Stop of
+    an idle run or a passing verify reaches the task without one — and every
+    one of them settles here, so this is the one place the check cannot be
+    walked around. Regin still never closes the defect: that needs the check
+    only the closer can name.
+    """
+    if status != RUN_STATUS_DONE:
+        return status, reason
+    try:
+        ids = _open_fix_defects(task_id)
+    except Exception:  # noqa: BLE001 — a check we cannot read is one we must not skip
+        log.error("task_run_fix_defects_unreadable", run_id=run_id,
+                  task_id=task_id, exc_info=True)
+        return RUN_STATUS_FAILED, "ended with its fix defects unreadable"
+    if not ids:
+        return status, reason
+    log.warn("task_run_settle_held", run_id=run_id, task_id=task_id,
+             open_defects=ids)
+    return RUN_STATUS_FAILED, f"ended with {_defects_named(ids)} still open"
 
 
 #: Verifies still in flight, by run id. A settle that happens on a worker

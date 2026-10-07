@@ -29,7 +29,7 @@ VIEWER = {"Authorization": f"Bearer {create_token(3, 'vw', 'viewer')}"}
 VIEW_FIELDS = {
     "id", "feature_id", "feature_title", "symptom", "status", "round",
     "blamed_event_kind", "missing_check", "suspect_paths", "fix_task_id",
-    "fix_state", "triage_state", "triage_reason", "queue_position",
+    "fix_state", "fix_drift", "triage_state", "triage_reason", "queue_position",
     "opened_at", "updated_at", "closed_at", "images",
 }
 

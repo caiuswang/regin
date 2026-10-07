@@ -49,7 +49,7 @@ _TRUE = {"1", "true", "yes", "on"}
 
 
 def _view(row, feature_title, blamed_event_kind, images=None,
-          fix_state=None) -> dict:
+          fix_state=None, fix_drift=False) -> dict:
     return {
         "id": row.id, "feature_id": row.feature_id, "symptom": row.symptom,
         # The feature's own title, never a task's: the two answer different
@@ -70,6 +70,9 @@ def _view(row, feature_title, blamed_event_kind, images=None,
         # column most readers never open. `regin defects list --with-fix-state`
         # is the same read under the same name.
         "fix_state": fix_state,
+        # Open while its fix task reads done/archived — always carried,
+        # because it is the one fix-task fact a row cannot be read without.
+        "fix_drift": fix_drift,
         # How this defect left the triage queue, or None while it is still in
         # it. Separate from `status` because a declined report and a fixed bug
         # are both closed, and only one of them was ever looked at.
@@ -94,7 +97,9 @@ def _serialize(row) -> dict:
     is a single row the caller just changed, so there is no loop for the cost
     to multiply through. The list reads its two extra facts off the row.
     """
-    return _view(row, _feature_title(row), _blamed_kind(row))
+    state = store.fix_states([row]).get(row.id)
+    return _view(row, _feature_title(row), _blamed_kind(row),
+                 fix_drift=store.is_fix_drift(row, state))
 
 
 def _feature_title(row):
@@ -159,15 +164,16 @@ def api_list_defects():
     # and a per-row call would be an N+1 against it.
     by_defect = defect_images.summaries_for(
         row.defect.id for row in result.items)
-    # One read for the whole page's fix tasks, for the same reason — and only
-    # when asked, so the default list costs exactly what it did before.
-    states = (store.fix_states([row.defect for row in result.items])
-              if (request.args.get("with_fix_state") or "").lower() in _TRUE
-              else {})
+    # One read for the whole page's fix tasks, for the same reason. Drift
+    # needs it on every page; the raw status is echoed only when asked.
+    states = store.fix_states([row.defect for row in result.items])
+    with_state = (request.args.get("with_fix_state") or "").lower() in _TRUE
     body["items"] = [_view(row.defect, row.feature_title,
                            row.blamed_event_kind,
                            by_defect.get(row.defect.id, []),
-                           states.get(row.defect.id))
+                           states.get(row.defect.id) if with_state else None,
+                           store.is_fix_drift(row.defect,
+                                              states.get(row.defect.id)))
                      for row in result.items]
     # The scope and the sort are echoed because the controls above the list
     # have to be able to render what the server actually applied — a sort key
@@ -182,7 +188,9 @@ def api_list_defects():
                  "fix_item": query.fix_task_id,
                  "project": "none" if query.project_none
                  else query.project_id},
-        extras={"scope": query.scope}))
+        # Over the whole filtered population, not this page — the I-B2 count.
+        extras={"scope": query.scope,
+                "fix_drift": store.fix_drift_count(query)}))
 
 
 @defects_bp.route("/api/defects/<int:defect_id>", methods=["GET"])

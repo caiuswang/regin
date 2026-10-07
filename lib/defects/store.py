@@ -747,6 +747,40 @@ def fix_states(rows: Iterable[Defect]) -> dict:
             if row.fix_task_id and status.get(row.fix_task_id) is not None}
 
 
+def is_fix_drift(row: Defect, fix_state: Optional[str]) -> bool:
+    """Open, while the task meant to fix it reads finished.
+
+    A run cannot settle a fix task `done` over an open defect, but an operator
+    can (Mark done), and a reopen leaves the task where it was; regin never
+    writes one side from the other, so this flag is how the gap is seen.
+    """
+    from lib.orm.models.tasks import (  # noqa: PLC0415
+        TASK_STATUS_ARCHIVED, TASK_STATUS_DONE)
+
+    return (row.status == STATUS_OPEN
+            and fix_state in (TASK_STATUS_DONE, TASK_STATUS_ARCHIVED))
+
+
+def fix_drift_count(query=None) -> int:
+    """How many defects under `query` are fix drift — the I-B2 query, joined
+    in SQL rather than summed off a page, so the number covers rows the page
+    did not load."""
+    from sqlalchemy import func  # noqa: PLC0415
+    from lib.orm.models.features import Feature  # noqa: PLC0415
+    from lib.orm.models.tasks import (  # noqa: PLC0415
+        AgentTask, TASK_STATUS_ARCHIVED, TASK_STATUS_DONE)
+
+    query = query or defect_query.DefectQuery()
+    stmt = (select(func.count(Defect.id))
+            .join(AgentTask, AgentTask.id == Defect.fix_task_id)
+            .join(Feature, Feature.id == Defect.feature_id, isouter=True)
+            .where(Defect.status == STATUS_OPEN,
+                   AgentTask.status.in_((TASK_STATUS_DONE,
+                                         TASK_STATUS_ARCHIVED))))
+    with SessionLocal() as session:
+        return int(session.exec(_narrowed(stmt, query)).one())
+
+
 def for_feature(feature_id: int) -> list[Defect]:
     with SessionLocal() as session:
         rows = session.exec(
