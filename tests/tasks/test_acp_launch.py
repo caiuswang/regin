@@ -129,18 +129,30 @@ def test_active_provider_kimi_task_run_end_to_end(tmp_db, native_task):
     # a dead port); the e2e's kimi must post to the REAL server or its trace
     # never lands. Overriding the overlay back is the production shape:
     # server → launcher → kimi → :8321 ingest.
+    from lib.orm import engine
     from lib.settings import _MAIN_WORKTREE, settings
 
     real_db = str(settings.trace_db_path
                   or _MAIN_WORKTREE / "db" / "regin.db")
     ingest = f"http://127.0.0.1:{settings.web_port}"
 
-    task_id = native_task(title="kimi e2e", status=TASK_STATUS_ARMED)
+    # A bare title reads as open-ended work: kimi spends the one turn
+    # exploring the repo for something to merge and never reports.
+    task_id = native_task(
+        title="kimi e2e", status=TASK_STATUS_ARMED,
+        body="Do no other work: run the finish command below exactly as "
+             "given, with --reason 'e2e ok'.")
+    # The child's `task finish` must settle this test's attempt, not the
+    # same-numbered one in the real DB; nothing listens on :9, so the
+    # finish settles in its own process.
     runs.open_attempt(task_id,
                       params={"provider": "kimi", "cwd": "/tmp",
                               "one_shot": True,
                               "env": {"REGIN_E2E": "1",
-                                      "REGIN_INGEST_BASE_URL": ingest}})
+                                      "REGIN_INGEST_BASE_URL": ingest,
+                                      "REGIN_TRACE_DB_PATH": engine.DB_PATH,
+                                      "REGIN_AGENT_MEMORY__INJECT_SERVER_URL":
+                                          "http://127.0.0.1:9"}})
     view = runs.start_run(task_id)
     assert view["trace_id"].startswith("session_")
     settled = _wait_settled(task_id)

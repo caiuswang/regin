@@ -326,15 +326,15 @@ def test_run_checks_mysql_ok_shared_mode_reports_configured(monkeypatch):
 
 def test_run_checks_mysql_ok_exception_is_false(monkeypatch):
     """Any exception during MODE/mysql_db lookup → mysql_ok False."""
-    import builtins as _bi
-    real_import = _bi.__import__
+    from lib import settings as _cfg
+    monkeypatch.setattr(_cfg.settings, "mode", "shared")
 
-    def _broken_import(name, *args, **kwargs):
-        if name == "lib.settings":
-            raise RuntimeError("simulated import failure")
-        return real_import(name, *args, **kwargs)
+    from lib import mysql_db
 
-    monkeypatch.setattr(_bi, "__import__", _broken_import)
+    def _boom():
+        raise RuntimeError("simulated lookup failure")
+
+    monkeypatch.setattr(mysql_db, "is_configured", _boom)
     result = doctor.run_checks()
     mysql = next(i for i in result["project"]["items"]
                  if i["id"] == "mysql_configured")
