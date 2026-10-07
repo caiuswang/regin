@@ -238,6 +238,10 @@ class KimiProvider(AgentProvider):
     hook_output_format = "kimi"
     # Kimi's session file is the event-sourced wire.jsonl, parsed by
     # lib.trace.kimi_transcript rather than Claude's read_usage.
+
+    def channel_launcher(self):
+        from lib.agent_acp.launcher import launch_run
+        return launch_run
     transcript_format = "kimi"
 
     def __init__(self, overrides: dict | None = None):

@@ -111,6 +111,20 @@ class AgentProvider:
         """
         return None
 
+    def channel_launcher(self):
+        """Callable launching a task run through this provider's structured
+        channel, or None when the provider launches Claude-style (the
+        sdk/tmux arms).
+
+        A channel launcher matches `supervisor.launch_run`'s contract: it
+        takes the prompt plus the launch-parameter subset and returns a
+        handle with `trace_id` and `add_done_callback`. Providers whose CLI
+        speaks a structured wire protocol (Kimi's ACP) override this; the
+        import stays inside the override so the channel module loads only
+        when the provider is actually asked to launch.
+        """
+        return None
+
     def live_session_ids(self) -> frozenset[str] | None:
         """Session ids this CLI reports as running right now, or None if it
         cannot say.

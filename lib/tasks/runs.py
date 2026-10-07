@@ -484,6 +484,10 @@ def start_run(task_id: int) -> Optional[dict]:
     _refuse_unrunnable(task)
     row = open_attempt(task_id)
     kwargs = _launch_kwargs(row["params"])
+    runner = _channel_launcher((row["params"] or {}).get("provider")
+                               or "claude")
+    if runner is not None:
+        return _start_channel(task, row, runner, kwargs)
     if tmux_runs.is_tmux(row["params"]):
         return _start_tmux(task, row, kwargs)
     try:
@@ -500,6 +504,40 @@ def start_run(task_id: int) -> Optional[dict]:
         lambda outcome: handle_completion(task_id, row["id"], outcome))
     log.write("task_run_started", task_id=task_id, run_id=row["id"],
               trace_id=handle.trace_id, attempt=view["attempt"])
+    return view
+
+
+def _channel_launcher(provider_id: str):
+    """The provider's structured-channel launcher, or None when the provider
+    launches Claude-style (the sdk/tmux arms below). Feature #140's seam:
+    adding a channel-launched provider is an adapter override, not a branch
+    here."""
+    if provider_id == "claude":
+        return None
+    from lib.providers.registry import build_provider  # noqa: PLC0415
+    return build_provider(provider_id).channel_launcher()
+
+
+def _start_channel(task: dict, row: dict, runner, kwargs: dict) -> dict:
+    """The structured-channel arm of `start_run` (kimi via ACP today).
+
+    Unlike the SDK arm there is no trace-id placeholder: the channel answers
+    with the child session id before the prompt is sent, so the attempt is
+    marked running under the id the trace will actually land on.
+    """
+    launch_kwargs = {name: kwargs.get(name)
+                     for name in ("cwd", "env", "model", "one_shot")}
+    try:
+        handle = runner(_prompt(task, row["id"], row["params"]),
+                        **launch_kwargs)
+    except Exception as exc:
+        raise _refuse_launch(row, exc) from exc
+    view = _mark_started(task, row, handle.trace_id)
+    handle.add_done_callback(
+        lambda outcome: handle_completion(task["id"], row["id"], outcome))
+    log.write("task_run_started", task_id=task["id"], run_id=row["id"],
+              trace_id=handle.trace_id, attempt=view["attempt"],
+              launch="channel")
     return view
 
 

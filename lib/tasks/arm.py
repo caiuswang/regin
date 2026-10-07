@@ -18,11 +18,12 @@ import re
 from typing import Optional
 
 from lib.agent_sdk import client
+from lib.providers import registry
 from lib.tasks.capture import CaptureRejected
 
 ARM_FIELDS = frozenset({
     "cwd", "model", "permission_mode", "effort", "one_shot", "worktree",
-    "env", "verify_cmd", "autorun", "skill", "launch",
+    "env", "verify_cmd", "autorun", "skill", "launch", "provider",
 })
 
 LAUNCH_SDK, LAUNCH_TMUX = "sdk", "tmux"
@@ -178,6 +179,46 @@ def _also(value, first: str) -> list[str]:
     return names
 
 
+def _launch_choice(payload: dict, provider: str) -> str:
+    """The `launch` value, scoped by provider.
+
+    Launch modes are Claude vocabulary for now: an explicit one on a
+    non-Claude arm is a rejection naming it, not a silent drop, and an absent
+    one stays the SDK default.
+    """
+    if provider != "claude":
+        if payload.get("launch"):
+            raise CaptureRejected("launch modes are Claude-only for now",
+                                  "launch")
+        return LAUNCH_SDK
+    return _choice(payload, "launch", LAUNCH_MODES) or LAUNCH_SDK
+
+
+def _params(payload: dict, provider: str) -> dict:
+    """The launch parameters in the launcher's own vocabulary.
+
+    permission_mode/effort mirror `claude_agent_sdk`'s enums, so a non-Claude
+    provider cannot mean them: its arms drop the values instead of dying on
+    words that have no use there (feature #140).
+    """
+    claude_params = provider == "claude"
+    return {
+        "cwd": _string(payload, "cwd", _PATH_MAX),
+        "model": _string(payload, "model", _ID_MAX),
+        "permission_mode": _choice(payload, "permission_mode",
+                                   client.PERMISSION_MODES)
+        if claude_params else "",
+        "effort": _choice(payload, "effort", client.EFFORT_LEVELS)
+        if claude_params else "",
+        "one_shot": _flag(payload, "one_shot"),
+        "env": _env(payload),
+        "worktree": _worktree(payload),
+        "skill": _skill(payload),
+        "launch": _launch_choice(payload, provider),
+        "provider": provider,
+    }
+
+
 def parse_arm(payload) -> dict:
     """`{params, verify_cmd, autorun}` for `store.arm_task`, or
     `CaptureRejected` naming the offending field.
@@ -191,20 +232,10 @@ def parse_arm(payload) -> dict:
     unknown = sorted(set(payload) - ARM_FIELDS)
     if unknown:
         raise CaptureRejected(f"unknown field: {unknown[0]}", unknown[0])
-    params = {
-        "cwd": _string(payload, "cwd", _PATH_MAX),
-        "model": _string(payload, "model", _ID_MAX),
-        "permission_mode": _choice(payload, "permission_mode",
-                                   client.PERMISSION_MODES),
-        "effort": _choice(payload, "effort", client.EFFORT_LEVELS),
-        "one_shot": _flag(payload, "one_shot"),
-        "env": _env(payload),
-        "worktree": _worktree(payload),
-        "skill": _skill(payload),
-        "launch": _choice(payload, "launch", LAUNCH_MODES) or LAUNCH_SDK,
-    }
+    provider = _choice(payload, "provider",
+                       registry.list_provider_ids()) or "claude"
     return {
-        "params": params,
+        "params": _params(payload, provider),
         "verify_cmd": _string(payload, "verify_cmd", _CMD_MAX) or None,
         "autorun": int(_flag(payload, "autorun")),
     }
