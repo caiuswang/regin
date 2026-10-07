@@ -249,6 +249,7 @@ class AcpRunHandle:
             log.error("acp_close_failed", trace_id=self.trace_id,
                       exc_info=True)
         _record_run_closed(self)
+        _end_trace_session(self.trace_id, reason)
         self._settle(RunOutcome(self.trace_id, "failed",
                                 f"channel closed: {reason}"))
         for callback in callbacks:
@@ -361,6 +362,29 @@ def _record_run_closed(handle: AcpRunHandle) -> None:
         sdk_store.upsert_run(handle.trace_id, status="exited", detail=detail)
     except Exception:  # noqa: BLE001 — teardown must not raise
         log.error("acp_run_row_unsettled", trace_id=handle.trace_id,
+                  exc_info=True)
+
+
+def _end_trace_session(trace_id: str, reason: str) -> None:
+    """Settle the `sessions` row of a run whose channel just closed.
+
+    kimi emits no `session.end` over ACP, so without this the row keeps its
+    `status='active'` until the next boot's `settle_ended_run_sessions`, and
+    every status surface reads Working on a session nothing can steer.
+
+    Skipped while the id is owned again: a resume of the same session can
+    reserve and revive it between `unregister` and this write, and stamping
+    that row ended would kill the new run's card.
+    """
+    try:
+        from lib.agent_sdk import registry as sdk_registry
+        from lib.agent_sdk import store as sdk_store
+
+        if sdk_registry.is_sdk_owned(trace_id):
+            return
+        sdk_store.end_trace_session(trace_id, reason=reason)
+    except Exception:  # noqa: BLE001 — teardown must not raise
+        log.error("acp_trace_session_unended", trace_id=trace_id,
                   exc_info=True)
 
 

@@ -290,3 +290,56 @@ def test_acp_busy_launch_turn_closes_channel(record):
     assert handle.wait(timeout=WAIT).detail == "turn.agent_busy"
     _until(lambda: not acp_registry.is_owned(handle.trace_id),
            what="channel close")
+
+
+# ── defect #266: the trace row ends with the channel ────────────────
+
+def _trace_row(trace_id: str, status: str = "active") -> None:
+    from sqlalchemy import text
+
+    from lib.orm import SessionLocal
+
+    with SessionLocal() as session:
+        session.exec(text(
+            "INSERT INTO sessions (trace_id, started_at, last_seen, agent_type,"
+            " status) VALUES (:t, '2026-10-07 10:00:00',"
+            " '2026-10-07 10:05:00', 'kimi', :s)"
+        ).bindparams(t=trace_id, s=status))
+        session.commit()
+
+
+def _trace_state(trace_id: str):
+    from sqlalchemy import text
+
+    from lib.orm import SessionLocal
+
+    with SessionLocal() as session:
+        return tuple(session.exec(text(
+            "SELECT status, ended_at, ended_reason FROM sessions"
+            " WHERE trace_id = :t").bindparams(t=trace_id)).first())
+
+
+def test_acp_close_ends_the_trace_session(record):
+    handle = _launch(record)
+    _trace_row(handle.trace_id)
+    _until(lambda: handle.turns, what="the launch turn")
+
+    handle.end_after_turn()
+    handle.wait(timeout=WAIT)
+
+    _until(lambda: _trace_state(handle.trace_id)[0] == "ended",
+           what="the trace row to end")
+    assert _trace_state(handle.trace_id) == (
+        "ended", "2026-10-07 10:05:00", "ended after the turn")
+
+
+def test_acp_close_spares_a_session_owned_again(record, monkeypatch):
+    from lib.agent_sdk import registry as sdk_registry
+
+    handle = _launch(record)
+    _trace_row(handle.trace_id)
+    monkeypatch.setattr(sdk_registry, "is_sdk_owned", lambda _tid: True)
+
+    handle.close()
+
+    assert _trace_state(handle.trace_id) == ("active", None, None)

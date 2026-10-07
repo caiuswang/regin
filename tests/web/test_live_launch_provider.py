@@ -266,10 +266,11 @@ def test_kimi_resume_refused_without_load_session(flask_client, enabled,
     assert _ended_at(_KIMI_SESSION) is not None
 
 
-def test_interrupted_resume_restores_its_end_marker_on_close(
+def test_interrupted_resume_ends_its_session_on_close(
         flask_client, enabled, no_claude, channel):
     """An interrupt settles the handle while the session stays open; the
-    undo of the revive must wait for the close, not be spent on that."""
+    session must not read ended until the close, which ends it with its own
+    reason rather than restoring the stale pre-resume marker."""
     _record, knobs, _calls = channel
     knobs["FAKE_ACP_STOP_REASON"] = "cancelled"
     _session(_KIMI_SESSION, "kimi")
@@ -281,7 +282,12 @@ def test_interrupted_resume_restores_its_end_marker_on_close(
     assert acp_registry.is_owned(_KIMI_SESSION)
     assert _ended_at(_KIMI_SESSION) is None
     handle.close()
-    assert _ended_at(_KIMI_SESSION) == "2026-10-01 10:05:00"
+    with SessionLocal() as session:
+        reason = session.exec(text(
+            "SELECT ended_reason FROM sessions WHERE trace_id = :t"
+        ).bindparams(t=_KIMI_SESSION)).first()[0]
+    assert _ended_at(_KIMI_SESSION) is not None
+    assert reason == "closed"
 
 
 def test_steer_sent_during_resume_handshake_runs_after_load(
