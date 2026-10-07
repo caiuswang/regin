@@ -137,10 +137,15 @@ for (const key of ['tasks']) {
         // Ungrouped, so the tasks count is the flat read's own.
         await page.goto(`/${key}${query}${key === 'tasks' ? `${sep}group=none` : ''}`)
         const strip = page.getByTestId(`pipeline-count-${key}`)
+        const count = page.getByTestId('list-count')
         await expect(strip).toBeVisible()
-        const n = (await strip.innerText()).trim()
-        await expect(page.getByTestId('list-count'))
-          .toHaveText(new RegExp(`^${n} ${key.slice(0, -1)}s?$`))
+        // Other specs write to the shared e2e DB, and each write re-reads
+        // both counts off the same frame, so they are compared once both
+        // have answered it rather than as two snapshots taken apart.
+        await expect.poll(async () => {
+          const n = (await strip.textContent()).trim()
+          return new RegExp(`^${n} ${key.slice(0, -1)}s?$`).test((await count.textContent()).trim())
+        }).toBe(true)
       })
   }
 }

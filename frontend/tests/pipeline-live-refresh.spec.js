@@ -69,7 +69,27 @@ test('a burst of events during a read costs exactly one more read', async ({ pag
   expect(reads.total).toBe(3)
 })
 
+// Every wake the page is owed a re-read for: a `pipeline` frame, or a
+// reconnect (frames were lost while it was down). Counted inside the page so
+// the tally is taken before the read it causes is issued.
+function countWakes() {
+  window.__plWakes = 0
+  const Native = window.EventSource
+  let opened = false
+  window.EventSource = class extends Native {
+    constructor(...args) {
+      super(...args)
+      super.addEventListener('open', () => {
+        if (opened) window.__plWakes += 1
+        opened = true
+      })
+      super.addEventListener('pipeline', () => { window.__plWakes += 1 })
+    }
+  }
+}
+
 test('overview re-reads on a CLI write and issues nothing while idle', async ({ page }) => {
+  await page.addInitScript(countWakes)
   await page.goto('/overview')
   await expect(page.getByTestId('pipeline-count-tasks')).toBeVisible()
 
@@ -77,10 +97,15 @@ test('overview re-reads on a CLI write and issues nothing while idle', async ({ 
   page.on('request', (r) => {
     if (new URL(r.url()).pathname === '/api/pipeline/overview') overviewReads.push(r.url())
   })
+  const wakesBefore = await page.evaluate(() => window.__plWakes)
   // The one fixed wait in this file, and it is the assertion itself: a poll
-  // would show up as a request inside the window.
+  // would show up as a read no frame asked for. Other specs share the e2e DB
+  // and their writes raise real frames here, so the bar is one read at most
+  // per wake rather than none at all.
   await page.waitForTimeout(3000)
-  expect(overviewReads).toEqual([])
+  const reads = overviewReads.length
+  const wakes = (await page.evaluate(() => window.__plWakes)) - wakesBefore
+  expect(reads).toBeLessThanOrEqual(wakes)
 
   const read = page.waitForRequest((r) => new URL(r.url()).pathname === '/api/pipeline/overview')
   const counts = page.waitForRequest((r) => new URL(r.url()).pathname === '/api/pipeline/counts')

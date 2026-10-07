@@ -29,7 +29,7 @@ const rounds = computed(() => {
       <span v-else>0/0 tasks</span>
     </span>
     <span data-pl-part="stat-line" data-testid="feature-rounds" :aria-label="`${row.rounds} rounds`">
-      <span data-pl-part="stat-mark" aria-hidden="true">↻</span>{{ rounds }} · {{ ago(row.last_activity) }}
+      <span data-pl-part="stat-mark" aria-hidden="true">↻</span><span data-pl-part="stat-text"><span>{{ rounds }} ·</span> <span>{{ ago(row.last_activity) }}</span></span>
     </span>
     <span v-if="row.defects.total" data-pl-part="stat-line" :data-warn="row.defects.open ? '' : undefined">
       <span data-pl-part="stat-mark" aria-hidden="true">✱</span>

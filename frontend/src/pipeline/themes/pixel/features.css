@@ -272,11 +272,12 @@ html[data-pl-theme="pixel"] [data-pl-part="row"] {
    a title is cut only when there is truly no room, the level never grows past
    the design's width, and spare width falls after STATS rather than between
    a title and its track. STATS has a fixed floor: an intrinsic one would take
-   the width of the expansion, which spans every column. Outranks every width
+   the width of the expansion, which spans every column. The floor counts the
+   row line's side padding, which a subgrid takes out of its last track. Outranks every width
    tier of classic's grid. */
 html[data-pl-theme="pixel"] [data-pl-part="table"] {
     display: grid;
-    grid-template-columns: minmax(0, max-content) minmax(5rem, 15rem) minmax(9.5rem, 1fr);
+    grid-template-columns: minmax(0, max-content) minmax(5rem, 15rem) minmax(11rem, 1fr);
     column-gap: 1rem;
     row-gap: 0;
 }
@@ -326,6 +327,17 @@ html[data-pl-theme="pixel"] [data-pl-part="stat-line"] {
     text-transform: uppercase;
     white-space: nowrap;
     color: var(--pl-text);
+}
+
+/* A narrow STATS track breaks the activity line at its separator instead of
+   letting the table clip it. */
+html[data-pl-theme="pixel"] [data-pl-part="stat-text"] {
+    min-width: 0;
+    white-space: normal;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="stat-text"] > span {
+    white-space: nowrap;
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="stat-line"][data-warn] {
