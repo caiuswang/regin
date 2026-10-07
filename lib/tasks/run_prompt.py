@@ -48,6 +48,10 @@ def _finish_command(run_id: int) -> str:
     return " ".join(shlex.quote(part) for part in parts)
 
 
+# Not `--file -`: printed as a ready command, it gets run with nothing piped in.
+SPEC_FILE_PLACEHOLDER = "<file holding the revised spec>"
+
+
 def _cli_command(*parts: str) -> str:
     """A `regin <…>` command as the prompt must write it — the server's own
     interpreter and CLI path, for the same reason `_finish_command` does it:
@@ -266,7 +270,7 @@ def _feature_block(task: dict) -> str:
     return "\n\n" + render_surface(FEATURE_SURFACE_ID, {
         "feature_named": named, "feature_id": feature_id,
         "spec_cmd": _cli_command("feature", "spec", str(feature_id),
-                                 "--file", "-"),
+                                 "--file", SPEC_FILE_PLACEHOLDER),
         "images": _feature_images_line(feature_id)})
 
 
@@ -303,7 +307,7 @@ def _spec_block(task: dict) -> str:
     return "\n\n" + render_surface(SPEC_SURFACE_ID, {
         "feature_named": named,
         "spec_cmd": _cli_command("feature", "spec", str(feature_id),
-                                 "--file", "-")})
+                                 "--file", SPEC_FILE_PLACEHOLDER)})
 
 
 def _cited_refs(task: dict, feature) -> list[str]:

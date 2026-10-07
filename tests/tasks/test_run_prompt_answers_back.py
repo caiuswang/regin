@@ -175,6 +175,23 @@ def test_a_run_under_a_feature_is_told_how_to_rewrite_its_spec(flask_client,
     assert "do not append a changelog" in prompt
 
 
+def test_the_spec_command_names_a_file_not_stdin(flask_client, launcher):
+    """Printed as `--file -`, the command was run as-is with nothing piped in,
+    and the empty read replaced the spec."""
+    from lib.features import store as feature_store
+    from lib.tasks.run_prompt import SPEC_FILE_PLACEHOLDER
+
+    feature = feature_store.create("the feature")
+    task_id = _armed(flask_client, "shelf", body="wire the thing")
+    assert flask_client.patch(f"/api/tasks/{task_id}",
+                              json={"feature_id": feature.id}).status_code == 200
+
+    prompt = _launch(flask_client, launcher, task_id)
+
+    assert "--file -" not in prompt
+    assert SPEC_FILE_PLACEHOLDER in prompt
+
+
 def test_a_task_under_no_feature_is_told_nothing_about_a_spec(flask_client,
                                                               launcher):
     """The block is absent, not empty — a bodyless instruction is noise the

@@ -49,7 +49,7 @@ What the task and its feature's spec cite, looked up when this run was launched:
 </references>"""
 
 _SPEC_BODY = """<spec>
-This run is the spec step of feature {{feature_named}}. Its deliverable is the feature's spec, written onto the feature row — nothing else:
+This run is the spec step of feature {{feature_named}}. Its deliverable is the feature's spec, written onto the feature row — nothing else. Write the spec to a file, then pass that file's path (without `--file` the command prints the current spec):
 
   {{spec_cmd}}
 
@@ -73,7 +73,7 @@ Drop `--resolve` when you are asking something back instead of settling it. An u
 
 _FEATURE_BODY = """<feature>
 This run is a session of feature {{feature_named}}; regin attributes it automatically. If you find something the feature got wrong, declare it against that id: `regin defects open "<what>" --feature {{feature_id}} --session <session id>`. Shipping is the operator's act on the feature, not yours.
-The feature's spec is the description this task was cut from, and this run is what proves it right or wrong. If you finish knowing the spec now contradicts the code — a decision reversed, a constraint that turned out false, a piece deliberately not built — rewrite it rather than leaving the next run to inherit the stale text:
+The feature's spec is the description this task was cut from, and this run is what proves it right or wrong. If you finish knowing the spec now contradicts the code — a decision reversed, a constraint that turned out false, a piece deliberately not built — rewrite it rather than leaving the next run to inherit the stale text. Read the current spec by running the command below without `--file`; write the revision to a file, then pass that file's path:
 
   {{spec_cmd}}
 
@@ -202,7 +202,7 @@ register_surface(
     variables=(
         PromptVariable("feature_named", "The feature as the prompt names it.", example="#80 (Agent SDK runs)"),
         PromptVariable("feature_id", "The feature's numeric id.", example="80"),
-        PromptVariable("spec_cmd", "The literal `regin feature spec` command, with this feature's id filled in."),
+        PromptVariable("spec_cmd", "The literal `regin feature spec` write command, with this feature's id filled in and a placeholder for the spec file."),
         PromptVariable("images", "How to fetch the feature's images. Empty when it has none.", required=False),
     ),
 )
@@ -236,7 +236,7 @@ register_surface(
     applies_to=("external-agent",),
     variables=(
         PromptVariable("feature_named", "The feature as the prompt names it.", example="#80 (Agent SDK runs)"),
-        PromptVariable("spec_cmd", "The literal `regin feature spec` command, with this feature's id filled in."),
+        PromptVariable("spec_cmd", "The literal `regin feature spec` write command, with this feature's id filled in and a placeholder for the spec file."),
     ),
 )
 _FINISH_ORDER_DEFECTS_BODY = (
@@ -367,3 +367,11 @@ register_retired_default(
 register_retired_default(
     LAUNCH_SURFACE_ID,
     sha256="7cdf66128594b8ff971201061cd752fe550e865167fafe002fa481d5468eea0e")
+# The feature and spec-step blocks before the spec command named a file: as
+# `--file -` it was run bare, with nothing piped in.
+register_retired_default(
+    FEATURE_SURFACE_ID,
+    sha256="e167cff65324376c36a626951828aba3b6350c386f293f04232a6e749adc4709")
+register_retired_default(
+    SPEC_SURFACE_ID,
+    sha256="2a6908d2c096a945b4fd06107a1bc39638562101a9544f6c2202b41a85dfe0c2")

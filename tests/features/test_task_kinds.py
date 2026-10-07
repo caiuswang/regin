@@ -5,6 +5,7 @@ One test per acceptance scenario of feature #102.
 
 from __future__ import annotations
 
+import shlex
 from types import SimpleNamespace
 
 import pytest
@@ -18,6 +19,7 @@ from lib.features import events, steps, store as feature_store
 from lib.orm import SessionLocal
 from lib.orm.models.tasks import AgentTask
 from lib.tasks import runs, store as task_store
+from lib.tasks.run_prompt import SPEC_FILE_PLACEHOLDER
 
 runner = CliRunner()
 
@@ -138,7 +140,8 @@ def test_the_spec_prompt_block_is_kind_scoped(flask_client, launcher):
     build_prompt = _run(flask_client, launcher, build["id"])
 
     assert "<spec>" in spec_prompt
-    assert f"feature spec {feature.id} --file -" in spec_prompt
+    assert (f"feature spec {feature.id} --file "
+            f"{shlex.quote(SPEC_FILE_PLACEHOLDER)}") in spec_prompt
     assert "<spec>" not in build_prompt
 
 
