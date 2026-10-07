@@ -130,6 +130,7 @@ async function onDrop(e) {
         ref="area"
         v-model="draft"
         :project="task.project_id"
+        :feature="task.feature_id"
         :rows="18"
         class="tbe-area"
         spellcheck="false"

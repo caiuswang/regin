@@ -1,14 +1,16 @@
 <script setup>
 // The `@` reference menu: groups of rows under one listbox, placed under the
-// caret's line.
+// caret's line, with the highlighted row previewed beside it wherever the
+// viewport leaves room for both.
 //
 // It never takes focus. The textarea keeps it, and with it the caret and the
 // combobox semantics, so every mousedown here is prevented and a click only
 // picks. Placement is written straight onto the element: it depends on the
 // menu's own measured height, and routing it through reactive state would
 // re-render the menu to measure the menu.
-import { nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import Icon from '../ui/Icon.vue'
+import RefPreview from './RefPreview.vue'
 import { KIND_LABELS } from '../../composables/useRefMentions.js'
 import { REF_GLYPHS as GLYPHS, shortKey } from './refDisplay.js'
 
@@ -21,6 +23,10 @@ const props = defineProps({
   note: { type: Object, default: null },
   // The selected project's id: rows from any other project name theirs.
   project: { type: Number, default: null },
+  // The composer's own feature: its rows need no "whose step is this" line.
+  feature: { type: Number, default: null },
+  // `useRefPreview`'s state for the highlighted row.
+  preview: { type: Object, default: null },
   // `{ left, lineTop, lineBottom, boxLeft, boxWidth }`, viewport pixels.
   anchor: { type: Object, default: null },
 })
@@ -29,14 +35,43 @@ defineEmits(['pick', 'hover', 'drill'])
 const GAP = 4
 const EDGE = 8
 const NARROW = 640
+// Below this the list alone gets the width: a preview squeezed beside it
+// would cut both to unreadable columns.
+const WIDE = 960
+const LIST_REM = 28
+const PREVIEW_REM = 24
 
 const root = ref(null)
+const main = ref(null)
+const wide = ref(document.documentElement.clientWidth >= WIDE)
+
+const activeRow = computed(() => {
+  for (const section of props.sections) {
+    const row = section.rows.find((r) => r.index === props.activeIndex)
+    if (row) return row
+  }
+  return null
+})
 
 const optionId = (index) => `${props.listId}-opt-${index}`
 const headId = (section) => `${props.listId}-head-${section.key}`
 
 function foreign(item) {
   return item.project && item.project_id !== props.project
+}
+
+function parentOf(item) {
+  if (!item.feature_title || item.feature_id === props.feature) return ''
+  return `F${item.feature_id} ${item.feature_title}`
+}
+
+function across(at, vw, rem) {
+  const narrow = vw < NARROW
+  const side = narrow ? 0 : rem
+  const full = wide.value ? LIST_REM + PREVIEW_REM : LIST_REM
+  const width = narrow ? Math.min(at.boxWidth, vw) : Math.min(full * rem, vw - 2 * rem)
+  const wanted = narrow ? at.boxLeft : at.left
+  return { width, left: Math.max(side, Math.min(wanted, vw - side - width)) }
 }
 
 function place() {
@@ -46,18 +81,23 @@ function place() {
   const vw = document.documentElement.clientWidth
   const vh = window.innerHeight
   const rem = Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 16
-  const narrow = vw < NARROW
-  const side = narrow ? 0 : rem
-  const width = narrow ? Math.min(at.boxWidth, vw) : Math.min(28 * rem, vw - 2 * rem)
-  const wanted = narrow ? at.boxLeft : at.left
-  const left = Math.max(side, Math.min(wanted, vw - side - width))
-  const natural = Math.min(20 * rem, el.scrollHeight)
+  if (wide.value !== vw >= WIDE) {
+    wide.value = vw >= WIDE
+    nextTick(place)
+    return
+  }
+  const { left, width } = across(at, vw, rem)
+  // With a preview the menu is always full height, so moving the highlight
+  // from a one-line body to a long one never makes the menu jump.
+  const natural = wide.value ? 20 * rem : Math.min(20 * rem, main.value?.scrollHeight ?? 0)
   const below = vh - at.lineBottom - GAP - EDGE
   const above = at.lineTop - GAP - EDGE
   const flip = natural > below && above > below
+  const height = Math.max(0, Math.min(20 * rem, flip ? above : below))
   el.style.left = `${left}px`
   el.style.width = `${width}px`
-  el.style.maxHeight = `${Math.max(0, Math.min(20 * rem, flip ? above : below))}px`
+  el.style.maxHeight = `${height}px`
+  el.style.height = wide.value ? `${height}px` : ''
   el.style.top = flip ? '' : `${at.lineBottom + GAP}px`
   el.style.bottom = flip ? `${vh - at.lineTop + GAP}px` : ''
 }
@@ -65,7 +105,7 @@ function place() {
 // Scrolls this list only. scrollIntoView would also scroll the dialog or the
 // page under it, moving the very textarea the menu is anchored to.
 function reveal() {
-  const box = root.value
+  const box = main.value
   const row = box && document.getElementById(optionId(props.activeIndex))
   if (!row) return
   if (props.activeIndex === 0) {
@@ -97,77 +137,86 @@ watch(() => props.activeIndex, () => nextTick(reveal))
   <div
     ref="root"
     class="ref-menu"
-    :class="{ 'is-stale': stale }"
+    :class="{ 'is-stale': stale, 'is-wide': wide }"
     data-ref-menu
     data-testid="ref-menu"
   >
-    <p
-      v-if="note"
-      class="ref-menu-note"
-      :data-note="note.kind"
-      data-testid="ref-menu-note"
-      role="status"
-    >
-      <span v-if="note.kind === 'busy' || loading" class="ref-menu-spinner" aria-hidden="true" />
-      {{ note.text }}
-    </p>
-    <div :id="listId" role="listbox" aria-label="References" class="ref-menu-list">
-      <div
-        v-for="(section, s) in sections"
-        :key="section.key"
-        role="group"
-        :aria-labelledby="headId(section)"
-        :data-testid="`ref-menu-group-${section.key}`"
+    <div ref="main" class="ref-menu-main">
+      <p
+        v-if="note"
+        class="ref-menu-note"
+        :data-note="note.kind"
+        data-testid="ref-menu-note"
+        role="status"
       >
+        <span v-if="note.kind === 'busy' || loading" class="ref-menu-spinner" aria-hidden="true" />
+        {{ note.text }}
+      </p>
+      <div :id="listId" role="listbox" aria-label="References" class="ref-menu-list">
         <div
-          v-if="section.kind"
-          :id="headId(section)"
-          class="ref-menu-head cursor-pointer hover:text-fg"
-          :title="`Search ${KIND_LABELS[section.kind].toLowerCase()}s only`"
-          data-testid="ref-menu-head"
-          @click="$emit('drill', section.kind)"
+          v-for="(section, s) in sections"
+          :key="section.key"
+          role="group"
+          :aria-labelledby="headId(section)"
+          :data-testid="`ref-menu-group-${section.key}`"
         >
-          <span>{{ section.label }}</span>
-          <span v-if="s === 0 && loading" class="ref-menu-spinner" aria-hidden="true" />
-        </div>
-        <div v-else :id="headId(section)" class="ref-menu-head" data-testid="ref-menu-head">
-          <span>{{ section.label }}</span>
-          <span v-if="s === 0 && loading" class="ref-menu-spinner" aria-hidden="true" />
-        </div>
-        <p v-if="section.hint" class="ref-menu-hint" data-testid="ref-menu-hint">{{ section.hint }}</p>
-        <div
-          v-for="row in section.rows"
-          :id="optionId(row.index)"
-          :key="row.id"
-          role="option"
-          :aria-selected="row.index === activeIndex"
-          class="ref-menu-row cursor-pointer hover:bg-surface-selected"
-          :class="{ 'is-active': row.index === activeIndex }"
-          :data-row-type="row.type"
-          :data-kind="row.kind"
-          :data-ref="row.item?.ref"
-          data-testid="ref-menu-row"
-          @mousemove="row.index !== activeIndex && $emit('hover', row.index)"
-          @click="$emit('pick', row)"
-        >
-          <Icon :name="GLYPHS[row.kind]" :size="13" class="ref-menu-glyph" />
-          <template v-if="row.type === 'item'">
-            <span
-              class="ref-menu-key"
-              :class="{ 'is-path': row.kind === 'file' }"
-              :title="row.kind === 'file' ? shortKey(row.item) : undefined"
-            >{{ shortKey(row.item) }}</span>
-            <span v-if="row.kind !== 'file'" class="ref-menu-title">{{ row.item.title }}</span>
-            <span v-if="row.item.status" class="ref-menu-status">{{ row.item.status }}</span>
-            <span v-if="foreign(row.item)" class="ref-menu-project">{{ row.item.project }}</span>
-          </template>
-          <template v-else>
-            <span class="ref-menu-title">{{ KIND_LABELS[row.kind] }}</span>
-            <span class="ref-menu-prefix">@{{ row.kind }}:</span>
-          </template>
+          <div
+            v-if="section.kind"
+            :id="headId(section)"
+            class="ref-menu-head cursor-pointer hover:text-fg"
+            :title="`Search ${KIND_LABELS[section.kind].toLowerCase()}s only`"
+            data-testid="ref-menu-head"
+            @click="$emit('drill', section.kind)"
+          >
+            <span>{{ section.label }}</span>
+            <span v-if="s === 0 && loading" class="ref-menu-spinner" aria-hidden="true" />
+          </div>
+          <div v-else :id="headId(section)" class="ref-menu-head" data-testid="ref-menu-head">
+            <span>{{ section.label }}</span>
+            <span v-if="s === 0 && loading" class="ref-menu-spinner" aria-hidden="true" />
+          </div>
+          <p v-if="section.hint" class="ref-menu-hint" data-testid="ref-menu-hint">{{ section.hint }}</p>
+          <div
+            v-for="row in section.rows"
+            :id="optionId(row.index)"
+            :key="row.id"
+            role="option"
+            :aria-selected="row.index === activeIndex"
+            class="ref-menu-row cursor-pointer hover:bg-surface-selected"
+            :class="{ 'is-active': row.index === activeIndex }"
+            :data-row-type="row.type"
+            :data-kind="row.kind"
+            :data-ref="row.item?.ref"
+            :title="row.item && row.kind !== 'file' ? row.item.title : undefined"
+            data-testid="ref-menu-row"
+            @mousemove="row.index !== activeIndex && $emit('hover', row.index)"
+            @click="$emit('pick', row)"
+          >
+            <Icon :name="GLYPHS[row.kind]" :size="13" class="ref-menu-glyph" />
+            <template v-if="row.type === 'item'">
+              <span
+                class="ref-menu-key"
+                :class="{ 'is-path': row.kind === 'file' }"
+                :title="row.kind === 'file' ? shortKey(row.item) : undefined"
+              >{{ shortKey(row.item) }}</span>
+              <span v-if="row.kind !== 'file'" class="ref-menu-text">
+                <span class="ref-menu-title">{{ row.item.title }}</span>
+                <span v-if="parentOf(row.item)" class="ref-menu-parent" data-testid="ref-menu-parent">
+                  {{ parentOf(row.item) }}
+                </span>
+              </span>
+              <span v-if="row.item.status" class="ref-menu-status">{{ row.item.status }}</span>
+              <span v-if="foreign(row.item)" class="ref-menu-project">{{ row.item.project }}</span>
+            </template>
+            <template v-else>
+              <span class="ref-menu-title">{{ KIND_LABELS[row.kind] }}</span>
+              <span class="ref-menu-prefix">@{{ row.kind }}:</span>
+            </template>
+          </div>
         </div>
       </div>
     </div>
+    <RefPreview v-if="wide" :row="activeRow" :preview="preview" :project="project" />
   </div>
 </template>
 
@@ -178,11 +227,10 @@ watch(() => props.activeIndex, () => nextTick(reveal))
     position: fixed;
     z-index: var(--z-popover);
     pointer-events: auto;
+    display: flex;
     width: min(28rem, calc(100vw - 2rem));
     max-height: 20rem;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    padding: 0.25rem;
+    overflow: hidden;
     background: var(--color-surface);
     color: var(--color-fg);
     border: 1px solid var(--color-border);
@@ -190,6 +238,16 @@ watch(() => props.activeIndex, () => nextTick(reveal))
     box-shadow: var(--ds-shadow-lg);
     font-size: 0.8125rem;
 }
+.ref-menu-main {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 0.25rem;
+}
+.ref-menu.is-wide .ref-menu-main { flex: 0 0 28rem; max-width: 60%; }
+.ref-menu.is-wide > .ref-preview { flex: 1 1 auto; }
 .ref-menu.is-stale .ref-menu-list,
 .ref-menu.is-stale .ref-menu-note:not([data-note="busy"]) { opacity: 0.55; }
 .ref-menu-note,
@@ -237,12 +295,23 @@ watch(() => props.activeIndex, () => nextTick(reveal))
     white-space: nowrap;
     color: var(--color-fg);
 }
-.ref-menu-title {
+.ref-menu-text {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-width: 0;
+}
+.ref-menu-title,
+.ref-menu-parent {
     flex: 1 1 auto;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+.ref-menu-parent {
+    font-size: 0.6875rem;
+    color: var(--color-fg-subtle);
 }
 .ref-menu-status {
     flex: none;

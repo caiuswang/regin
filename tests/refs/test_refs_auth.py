@@ -47,7 +47,7 @@ def test_search_requires_editor_and_sessions_need_admin(
 def _restricted(key: str) -> dict:
     return {"ref": f"session:{key}", "kind": "session", "key": key,
             "label": f"S{key[:8]}", "title": "", "status": None,
-            "project_id": None, "project": None, "feature_id": None,
+            "project_id": None, "project": None, "feature_id": None, "feature_title": None,
             "url": None, "restricted": True}
 
 

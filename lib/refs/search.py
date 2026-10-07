@@ -9,18 +9,20 @@ rows for the same words.
 
 On top of that predicate, one ranking for every kind: exact id or key, then
 title prefix, title substring, any other matched field, then recency — with
-the selected project's rows first inside each tier. Abandoned features and
-archived tasks are outside every list predicate, so only their exact id finds
-them.
+the selected project's rows first inside each tier. A composer writing
+inside a feature names it, and that feature, its tasks and its defects rank
+above every tier: a step's "S14 — verify" is what that composer means by
+"verify". Abandoned features and archived tasks are outside every list
+predicate, so only their exact id finds them.
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional
 
-from sqlalchemy import case, func
+from sqlalchemy import case, func, or_
 from sqlmodel import select
 
 import lib.memory as memory
@@ -48,6 +50,8 @@ log = get_activity_logger("refs")
 GROUP_LIMIT = 5
 KIND_LIMIT = 20
 RECENT_LIMIT = 3
+CONTEXT_TASKS = 4
+CONTEXT_DEFECTS = 3
 LIMIT_MAX = 50
 FILE_HINT = "Pick a project to search its files"
 
@@ -74,6 +78,9 @@ class Plan:
     exact: str = ""
     session_prefix: str = ""
     recent: bool = False
+    #: The feature the composer writes inside. On the Recent screen its rows
+    #: are a section of their own, so Recent leaves them out.
+    feature: Optional[int] = None
 
 
 def _named_kind(raw) -> Optional[str]:
@@ -182,18 +189,39 @@ def _first(condition, project) -> list:
     return [case((condition, 0), else_=1)] if project is not None else []
 
 
+def _in_context(column, chosen: Plan) -> list:
+    if chosen.feature is None:
+        return []
+    return [case((column == chosen.feature, 0), else_=1)]
+
+
 # ── one search per kind ───────────────────────────────────────
 
-def _features(chosen: Plan, project, size: int) -> dict:
+def _and(where: str, clause: str) -> str:
+    return where + (" AND " if where else " WHERE ") + clause
+
+
+def _feature_where(chosen: Plan, project) -> tuple[str, dict]:
     spec = {**feature_index.NO_FILTERS, "q": chosen.text}
     if chosen.recent and project is not None:
         spec["project_id"] = project.id
     where, binds = feature_index._where(spec)
     key = _exact_key("feature", chosen)
     if key:
-        where += (" AND" if where else " WHERE") + " id <> :exact"
+        where = _and(where, "id <> :exact")
         binds["exact"] = int(key)
+    if chosen.feature is not None:
+        binds["context"] = chosen.feature
+        if chosen.recent:
+            where = _and(where, "id <> :context")
+    return where, binds
+
+
+def _features(chosen: Plan, project, size: int) -> dict:
+    where, binds = _feature_where(chosen, project)
     order = []
+    if chosen.feature is not None and not chosen.recent:
+        order.append("CASE WHEN id = :context THEN 0 ELSE 1 END")
     if chosen.text:
         binds["prefix"], binds["sub"] = _patterns(chosen.text)
         order.append("CASE WHEN title LIKE :prefix ESCAPE '\\' THEN 1"
@@ -221,7 +249,12 @@ def _tasks(chosen: Plan, project, size: int) -> dict:
     if key:
         stmt = stmt.where(AgentTask.id != int(key))
         count = count.where(AgentTask.id != int(key))
+    if chosen.recent and chosen.feature is not None:
+        elsewhere = or_(AgentTask.feature_id.is_(None),
+                        AgentTask.feature_id != chosen.feature)
+        stmt, count = stmt.where(elsewhere), count.where(elsewhere)
     stmt = stmt.order_by(
+        *_in_context(AgentTask.feature_id, chosen),
         *_tiered(AgentTask.title, chosen.text),
         *_first(AgentTask.project_id == getattr(project, "id", None), project),
         AgentTask.updated_at.desc(), AgentTask.id.desc()).limit(size)
@@ -237,6 +270,7 @@ def _defects(chosen: Plan, project, size: int) -> dict:
     if key:
         base = base.where(Defect.id != int(key))
     stmt = base.add_columns(Feature.project_id).order_by(
+        *_in_context(Defect.feature_id, chosen),
         *_tiered(Defect.symptom, chosen.text),
         *_first(Feature.project_id == getattr(project, "id", None), project),
         Defect.updated_at.desc(), Defect.id.desc()).limit(size)
@@ -351,21 +385,31 @@ def _memories(chosen: Plan, project, size: int) -> dict:
     return _exact("memory", chosen, size, resolve.memory_items(rows), total)
 
 
+def _context(feature_id: int) -> list:
+    """The Recent screen's first section: the feature the composer writes
+    inside, then its latest tasks, then its open defects."""
+    head = resolve.items_for("feature", [str(feature_id)],
+                             can_read_sessions=False)
+    filters = task_query.parse_filters({"feature_id": str(feature_id)})
+    tasks = task_query.apply_filters(select(AgentTask), filters).order_by(
+        AgentTask.updated_at.desc(), AgentTask.id.desc()).limit(CONTEXT_TASKS)
+    defects = defect_store.listing_stmt(
+        DefectQuery(feature_id=feature_id, status="open")).order_by(None) \
+        .add_columns(Feature.project_id).order_by(
+            Defect.updated_at.desc(), Defect.id.desc()).limit(CONTEXT_DEFECTS)
+    with SessionLocal() as session:
+        task_rows = session.exec(tasks).all()
+        defect_rows = session.exec(defects).all()
+    return (head + resolve.task_items(task_rows)
+            + resolve.defect_items([(row[0], row[-1]) for row in defect_rows]))
+
+
 _SEARCHES = {"feature": _features, "task": _tasks, "defect": _defects,
              "session": _sessions, "file": _files, "memory": _memories}
 
 
-def search(q: str = "", *, kind=None, project_id=None, limit=None,
-           can_read_sessions: bool = False) -> dict:
-    """`RefSearch`: the groups in fixed kind order, each with its total.
-
-    An empty group is left out, except the File group's hint when no
-    project is selected. No Session group is built for a caller who cannot
-    read sessions — not an empty one, none.
-    """
-    chosen = plan(q, kind, can_read_sessions=can_read_sessions)
-    project = resolve.require_project(project_id)
-    size = _size(chosen, limit)
+def _groups(chosen: Plan, project, size: int,
+            can_read_sessions: bool) -> list:
     groups = []
     for name in KINDS:
         if name not in chosen.kinds:
@@ -375,6 +419,28 @@ def search(q: str = "", *, kind=None, project_id=None, limit=None,
         group = _SEARCHES[name](chosen, project, size)
         if group["items"] or group.get("hint"):
             groups.append(group)
+    return groups
+
+
+def search(q: str = "", *, kind=None, project_id=None, limit=None,
+           feature_id=None, can_read_sessions: bool = False) -> dict:
+    """`RefSearch`: the groups in fixed kind order, each with its total, and
+    on the Recent screen of a composer inside a feature, `context`.
+
+    An empty group is left out, except the File group's hint when no
+    project is selected. No Session group is built for a caller who cannot
+    read sessions — not an empty one, none. A composer inside a feature that
+    names no project searches the feature's.
+    """
+    context = resolve.require_feature(feature_id)
+    chosen = plan(q, kind, can_read_sessions=can_read_sessions)
+    project = resolve.require_project(project_id)
+    if context is not None:
+        chosen = replace(chosen, feature=context.id)
+        project = project or resolve.find_project(context.project_id)
+    groups = _groups(chosen, project, _size(chosen, limit), can_read_sessions)
+    pinned = _context(context.id) if context and chosen.recent else []
     log.read("refs_searched", groups=len(groups), recent=chosen.recent,
-             kind=chosen.kind or "")
-    return {"query": (q or "").strip(), "kind": chosen.kind, "groups": groups}
+             kind=chosen.kind or "", feature=chosen.feature or 0)
+    return {"query": (q or "").strip(), "kind": chosen.kind, "groups": groups,
+            "context": pinned}

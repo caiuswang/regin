@@ -159,7 +159,7 @@ async function onDrop(e) {
       <RefTextarea
         v-show="!previewing"
         ref="area"
-        v-model="draft" :project="project" :rows="14" class="fs-area" spellcheck="false"
+        v-model="draft" :project="project" :feature="featureId" :rows="14" class="fs-area" spellcheck="false"
         aria-label="Feature spec markdown" data-testid="feature-spec-input"
         @paste="onPaste"
         @dragover.prevent

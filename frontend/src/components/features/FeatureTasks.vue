@@ -191,7 +191,7 @@ async function submit() {
       </label>
       <RefTextarea
         :id="`ft-step-${featureId}`"
-        v-model="stepBody" :project="props.projectId" :rows="3" :disabled="busy"
+        v-model="stepBody" :project="props.projectId" :feature="featureId" :rows="3" :disabled="busy"
         :placeholder="stepKind === 'spec' ? 'what the spec must settle' : 'what the build must respect'"
         data-testid="feature-step-body"
       />

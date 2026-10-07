@@ -16,6 +16,7 @@ import RefHighlight from './RefHighlight.vue'
 import RefMenu from './RefMenu.vue'
 import Textarea from '../ui/Textarea.vue'
 import { refForUrl, useRefMentions } from '../../composables/useRefMentions.js'
+import { useRefPreview } from '../../composables/useRefPreview.js'
 import { caretPoint } from '../../utils/caretPoint.js'
 import { cn } from '../../utils/cn'
 import { imageFilesFrom } from '../../utils/imageFiles'
@@ -26,6 +27,8 @@ const props = defineProps({
   modelValue: { type: String, default: '' },
   // A repo id, or nothing. Recent work and file search are scoped to it.
   project: { type: [Number, String], default: null },
+  // The feature this body belongs to, or nothing: it and its work lead the menu.
+  feature: { type: [Number, String], default: null },
   error: { type: Boolean, default: false },
 })
 const emit = defineEmits(['update:modelValue'])
@@ -33,10 +36,14 @@ const field = ref(null)
 const textarea = computed(() => field.value?.$el ?? null)
 defineExpose({ textarea })
 
-const menu = useRefMentions({ project: () => props.project })
+const menu = useRefMentions({ project: () => props.project, feature: () => props.feature })
 const {
-  open, sections, rows, activeIndex, stale, loading, note, selected, query, tokenStart,
+  open, sections, rows, activeIndex, stale, loading, note, selected, context, query, tokenStart,
 } = menu
+const preview = useRefPreview(() => {
+  const row = open.value ? rows.value[activeIndex.value] : null
+  return row?.type === 'item' ? { ref: row.item.ref, project: selected.value } : null
+})
 const listId = `ref-menu-${useId()}`
 const anchor = ref(null)
 let composing = false
@@ -205,7 +212,10 @@ watch(menu.armedResolved, () => {
   const row = rows.value[activeIndex.value]
   if (row) accept(row)
 })
-watch(open, track)
+watch(open, (isOpen) => {
+  track(isOpen)
+  if (!isOpen) preview.reset()
+})
 onBeforeUnmount(() => {
   track(false)
   menu.close()
@@ -245,6 +255,8 @@ onBeforeUnmount(() => {
         :loading="loading"
         :note="note"
         :project="selected"
+        :feature="context"
+        :preview="preview.state.value"
         :anchor="anchor"
         :data-query="query"
         @pick="accept"

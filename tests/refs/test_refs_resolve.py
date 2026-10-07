@@ -39,7 +39,8 @@ def test_resolve_returns_live_item_or_null(flask_client, project, git_repo,
         "ref": f"feature:{renamed.id}", "kind": "feature",
         "key": str(renamed.id), "label": f"F{renamed.id} Alpha",
         "title": "Alpha", "status": "spec", "project_id": repo.id,
-        "project": "p", "feature_id": None, "url": f"/features/{renamed.id}"}
+        "project": "p", "feature_id": None, "feature_title": None,
+        "url": f"/features/{renamed.id}"}
     assert refs["feature:999999"] is None
     assert (refs[f"task:{step['id']}"]["feature_id"],
             refs[f"task:{step['id']}"]["status"]) == (renamed.id, "idea")

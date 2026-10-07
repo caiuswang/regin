@@ -10,8 +10,9 @@
 //     decorator rather than a reference;
 //   - an accept is applied by the caller through the browser's editing stack,
 //     so it is handed back as a range and its replacement, never a new draft;
-//   - the empty query is a screen of its own: recent work, then one row per
-//     kind that narrows the search to that kind.
+//   - the empty query is a screen of its own: the feature the composer writes
+//     inside and its work, recent work, then one row per kind that narrows the
+//     search to that kind.
 import { computed, ref, toValue } from 'vue'
 import api from '../api'
 import { KINDS, canonicalKind, codeRanges, isValidKey } from '../utils/refs.js'
@@ -110,6 +111,9 @@ function screen(found, canReadSessions) {
   if (found.failed) {
     // Nothing to list; the note says why.
   } else if (found.query === '') {
+    if (found.context.length) {
+      sections.push({ key: 'context', label: 'This feature', rows: found.context.map(itemRow) })
+    }
     const recent = found.groups.flatMap((group) => group.items)
     if (recent.length) sections.push({ key: 'recent', label: 'Recent', rows: recent.map(itemRow) })
   } else {
@@ -136,6 +140,9 @@ function screen(found, canReadSessions) {
 
 export function useRefMentions({
   project = null,
+  // The feature the composer writes inside: it, its tasks and its defects
+  // lead every list, and lend it their project when none is given.
+  feature = null,
   // A non-admin is offered no Session group, so no Session row either.
   canReadSessions = () => api.getStoredUser()?.role === 'admin',
 } = {}) {
@@ -159,6 +166,7 @@ export function useRefMentions({
   let armed = null
 
   const selected = computed(() => projectId(project))
+  const context = computed(() => projectId(feature))
   const stale = computed(() => answer.value?.query !== query.value)
   const loading = computed(() => pending.value || stale.value)
   const sections = computed(() => (answer.value ? screen(answer.value, canReadSessions()) : []))
@@ -180,17 +188,23 @@ export function useRefMentions({
     if (activeIndex.value < 0) activeIndex.value = 0
   }
 
-  async function run(q, scope) {
+  async function run(q, scope, within) {
     const mine = ++seq
     let found
     try {
       const params = new URLSearchParams()
       if (q) params.set('q', q)
       if (scope !== null) params.set('project_id', String(scope))
+      if (within !== null) params.set('feature_id', String(within))
       const res = await api.get(`/refs?${params}`)
-      found = { query: q, groups: Array.isArray(res?.groups) ? res.groups : [], failed: false }
+      found = {
+        query: q,
+        groups: Array.isArray(res?.groups) ? res.groups : [],
+        context: Array.isArray(res?.context) ? res.context : [],
+        failed: false,
+      }
     } catch {
-      found = { query: q, groups: [], failed: true }
+      found = { query: q, groups: [], context: [], failed: true }
     }
     if (mine !== seq) return
     answer.value = found
@@ -220,9 +234,10 @@ export function useRefMentions({
     seq++
     pending.value = true
     const scope = selected.value
+    const within = context.value
     timer = setTimeout(() => {
       timer = null
-      run(q, scope)
+      run(q, scope, within)
     }, DEBOUNCE_MS)
   }
 
@@ -325,7 +340,7 @@ export function useRefMentions({
 
   return {
     open, query, sections, rows, activeIndex, stale, loading, note, selected,
-    tokenStart, armedResolved,
+    context, tokenStart, armedResolved,
     sync, move, setActive, close, editFor, handleKeydown,
   }
 }

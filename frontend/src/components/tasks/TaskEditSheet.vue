@@ -115,6 +115,7 @@ async function submit() {
           ref="bodyArea"
           v-model="draft.body"
           :project="draft.project_id"
+          :feature="draft.feature_id"
           :rows="4"
           aria-label="Task details"
         />

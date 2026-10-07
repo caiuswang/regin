@@ -53,6 +53,7 @@ _LABEL_ESCAPES = re.compile(r"([\\\[\]<>&`])")
 _NEWLINES = re.compile(r"\r\n|\r|\n")
 _EDGE_BLANKS = re.compile(r"^[ \t]+|[ \t]+$")
 _TRAILING_BLANKS = re.compile(r"[ \t]+$")
+_RUNS_OF_BLANK = re.compile(r"\s+")
 
 # `[^\r\n]`, never `.`: JS's `.` also refuses U+2028/U+2029, and the two
 # grammars must not disagree about where a fence opens.
@@ -388,3 +389,18 @@ def parse_refs(text: Optional[str]) -> list[Ref]:
                 start=match.start(), end=match.end())
             for match in _LINK.finditer(text)
             if _is_reference(text, match, code)]
+
+
+def plain_title(text: Optional[str]) -> str:
+    """A title as one line of reading text, each reference in it read as its
+    label. Step titles carry their feature's reference, and a menu row or a
+    chip showing `[F139 …](feature:139)` names it twice and reads as neither."""
+    if not text:
+        return ""
+    parts, at = [], 0
+    for ref in parse_refs(text):
+        parts.append(text[at:ref.start])
+        parts.append(ref.label)
+        at = ref.end
+    parts.append(text[at:])
+    return _RUNS_OF_BLANK.sub(" ", "".join(parts)).strip()

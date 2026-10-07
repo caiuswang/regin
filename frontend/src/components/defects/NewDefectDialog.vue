@@ -11,6 +11,7 @@ import api from '../../api'
 import Button from '../ui/Button.vue'
 import Dialog from '../ui/Dialog.vue'
 import Textarea from '../ui/Textarea.vue'
+import RefTextarea from '../refs/RefTextarea.vue'
 import FeaturePicker from '../pipeline/FeaturePicker.vue'
 import PlGlyph from '../pipeline/PlGlyph.vue'
 import TaskImageStrip from '../tasks/TaskImageStrip.vue'
@@ -100,9 +101,10 @@ async function submit() {
     <template #mark><PlGlyph kind="defect.wild" :scale="2" /></template>
     <form class="nd-form" data-testid="new-defect" @submit.prevent="submit" @paste="onPaste">
       <label class="nd-label" for="nd-symptom" data-pl-part="field-label">Symptom</label>
-      <Textarea
+      <RefTextarea
         id="nd-symptom"
         v-model="symptom"
+        :feature="featureId"
         :rows="4"
         data-testid="new-defect-symptom"
         data-pl-part="input"

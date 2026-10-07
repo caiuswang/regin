@@ -55,7 +55,9 @@ const tip = computed(() => {
   if (state.value === 'restricted') return 'session — admin only'
   if (state.value === 'gone') return `${text.value} — not in the repo`
   if (!live.value) return undefined
-  return kind.value === 'file' ? props.item.title : `${shortKey(props.item)} ${props.item.title}`
+  if (kind.value === 'file') return props.item.title
+  const parent = props.item.feature_title ? ` · F${props.item.feature_id} ${props.item.feature_title}` : ''
+  return `${shortKey(props.item)} ${props.item.title}${parent}`
 })
 </script>
 

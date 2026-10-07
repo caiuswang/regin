@@ -50,7 +50,7 @@ def test_search_groups_by_kind_with_exact_id_first(
     assert found["feature"]["items"][0] == {
         "ref": f"feature:{a.id}", "kind": "feature", "key": str(a.id),
         "label": f"F{a.id} Alpha", "title": "Alpha", "status": "spec",
-        "project_id": repo.id, "project": "p", "feature_id": None,
+        "project_id": repo.id, "project": "p", "feature_id": None, "feature_title": None,
         "url": f"/features/{a.id}"}
     assert keys(found["file"]) == ["notes/alpha.md"]
 

@@ -26,7 +26,7 @@ from lib.orm.models.features import Feature
 from lib.orm.models.sync import Repo
 from lib.orm.models.tasks import AgentTask
 from lib.refs.grammar import (
-    RefError, decode_file_key, format_label, parse_ref_target,
+    RefError, decode_file_key, format_label, parse_ref_target, plain_title,
 )
 
 log = get_activity_logger("refs")
@@ -51,26 +51,59 @@ class Project:
 NO_PROJECT: tuple = (None, None)
 
 
-def require_project(raw) -> Optional[Project]:
-    """The project a request names, or None when it names none. An id that is
-    not a registered repo is refused, not ignored: a scope silently dropped
-    answers a different question than the one asked."""
+@dataclass(frozen=True)
+class ContextFeature:
+    id: int
+    project_id: Optional[int]
+
+
+def _row_id(raw, field: str) -> Optional[int]:
     value = str(raw).strip() if raw is not None else ""
     if not value:
         return None
     try:
-        project_id = int(value)
+        row_id = int(value)
     except ValueError:
-        raise RefError(f"project_id must be an integer: {value}",
-                       "project_id") from None
-    # Past 64 bits SQLite cannot even bind the id; no repo can carry it.
-    if project_id.bit_length() > 63:
-        raise RefError(f"unknown project: {project_id}", "project_id")
+        raise RefError(f"{field} must be an integer: {value}", field) from None
+    # Past 64 bits SQLite cannot even bind the id; no row can carry it.
+    if row_id.bit_length() > 63:
+        raise RefError(f"unknown {field[:-3]}: {row_id}", field)
+    return row_id
+
+
+def find_project(project_id: Optional[int]) -> Optional[Project]:
+    if project_id is None:
+        return None
     with SessionLocal() as session:
         repo = session.get(Repo, project_id)
-        if repo is None:
-            raise RefError(f"unknown project: {project_id}", "project_id")
-        return Project(id=repo.id, name=repo.name, path=repo.path)
+        return Project(id=repo.id, name=repo.name, path=repo.path) \
+            if repo is not None else None
+
+
+def require_project(raw) -> Optional[Project]:
+    """The project a request names, or None when it names none. An id that is
+    not a registered repo is refused, not ignored: a scope silently dropped
+    answers a different question than the one asked."""
+    project_id = _row_id(raw, "project_id")
+    if project_id is None:
+        return None
+    project = find_project(project_id)
+    if project is None:
+        raise RefError(f"unknown project: {project_id}", "project_id")
+    return project
+
+
+def require_feature(raw) -> Optional[ContextFeature]:
+    """The feature a composer is writing inside, refused when unknown for
+    the same reason an unknown project is."""
+    feature_id = _row_id(raw, "feature_id")
+    if feature_id is None:
+        return None
+    with SessionLocal() as session:
+        row = session.get(Feature, feature_id)
+        if row is None:
+            raise RefError(f"unknown feature: {feature_id}", "feature_id")
+        return ContextFeature(id=row.id, project_id=row.project_id)
 
 
 def project_names(ids: Iterable[Optional[int]]) -> dict[int, str]:
@@ -90,14 +123,28 @@ def named(project_id: Optional[int], names: dict[int, str]) -> tuple:
     return (project_id, name) if name else NO_PROJECT
 
 
+def feature_titles(ids: Iterable[Optional[int]]) -> dict[int, str]:
+    wanted = {fid for fid in ids if fid is not None}
+    if not wanted:
+        return {}
+    with SessionLocal() as session:
+        rows = session.exec(select(Feature.id, Feature.title)
+                            .where(Feature.id.in_(wanted))).all()
+    return {fid: plain_title(title) for fid, title in rows}
+
+
 def ref_item(kind: str, key: str, title: str, *, status=None,
-             project: tuple = NO_PROJECT, feature_id=None) -> dict:
-    title = title or ""
+             project: tuple = NO_PROJECT, feature_id=None,
+             feature_title: Optional[str] = None) -> dict:
+    # A path is its own title; anything else is read as one line of text.
+    title = (title or "") if kind == "file" else plain_title(title)
     route = _ROUTES.get(kind)
     return {"ref": f"{kind}:{key}", "kind": kind, "key": key,
             "label": format_label(kind, key, title), "title": title,
             "status": status, "project_id": project[0],
             "project": project[1], "feature_id": feature_id,
+            # "S14 — verify" names nothing until it says whose step it is.
+            "feature_title": feature_title,
             "url": route.format(key) if route else None}
 
 
@@ -158,17 +205,22 @@ def feature_items(rows) -> list[dict]:
 
 def task_items(rows) -> list[dict]:
     names = project_names(row.project_id for row in rows)
+    parents = feature_titles(row.feature_id for row in rows)
     return [ref_item("task", str(row.id), row.title, status=row.status,
                      project=named(row.project_id, names),
-                     feature_id=row.feature_id) for row in rows]
+                     feature_id=row.feature_id,
+                     feature_title=parents.get(row.feature_id))
+            for row in rows]
 
 
 def defect_items(rows) -> list[dict]:
     """`rows` are `(Defect, project_id)` — a defect's project is its
     feature's."""
     names = project_names(pid for _, pid in rows)
+    parents = feature_titles(row.feature_id for row, _ in rows)
     return [ref_item("defect", str(row.id), row.symptom, status=row.status,
-                     project=named(pid, names), feature_id=row.feature_id)
+                     project=named(pid, names), feature_id=row.feature_id,
+                     feature_title=parents.get(row.feature_id))
             for row, pid in rows]
 
 

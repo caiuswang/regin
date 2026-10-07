@@ -1,8 +1,8 @@
-"""The `@`-reference endpoints: one grouped search, one batch resolve, and
-who cites one item.
+"""The `@`-reference endpoints: one grouped search, one batch resolve, one
+item's preview, and who cites one item.
 
 Search is an editor's act — it feeds a composer only an editor can submit.
-Resolve and backlinks are a reader's: every signed-in role renders the bodies
+Resolve, preview and backlinks are a reader's: every signed-in role renders the bodies
 that carry chips. Sessions follow their own surface's rule throughout: only
 an admin is told what a session said, or who cites one.
 """
@@ -13,6 +13,7 @@ from flask import Blueprint, jsonify, request
 
 from lib.auth import get_current_user, require_auth, require_editor
 from lib.refs import backlinks as backlinks_module
+from lib.refs import preview as preview_module
 from lib.refs import resolve as resolve_module
 from lib.refs import search as search_module
 from lib.refs.grammar import RefError
@@ -38,6 +39,7 @@ def api_refs_search():
             kind=request.args.get("kind"),
             project_id=request.args.get("project_id"),
             limit=request.args.get("limit"),
+            feature_id=request.args.get("feature_id"),
             can_read_sessions=_is_admin()))
     except RefError as exc:
         return _refused(exc)
@@ -54,6 +56,18 @@ def api_refs_resolve():
     except RefError as exc:
         return _refused(exc)
     return jsonify({"refs": refs})
+
+
+@refs_bp.route("/api/refs/preview", methods=["GET"])
+@require_auth
+def api_refs_preview():
+    try:
+        return jsonify(preview_module.preview(
+            request.args.get("ref") or "",
+            project_id=request.args.get("project_id"),
+            can_read_sessions=_is_admin()))
+    except RefError as exc:
+        return _refused(exc)
 
 
 @refs_bp.route("/api/refs/backlinks", methods=["GET"])
