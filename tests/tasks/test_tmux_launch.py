@@ -159,6 +159,18 @@ def test_tmux_run_starts_detached_session(flask_client, tmux, no_sdk):
     assert _task(task_id).status == "running"
 
 
+def test_tmux_run_pane_has_the_autoupdater_off(flask_client, tmux, no_sdk):
+    """A long-lived pane's update check reinstalls the global package every
+    minute, unlinking `claude` from PATH under the next launch's check."""
+    task_id = _armed(flask_client, launch="tmux")
+
+    _run(flask_client, task_id)
+
+    (call,) = _new_sessions(tmux)
+    argv = list(call)
+    assert argv[argv.index("DISABLE_AUTOUPDATER=1") - 1] == "-e"
+
+
 def test_tmux_refusal_settles_the_attempt_and_keeps_the_task_armed(
         flask_client, tmux, monkeypatch):
     monkeypatch.setattr(settings.agent_bridge, "enabled", False)

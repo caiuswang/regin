@@ -38,7 +38,7 @@ def tmux(monkeypatch):
     """Stub tmux. `calls` is the verb sequence; `command` is what the pane
     reports as its foreground process."""
     state = type("S", (), {"calls": [], "command": "claude", "alive": False,
-                           "new_session_rc": 0})()
+                           "new_session_rc": 0, "argv": ()})()
 
     class _R:
         def __init__(self, rc=0, out="", err=""):
@@ -47,6 +47,7 @@ def tmux(monkeypatch):
     def _fake(*args):
         state.calls.append(args[0])
         if args[0] == "new-session":
+            state.argv = args
             if state.new_session_rc == 0:
                 state.alive = True
             return _R(state.new_session_rc, err="refused")
@@ -109,6 +110,16 @@ def test_taking_over_claims_the_pane_on_regins_own_socket(tmp_db, cli_holds,
     pane_id, server_pid, pane_pid, socket, reachable = _row(_TRACE)
     assert (pane_id, server_pid, pane_pid, reachable) == ("%7", 4242, 4243, 1)
     assert socket.endswith("regin-bridge")
+
+
+def test_the_taken_over_pane_has_the_autoupdater_off(tmp_db, cli_holds, tmux):
+    cli_holds[_TRACE] = _HANDLE
+
+    attach.take_over(_TRACE)
+
+    argv = list(tmux.argv)
+    assert argv[argv.index("DISABLE_AUTOUPDATER=1") - 1] == "-e"
+    assert argv.index("DISABLE_AUTOUPDATER=1") < argv.index("claude")
 
 
 def test_taking_over_twice_reuses_the_pane(tmp_db, cli_holds, tmux):

@@ -94,7 +94,8 @@ def _pane_env() -> list[str]:
     pane; here tmux sets `TMUX_PANE` to the pane regin just made, so the
     SessionStart hook registering it is correct — and keeps a `/clear` in the
     terminal on the same pane row chain as any other bridged session."""
-    return ["-e", f"PATH={os.environ.get('PATH', '')}", "-e", "REGIN_BRIDGE=1"]
+    return ["-e", f"PATH={os.environ.get('PATH', '')}", "-e", "REGIN_BRIDGE=1",
+            *attach.NO_AUTOUPDATE_ENV]
 
 
 def launch_terminal(*, role: str | None, cwd: str | None, model: str = "",

@@ -50,6 +50,11 @@ _TMUX_TIMEOUT_SEC = 5.0
 # `capture_screen` reads that back, so it needs a plausible terminal size.
 # Matches the geometry the /live peek already assumes.
 _PANE_COLS, _PANE_ROWS = 200, 50
+# A pane outlives many releases, and each update check compares the *running*
+# version against latest, so a day-old pane reinstalls the global package
+# every minute. npm unlinks `claude` from PATH for the length of each install,
+# refusing any launch that looks for it in that window.
+NO_AUTOUPDATE_ENV = ("-e", "DISABLE_AUTOUPDATER=1")
 
 _UPSERT_SQL = """
 INSERT INTO bridge_panes
@@ -137,7 +142,7 @@ def take_over(trace_id: str) -> AttachResult:
     if existing is None:
         r = _tmux("new-session", "-d", "-s", name,
                   "-x", str(_PANE_COLS), "-y", str(_PANE_ROWS),
-                  "claude", "attach", handle)
+                  *NO_AUTOUPDATE_ENV, "claude", "attach", handle)
         if r.returncode != 0:
             return AttachResult(False, f"tmux refused: {r.stderr.strip()}")
         existing = _pane_identity(name)
