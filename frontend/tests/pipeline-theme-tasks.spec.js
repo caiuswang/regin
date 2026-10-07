@@ -1,7 +1,7 @@
 /**
  * Feature #139, slice S4 — the Tasks tab under the pixel theme ("quest log"):
- * chapter-numbered groups with sprite heads, one primary key, board sprite
- * heads, `L.0n` graph lanes. The data-owning components are hooked, never
+ * groups with sprite heads and no prototype codes, one primary key, board
+ * sprite heads, `#feature` graph lanes. The data-owning components are hooked, never
  * forked, so the same rows, test ids and verbs exist under either theme.
  *
  * Every seeded task carries the test's own tag and every page is read under
@@ -172,7 +172,7 @@ test.describe('pixel theme — tasks', () => {
     await expect.poll(() => runs).toEqual([ids.ready])
   })
 
-  test('the quest log reads as chapters', async ({ page }) => {
+  test('the quest log draws titles, never prototype codes', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
     const tag = mark()
     const ids = seed(tag)
@@ -184,21 +184,21 @@ test.describe('pixel theme — tasks', () => {
 
     const panelTitle = await page.getByTestId('task-toolbar')
       .evaluate(el => getComputedStyle(el, '::before').content)
-    expect(panelTitle).toMatch(/^"2-1\s+Quest log"/)
+    expect(panelTitle).toMatch(/^"Quest log"/)
 
-    // Chapters follow the groups on screen, in order: 2-01 … 2-05.
+    // Group heads carry their sprite and label, no 2-0n code.
     const heads = await page.locator('[data-testid^="next-step-group-"]').evaluateAll(groups => groups.map(g => {
       const label = g.querySelector('[data-pl-part="group-label"]')
       return {
         key: g.getAttribute('data-testid').replace('next-step-group-', ''),
-        chapter: getComputedStyle(label, '::before').content,
+        before: getComputedStyle(label, '::before').content,
         transform: getComputedStyle(label).textTransform,
         font: getComputedStyle(label).fontFamily,
         sprite: g.querySelector('[data-pl-part="group-head"] [data-pl-glyph]')?.getAttribute('data-sprite') ?? null,
       }
     }))
     expect(heads.map(h => h.key)).toEqual(['ready', 'running', 'blocked', 'failed', 'ideas'])
-    expect(heads.map(h => h.chapter)).toEqual(['"2-01"', '"2-02"', '"2-03"', '"2-04"', '"2-05"'])
+    for (const h of heads) expect(h.before, h.key).toBe('none')
     expect(heads.map(h => h.sprite)).toEqual(['bot', 'bot.running', 'lock', 'bot.failed', 'bulb'])
     for (const h of heads) {
       expect(h.transform).toBe('uppercase')
@@ -214,7 +214,7 @@ test.describe('pixel theme — tasks', () => {
     expect(await page.getByTestId(`next-step-row-${ids.ready}`).locator('[data-pl-part="row-id"]')
       .evaluate(el => getComputedStyle(el).fontFamily)).toMatch(/^"?Silkscreen/)
 
-    // Grouped by status, every group head has its status sprite and chapter.
+    // Grouped by status, every group head has its status sprite and no code.
     await page.goto(`/tasks?tag=${tag}&view=list&group=status`)
     await expect(page.locator('[data-testid^="task-group-toggle-"]').first()).toBeVisible()
     const statusHeads = await page.locator('[data-testid^="task-group-toggle-"]').evaluateAll(heads => heads.map(h => [
@@ -223,9 +223,9 @@ test.describe('pixel theme — tasks', () => {
       getComputedStyle(h.querySelector('[data-pl-part="group-label"]'), '::before').content,
     ]))
     expect(statusHeads.length).toBeGreaterThanOrEqual(5)
-    statusHeads.forEach(([group, sprite, chapter], i) => {
+    statusHeads.forEach(([group, sprite, before]) => {
       expect(sprite, group).not.toBeNull()
-      expect(chapter).toBe(`"2-0${i + 1}"`)
+      expect(before, group).toBe('none')
     })
     expect(Object.fromEntries(statusHeads.map(([g, s]) => [g, s]))).toMatchObject({
       idea: 'bulb', armed: 'bot', running: 'bot.running', done: 'check', failed: 'bot.failed' })
@@ -239,15 +239,15 @@ test.describe('pixel theme — tasks', () => {
     for (const [, sprite] of columns) expect(sprite).not.toBeNull()
     expect(Object.fromEntries(columns)['board-column-running']).toBe('bot.running')
 
-    // Graph: lanes are L.0n · #feature, in lane order.
+    // Graph: lanes are #feature, with no L.0n code.
     await page.goto(`/tasks?tag=${tag}&view=graph`)
     await viewLoaded(page, 'graph', ids)
     const lanes = await page.locator('[data-testid^="graph-lane-"]:not([data-testid="graph-lane-count"])').evaluateAll(ls => ls.map((l) => {
-      const ref = l.querySelector('[data-pl-chapter]')
-      return getComputedStyle(ref, '::before').content.replace(/"/g, '') + ref.textContent.trim()
+      const ref = l.querySelector('[data-pl-part="meta-label"]')
+      return getComputedStyle(ref, '::before').content + ' ' + ref.textContent.trim()
     }))
     expect(lanes.length).toBeGreaterThanOrEqual(2)
-    lanes.forEach((lane, i) => expect(lane).toMatch(new RegExp(`^L\\.0${i + 1} · (#\\d+|no feature)$`)))
+    lanes.forEach(lane => expect(lane).toMatch(/^none (#\d+|no feature)$/))
     expect(lanes.some(l => l.endsWith(`#${ids.feature}`))).toBe(true)
     expect(lanes.some(l => l.endsWith('no feature'))).toBe(true)
   })
@@ -339,7 +339,7 @@ test.describe('pixel theme — tasks', () => {
     })
   }
 
-  test('classic draws no chapters and no sprites', async ({ page }) => {
+  test('classic draws no sprites', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
     const tag = mark()
     const ids = seed(tag)
@@ -348,11 +348,8 @@ test.describe('pixel theme — tasks', () => {
     await expect.poll(() => plTheme(page)).toBe('classic')
     const drawn = await page.locator('.pl-shell').evaluate(shell => ({
       glyphs: shell.querySelectorAll('[data-pl-glyph]').length,
-      chapters: [...shell.querySelectorAll('[data-pl-chapter]')]
-        .map(el => getComputedStyle(el, '::before').content)
-        .filter(c => c !== 'none' && c !== 'normal'),
     }))
-    expect(drawn).toEqual({ glyphs: 0, chapters: [] })
+    expect(drawn).toEqual({ glyphs: 0 })
   })
 
   // R7: on the Tasks tab, a chromatic fill is a primary key (one per panel),
@@ -416,7 +413,7 @@ test.describe('pixel theme — tasks', () => {
       expect(t.height, key).toBeGreaterThanOrEqual(44)
     }
     expect(await page.getByTestId('next-step-group-ready').locator('[data-pl-part="group-label"]')
-      .evaluate(el => getComputedStyle(el, '::before').content)).toBe('"2-01"')
+      .evaluate(el => getComputedStyle(el, '::before').content)).toBe('none')
 
     const overflow = await contentOverflow(page)
     expect(overflow.pane).toBe(true)

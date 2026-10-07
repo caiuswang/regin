@@ -1,5 +1,5 @@
 /**
- * Feature #139, slice S12 — All defects (3-3) under the pixel theme: R3's
+ * Feature #139, slice S12 — All defects under the pixel theme: R3's
  * scope widened to /defects (never /defects/:id), the DefectsHead slot, the
  * toolbar's MenuFields against the API, the card hooks and the colour budget.
  */
@@ -158,7 +158,7 @@ test.describe('pixel theme — All defects', () => {
     await expect(page.getByTestId('defects-list')).toBeVisible()
     expect(await plTheme(page)).toBe('pixel')
     const head = page.getByTestId('defects-head')
-    await expect(head).toHaveText(/3-3\s*All defects/)
+    await expect(head).toHaveText(/^FeaturesAll defects/)
     await expect(page.getByTestId('defects-head-count')).toHaveText(`${DEFECTS.length} defects`)
     await expect(page.getByTestId('pipeline-tab-features')).toHaveAttribute('aria-current', 'page')
     await expect(page.getByTestId('defects-back')).toHaveAttribute('href', '/features')

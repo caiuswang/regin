@@ -95,7 +95,7 @@ test.describe('pixel scoped overview', () => {
     })
     expect(isAfterLoop).toBe(true)
 
-    await expect(panel.locator('[data-pl-part="panel-head"]')).toHaveAttribute('data-pl-chapter', '1-4')
+    await expect(panel.locator('[data-pl-part="panel-head"]')).not.toHaveAttribute('data-pl-chapter')
     const head = await panel.locator('[data-pl-part="panel-head"]').innerText()
     expect(head.replace(/\s+/g, ' ')).toMatch(/ALL PROJECTS \/ REGIN-WEB/)
     await expect(page.getByTestId('project-head-count')).toHaveText('10 FEATURES', inner)

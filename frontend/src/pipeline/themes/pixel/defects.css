@@ -1,5 +1,5 @@
 /*
- * Pixel theme — All defects (3-3, it lights the Features tab): the DefectsHead
+ * Pixel theme — All defects (it lights the Features tab): the DefectsHead
  * slot, the list toolbar, and each defect as a card. Same rules as tokens.css:
  * html[data-pl-theme="pixel"] first, hooks only, --pl-* only.
  *
@@ -42,13 +42,6 @@ html[data-pl-theme="pixel"] [data-pl-part="panel-head"] [data-pl-part="panel-lin
 
 html[data-pl-theme="pixel"] [data-pl-part="panel-head"] [data-pl-part="panel-link"][data-pl-back]:hover {
     text-decoration: underline;
-}
-
-html[data-pl-theme="pixel"] [data-pl-part="panel-head"] [data-pl-part="panel-chapter"] {
-    font-family: var(--pl-font);
-    font-size: 10px;
-    letter-spacing: 0.1em;
-    color: var(--pl-muted);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="sheet"] [data-pl-part="panel-head"] [data-pl-part="panel-title"] {

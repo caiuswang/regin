@@ -24,7 +24,7 @@ import { useNextStep } from '../../composables/useTaskViews.js'
 import { useTaskVerbs } from '../../composables/useTaskVerbs.js'
 import { invalidatePipelineCounts } from '../../composables/usePipelineCounts.js'
 import { taskTitle } from '../../utils/taskTitle.js'
-import { groupChapter, nextStepGlyph } from '../../utils/taskMeta.js'
+import { nextStepGlyph } from '../../utils/taskMeta.js'
 
 const props = defineProps({
   params: { type: Object, required: true },
@@ -213,7 +213,7 @@ defineExpose({ reload })
     </p>
 
     <section
-      v-for="(group, index) in groups"
+      v-for="group in groups"
       :key="group.key"
       class="nsl-group"
       :class="{ 'is-anchored': group.key === anchor }"
@@ -240,7 +240,7 @@ defineExpose({ reload })
         >
           <Icon :name="collapsed[group.key] ? 'chevron-right' : 'chevron-down'" :size="14" />
           <PlGlyph :kind="nextStepGlyph(group.key)" :scale="2" />
-          <span class="nsl-label" data-pl-part="group-label" :data-pl-chapter="groupChapter(index)">{{ group.label }}</span>
+          <span class="nsl-label" data-pl-part="group-label">{{ group.label }}</span>
           <span class="nsl-n" data-pl-part="count" data-testid="next-step-n">{{ group.n }}</span>
         </Button>
         <span v-if="group.hint" class="nsl-hint">{{ group.hint }}</span>

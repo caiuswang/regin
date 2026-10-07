@@ -1,5 +1,5 @@
 <script setup>
-// Projects as save slots (Overview 1-4): the same active rows, attention
+// Projects as save slots (Overview): the same active rows, attention
 // sort and links as the classic panel, drawn as one card per project.
 import Button from '../../../../components/ui/Button.vue'
 import PixelSprite from '../PixelSprite.vue'
@@ -13,7 +13,6 @@ const emit = defineEmits(['pick', 'all'])
 
 const to = (path, id, extra = {}) => ({ path, query: { project: String(id), ...extra } })
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`
-const slot = i => `Slot ${String(i + 1).padStart(2, '0')}`
 
 function seen(row) {
   const at = row.last_activity ? ago(row.last_activity) : '—'
@@ -30,7 +29,7 @@ function seen(row) {
     data-testid="projects-panel"
     aria-labelledby="pj-title"
   >
-    <header class="pl-panel__head" data-pl-part="panel-head" data-pl-chapter="1-4">
+    <header class="pl-panel__head" data-pl-part="panel-head">
       <h2 id="pj-title" class="pl-panel__title" data-pl-part="panel-title">Projects</h2>
       <span class="pl-panel__sub" data-pl-part="panel-meta" data-testid="projects-counts">{{ panel.active }} active · {{ panel.quiet }} quiet</span>
       <Button
@@ -47,14 +46,13 @@ function seen(row) {
     </p>
     <ul v-else class="px-pj__slots">
       <li
-        v-for="(row, i) in panel.rows"
+        v-for="row in panel.rows"
         :key="row.id"
         class="px-slot"
         data-pl-part="card"
         :data-testid="`projects-row-${row.id}`"
       >
         <div class="px-slot__head">
-          <span>{{ slot(i) }}</span>
           <span>{{ seen(row) }}</span>
         </div>
         <Button

@@ -1,5 +1,5 @@
 <script setup>
-// One project picked (Overview 1-4 under a scope): the breadcrumb head, the
+// One project picked (Overview, under a scope): the breadcrumb head, the
 // project's stages as one cell per feature, its three figures as keys, and its
 // most active features. Same props, emits and links as the classic panel.
 import { computed } from 'vue'
@@ -42,7 +42,7 @@ const pct = computed(() => (props.head.shipped_pct == null ? null : `${props.hea
 <template>
   <section class="pl-panel px-ps" data-pl-part="panel" data-testid="project-scope" aria-labelledby="px-ps-title">
     <div data-testid="project-head">
-      <header class="pl-panel__head px-ps__head" data-pl-part="panel-head" data-pl-chapter="1-4">
+      <header class="pl-panel__head px-ps__head" data-pl-part="panel-head">
         <nav class="px-ps__trail" aria-label="Breadcrumb">
           <Button
             variant="link"

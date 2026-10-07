@@ -11,7 +11,7 @@ import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
 import PlGlyph from '../pipeline/PlGlyph.vue'
 import TaskRows from './TaskRows.vue'
-import { groupChapter, groupGlyph } from '../../utils/taskMeta.js'
+import { groupGlyph } from '../../utils/taskMeta.js'
 import { useTaskFeed } from '../../composables/useTasks.js'
 
 const props = defineProps({
@@ -24,8 +24,6 @@ const props = defineProps({
   projectFor: { type: Function, default: () => null },
   canWrite: { type: Boolean, default: true },
   dateField: { type: String, default: 'created_at' },
-  // Position on screen, for the pipeline theme's chapter number.
-  index: { type: Number, default: 0 },
 })
 const emit = defineEmits(['verb', 'open', 'focus', 'select', 'loaded', 'hidden'])
 
@@ -87,7 +85,7 @@ defineExpose({ reload: () => { fetched.value = false; if (open.value) load() } }
     >
       <Icon :name="open ? 'chevron-down' : 'chevron-right'" :size="14" />
       <PlGlyph :kind="groupGlyph(group)" :scale="2" />
-      <span class="tg-label" data-pl-part="group-label" :data-pl-chapter="groupChapter(index)">{{ group.label }}</span>
+      <span class="tg-label" data-pl-part="group-label">{{ group.label }}</span>
       <span class="tg-count" data-pl-part="count" :data-testid="`task-group-count-${group.key}`">
         {{ group.count }}
       </span>

@@ -161,16 +161,6 @@ export function waitsLabel(task) {
   return `waits on #${w.id}${w.status === 'running' ? ' (running)' : ''}`
 }
 
-/** "2-03" — a Tasks group's chapter, by its position on screen (feature #139 R10). */
-export function groupChapter(index) {
-  return `2-${String(index + 1).padStart(2, '0')}`
-}
-
-/** "L.03" — a graph lane's chapter, by its position down the graph. */
-export function laneChapter(index) {
-  return `L.${String(index + 1).padStart(2, '0')}`
-}
-
 // The pipeline theme glyph (`<PlGlyph kind>`) that heads a group or column.
 // Armed has no glyph of its own: an armed task is one that is ready to run.
 const STATUS_GLYPH = { idea: 'task.idea', armed: 'task.ready', queued: 'task.ready',

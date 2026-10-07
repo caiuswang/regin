@@ -3,10 +3,6 @@
  * cards, and graph lanes and nodes. Same contract as tokens.css (R4): every
  * selector starts at a [data-pl-part] / [data-pl-glyph] hook under
  * html[data-pl-theme="pixel"], and only --pl-* properties are declared.
- *
- * Group chapters and lane prefixes are the hook's own data-pl-chapter drawn
- * by ::before, so classic, which never draws them, keeps an unchanged DOM.
- * The quest log's own 2-1 line is features.css's panel-head chapter rule.
  */
 
 html[data-pl-theme="pixel"] [data-pl-part="kbd"] {
@@ -117,15 +113,6 @@ html[data-pl-theme="pixel"] [data-pl-part="group-label"] {
     letter-spacing: 0.12em;
     text-transform: uppercase;
     color: var(--pl-text);
-}
-
-html[data-pl-theme="pixel"] [data-pl-part="group-label"][data-pl-chapter]::before {
-    content: attr(data-pl-chapter);
-    margin-right: 0.875rem;
-    font-size: 10px;
-    font-weight: 400;
-    letter-spacing: 0.08em;
-    color: var(--pl-muted);
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="group-head"][data-pl-group="running"] [data-pl-part="group-label"] {
@@ -324,10 +311,6 @@ html[data-pl-theme="pixel"] [data-pl-part="lane-head"] {
     background: var(--pl-paper);
 }
 
-html[data-pl-theme="pixel"] [data-pl-part="meta-label"][data-pl-chapter]::before {
-    content: attr(data-pl-chapter) "\00a0\00b7\00a0";
-}
-
 /* Lane progress as a strip of ink cells, empty cells shaded. */
 html[data-pl-theme="pixel"] [data-pl-part="meter"] {
     height: 6px;
@@ -432,11 +415,6 @@ html[data-pl-theme="pixel"] [data-pl-part="view-switch"] [role="tablist"] button
     html[data-pl-theme="pixel"] [data-pl-part="group-head"] > button:not([data-pl-part]) {
         min-width: 0;
         overflow: hidden;
-    }
-
-    html[data-pl-theme="pixel"] [data-pl-part="group-label"][data-pl-chapter]::before {
-        margin-right: 0.5rem;
-        letter-spacing: 0;
     }
 
     html[data-pl-theme="pixel"] [data-pl-part="group-head"] [data-pl-part="key--primary"] {

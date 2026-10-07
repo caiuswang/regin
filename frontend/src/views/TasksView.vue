@@ -123,7 +123,6 @@ onBeforeUnmount(() => window.removeEventListener(TASK_CAPTURED_EVENT, afterWrite
     <TaskToolbar
       ref="toolbar"
       data-pl-part="panel-head"
-      data-pl-chapter="2-1"
       data-pl-title="Quest log"
       :view="view"
       :mobile="mobile"

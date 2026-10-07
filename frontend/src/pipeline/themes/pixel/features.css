@@ -1,5 +1,5 @@
 /*
- * Pixel theme — the Features tab (chapter 3): the stage tabs and level track
+ * Pixel theme — the Features tab: the stage tabs and level track
  * slots, the feature table, a row's expansion and the triage rail. Same rules
  * as tokens.css: html[data-pl-theme="pixel"] first, hooks only, --pl-* only.
  *
@@ -8,20 +8,14 @@
  * pixel rule has to outrank it rather than lean on source order.
  */
 
-/* ── Chapters (R10) ──────────────────────────────────────────────────── */
-html[data-pl-theme="pixel"] [data-pl-part="panel-head"][data-pl-chapter]::before {
-    content: attr(data-pl-chapter) / "";
+/* ── Panel title (a toolbar that is also the panel's head) ───────────── */
+html[data-pl-theme="pixel"] [data-pl-part="panel-head"][data-pl-title]::before {
+    content: attr(data-pl-title) / "";
     flex: none;
+    flex-basis: 100%;
     font-family: var(--pl-font);
     font-size: 10px;
     letter-spacing: 0.1em;
-    color: var(--pl-muted);
-}
-
-/* A toolbar that is also the panel's head gets its chapter line to itself. */
-html[data-pl-theme="pixel"] [data-pl-part="panel-head"][data-pl-chapter][data-pl-title]::before {
-    content: attr(data-pl-chapter) "\00a0\00a0" attr(data-pl-title) / "";
-    flex-basis: 100%;
     text-transform: uppercase;
     color: var(--pl-text);
 }

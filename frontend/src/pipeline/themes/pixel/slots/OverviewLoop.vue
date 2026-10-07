@@ -1,5 +1,5 @@
 <script setup>
-// The loop as a level (Overview 1-1): a scene strip where each drawn actor
+// The loop as a level (Overview): a scene strip where each drawn actor
 // stands for real rows, then the three stages as cards with a cell meter and
 // fact keys. Same props as the classic loop; every number is a loop part.
 import { computed } from 'vue'
@@ -55,7 +55,6 @@ const stages = computed(() => (props.loop.stages || []).map((stage) => {
 }))
 
 const note = computed(() => loopNote(props.loop.fix_tasks))
-const index = i => String(i + 1).padStart(2, '0')
 </script>
 
 <template>
@@ -66,7 +65,7 @@ const index = i => String(i + 1).padStart(2, '0')
     data-testid="overview-loop"
     aria-label="The loop"
   >
-    <header class="pl-panel__head" data-pl-part="panel-head" data-pl-chapter="1-1">
+    <header class="pl-panel__head" data-pl-part="panel-head">
       <h2 class="pl-panel__title" data-pl-part="panel-title">The loop</h2>
       <span class="pl-panel__sub px-loop__path" data-pl-part="panel-meta">Tasks → Features → Defects</span>
     </header>
@@ -92,13 +91,12 @@ const index = i => String(i + 1).padStart(2, '0')
 
     <div class="px-stages">
       <article
-        v-for="(stage, i) in stages"
+        v-for="stage in stages"
         :key="stage.label"
         class="px-stage"
         :data-testid="`loop-${stage.label.toLowerCase()}`"
       >
         <header class="px-stage__head">
-          <span class="px-stage__index">{{ index(i) }}</span>
           <h2 class="px-stage__label">{{ stage.label }}</h2>
           <span class="px-stage__total" data-testid="loop-total">{{ stage.total }}</span>
         </header>
@@ -159,10 +157,9 @@ const index = i => String(i + 1).padStart(2, '0')
 .px-stage { display: flex; flex-direction: column; gap: 0.75rem; min-width: 0; padding: 1rem 1.1rem; }
 .px-stage + .px-stage { border-left: 1px dashed var(--pl-rule); }
 .px-stage__head { display: flex; align-items: center; gap: 0.75rem; }
-.px-stage__index, .px-stage__label {
+.px-stage__label {
     font-family: var(--pl-font); font-size: 12px; font-weight: 400; letter-spacing: 0.1em; text-transform: uppercase;
 }
-.px-stage__index { color: var(--pl-muted); }
 .px-stage__label { color: var(--pl-text); }
 .px-stage__total {
     margin-left: auto; font-family: var(--pl-font); font-size: 32px; font-weight: 700; line-height: 1;

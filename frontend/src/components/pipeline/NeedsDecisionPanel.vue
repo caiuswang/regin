@@ -31,7 +31,7 @@ const newest = computed(() => props.decision.rows[0] || null)
   </section>
 
   <section v-else class="pl-panel nd" data-pl-part="panel" data-testid="needs-decision" aria-labelledby="nd-title">
-    <header class="pl-panel__head" data-pl-part="panel-head" data-pl-chapter="1-3">
+    <header class="pl-panel__head" data-pl-part="panel-head">
       <h2 id="nd-title" class="pl-panel__title" data-pl-part="panel-title">Needs a decision</h2>
       <span
         class="pl-panel__sub" data-pl-part="panel-meta" data-pl-label="waiting"

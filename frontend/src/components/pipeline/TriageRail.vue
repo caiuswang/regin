@@ -178,7 +178,7 @@ defineExpose({ load: reload })
       <kbd class="tr-strip__kbd" data-pl-part="strip-kbd">]</kbd>
     </Button>
     <template v-else>
-    <header class="tr-head" data-pl-part="panel-head" data-pl-chapter="3-2">
+    <header class="tr-head" data-pl-part="panel-head">
       <h2 class="tr-title" data-pl-part="panel-title">Triage</h2>
       <span class="tr-caption" data-pl-part="panel-meta">
         <span data-testid="triage-count">{{ total }}</span> waiting ·

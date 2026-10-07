@@ -157,7 +157,7 @@ useTaskShortcuts({
 
     <div class="fv-layout" :class="{ 'fv-layout--folded': isMdUp && railFolded }">
       <div class="fv-main" data-pl-part="panel">
-        <div class="fv-toolbar" data-pl-part="panel-head" data-pl-chapter="3-1" data-pl-title="Features">
+        <div class="fv-toolbar" data-pl-part="panel-head" data-pl-title="Features">
           <PlSlot
             name="FeatureStageTabs"
             :counts="extras.stage_counts || null"

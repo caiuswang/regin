@@ -632,7 +632,7 @@ html[data-pl-theme="pixel"] [data-pl-part="wait"] svg {
     display: none;
 }
 
-/* The up-next hero (Overview 1-2): the first dependency-clear row, its Run
+/* The up-next hero (Overview): the first dependency-clear row, its Run
    the panel's one primary key, labelled with the task it runs. Phones keep
    the compact row. */
 @media (min-width: 768px) {

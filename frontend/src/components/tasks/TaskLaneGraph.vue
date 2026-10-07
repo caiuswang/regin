@@ -16,7 +16,6 @@ import api from '../../api'
 import { invalidatePipelineCounts } from '../../composables/usePipelineCounts.js'
 import { GRAPH_FILTERS, useLaneGraph } from '../../composables/useTaskViews.js'
 import { useTaskVerbs } from '../../composables/useTaskVerbs.js'
-import { laneChapter } from '../../utils/taskMeta.js'
 import { LANE_W, NODE_H, NODE_W, layoutLanes } from '../../utils/taskLaneLayout.js'
 
 const props = defineProps({
@@ -164,14 +163,14 @@ defineExpose({ reload: graph.load })
             :style="{ width: `${layout.width}px`, height: `${layout.height}px`, transform: `scale(${zoom})` }"
           >
             <div
-              v-for="(lane, index) in layout.lanes"
+              v-for="lane in layout.lanes"
               :key="lane.key"
               class="tlg-lane"
               :style="{ top: `${lane.top}px`, height: `${lane.height}px` }"
               :data-testid="`graph-lane-${lane.key}`"
             >
               <div class="tlg-lane-head" data-pl-part="lane-head" :style="{ width: `${LANE_W}px` }">
-                <span class="tlg-lane-ref" data-pl-part="meta-label" :data-pl-chapter="laneChapter(index)">{{ lanePrefix(lane) }}</span>
+                <span class="tlg-lane-ref" data-pl-part="meta-label">{{ lanePrefix(lane) }}</span>
                 <span class="tlg-lane-title" :title="lane.title">{{ lane.title }}</span>
                 <span class="tlg-lane-bar" data-pl-part="meter" aria-hidden="true">
                   <span data-pl-part="meter-cell" :style="{ width: `${progress(lane)}%` }" />
