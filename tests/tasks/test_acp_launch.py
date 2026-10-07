@@ -28,7 +28,8 @@ class _FakeAcpHandle:
     def add_done_callback(self, callback) -> None:
         self.callback = callback
 
-    def finish(self, status: str = "exited", detail: str = "end_turn") -> None:
+    def finish(self, status: str = "failed",
+               detail: str = "channel closed: closed") -> None:
         from lib.agent_acp.launcher import RunOutcome
         self.callback(RunOutcome(self.trace_id, status, detail))
 
@@ -76,13 +77,14 @@ def test_task_run_acp_launch_uses_provider_channel(tmp_db, native_task,
     assert not acp_launcher.sdk_calls, "kimi run must not touch the Claude SDK"
     handle = acp_launcher.handles[0]
     assert handle.callback is not None
-    # Finishing the turn settles the attempt through the shared completion path.
+    # The channel only reports failures (D6); its close settles the attempt
+    # through the shared completion path.
     handle.finish()
     with SessionLocal() as session:
         row = session.exec(select(AgentTaskRun)
                            .where(AgentTaskRun.task_id == task_id)
                            .order_by(AgentTaskRun.id.desc())).first()
-    assert row.status == "done"
+    assert row.status == "failed"
 
 
 def _wait_settled(task_id: int, timeout: float = 300) -> dict:

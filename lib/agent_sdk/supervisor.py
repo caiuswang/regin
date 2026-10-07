@@ -360,6 +360,11 @@ def end_after_turn(trace_id: str) -> tuple[bool, str]:
     the pump stops at the next turn boundary and the teardown still waits out
     delegated work (`_settle_stream`). A run that is idle ends at once.
     """
+    handle = registry._acp_handle(trace_id)
+    if handle is not None:
+        ended, detail = handle.end_after_turn()
+        log.write("sdk_run_end_after_turn", trace_id=trace_id, launch="acp")
+        return ended, detail
     runner, refusal = registry._live_runner(trace_id)
     if runner is None:
         return False, refusal

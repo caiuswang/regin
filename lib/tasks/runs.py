@@ -524,12 +524,17 @@ def _start_channel(task: dict, row: dict, runner, kwargs: dict) -> dict:
     Unlike the SDK arm there is no trace-id placeholder: the channel answers
     with the child session id before the prompt is sent, so the attempt is
     marked running under the id the trace will actually land on.
+
+    The channel's completion only ever reports a failure (D6): a turn ending
+    `end_turn` leaves the attempt running for the agent's `task finish`.
+    Unlike the SDK arm, `one_shot` is handed to the launch: the channel
+    closes after the first turn, and an unreported attempt settles failed.
     """
-    launch_kwargs = {name: kwargs.get(name)
-                     for name in ("cwd", "env", "model", "one_shot")}
+    launch_kwargs = {name: kwargs.get(name) for name in ("cwd", "env", "model")}
     try:
         handle = runner(_prompt(task, row["id"], row["params"]),
-                        **launch_kwargs)
+                        one_shot=bool((row["params"] or {}).get("one_shot")),
+                        images=_launch_images(task), **launch_kwargs)
     except Exception as exc:
         raise _refuse_launch(row, exc) from exc
     view = _mark_started(task, row, handle.trace_id)

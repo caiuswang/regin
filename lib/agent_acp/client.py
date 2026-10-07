@@ -142,15 +142,27 @@ class AcpClient:
                       {"sessionId": session_id, "modeId": mode},
                       timeout=timeout)
 
+    def session_set_model(self, session_id: str, model: str,
+                          timeout: float = DEFAULT_HANDSHAKE_TIMEOUT) -> None:
+        self._request("session/set_model",
+                      {"sessionId": session_id, "modelId": model},
+                      timeout=timeout)
+
     def session_prompt(self, session_id: str, text: str,
                        on_chunk: object = None,
-                       timeout: float | None = None) -> PromptResult:
+                       timeout: float | None = None,
+                       images: list | None = None) -> PromptResult:
+        """`images` are `{media_type, data_b64}` entries, sent as ACP image
+        content blocks after the text block."""
         if on_chunk is not None:
             self._update_callbacks.append(on_chunk)
+        prompt = [{"type": "text", "text": text}]
+        prompt += [{"type": "image", "mimeType": img["media_type"],
+                    "data": img["data_b64"]} for img in images or ()]
         try:
             result = self._request("session/prompt", {
                 "sessionId": session_id,
-                "prompt": [{"type": "text", "text": text}],
+                "prompt": prompt,
             }, timeout=timeout)
         finally:
             if on_chunk is not None:
