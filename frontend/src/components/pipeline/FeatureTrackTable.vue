@@ -107,7 +107,7 @@ function cost(row) {
             <span role="cell" class="num muted" data-pl-part="stat">{{ ago(row.last_activity) }}</span>
           </PlSlot>
         </div>
-        <div v-if="expanded.has(row.id)" class="ftt-expansion">
+        <div v-if="expanded.has(row.id)" class="ftt-expansion" data-pl-part="row-expansion">
           <FeatureExpansion :feature="row" />
         </div>
       </div>

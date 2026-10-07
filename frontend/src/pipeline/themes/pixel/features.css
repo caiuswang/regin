@@ -267,16 +267,37 @@ html[data-pl-theme="pixel"] [data-pl-part="row"] {
 }
 
 /* Three columns, the design's: FEATURE · LEVEL · STATS (slots FeatureTableHead,
-   FeatureStats). The feature column stops at 19rem and the level takes the
-   rest, so a wide table (triage folded) leaves no gap after the title.
-   Outranks every width tier of classic's six-column grid. */
-html[data-pl-theme="pixel"] [data-pl-part="table-head"],
-html[data-pl-theme="pixel"] [data-pl-part="row-line"] {
-    grid-template-columns: minmax(0, 19rem) minmax(5rem, 1fr) minmax(6.5rem, 9rem);
+   FeatureStats). One grid for the whole table — head, rows and their row
+   lines are subgrids — so the feature column can size to the longest title:
+   a title is cut only when there is truly no room, the level never grows past
+   the design's width, and spare width falls after STATS rather than between
+   a title and its track. STATS has a fixed floor: an intrinsic one would take
+   the width of the expansion, which spans every column. Outranks every width
+   tier of classic's grid. */
+html[data-pl-theme="pixel"] [data-pl-part="table"] {
+    display: grid;
+    grid-template-columns: minmax(0, max-content) minmax(5rem, 15rem) minmax(9.5rem, 1fr);
+    column-gap: 1rem;
+    row-gap: 0;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="table"] > [data-pl-part="table-head"],
+html[data-pl-theme="pixel"] [data-pl-part="table"] > [data-pl-part="rows"],
+html[data-pl-theme="pixel"] [data-pl-part="rows"] > [data-pl-part="row"],
+html[data-pl-theme="pixel"] [data-pl-part="row"] > [data-pl-part="row-line"] {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: subgrid;
+    row-gap: 0;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="row"] > [data-pl-part="row-expansion"] {
+    grid-column: 1 / -1;
+    min-width: 0;
 }
 
 html[data-pl-theme="pixel"] [data-pl-part="row-line"] [data-pl-part="level"] {
-    max-width: 24rem;
+    max-width: none;
 }
 
 /* Classic's narrow tiers hide its 3rd column by position; here that is STATS. */
