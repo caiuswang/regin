@@ -109,6 +109,34 @@ _USER_PROMPT_SUBMIT = {
     "agent_type": "kimi",
     "prompt": [{"type": "text", "text": "give me the arch of current project"}],
 }
+_USER_PROMPT_SUBMIT_WITH_IMAGE = {
+    "hook_event_name": "UserPromptSubmit", "session_id": "s1", "cwd": "/r",
+    "agent_type": "kimi",
+    "prompt": [
+        {"type": "text", "text": "describe this"},
+        {"type": "image_url", "imageUrl": {"url": "data:image/png;base64,ABC"}},
+    ],
+}
+_NOTIFICATION = {
+    "hook_event_name": "Notification", "session_id": "s1", "cwd": "/r",
+    "agent_type": "kimi", "sink": "context",
+    "title": "Background process completed",
+    "body": "Run header-collapse e2e test completed.",
+    "severity": "info", "source_kind": "background_task",
+    "source_id": "bash-9ecj8jbe",
+}
+_READ_MEDIA_FILE = {
+    "hook_event_name": "PostToolUse", "session_id": "s1", "cwd": "/r",
+    "agent_type": "kimi", "tool_name": "ReadMediaFile", "tool_call_id": "tool_l",
+    "tool_input": {"path": "screenshot.png"},
+    "tool_response": {"output": "<media>"},
+}
+_TASK_OUTPUT = {
+    "hook_event_name": "PostToolUse", "session_id": "s1", "cwd": "/r",
+    "agent_type": "kimi", "tool_name": "TaskOutput", "tool_call_id": "tool_m",
+    "tool_input": {"task_id": "t1", "block": True, "timeout": 240},
+    "tool_response": {"output": "ok"},
+}
 _POST_TOOL_FAILURE = {
     "hook_event_name": "PostToolUseFailure", "session_id": "s1", "cwd": "/r",
     "agent_type": "kimi", "tool_name": "Bash", "tool_call_id": "tool_k",
@@ -134,7 +162,9 @@ _POST_COMPACT = {
 
 _ALL_KIMI_PAYLOADS = [
     _BASH, _READ, _EDIT, _WRITE, _GLOB, _GREP, _AGENT, _FETCHURL, _TODOLIST,
-    _PRE_TOOL_USE, _USER_PROMPT_SUBMIT, _POST_TOOL_FAILURE,
+    _READ_MEDIA_FILE, _TASK_OUTPUT,
+    _PRE_TOOL_USE, _USER_PROMPT_SUBMIT, _USER_PROMPT_SUBMIT_WITH_IMAGE,
+    _NOTIFICATION, _POST_TOOL_FAILURE,
     _SUBAGENT_START, _SUBAGENT_STOP, _PRE_COMPACT, _POST_COMPACT,
 ]
 

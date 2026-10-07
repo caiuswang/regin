@@ -164,8 +164,13 @@ def has_unreported_shells(conn, trace_ids) -> bool:
     The gate for the notification backfill: a lost notification shows up
     exactly here, as a launch that never settles. False costs two indexed
     reads and skips the transcript walk entirely.
+
+    File-marker fallback is disabled here: the backfill's job is to publish
+    the very outcome the marker would supply, so reading the marker would
+    hide the shell from the backfill and leave it unreported.
     """
-    return any(e['status'] == RUNNING for e in shell_roster(conn, trace_ids))
+    return any(e['status'] == RUNNING
+               for e in shell_roster(conn, trace_ids, file_marker=False))
 
 
 def _entry(row, attrs: dict, task_id: str, end: dict) -> dict:
@@ -183,6 +188,26 @@ def _entry(row, attrs: dict, task_id: str, end: dict) -> dict:
     }
 
 
+def _file_settled(task_id: str, directory: str, done: dict) -> dict | None:
+    """Output-file marker verdict for a running shell, or None if the file
+    doesn't exist or hasn't been closed yet.
+
+    Notifications can be lost (Kimi's structured Notification hook is best-
+    effort, and a killed shell may leave no transcript envelope at all), but
+    the harness appends a terminal marker to the output file itself. Reading
+    only the tail keeps the check cheap, and we only do it for shells still
+    counted as running.
+    """
+    stated = done.get(task_id, {}).get('output_file')
+    if isinstance(stated, str) and stated:
+        path = stated if os.path.basename(stated) == f'{task_id}.output' else ''
+    else:
+        path = os.path.join(directory, f'{task_id}.output') if directory else ''
+    if not path:
+        return None
+    return terminal_outcome(path)
+
+
 #: A shell known to have ended with no word on how: a launch with no
 #: completion on a session that is over, or one the harness's `Stop` snapshot
 #: of in-flight tasks no longer lists. Not `running`: a shell is a child of the
@@ -193,7 +218,8 @@ def _entry(row, attrs: dict, task_id: str, end: dict) -> dict:
 STOPPED = 'stopped'
 
 
-def shell_roster(conn, trace_ids, session_ended: bool = False) -> list[dict]:
+def shell_roster(conn, trace_ids, session_ended: bool = False,
+                 file_marker: bool = True) -> list[dict]:
     """Every background shell this session started, oldest first.
 
     One entry per task id: the append-only store holds a pending and a
@@ -202,6 +228,12 @@ def shell_roster(conn, trace_ids, session_ended: bool = False) -> list[dict]:
     `session_ended` settles the launches nothing ever reported on. A real
     outcome always wins — an ended session does not rewrite a shell that
     already said how it finished.
+
+    `file_marker` enables a fallback read of the harness's end-of-shell
+    marker for shells still marked running. Serve-time callers want this
+    so the UI reflects finished shells even when the Notification hook was
+    lost; backfill callers disable it because their job is to publish that
+    very outcome.
     """
     done = _completions(conn, trace_ids)
     by_task: dict = {}
@@ -211,7 +243,17 @@ def shell_roster(conn, trace_ids, session_ended: bool = False) -> list[dict]:
         if isinstance(task_id, str) and task_id:
             by_task[task_id] = _entry(row, attrs, task_id,
                                       done.get(task_id) or {})
+    directory = tasks_dir(conn, trace_ids)
     entries = sorted(by_task.values(), key=lambda e: e['started_at'] or '')
+    if file_marker:
+        for e in entries:
+            if e['status'] != RUNNING:
+                continue
+            settled = _file_settled(e['task_id'], directory, done)
+            if settled:
+                e['status'] = settled['status']
+                e['summary'] = settled['summary']
+                e['ended_at'] = settled['ended_at']
     if not session_ended:
         return entries
     return [e if e['status'] != RUNNING else {**e, 'status': STOPPED}

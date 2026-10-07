@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Notification hook payload (Kimi)",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "agent_type": {
+      "type": "string"
+    },
+    "notification_type": {
+      "type": "string"
+    },
+    "sink": {
+      "type": "string"
+    },
+    "severity": {
+      "type": "string"
+    },
+    "source_kind": {
+      "type": "string"
+    },
+    "source_id": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    },
+    "body": {
+      "type": "string"
+    },
+    "message": {
+      "type": "string"
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "required": []
+}

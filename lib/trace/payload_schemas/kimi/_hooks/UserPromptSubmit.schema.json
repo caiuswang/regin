@@ -18,6 +18,24 @@
           },
           "text": {
             "type": "string"
+          },
+          "image_url": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "url": {
+                "type": "string"
+              }
+            }
+          },
+          "imageUrl": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "url": {
+                "type": "string"
+              }
+            }
           }
         }
       }

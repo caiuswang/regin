@@ -175,6 +175,38 @@ def test_a_live_session_still_reports_running(conn):
     assert entry['status'] == 'running'
 
 
+def test_a_lost_notification_is_settled_by_output_file_marker(conn, tmp_path):
+    """When the Notification hook is lost, the output file's harness marker
+    is the ground truth and the roster must fall back to it — otherwise the
+    UI keeps counting finished shells as running."""
+    sibling = tmp_path / 'earlier.output'
+    sibling.write_text('x')
+    live = tmp_path / 'bo58vwcaw.output'
+    live.write_text('step 1\n\n[exited with code 0]\n')
+    _done(conn, 'earlier', output_file=str(sibling))
+    _launch(conn, 'bo58vwcaw', span_id='b1')
+
+    [entry] = shell_roster(conn, ['t'])
+    assert entry['status'] == 'completed'
+    assert entry['summary'] == 'Shell exited with code 0'
+    assert entry['ended_at'] is not None
+
+
+def test_a_running_shell_without_a_marker_stays_running(conn, tmp_path):
+    """A shell whose output file exists but hasn't been closed yet is still
+    running; the fallback must not over-settle."""
+    sibling = tmp_path / 'earlier.output'
+    sibling.write_text('x')
+    live = tmp_path / 'bo58vwcaw.output'
+    live.write_text('still writing\n')
+    _done(conn, 'earlier', output_file=str(sibling))
+    _launch(conn, 'bo58vwcaw', span_id='b1')
+
+    [entry] = shell_roster(conn, ['t'])
+    assert entry['status'] == 'running'
+    assert entry['ended_at'] is None
+
+
 def _output(tmp_path, text):
     path = tmp_path / 'bo58vwcaw.output'
     path.write_text(text)

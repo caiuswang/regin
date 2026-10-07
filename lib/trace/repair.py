@@ -784,7 +784,7 @@ def _unreported_shells(trace_id: str) -> list[tuple[str, str]]:
     conn = get_connection()
     try:
         return [(e['task_id'], output_path(conn, [trace_id], e['task_id']))
-                for e in shell_roster(conn, [trace_id])
+                for e in shell_roster(conn, [trace_id], file_marker=False)
                 if e['status'] == RUNNING]
     finally:
         conn.close()
