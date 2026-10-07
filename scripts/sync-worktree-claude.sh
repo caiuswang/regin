@@ -98,7 +98,7 @@ sync_one() {
 
   mkdir -p "$dest_wt/$dest"
   echo "==> syncing .claude/ -> $dest_wt/$dest ${DRY_RUN:+(dry-run)}"
-  rsync -a ${DRY_RUN} --itemize-changes \
+  rsync -a --copy-unsafe-links ${DRY_RUN} --itemize-changes \
     "${extra_flags[@]+"${extra_flags[@]}"}" \
     "${RSYNC_EXCLUDES[@]}" \
     "$SRC/" "$dest_wt/$dest/"
