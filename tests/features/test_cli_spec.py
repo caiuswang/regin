@@ -99,3 +99,30 @@ def test_a_missing_file_is_refused_without_touching_the_row(tmp_path):
                                  "--file", str(tmp_path / "nope.md")])
     assert result.exit_code == 2
     assert _spec_of(feature.id) == SPEC
+
+
+def test_file_dash_with_empty_stdin_is_refused_and_leaves_the_row_alone():
+    feature = store.create("a feature", body=SPEC)
+    result = runner.invoke(app, ["feature", "spec", str(feature.id),
+                                 "--file", "-"], input="")
+    assert result.exit_code == 2
+    assert "--clear" in result.output
+    assert _spec_of(feature.id) == SPEC
+
+
+def test_a_blank_file_is_refused_and_leaves_the_row_alone(tmp_path):
+    feature = store.create("a feature", body=SPEC)
+    path = tmp_path / "spec.md"
+    path.write_text(" \n\n", encoding="utf-8")
+    result = runner.invoke(app, ["feature", "spec", str(feature.id),
+                                 "--file", str(path)])
+    assert result.exit_code == 2
+    assert _spec_of(feature.id) == SPEC
+
+
+def test_a_blank_spec_argument_is_refused():
+    feature = store.create("a feature", body=SPEC)
+    result = runner.invoke(app, ["feature", "spec", str(feature.id),
+                                 "--spec", ""])
+    assert result.exit_code == 2
+    assert _spec_of(feature.id) == SPEC

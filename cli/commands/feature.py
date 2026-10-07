@@ -220,6 +220,23 @@ def new_cmd(
     typer.echo(f"#{row.id}  {row.title}  {events.stage(row.id)}")
 
 
+def _spec_source(body: Optional[str], path: Optional[str]) -> str:
+    if path is not None:
+        try:
+            body = (sys.stdin.read() if path == "-"
+                    else Path(path).read_text(encoding="utf-8"))
+        except OSError as exc:
+            typer.echo(f"cannot read {path}: {exc}", err=True)
+            raise typer.Exit(2)
+    # `--file -` run with nothing piped in reads EOF; written through, that
+    # wipes the spec with no hint anything went wrong. Emptying is `--clear`'s.
+    if not (body or "").strip():
+        typer.echo("the spec given is empty — nothing written; "
+                   "`--clear` is how to empty a spec", err=True)
+        raise typer.Exit(2)
+    return body
+
+
 @feature_app.command("spec")
 def spec_cmd(
     key: str = typer.Argument(..., help="Feature id"),
@@ -250,15 +267,9 @@ def spec_cmd(
         typer.echo(feature_store.require(feature_id).body
                    or "(no spec — `--spec`, or `--file` for a long one)")
         return
-    if path is not None:
-        try:
-            body = (sys.stdin.read() if path == "-"
-                    else Path(path).read_text(encoding="utf-8"))
-        except OSError as exc:
-            typer.echo(f"cannot read {path}: {exc}", err=True)
-            raise typer.Exit(2)
     try:
-        row = feature_store.set_body(feature_id, None if clear else body)
+        row = feature_store.set_body(
+            feature_id, None if clear else _spec_source(body, path))
     except feature_store.FeatureError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(2)
