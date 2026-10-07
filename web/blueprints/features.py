@@ -25,6 +25,7 @@ from sqlmodel import text
 
 from lib.auth import require_auth, require_editor
 from lib.features import attribution, images as images_module
+from lib.features import branches as branches_module
 from lib.features import index as index_module
 from lib.features import ledger as ledger_module
 from lib.features import next_step as next_step_module
@@ -125,6 +126,7 @@ def _ledger_body(feature_id: int) -> dict:
     # feature has no "as of T" at all because its stage is derived here.
     feature = feature_store.require(feature_id)
     body["synced_at"] = feature.synced_at
+    body["branch"] = feature.branch
     body["stage_live"] = not sync_module.is_remote(feature)
     # Summaries, never the bytes: a spec with four screenshots on it would
     # otherwise put megabytes of base64 into every read of the ledger.
@@ -150,7 +152,7 @@ def api_feature_ledger(feature_id):
 @features_bp.route("/api/features/<int:feature_id>", methods=["PATCH"])
 @require_editor
 def api_feature_edit(feature_id):
-    """Edit the feature's own title, spec or project.
+    """Edit the feature's own title, spec, project or integration branch.
 
     `project_id` is keyed on PRESENCE, not truthiness: an explicit `null`
     unfiles the feature and an absent key leaves it alone, because "move this
@@ -159,16 +161,29 @@ def api_feature_edit(feature_id):
     """
     payload = _payload()
     try:
+        if "branch" in payload:
+            feature_store.clean_branch(payload["branch"])
         if "title" in payload:
             feature_store.rename(feature_id, payload["title"])
         if "body" in payload:
             feature_store.set_body(feature_id, payload["body"])
         if "project_id" in payload:
             feature_store.set_project(feature_id, payload["project_id"])
+        if "branch" in payload:
+            feature_store.set_branch(feature_id, payload["branch"])
     except feature_store.FeatureError as exc:
         return jsonify({"error": str(exc),
                         "field": getattr(exc, "field", None)}), 400
     return jsonify(_ledger_body(feature_id))
+
+
+@features_bp.route("/api/features/<int:feature_id>/branches")
+def api_feature_branches(feature_id):
+    """The feature's integration and run branches, read live from git."""
+    try:
+        return jsonify(branches_module.for_feature(feature_id))
+    except feature_store.FeatureError:
+        return jsonify({"error": f"no feature {feature_id}"}), 404
 
 
 @features_bp.route("/api/features/<int:feature_id>/ship", methods=["POST"])

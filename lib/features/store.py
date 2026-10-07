@@ -20,6 +20,7 @@ so a delete is not a cleanup — it is a rewrite of history.
 
 from __future__ import annotations
 
+import subprocess
 from typing import Optional
 
 from sqlmodel import select
@@ -51,6 +52,12 @@ class ProjectRejected(FeatureError):
     """
 
     field = "project_id"
+
+
+class BranchRejected(FeatureError):
+    """A branch name git would refuse to create."""
+
+    field = "branch"
 
 
 class NotRunnable(FeatureError):
@@ -198,6 +205,58 @@ def set_project(feature_id: int, project_id: Optional[int]) -> Feature:
         session.refresh(row)
     log.write("feature_project_set", feature_id=feature_id,
               project_id=project_id)
+    return row
+
+
+def check_branch(branch: str) -> None:
+    """Refuse a name `git check-ref-format --branch` rejects.
+
+    The echoed name must equal the input: `--branch` expands `@{-N}` into
+    whatever branch the cwd last had checked out, which would store a name
+    the operator never typed. The leading dash is refused first because git
+    would parse it as one of its own flags.
+    """
+    if branch.startswith("-"):
+        raise BranchRejected(f"invalid branch name {branch!r}")
+    try:
+        proc = subprocess.run(["git", "check-ref-format", "--branch", branch],
+                              capture_output=True, text=True, check=False,
+                              timeout=10)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise BranchRejected(f"could not check {branch!r}: {exc}") from exc
+    if proc.returncode or proc.stdout.strip() != branch:
+        raise BranchRejected(f"git rejected the branch name {branch!r}")
+
+
+def clean_branch(branch) -> Optional[str]:
+    """The name `set_branch` would store — `None` for null or blank — or
+    `BranchRejected`; callable on its own so a multi-field edit can refuse a
+    bad branch before writing any other field."""
+    if branch is not None and not isinstance(branch, str):
+        raise BranchRejected("branch must be a string or null")
+    branch = (branch or "").strip() or None
+    if branch is not None:
+        check_branch(branch)
+    return branch
+
+
+def set_branch(feature_id: int, branch: Optional[str]) -> Feature:
+    """Bind the feature's integration branch, or clear it with `None`/"".
+
+    Validated as a name only — the branch need not exist yet, since an
+    operator binds the branch before the first run creates it. Appends no
+    event, for the reason `set_project` gives.
+    """
+    branch = clean_branch(branch)
+    with SessionLocal() as session:
+        row = session.get(Feature, feature_id)
+        if row is None:
+            raise FeatureError(f"no feature {feature_id}")
+        row.branch = branch
+        session.add(row)
+        session.commit()
+        session.refresh(row)
+    log.write("feature_branch_set", feature_id=feature_id, branch=branch)
     return row
 
 
