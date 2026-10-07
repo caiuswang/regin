@@ -65,18 +65,43 @@ function seedProjectCwd() {
   if (cwd !== null) draft.cwd = cwd
 }
 
-// Sources 2 and 3 of R4b. Neither is an error when absent: a task that is no
-// slice has no proposal (404), and a task never run has no attempt.
+// A feature's task forks from the feature's integration branch; any other
+// base can lack the feature's code entirely.
+const featureIntegration = ref('')
+// Said, never silent: the worktree picker swaps a base its repo does not list
+// for the default, which is exactly the fork that lacks the feature's code.
+const baseNote = computed(() => {
+  const name = featureIntegration.value
+  if (!draft.useWorktree || !name || draft.worktreeBase === name) return ''
+  return `This feature integrates on ${name}; the worktree forks from `
+    + `${draft.worktreeBase || 'the default base'}.`
+})
+
+async function integrationBranch(task) {
+  if (task.feature_id == null) return ''
+  const branches = await api.get(`/features/${task.feature_id}/branches`).catch(() => null)
+  return branches?.integration?.name || ''
+}
+
+// Sources 2 and 3 of R4b, and the feature's integration branch as a base.
+// None is an error when absent: a task that is no slice has no proposal
+// (404), a task never run has no attempt, and a feature may name no branch.
+async function readHigherSources(task) {
+  const [proposal, history, integration] = await Promise.all([
+    api.get(`/tasks/${task.id}/arm-proposal`).catch(() => null),
+    api.get(`/tasks/${task.id}/runs`).catch(() => null),
+    integrationBranch(task),
+  ])
+  return { proposal, lastRun: history?.runs?.[0] || null, integration }
+}
+
 async function layerHigherSources() {
   if (props.task?.armed?.params || props.task?.id == null) return
-  const [proposal, history] = await Promise.all([
-    api.get(`/tasks/${props.task.id}/arm-proposal`).catch(() => null),
-    api.get(`/tasks/${props.task.id}/runs`).catch(() => null),
-  ])
-  const lastRun = history?.runs?.[0] || null
-  if (!proposal && !lastRun) return
-  higher = { proposal, lastRun }
-  const seeded = prefilledArmDraft(props.task, { proposal, lastRun })
+  const { proposal, lastRun, integration } = await readHigherSources(props.task)
+  featureIntegration.value = integration
+  if (!proposal && !lastRun && !integration) return
+  higher = { proposal, lastRun, integration }
+  const seeded = prefilledArmDraft(props.task, higher)
   Object.assign(draft, seeded.draft)
   recalled.value = seeded.recalled
   recalledFields = seeded.recalledFields
@@ -220,6 +245,9 @@ async function submit() {
           v-model:base="draft.worktreeBase"
           :cwd="draft.cwd"
         />
+        <p v-if="baseNote" class="task-arm-note" role="status" data-testid="task-arm-base-note">
+          {{ baseNote }}
+        </p>
       </div>
 
       <div class="task-arm-sec" data-pl-part="dialog-section" data-pl-section="Agent">

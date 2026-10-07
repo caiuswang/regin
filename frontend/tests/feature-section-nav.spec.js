@@ -71,6 +71,10 @@ async function stub(page, { body = ledger(), patch = null } = {}) {
   await page.route(new RegExp(`/api/features/${FID}/slices$`), route => route.fulfill({
     json: { sliceable: false, refusal: null, tail_missing: false, rows: [] },
   }))
+  await page.route(new RegExp(`/api/features/${FID}/branches$`), route => route.fulfill({
+    json: { integration: { name: '', source: null, exists: false, merged_into_default: null },
+            runs: [] },
+  }))
   await page.route(new RegExp(`/api/features/${FID}/images/\\d+$`), route => route.fulfill({
     body: PNG, contentType: 'image/png',
   }))

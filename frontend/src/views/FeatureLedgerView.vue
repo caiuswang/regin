@@ -38,6 +38,7 @@ import Icon from '../components/ui/Icon.vue'
 import PipelineCreateButton from '../components/pipeline/PipelineCreateButton.vue'
 import DeclareSessionDialog from '../components/features/DeclareSessionDialog.vue'
 import RefBacklinks from '../components/refs/RefBacklinks.vue'
+import FeatureBranch from '../components/features/FeatureBranch.vue'
 import FeatureDefects from '../components/features/FeatureDefects.vue'
 import FeatureEvidence from '../components/features/FeatureEvidence.vue'
 import FeatureFigures from '../components/features/FeatureFigures.vue'
@@ -404,6 +405,13 @@ function onDeclared() {
         :tracked="!ledger.stage_live"
         :project-id="ledger.project_id"
         @changed="onSlicesChanged"
+      />
+
+      <FeatureBranch
+        :feature-id="ledger.id"
+        :branch="ledger.branch || null"
+        :can-write="canWrite"
+        @saved="ledger = $event"
       />
 
       <FeatureImages

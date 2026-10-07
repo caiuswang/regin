@@ -163,12 +163,16 @@ function fillFromStored(draft, task, fields) {
  *   3. the last attempt's parameters;
  *   4. the remembered prefs — only skill/model once 2 or 3 spoke, and never
  *      branch/base (they are not remembered at all).
+ *
+ * A base none of these named is the feature's integration branch — but never
+ * on a slice, whose base belongs to its row of the slice table alone.
  */
-export function prefilledArmDraft(task, { proposal = null, lastRun = null } = {}) {
+export function prefilledArmDraft(task, { proposal = null, lastRun = null, integration = '' } = {}) {
   const draft = armDraft(task)
   if (task?.armed?.params) return { draft: withProvider(draft), recalled: false, recalledFields: [] }
   const higher = [proposalAttempt(proposal), lastRun].filter(Boolean)
   for (const attempt of higher) fillEmpty(draft, attempt)
+  if (!proposal && !draft.worktreeBase) draft.worktreeBase = integration
   // A run that names no provider ran on claude (D1 of #140); its model is a
   // claude id, so the remembered provider must not re-aim it.
   if (lastRun && !draft.provider) draft.provider = DEFAULT_PROVIDER
