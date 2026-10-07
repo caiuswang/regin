@@ -5,7 +5,7 @@ a reading of git's own answers — which branches exist, which paths git already
 counts as worktrees — and a stub of that would pin the reading rather than the
 behaviour.
 
-`_sync_claude_config` is stubbed by default. It shells out to a bash+rsync
+`_sync_project_config` is stubbed by default. It shells out to a bash+rsync
 script whose job is copying config that a temp repo does not have, so leaving
 it live would buy nothing but two subprocesses per test; one test below covers
 it directly.
@@ -22,7 +22,7 @@ from lib.agent_sdk import worktree
 
 # Captured before the autouse stub replaces it, for the one test that wants the
 # real thing back.
-_REAL_SYNC = worktree._sync_claude_config
+_REAL_SYNC = worktree._sync_project_config
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -47,7 +47,7 @@ def repo(tmp_path):
 
 @pytest.fixture(autouse=True)
 def no_claude_sync(monkeypatch):
-    monkeypatch.setattr(worktree, "_sync_claude_config", lambda path: None)
+    monkeypatch.setattr(worktree, "_sync_project_config", lambda path: None)
 
 
 def test_creates_the_tree_under_dot_claude_on_a_new_branch(repo):
@@ -178,7 +178,7 @@ def test_claude_config_is_synced_at_creation_not_left_to_a_later_hook(repo,
     """The harness enumerates skills before a SessionStart hook could finish,
     so the copy has to happen while the tree is being made."""
     synced = []
-    monkeypatch.setattr(worktree, "_sync_claude_config", synced.append)
+    monkeypatch.setattr(worktree, "_sync_project_config", synced.append)
 
     made = worktree.ensure_worktree(repo, "feat/x")
 
@@ -186,9 +186,9 @@ def test_claude_config_is_synced_at_creation_not_left_to_a_later_hook(repo,
 
 
 def test_a_repo_with_no_claude_config_still_creates_the_tree(repo, monkeypatch):
-    """`_sync_claude_config` is best-effort: the real script fails on a repo
-    that has nothing to copy, and that must not fail the worktree."""
-    monkeypatch.setattr(worktree, "_sync_claude_config", _REAL_SYNC)
+    """`_sync_project_config` is best-effort: the real script finds nothing to
+    copy in this repo, and that must not fail the worktree."""
+    monkeypatch.setattr(worktree, "_sync_project_config", _REAL_SYNC)
 
     assert worktree.ensure_worktree(repo, "feat/x")["created"] is True
 

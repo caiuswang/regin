@@ -25,16 +25,20 @@ provider-agnostic deployer writes the standard ``SKILL.md`` layout there.
 from __future__ import annotations
 
 import glob
+import hashlib
 import json
 import os
 import re
+import time
 from pathlib import Path
 
-from lib.providers.base import AgentProvider, ProviderCapabilities
+from lib.providers.base import (AgentProvider, ProviderCapabilities,
+                                SkillCatalogLayout)
 from hook_manager.core import HookPayload, HookResponse, PermissionRequestInfo
 
 
 _KIMI_HOME = Path.home() / ".kimi-code"
+_WORKSPACE_TRUST_DIR = _KIMI_HOME / "workspace-trust"
 _SKILL_READ_CONTENT_RE = re.compile(
     r"^(?:\.kimi-code|\.agents)/skills/([^/]+)/content\.md$"
 )
@@ -355,6 +359,41 @@ class KimiProvider(AgentProvider):
 
     def project_skills_subpath(self) -> tuple[str, ...]:
         return (".kimi-code", "skills")
+
+    def skill_catalog_layout(self) -> SkillCatalogLayout:
+        return SkillCatalogLayout(
+            skill_dirs=((".kimi-code", "skills"), (".agents", "skills")))
+
+    def skill_invocation(self, name: str, args: str, also: list[str]) -> str:
+        """`/skill:<name>` — probed on kimi 2.1.1 over ACP: the SKILL.md body
+        is expanded into the turn (the bare `/<name>` form also works, but can
+        collide with a built-in command of the same name)."""
+        line = f"/skill:{name}"
+        if args:
+            line += f" {args}"
+        line += "\n\n"
+        if also:
+            named = ", ".join(f"`{n}`" for n in also)
+            line += ("Also read and follow these skills — each is "
+                     "`skills/<name>/SKILL.md` under `.kimi-code/` or "
+                     "`.agents/`, in the project or in your home: "
+                     f"{named}.\n\n")
+        return line
+
+    def prepare_workspace(self, cwd: Path) -> None:
+        """Pre-write kimi's workspace-trust record, or the first launch in a
+        fresh worktree blocks on the interactive Trust prompt. The name is
+        kimi's own `wd_<basename>_<sha256(realpath)[:12]>`, checked against
+        records kimi wrote itself; an existing record is kimi's and is kept."""
+        root = os.path.realpath(cwd)
+        digest = hashlib.sha256(root.encode()).hexdigest()[:12]
+        record = _WORKSPACE_TRUST_DIR / f"wd_{os.path.basename(root)}_{digest}"
+        if record.exists():
+            return
+        record.parent.mkdir(parents=True, exist_ok=True)
+        record.write_text(json.dumps(
+            {"root": root, "trustedAt": int(time.time() * 1000)},
+            separators=(",", ":")))
 
     def skill_invoke_path(self, skill_id: str) -> str:
         return f".kimi-code/skills/{skill_id}/invoke"

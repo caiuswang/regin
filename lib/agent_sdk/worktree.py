@@ -162,25 +162,36 @@ def _add_arguments(root: Path, branch: str, base: str) -> list[str]:
     return ["-b", branch, base]
 
 
-def _sync_claude_config(path: Path) -> None:
-    """Copy the main checkout's gitignored `.claude/` into the fresh worktree.
+def _provider_config_dirs() -> list[str]:
+    from lib.providers.registry import (  # noqa: PLC0415
+        build_provider, list_provider_ids)
+    return list(dict.fromkeys(build_provider(pid).project_config_dir()
+                              for pid in list_provider_ids()))
+
+
+def _sync_project_config(path: Path) -> None:
+    """Copy the main checkout's per-provider config dirs (`.claude/`,
+    `.kimi-code/`, …) into the fresh worktree.
 
     `.claude/` is gitignored, so `git worktree add` never checks it out and a
-    new tree starts with no skills, agents or commands. Doing it at creation is
-    what makes it land in time: a SessionStart hook finishes after the harness
-    has already enumerated skills, so the first session in the tree would see
-    none of them.
+    new tree starts with no skills, agents or commands — and a run armed on
+    another provider reads that provider's dir instead. Doing it at creation
+    is what makes it land in time: a SessionStart hook finishes after the
+    harness has already enumerated skills, so the first session in the tree
+    would see none of them.
 
-    Best-effort by design — a repo that carries no `.claude/` is an ordinary
-    case, and a launch must not fail because config copying did.
+    Best-effort by design — a repo that carries none of these dirs is an
+    ordinary case, and a launch must not fail because config copying did.
     """
     script = settings.project_root / "scripts" / "sync-worktree-claude.sh"
     if not script.is_file():
         return
-    proc = _run(["bash", str(script), "--auto", str(path)], path)
-    if proc.returncode != 0:
-        log.error("worktree_claude_sync_failed", path=str(path),
-                  detail=_failure_detail(proc)[:400])
+    for name in _provider_config_dirs():
+        proc = _run(["bash", str(script), "--auto", f"--dir={name}",
+                     str(path)], path)
+        if proc.returncode != 0:
+            log.error("worktree_claude_sync_failed", path=str(path),
+                      dir=name, detail=_failure_detail(proc)[:400])
 
 
 def ensure_worktree(cwd: str | Path, branch: str, base: str = "") -> dict:
@@ -212,7 +223,7 @@ def ensure_worktree(cwd: str | Path, branch: str, base: str = "") -> dict:
     args = _add_arguments(root, branch, base.strip())
     path.parent.mkdir(parents=True, exist_ok=True)
     _git(["worktree", "add", str(path), *args], root)
-    _sync_claude_config(path)
+    _sync_project_config(path)
     log.write("worktree_created", path=str(path), branch=branch,
               repo_root=str(root))
     return _result(root, path, branch, created=True)

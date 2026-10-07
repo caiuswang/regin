@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 from threading import Thread
 from typing import Optional
 
@@ -532,6 +533,7 @@ def _start_channel(task: dict, row: dict, runner, kwargs: dict) -> dict:
     """
     launch_kwargs = {name: kwargs.get(name) for name in ("cwd", "env", "model")}
     try:
+        _prepare_workspace(row, launch_kwargs["cwd"])
         handle = runner(_prompt(task, row["id"], row["params"]),
                         one_shot=bool((row["params"] or {}).get("one_shot")),
                         images=_launch_images(task), **launch_kwargs)
@@ -544,6 +546,15 @@ def _start_channel(task: dict, row: dict, runner, kwargs: dict) -> dict:
               trace_id=handle.trace_id, attempt=view["attempt"],
               launch="channel")
     return view
+
+
+def _prepare_workspace(row: dict, cwd: Optional[str]) -> None:
+    """D8: the provider readies the directory before the launch opens a
+    session there — kimi's would otherwise stop on its Trust prompt."""
+    from lib.providers.registry import build_provider  # noqa: PLC0415
+    provider = build_provider((row["params"] or {}).get("provider")
+                              or "claude")
+    provider.prepare_workspace(Path(cwd or settings.project_root).resolve())
 
 
 def _refuse_launch(row: dict, exc: Exception) -> RunRefused:

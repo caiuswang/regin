@@ -258,10 +258,17 @@ def api_worktree_options():
 def api_skill_options():
     """The skills a run in `cwd` can open with — per-repo, like the worktree
     options, because a skill one repo carries is a dead slash command in
-    another. An empty `cwd` is the server working directory, as at launch."""
+    another, and per-provider, because each CLI reads its own dirs. An empty
+    `cwd` is the server working directory and an empty `provider` is claude,
+    as at launch."""
     cwd = (request.args.get('cwd') or '').strip()[:_PATH_MAX]
     cwd = cwd or str(settings.project_root)
-    return jsonify({"cwd": cwd, "skills": skill_catalog.available_skills(cwd)})
+    provider = (request.args.get('provider') or '').strip() or "claude"
+    try:
+        skills = skill_catalog.available_skills(cwd, provider=provider)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"cwd": cwd, "provider": provider, "skills": skills})
 
 
 @agent_runs_bp.route('/api/agent-runs/resumable', methods=['GET'])

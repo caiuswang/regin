@@ -13,9 +13,12 @@
 #   scripts/sync-worktree-claude.sh --all               # sync every worktree
 #   scripts/sync-worktree-claude.sh --dry-run [TARGET]  # show what would change
 #   scripts/sync-worktree-claude.sh --auto [TARGET]     # hook mode: silent no-op when
-#                                                       # TARGET is not a worktree, and
+#                                                       # TARGET is not a worktree or the
+#                                                       # main repo has no such dir, and
 #                                                       # never overwrites files the
 #                                                       # worktree has edited more recently
+#   scripts/sync-worktree-claude.sh --dir=.kimi-code    # sync another agent's project dir
+#                                                       # (default: .claude)
 #
 # Re-running is safe: it overwrites config files but never deletes worktree-local files
 # (settings.local.json is preserved; nothing is removed from the target).
@@ -26,12 +29,14 @@ DRY_RUN=""
 ALL=""
 AUTO=""
 TARGET=""
+DIR=".claude"
 
 for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN="--dry-run" ;;
     --all)     ALL="1" ;;
     --auto)    AUTO="1" ;;
+    --dir=*)   DIR="${arg#--dir=}" ;;
     -h|--help)
       grep '^#' "$0" | sed 's/^# \{0,1\}//'
       exit 0
@@ -46,12 +51,21 @@ MAIN_REPO="$(git worktree list --porcelain \
   | grep -v '/\.claude/worktrees/' \
   | head -n1)"
 
-if [[ -z "${MAIN_REPO:-}" || ! -d "$MAIN_REPO/.claude" ]]; then
-  echo "error: could not locate main repo .claude/ (are you inside the repo?)" >&2
+if [[ -z "$DIR" || "$DIR" == */* ]]; then
+  echo "error: --dir takes one directory name, e.g. --dir=.kimi-code" >&2
   exit 1
 fi
 
-SRC="$MAIN_REPO/.claude"
+if [[ -n "${MAIN_REPO:-}" && ! -d "$MAIN_REPO/$DIR" && -n "$AUTO" ]]; then
+  exit 0
+fi
+
+if [[ -z "${MAIN_REPO:-}" || ! -d "$MAIN_REPO/$DIR" ]]; then
+  echo "error: could not locate main repo $DIR/ (are you inside the repo?)" >&2
+  exit 1
+fi
+
+SRC="$MAIN_REPO/$DIR"
 
 # Config that should be shared into worktrees. Excludes:
 #   worktrees/          — would recursively copy worktrees into themselves
@@ -72,7 +86,7 @@ RSYNC_EXCLUDES=(
 
 sync_one() {
   local dest_wt="$1"
-  local dest=".claude"
+  local dest="$DIR"
 
   if [[ ! -d "$dest_wt" ]]; then
     echo "skip: not a directory: $dest_wt" >&2
@@ -97,7 +111,7 @@ sync_one() {
   [[ -n "$AUTO" ]] && extra_flags+=(--update)
 
   mkdir -p "$dest_wt/$dest"
-  echo "==> syncing .claude/ -> $dest_wt/$dest ${DRY_RUN:+(dry-run)}"
+  echo "==> syncing $DIR/ -> $dest_wt/$dest ${DRY_RUN:+(dry-run)}"
   rsync -a ${DRY_RUN} --itemize-changes \
     "${extra_flags[@]+"${extra_flags[@]}"}" \
     "${RSYNC_EXCLUDES[@]}" \

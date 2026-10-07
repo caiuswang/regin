@@ -156,6 +156,17 @@ def _default_feature_config(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _kimi_trust_stays_in_tmp(monkeypatch, tmp_path_factory):
+    """A kimi task run pre-writes a workspace-trust record before launch;
+    without this every such test would trust its tmp dir in the developer's
+    real `~/.kimi-code`."""
+    from lib.providers import kimi
+    monkeypatch.setattr(kimi, "_WORKSPACE_TRUST_DIR",
+                        tmp_path_factory.mktemp("kimi-trust"))
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _pipeline_frames_stay_in_process(monkeypatch):
     """A CliRunner test runs the CLI root callback, which switches this worker
     to loopback delivery — a POST to whatever real dashboard listens on

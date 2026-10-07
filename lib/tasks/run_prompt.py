@@ -427,8 +427,9 @@ def _prompt(task: dict, run_id: int, params: Optional[dict] = None) -> str:
     is left out whenever a body exists; only a bodyless task falls back to it
     for want of anything else to say.
 
-    An armed skill goes in front as a slash-command line (`_invocation`), so
-    the run opens by following that procedure with the idea as its subject.
+    An armed skill goes in front as the provider's invocation
+    (`_invocation`), so the run opens by following that procedure with the
+    idea as its subject.
 
     Every block after the body is appended *after* the `PROMPT_MAX` cut, never
     inside it: truncation is a property of the captured idea, and a body long
@@ -488,29 +489,16 @@ def _armed_base(params: Optional[dict]) -> str:
 
 
 def _invocation(params: dict) -> str:
-    """The `/<skill> <args>` line an armed skill puts in front of the idea.
-
-    A slash command is what the CLI resolves from the *start* of a prompt, so
-    the invocation is the first line and the body follows as the rest of the
-    skill's arguments — a skill whose procedure takes the task as its subject
-    reads it from there, and one with its own arguments gets them on the line.
-    The CLI expands only that one command, so further armed skills are named
-    on the next line for the agent to load itself.
-    """
+    """The armed skill's lines in front of the idea, in the armed provider's
+    own invocation syntax (`AgentProvider.skill_invocation`)."""
     skill = (params or {}).get("skill") or {}
     name = skill.get("name")
     if not name:
         return ""
-    line = f"/{name}"
-    if skill.get("args"):
-        line += f" {skill['args']}"
-    line += "\n\n"
-    also = skill.get("also") or []
-    if also:
-        named = ", ".join(f"`{n}`" for n in also)
-        line += (f"Also load and follow these skills with the Skill tool: "
-                 f"{named}.\n\n")
-    return line
+    from lib.providers.registry import build_provider  # noqa: PLC0415
+    provider = build_provider(params.get("provider") or "claude")
+    return provider.skill_invocation(name, skill.get("args") or "",
+                                     list(skill.get("also") or []))
 
 
 def _launch_kwargs(params: dict) -> dict:

@@ -26,6 +26,16 @@ class ProviderCapabilities:
     transcript_usage: bool = False
 
 
+@dataclass(frozen=True)
+class SkillCatalogLayout:
+    """`skill_dirs` hold `<name>/SKILL.md`; `command_dirs` hold `<name>.md`;
+    `plugins` reads Claude Code's enabled-plugin registry."""
+
+    skill_dirs: tuple[tuple[str, ...], ...]
+    command_dirs: tuple[tuple[str, ...], ...] = ()
+    plugins: bool = False
+
+
 class AgentProvider:
     """Base adapter for provider-specific paths and conventions."""
 
@@ -273,6 +283,38 @@ class AgentProvider:
         would double-render the one rejected call.
         """
         return False
+
+    def prepare_workspace(self, cwd: Path) -> None:
+        """Make `cwd` launchable unattended before a run starts there."""
+        return None
+
+    def skill_invocation(self, name: str, args: str, also: list[str]) -> str:
+        """The lines an armed skill puts in front of a task run's prompt.
+
+        A slash command is what the CLI resolves from the *start* of a prompt,
+        so the invocation is the first line and the body follows as the rest
+        of the skill's arguments. The CLI expands only that one command, so
+        further armed skills are named on the next line for the agent to load
+        itself.
+        """
+        line = f"/{name}"
+        if args:
+            line += f" {args}"
+        line += "\n\n"
+        if also:
+            named = ", ".join(f"`{n}`" for n in also)
+            line += (f"Also load and follow these skills with the Skill tool: "
+                     f"{named}.\n\n")
+        return line
+
+    def skill_catalog_layout(self) -> "SkillCatalogLayout":
+        """Where this CLI resolves skills from, relative to each project
+        directory and to home."""
+        return SkillCatalogLayout(skill_dirs=(self.project_skills_subpath(),))
+
+    def project_config_dir(self) -> str:
+        """The per-project config directory a fresh worktree must be given."""
+        return self.project_skills_subpath()[0]
 
     def global_skills_dir(self) -> Path:
         raise NotImplementedError

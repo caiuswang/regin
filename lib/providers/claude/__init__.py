@@ -6,7 +6,8 @@ import os
 import re
 from pathlib import Path
 
-from lib.providers.base import AgentProvider, ProviderCapabilities
+from lib.providers.base import (AgentProvider, ProviderCapabilities,
+                                SkillCatalogLayout)
 from hook_manager.core import (
     HookPayload,
     HookResponse,
@@ -53,6 +54,11 @@ class ClaudeProvider(AgentProvider):
 
     def project_skills_subpath(self) -> tuple[str, ...]:
         return (".claude", "skills")
+
+    def skill_catalog_layout(self) -> SkillCatalogLayout:
+        return SkillCatalogLayout(skill_dirs=((".claude", "skills"),),
+                                  command_dirs=((".claude", "commands"),),
+                                  plugins=True)
 
     def client_version(self) -> str | None:
         from lib.trace.claude_version import current_claude_version
