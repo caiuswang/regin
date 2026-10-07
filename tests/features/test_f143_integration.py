@@ -1,0 +1,89 @@
+"""S7 — the integration check: every build slice of feature 143 merged back.
+
+Each slice merges its branch into `f143/integration` as the precondition of
+reporting finished, so integrate is a *check*: a slice that reported done but
+left nothing on the integration branch — or whose branch carries work the
+integration branch never got — is invisible until something asks.
+
+Read from git alone: the DB holding the slices' task rows is per-checkout, so a
+worktree's copy would skip the check exactly where the slices were built.
+"""
+
+from __future__ import annotations
+
+import re
+import subprocess
+from pathlib import Path
+
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+INTEGRATION = "f143/integration"
+
+#: S1–S6 build; integrate (S7), migrate (S8) and verify (S9) may rightly land nothing.
+BUILD_SLICES = (1, 2, 3, 4, 5, 6)
+
+#: `feat(defects): … (feature #143 S2)` — the slice's own commit. Counted only
+#: over `--no-merges`, so a `Merge … f143/s2` subject never stands in for work.
+LANDED_IN_SUBJECT = re.compile(r"\(feature #143,? S(\d+)\)\s*$", re.IGNORECASE)
+
+
+def _git(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", *args], cwd=REPO_ROOT,
+                          capture_output=True, text=True, timeout=60)
+
+
+def _git_out(*args: str) -> str:
+    proc = _git(*args)
+    if proc.returncode != 0:
+        pytest.skip(f"git {' '.join(args)} is not answerable here")
+    return proc.stdout
+
+
+def commits_per_slice() -> dict[int, int]:
+    """Slice id → non-merge commits reachable from the integration branch that name it.
+
+    Walked with no fork point: once master merges the integration branch a
+    `master..` range empties and every slice would read as empty-handed
+    exactly when the feature landed.
+    """
+    _git_out("rev-parse", "--verify", f"{INTEGRATION}^{{commit}}")
+    counts: dict[int, int] = {}
+    for subject in _git_out("log", "--no-merges", "--format=%s", INTEGRATION).splitlines():
+        found = LANDED_IN_SUBJECT.search(subject)
+        if found:
+            n = int(found.group(1))
+            counts[n] = counts.get(n, 0) + 1
+    return counts
+
+
+def unmerged_slice_branches() -> list[str]:
+    """Slice branches whose tip is not an ancestor of the integration branch.
+
+    Only `--is-ancestor`'s exit 1 means "not merged"; any other failure is
+    git not answering, and silence is not evidence either way.
+    """
+    unmerged = []
+    for n in BUILD_SLICES:
+        branch = f"f143/s{n}"
+        if _git("rev-parse", "--verify", "-q", f"refs/heads/{branch}").returncode != 0:
+            continue
+        proc = _git("merge-base", "--is-ancestor", branch, INTEGRATION)
+        if proc.returncode == 1:
+            unmerged.append(branch)
+        elif proc.returncode != 0:
+            pytest.skip(f"git cannot say whether {branch} is merged: {proc.stderr.strip()}")
+    return unmerged
+
+
+def test_every_slice_merged_back():
+    landed = commits_per_slice()
+
+    empty_handed = [f"S{n}" for n in BUILD_SLICES if landed.get(n, 0) == 0]
+    assert not empty_handed, (
+        f"slices with no commit on {INTEGRATION}: " + ", ".join(empty_handed))
+
+    unmerged = unmerged_slice_branches()
+    assert not unmerged, (
+        f"slice branches with work not merged into {INTEGRATION}: "
+        + ", ".join(unmerged))
