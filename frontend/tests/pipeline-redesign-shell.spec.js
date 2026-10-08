@@ -230,11 +230,10 @@ test('test_pipeline_shell_three_tabs_one_line_header', async ({ page }) => {
 
 test('test_pipeline_retired_tabs_are_gone', async ({ page }) => {
   await stubPipeline(page)
-  for (const path of ['/projects', '/projects/3']) {
-    await page.goto(path)
-    await expect(page.locator('.page-title')).toHaveText('Page not found')
-  }
-  for (const file of ['views/ProjectsView.vue', 'views/ProjectPanelView.vue', 'components/projects']) {
+  // `/projects/:id` is the project-manage page now; only the bare tab is retired.
+  await page.goto('/projects')
+  await expect(page.locator('.page-title')).toHaveText('Page not found')
+  for (const file of ['views/ProjectsView.vue', 'views/ProjectPanelView.vue']) {
     expect(existsSync(join(SRC, file)), file).toBe(false)
   }
   await page.setViewportSize({ width: 1440, height: 900 })
