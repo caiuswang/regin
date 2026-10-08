@@ -11,6 +11,7 @@ import Icon from '../ui/Icon.vue'
 import DefectActions from './DefectActions.vue'
 import DefectImages from './DefectImages.vue'
 import PlGlyph from '../pipeline/PlGlyph.vue'
+import RefInlineText from '../refs/RefInlineText.vue'
 import { shortDate } from '../../utils/ledgerFormat'
 import { utcTitle } from '../../utils/time.js'
 import { reopenedLabel } from '../../utils/pipelineFormat'
@@ -93,7 +94,7 @@ const unblamed = computed(() => props.defect.status === 'open' && !props.defect.
     </div>
 
     <p class="symptom" :class="{ 'symptom-clamped': !open }" data-pl-part="symptom"
-       :title="open ? undefined : defect.symptom">{{ defect.symptom }}</p>
+       :title="open ? undefined : defect.symptom"><RefInlineText :text="defect.symptom" /></p>
 
     <template v-if="open">
 

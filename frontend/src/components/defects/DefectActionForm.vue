@@ -6,12 +6,15 @@ import { computed } from 'vue'
 import Button from '../ui/Button.vue'
 import Input from '../ui/Input.vue'
 import Textarea from '../ui/Textarea.vue'
+import RefTextarea from '../refs/RefTextarea.vue'
 
 const props = defineProps({
   form: { type: String, required: true },
   spec: { type: Object, required: true },
   defectId: { type: Number, required: true },
   busy: { type: Boolean, default: false },
+  // The feature the defect is blamed on: it and its work lead the `@` menu.
+  feature: { type: Number, default: null },
 })
 const value = defineModel({ type: String, default: '' })
 const emit = defineEmits(['submit'])
@@ -22,8 +25,22 @@ const problem = computed(() => props.spec.invalid(value.value))
 <template>
   <form class="daf" @submit.prevent="!problem && emit('submit')">
     <label class="sr-only" :for="`f-${defectId}`">{{ spec.placeholder }}</label>
+    <!-- Only the symptom takes references: the other multiline field is a
+         list of paths, one per line, where `[label](kind:key)` is no path. -->
+    <RefTextarea
+      v-if="form === 'edit'"
+      :id="`f-${defectId}`"
+      v-model="value"
+      class="daf-grow"
+      rows="3"
+      :feature="feature"
+      :placeholder="spec.placeholder"
+      :disabled="busy"
+      :error="!!problem"
+      :data-testid="`defect-${form}-field-${defectId}`"
+    />
     <Textarea
-      v-if="spec.multiline"
+      v-else-if="spec.multiline"
       :id="`f-${defectId}`"
       v-model="value"
       class="daf-grow"
