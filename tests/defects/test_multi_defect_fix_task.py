@@ -287,23 +287,61 @@ def test_create_still_refuses_a_task_not_created_from_a_defect(
         fix_items.create_for(row.id)
 
 
-def test_batch_copies_every_defect_image(feature_row):
+def test_batch_body_cites_every_defect_and_copies_no_image(feature_row):
     feature = feature_row()
-    d10, d11 = _defects(feature.id, "ten", "eleven")
-    defect_images.attach(d10.id, PNG)
-    defect_images.attach(d11.id, GIF)
-    defect_images.attach(d11.id, PNG)
+    rows = _defects(feature.id, "ten", "eleven", "twelve")
+    defect_images.attach(rows[1].id, GIF)
 
-    task_id, _ = fix_items.create_batch([d11.id, d10.id])
+    task_id, _ = fix_items.create_batch([r.id for r in reversed(rows)])
 
-    landed = task_images.list_for(task_id)
-    assert sorted(i["idx"] for i in landed) == [1, 2, 3]
-    by_idx = {i["idx"]: i["media_type"] for i in landed}
-    assert by_idx[1] == "image/png"
-    assert by_idx[2] == "image/gif"
     body = _task(task_id).body
-    for idx in (1, 2, 3):
-        assert body.count(f"![](image:{idx})") == 1, body
+    for row in rows:
+        assert body.count(f"](defect:{row.id})") == 1, body
+    assert body.index(f"defect:{rows[0].id}") \
+        < body.index(f"defect:{rows[2].id}")
+    assert f"](feature:{feature.id})" in body
+    assert "eleven" in body and "![](image:" not in body
+    assert task_images.list_for(task_id) == []
+
+
+def test_a_launch_names_how_to_fetch_a_linked_defect_screenshot(feature_row):
+    feature = feature_row()
+    rows = _defects(feature.id, "ten", "eleven")
+    defect_images.attach(rows[1].id, PNG, want_idx=3)
+    task_id, _ = fix_items.create_batch([r.id for r in rows])
+
+    from lib.tasks.run_prompt import _references_block  # noqa: PLC0415
+
+    block = _references_block({"id": task_id, "body": _task(task_id).body},
+                              None)
+    line = next(ln for ln in block.splitlines() if f"D{rows[1].id}" in ln)
+    assert "screenshots 3" in line
+    assert f"defects image {rows[1].id}" in line
+
+
+def test_a_stale_seeded_fix_task_template_heals_to_the_batch_default():
+    """The first seed copied the lowest defect's symptom; an install still
+    holding it unedited must render every defect, not only that one."""
+    from lib.orm.models.prompts import PromptTemplate  # noqa: PLC0415
+    from lib.prompt_templates import seed_builtin_skeletons  # noqa: PLC0415
+    from lib.prompts.surfaces.defects import _FIX_TASK_BODY  # noqa: PLC0415
+
+    first_seed = ("Fix regin defect #{{defect_id}}, reported against feature "
+                  "{{feature_named}}:\n\n{{symptom}}\n{{details}}")
+    seed_builtin_skeletons()
+    with SessionLocal() as session:
+        row = session.exec(select(PromptTemplate).where(
+            PromptTemplate.slug == "defect-fix-task")).one()
+        row.body = first_seed
+        session.add(row)
+        session.commit()
+
+    seed_builtin_skeletons()
+
+    with SessionLocal() as session:
+        row = session.exec(select(PromptTemplate).where(
+            PromptTemplate.slug == "defect-fix-task")).one()
+    assert row.body == _FIX_TASK_BODY
 
 
 @pytest.mark.parametrize("keep", [0, 1])

@@ -239,8 +239,8 @@ def test_the_body_cites_the_defect_and_the_feature(flask_client,
     _create(flask_client, row.id)
 
     assert _fix_task(row.id).body == (
-        f"Fix regin defect [D{row.id} the gutter folds the newest span]"
-        f"(defect:{row.id}), reported against feature "
+        f"Fix regin defect:\n- [D{row.id} the gutter folds the newest span]"
+        f"(defect:{row.id})\nReported against feature "
         f"[F{feature.id} the gutter](feature:{feature.id}).")
 
 
@@ -262,9 +262,9 @@ def test_an_edited_surface_reaches_the_next_fix_task(flask_client,
     assert _fix_task(row.id).body == f"REPRO FIRST #{row.id}: it broke"
 
 
-def test_the_defect_screenshots_ride_the_fix_task(flask_client, feature_row):
-    """A defect's images reach no model; a task's are delivered to its runs.
-    Copied once, at the index the symptom's prose may already name."""
+def test_the_defect_screenshots_stay_on_the_defect(flask_client, feature_row):
+    """The task cites the defect instead of carrying a second copy of its
+    screenshots; the run is told how to fetch each from the defect."""
     from lib.defects import images as defect_images  # noqa: PLC0415
     from lib.tasks import images as task_images  # noqa: PLC0415
 
@@ -274,36 +274,13 @@ def test_the_defect_screenshots_ride_the_fix_task(flask_client, feature_row):
     defect_images.attach(row.id, png, want_idx=2)
 
     _create(flask_client, row.id)
-    _create(flask_client, row.id)
 
     task_id = store.get(row.id).fix_task_id
-    assert [i["idx"] for i in task_images.list_for(task_id)] == [2]
-    assert task_images.get_bytes(task_id, 2)[0] == png
-    assert _fix_task(row.id).body.count("![](image:2)") == 1
+    assert task_images.list_for(task_id) == []
+    assert "![](image:" not in _fix_task(row.id).body
 
 
-def test_every_screenshot_is_named_in_the_body(flask_client, feature_row):
-    """The body cites the symptom instead of carrying its prose, so it has to
-    name each screenshot or the run gets pictures its prompt never mentions."""
-    from lib.defects import images as defect_images  # noqa: PLC0415
-    from lib.tasks import images as task_images  # noqa: PLC0415
-
-    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
-    feature = feature_row()
-    row = store.record("the badge overlaps", feature_id=feature.id,
-                       session_id="t-3")
-    defect_images.attach(row.id, png)
-    defect_images.attach(row.id, png)
-
-    _create(flask_client, row.id)
-
-    body = _fix_task(row.id).body
-    task_id = store.get(row.id).fix_task_id
-    assert [i["idx"] for i in task_images.list_for(task_id)] == [1, 2]
-    assert body.endswith(f"(feature:{feature.id}).\n![](image:1)\n![](image:2)")
-
-
-def test_a_defect_without_screenshots_names_none(flask_client, feature_row):
+def test_the_body_ends_at_the_feature_reference(flask_client, feature_row):
     feature = feature_row()
     row = store.record("it broke", feature_id=feature.id, session_id="t-4")
 

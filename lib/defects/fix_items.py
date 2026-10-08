@@ -101,17 +101,14 @@ def _create(rows, replacing=None) -> int:
     title = store.fix_task_title(rows)
     # A replay here means the lowest defect's task was unlinked by `--clear`:
     # it is relinked rather than filed again, one task per defect for good.
-    view, created = task_store.capture_task(
+    view, _ = task_store.capture_task(
         title=title, auto_title=title, source="defect",
         external_id=external_id, feature_id=lead.feature_id,
         kind=TASK_KIND_FIX)
-    if created:
-        _copy_images(rows, view["id"])
     # Written on a replay too while still empty: a first attempt that died
     # between the insert and this line would otherwise never get a body.
     if view["body"] is None:
-        task_store.update_task(
-            view["id"], {"body": task_body(lead, _image_refs(view["id"]))})
+        task_store.update_task(view["id"], {"body": task_body(rows)})
     store.set_fix_items([row.id for row in rows], view["id"])
     return view["id"]
 
@@ -165,50 +162,25 @@ def _is_own_task(row) -> bool:
     return task is not None and task.source == "defect"
 
 
-def _copy_images(rows, task_id: int) -> None:
-    """A defect's screenshots reach no model; a task's ride its runs. Copied
-    in defect-id order, so the lowest defect keeps its `idx` and a later one
-    whose `idx` is taken gets the next free number."""
-    from lib.defects import images as defect_images  # noqa: PLC0415
-    from lib.tasks import images as task_images  # noqa: PLC0415
-
-    for row in rows:
-        for image in defect_images.list_for(row.id):
-            found = defect_images.get_bytes(row.id, image["idx"])
-            if found is None:
-                continue
-            try:
-                task_images.attach(task_id, found[0], want_idx=image["idx"])
-            except ValueError:
-                log.error("defect_image_not_copied", defect_id=row.id,
-                          task_id=task_id, idx=image["idx"], exc_info=True)
-
-
-def _image_refs(task_id: int) -> str:
-    """An `![](image:N)` line per image under the number it landed on."""
-    from lib.tasks import images as task_images  # noqa: PLC0415
-
-    return "".join(f"![](image:{image['idx']})\n"
-                   for image in task_images.list_for(task_id))
-
-
-def task_body(row, images: str = "") -> str:
-    """The defect and its feature are cited as references, never copied: a
-    symptom edited or a feature renamed after the task was cut must not leave
-    the task describing the old one. The run reads them live in its
-    `<references>` block (`lib/tasks/run_prompt.py`).
-
-    `images` names every copied screenshot: since the symptom is cited rather
-    than carried, an image it names inline is named nowhere else, and would
-    ride the run as a content block the body never mentions."""
+def task_body(rows) -> str:
+    """Every defect and their feature are cited as references, never copied:
+    a symptom edited or a feature renamed after the task was cut must not
+    leave the task describing the old one. The run reads them live in its
+    `<references>` block (`lib/tasks/run_prompt.py`), screenshots included —
+    which is why none are copied onto the task."""
     from lib.features import store as feature_store  # noqa: PLC0415
     from lib.prompts import render_surface  # noqa: PLC0415
     from lib.prompts.surfaces.defects import FIX_TASK_SURFACE_ID  # noqa: PLC0415
 
+    rows = sorted(rows, key=lambda r: r.id)
+    row = rows[0]
     feature = feature_store.get(row.feature_id)
     title = feature.title if feature else ""
     paths = ", ".join(suspect_paths(row))
     return render_surface(FIX_TASK_SURFACE_ID, {
+        "defects_named": "defect" if len(rows) == 1 else "defects",
+        "defect_refs": "\n".join(
+            "- " + format_ref("defect", str(r.id), r.symptom) for r in rows),
         "defect_id": row.id,
         "defect_ref": format_ref("defect", str(row.id), row.symptom),
         "feature_ref": format_ref("feature", str(row.feature_id), title),
@@ -216,7 +188,6 @@ def task_body(row, images: str = "") -> str:
         "feature_named": f"#{row.feature_id}"
                          + (f" ({title})" if title else ""),
         "round": row.round,
-        "images": images,
         "details": "\n".join(facts(row)),
         "reported_session": row.reported_by_trace or "",
         "suspect_paths": paths,

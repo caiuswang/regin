@@ -409,3 +409,35 @@ def _write_fix_item(defect_id: int, task, create, clear):
     if task:
         return store.set_fix_item(defect_id, task)
     return fix_items.create_for(defect_id)
+
+
+@defects_app.command("image")
+def image_cmd(
+    defect_id: int = typer.Argument(..., help="Defect id"),
+    idx: int = typer.Argument(..., help="The screenshot's number"),
+    out: Optional[str] = typer.Option(
+        None, "--out", help="Where to write it (default: a temp file)"),
+) -> None:
+    """Write one of the defect's screenshots to a file and print its path.
+
+    A fix task cites its defects rather than carrying their screenshots, so
+    this is how its run reads one.
+    """
+    import tempfile  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+
+    from lib.defects import images as defect_images  # noqa: PLC0415
+
+    found = defect_images.get_bytes(defect_id, idx)
+    if found is None:
+        held = [row["idx"] for row in defect_images.list_for(defect_id)]
+        typer.echo(f"defect #{defect_id} has no image {idx} "
+                   f"(it has: {', '.join(map(str, held)) or 'none'})", err=True)
+        raise typer.Exit(2)
+    data, media_type = found
+    suffix = media_type.split("/", 1)[-1]
+    target = (Path(out) if out else Path(tempfile.gettempdir())
+              / "regin-defect-images" / f"{defect_id}-{idx}.{suffix}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(data)
+    typer.echo(str(target))

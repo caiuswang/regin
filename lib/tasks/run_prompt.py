@@ -370,18 +370,25 @@ def _read_command(kind: str, key: str) -> str:
 
 def _defect_facts(key: str) -> list[str]:
     from lib.defects import fix_items  # noqa: PLC0415
+    from lib.defects import images as defect_images  # noqa: PLC0415
     from lib.defects import store as defect_store  # noqa: PLC0415
 
     try:
-        return fix_items.facts(defect_store.get(int(key)))
+        facts = fix_items.facts(defect_store.get(int(key)))
     except defect_store.DefectError:
         return []
+    indices = [str(row["idx"]) for row in defect_images.list_for(int(key))]
+    if indices:
+        facts.append(f"screenshots {', '.join(indices)} — read one: "
+                     + _cli_command("defects", "image", key, "<N>"))
+    return facts
 
 
 def _reference_line(ref: str, item: Optional[dict]) -> str:
     """One reference as the run reads it: what it is now, and how to read the
     rest. A defect has no read command, so its line carries the symptom whole
-    and the facts a fix task's body cites rather than copies.
+    and the facts a fix task's body cites rather than copies — its
+    screenshots as the command that fetches each.
     """
     if item is None:
         return f"- {ref} — not found"
