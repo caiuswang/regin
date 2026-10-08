@@ -26,7 +26,7 @@ import FeatureTaskSessions from './FeatureTaskSessions.vue'
 import Icon from '../ui/Icon.vue'
 import TaskKindChip from '../tasks/TaskKindChip.vue'
 import TaskStatusIcon from '../tasks/TaskStatusIcon.vue'
-import { TASKS_ANCHOR } from '../../utils/featureLinks'
+import { TASKS_ANCHOR, tasksGraphLink, tasksListLink } from '../../utils/featureLinks'
 import { sessionsByTask } from '../../utils/ledgerFormat'
 import { taskTitle } from '../../utils/taskTitle.js'
 
@@ -98,23 +98,37 @@ defineExpose({ load })
         <h2 class="card-header ft-title">Tasks</h2>
         <p class="ft-sub">the steps of this feature — arm and run them on their own pages</p>
       </div>
-      <div v-if="canWrite" class="ft-verbs">
-        <Button
-          variant="secondary" size="sm" data-testid="feature-verb-spec"
-          @click="startStep('spec')"
-        >Write spec</Button>
-        <Button
-          v-if="!hasSlices"
-          variant="secondary" size="sm" data-testid="feature-verb-build"
-          @click="startStep('build')"
-        >Build</Button>
-        <Button
-          variant="ghost" size="sm" class="ft-free" data-testid="feature-new-task"
-          @click="emit('new-task')"
-        >
-          <Icon name="plus" :size="11" />
-          task
-        </Button>
+      <div class="ft-actions">
+        <div class="ft-links">
+          <router-link
+            :to="tasksListLink(featureId)"
+            class="ft-link-out focus-visible:outline-2 focus-visible:outline-blue-500"
+            data-testid="feature-tasks-open-list"
+          >Open in Tasks</router-link>
+          <router-link
+            :to="tasksGraphLink(featureId)"
+            class="ft-link-out focus-visible:outline-2 focus-visible:outline-blue-500"
+            data-testid="feature-tasks-open-graph"
+          >Graph</router-link>
+        </div>
+        <div v-if="canWrite" class="ft-verbs">
+          <Button
+            variant="secondary" size="sm" data-testid="feature-verb-spec"
+            @click="startStep('spec')"
+          >Write spec</Button>
+          <Button
+            v-if="!hasSlices"
+            variant="secondary" size="sm" data-testid="feature-verb-build"
+            @click="startStep('build')"
+          >Build</Button>
+          <Button
+            variant="ghost" size="sm" class="ft-free" data-testid="feature-new-task"
+            @click="emit('new-task')"
+          >
+            <Icon name="plus" :size="11" />
+            task
+          </Button>
+        </div>
       </div>
     </div>
 
@@ -139,6 +153,12 @@ defineExpose({ load })
           <span class="ft-name">{{ taskTitle(task) }}</span>
         </router-link>
         <router-link
+          v-if="task.waits_on"
+          :to="`/tasks/${task.waits_on.id}`"
+          class="ft-waits focus-visible:outline-2 focus-visible:outline-blue-500"
+          :data-testid="`feature-task-waits-${task.id}`"
+        >waits on #{{ task.waits_on.id }}<template v-if="(task.blocked_by?.length || 0) > 1">+{{ task.blocked_by.length - 1 }}</template></router-link>
+        <router-link
           v-for="d in task.fixes_defects || []" :key="d"
           class="ledger-tag" :to="`/defects/${d}`"
           :data-testid="`feature-task-fixes-${task.id}-${d}`"
@@ -161,6 +181,22 @@ defineExpose({ load })
 .ft-title { margin-bottom: 0; }
 .ft-verbs { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; min-width: 0; }
 .ft-free { font-size: 11px; color: var(--color-fg-muted); }
+.ft-actions {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem;
+    margin-left: auto; min-width: 0;
+}
+.ft-links {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem;
+    font-size: 12px;
+}
+.ft-link-out {
+    color: var(--color-info); text-decoration: none;
+}
+.ft-link-out:hover { text-decoration: underline; }
+.ft-waits {
+    font-size: 11px; color: var(--color-info); text-decoration: none; flex: none;
+}
+.ft-waits:hover { text-decoration: underline; }
 .ft-sub { font-size: 11.5px; color: var(--color-fg-subtle); }
 .ft-note { margin: 0.4rem 0 0; font-size: 11.5px; color: var(--color-fg-muted); }
 .ft-fail {

@@ -30,6 +30,19 @@ export function tasksLink(featureId) {
   return { path: '/tasks', query: { feature_id: String(featureId) } }
 }
 
+//: The same feature-scoped backlog in the list view. The explicit `view=list`
+//: matches the header contract on the feature ledger; callers that just need
+//: the scope should use `tasksLink`.
+export function tasksListLink(featureId) {
+  return { path: '/tasks', query: { feature_id: String(featureId), view: 'list' } }
+}
+
+//: The same feature-scoped backlog drawn as lanes, including closed chains so
+//: the preview shows the whole dependency graph, not only what is open.
+export function tasksGraphLink(featureId) {
+  return { path: '/tasks', query: { feature_id: String(featureId), view: 'graph', open: '0' } }
+}
+
 //: A feature's sessions, which live on its ledger page beside the figure.
 export function sessionsLink(featureId) {
   return { path: `/features/${featureId}`, hash: `#${SESSIONS_ANCHOR}` }
