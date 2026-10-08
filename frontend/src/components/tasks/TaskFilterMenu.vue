@@ -16,6 +16,7 @@ import Icon from '../ui/Icon.vue'
 import Input from '../ui/Input.vue'
 import Popover from '../ui/Popover.vue'
 import Select from '../ui/Select.vue'
+import FeaturePicker from '../pipeline/FeaturePicker.vue'
 import PlGlyph from '../pipeline/PlGlyph.vue'
 import { PRIORITIES, STATUS_FILTERS } from '../../utils/taskMeta.js'
 import { taskChips } from '../../utils/taskChips.js'
@@ -26,6 +27,8 @@ const props = defineProps({
   mode: { type: String, default: 'grouped' },
   users: { type: Array, default: () => [] },
   mobile: { type: Boolean, default: false },
+  // The currently selected feature, if its title has been resolved.
+  feature: { type: Object, default: null },
 })
 const emit = defineEmits(['patch'])
 
@@ -151,7 +154,13 @@ function apply() {
       <div class="tfm-pair">
         <label class="tfm-field" data-pl-part="field">
           <span class="tfm-label" data-pl-part="field-label">Feature</span>
-          <Input v-model="draft.feature_id" type="number" placeholder="73" data-pl-part="input" data-testid="task-filter-feature" />
+          <FeaturePicker
+            v-model="draft.feature_id"
+            :current="feature"
+            placeholder="Search features…"
+            data-pl-part="input"
+            testid="task-filter-feature"
+          />
         </label>
         <label class="tfm-field" data-pl-part="field">
           <span class="tfm-label" data-pl-part="field-label">Assignee</span>

@@ -107,6 +107,15 @@ function onKeydown(event) {
 // A parent that resets the model (a triage cursor move) resets the chip too.
 watch(model, (v) => { if (!v) chosen.value = null })
 
+// The current feature may be fetched after the picker mounted, or the model
+// may be set to match an already-known current; update the chip only when the
+// two agree, without overriding a user pick.
+watch([() => props.current, model], ([cur, id]) => {
+  if (cur && id === String(cur.id) && (!chosen.value || String(chosen.value.id) !== id)) {
+    chosen.value = cur
+  }
+})
+
 defineExpose({ focus: () => field.value?.focus() })
 </script>
 

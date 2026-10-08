@@ -29,10 +29,29 @@ import { useUsers } from '../composables/useUsers.js'
 import { usePipelineLive } from '../composables/usePipelineEvents'
 import { taskChips } from '../utils/taskChips.js'
 import { GROUPS, SORT_KEYS } from '../utils/taskMeta.js'
+import api from '../api'
 
 const route = useRoute()
 const query = useTaskQuery()
 const isCurrentTab = usePipelineTabActive()
+
+const featureRow = ref(null)
+let featureAsked = 0
+watch(() => query.state.value.feature_id, async (id) => {
+  if (!id) {
+    featureRow.value = null
+    return
+  }
+  const mine = ++featureAsked
+  try {
+    const row = await api.get(`/features/${id}`)
+    if (mine !== featureAsked) return
+    featureRow.value = { id: row.id, title: row.title }
+  } catch {
+    if (mine !== featureAsked) return
+    featureRow.value = null
+  }
+}, { immediate: true })
 const { isMdUp } = useBreakpoint()
 const { items: users, ensure: ensureUsers } = useUsers()
 
@@ -57,7 +76,7 @@ const sortKey = computed(() => query.state.value.sort.split(':')[0])
 const sortDir = computed(() => (query.state.value.sort.split(':')[1] === 'asc' ? 'asc' : 'desc'))
 
 const chips = computed(() => taskChips(query.state.value,
-  { mode: mode.value, mobile: mobile.value, users: users.value }))
+  { mode: mode.value, mobile: mobile.value, users: users.value, feature: featureRow.value }))
 const count = ref('')
 const find = ref('')
 const body = ref(null)
@@ -139,6 +158,7 @@ onBeforeUnmount(() => window.removeEventListener(TASK_CAPTURED_EVENT, afterWrite
           :mode="mode"
           :users="users"
           :mobile="mobile"
+          :feature="featureRow"
           @patch="query.patch"
         />
         <DropdownMenu v-if="mobile" :items="groupItems" align="start">

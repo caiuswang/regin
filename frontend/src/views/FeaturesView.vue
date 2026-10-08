@@ -130,7 +130,13 @@ async function openSecret() {
   }
 }
 const rail = ref(null)
-const railFolded = ref(false)
+const railFolded = ref(true)
+
+// A deep link to `?triage=<id>` must arrive unfolded so the requested card is
+// visible and focused; otherwise the rail starts folded (D1).
+watch(() => route.query.triage, (id) => {
+  if (id) railFolded.value = false
+}, { immediate: true })
 
 // A write made elsewhere — a defect reported from the header's "New ▾", a
 // capture — moves this tab's rows and its triage queue too.
