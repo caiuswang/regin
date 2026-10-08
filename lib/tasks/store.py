@@ -148,6 +148,7 @@ def serialize(task: AgentTask) -> dict:
         "feature_id": task.feature_id,
         "assignee": task.assignee,
         "kind": task.kind or TASK_KIND_TASK,
+        "stage_key": task.stage_key,
         # Resolved beside the id, never in place of it: `assignee` carries no
         # foreign key, so an id pointing at a deleted user is a real state and
         # the client renders the gap rather than a name regin invented.
@@ -264,7 +265,8 @@ def capture_task(*, title: str, source: str, body: Optional[str] = None,
                  feature_id: Optional[int] = None,
                  priority: str = TASK_PRIORITY_NONE,
                  kind: str = TASK_KIND_TASK,
-                 auto_title: Optional[str] = None) -> tuple[dict, bool]:
+                 auto_title: Optional[str] = None,
+                 stage_key: Optional[str] = None) -> tuple[dict, bool]:
     """Insert an idea, or resolve a replay. Returns `(task, created)`.
 
     `status` is `idea` unconditionally — no caller can set it. `auto_title`
@@ -285,7 +287,7 @@ def capture_task(*, title: str, source: str, body: Optional[str] = None,
             project_id=_created_project(session, project_id, feature_id),
             feature_id=feature_id,
             priority=priority, priority_rank=PRIORITY_ORDER[priority],
-            kind=kind, auto_title=auto_title,
+            kind=kind, auto_title=auto_title, stage_key=stage_key,
         )
         session.add(row)
         try:

@@ -636,6 +636,48 @@ a note explaining which calls were skipped — do not invent edges.',
     1
 );
 
+-- The steps a feature can open, per project. project_id IS NULL rows are the
+-- global default: what a feature with no project reads, and what a project
+-- copies on its first write (lib/features/stages.py). `role` is what the step
+-- means to the ledger and becomes the task's `kind`; `key` lands in
+-- agent_tasks.stage_key. Archived rows stay so their tasks still resolve.
+CREATE TABLE IF NOT EXISTS project_stages (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id   INTEGER,
+    key          TEXT NOT NULL,
+    label        TEXT NOT NULL,
+    role         TEXT NOT NULL,
+    position     INTEGER NOT NULL DEFAULT 0,
+    prompt_slug  TEXT,
+    builtin      INTEGER NOT NULL DEFAULT 0,
+    archived_at  TEXT,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    CONSTRAINT uq_project_stages_project_key UNIQUE (project_id, key)
+);
+-- UNIQUE (project_id, key) cannot hold for the global rows: SQLite treats
+-- every NULL project_id as distinct.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_project_stages_global_key
+    ON project_stages(key) WHERE project_id IS NULL;
+
+-- The default stages and their prompts. The spec prompt includes the
+-- task-run-spec surface rather than copying it, so a spec run is told what it
+-- was told before this table existed.
+INSERT OR IGNORE INTO prompt_templates
+    (slug, label, description, body, kind, variables, builtin)
+VALUES
+    ('stage-global-spec', 'Stage — Spec',
+     'The prompt a spec step run is told (default stages).',
+     '{{include:task-run-spec}}', 'stage', '[{"name": "feature_named", "description": "The feature as the prompt names it.", "example": "#80 (Agent SDK runs)", "required": false}, {"name": "spec_cmd", "description": "The literal `regin feature spec` write command for this feature.", "example": "", "required": false}, {"name": "stage_label", "description": "The stage this step belongs to.", "example": "Spec", "required": false}]', 1),
+    ('stage-global-build', 'Stage — Build',
+     'The prompt a build step run is told (default stages).',
+     '', 'stage', '[{"name": "feature_named", "description": "The feature as the prompt names it.", "example": "#80 (Agent SDK runs)", "required": false}, {"name": "spec_cmd", "description": "The literal `regin feature spec` write command for this feature.", "example": "", "required": false}, {"name": "stage_label", "description": "The stage this step belongs to.", "example": "Spec", "required": false}]', 1);
+INSERT OR IGNORE INTO project_stages
+    (project_id, key, label, role, position, prompt_slug, builtin)
+VALUES
+    (NULL, 'spec', 'Spec', 'spec', 0, 'stage-global-spec', 1),
+    (NULL, 'build', 'Build', 'build', 1, 'stage-global-build', 1);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_branches_repo ON branches(repo_id);
 CREATE INDEX IF NOT EXISTS idx_pattern_docs_category ON pattern_docs(category);
@@ -1047,6 +1089,10 @@ CREATE TABLE IF NOT EXISTS agent_tasks (
     -- The title regin last generated. title == auto_title is what says the
     -- title is still regin's to recompute; a hand edit breaks the equality.
     auto_title    TEXT,
+    -- The project stage this step was opened from (project_stages.key), or
+    -- NULL for a task that is not a feature step. Orthogonal to `kind`, which
+    -- carries the stage's role.
+    stage_key     TEXT,
     CONSTRAINT uq_agent_tasks_source_external UNIQUE (source, external_id)
 );
 

@@ -8,6 +8,7 @@ import shlex
 import sys
 from typing import Optional
 
+from lib.activity_log import get_activity_logger
 from lib.agent_sdk import worktree
 from lib.comments import store as comments
 from lib.orm.models.comments import RESOLUTION_OPEN, SUBJECT_TASK
@@ -16,6 +17,9 @@ from lib.refs.grammar import RefError, format_label, parse_refs
 from lib.settings import settings
 from lib.tasks import images
 from lib.tasks.integrations import registry
+
+
+log = get_activity_logger("tasks")
 
 
 PROMPT_MAX = 8000
@@ -289,25 +293,50 @@ def _feature_images_line(feature_id: int) -> str:
         "image_cmd": _cli_command("feature", "image", str(feature_id), "<N>")})
 
 
-def _spec_block(task: dict) -> str:
-    """The `<spec>` instruction, for a feature's spec step only.
+def _stage_prompt(stage: Optional[dict], context: dict) -> str:
+    """The stage's own prompt rendered, or "" when it has none or it fails."""
+    from lib.prompts.engine import PromptRenderError  # noqa: PLC0415
+    from lib.prompts.resolve import render_body  # noqa: PLC0415
 
-    Keyed on the declared `kind`, never on the title: "write the spec and do
-    not build" used to be typed into titles by hand.
+    if not stage or not stage["prompt_body"]:
+        return ""
+    try:
+        return render_body(stage["prompt_body"], context)
+    except PromptRenderError as exc:
+        log.write("stage_prompt_fell_back_to_default",
+                  stage=stage["key"], error=str(exc))
+        return ""
+
+
+def _stage_block(task: dict, feature) -> str:
+    """The step's stage prompt, for a feature step only.
+
+    Keyed on the declared stage and `kind`, never on the title: "write the
+    spec and do not build" used to be typed into titles by hand. The stage's
+    own prompt row wins; a spec-role step without one is told the
+    `task-run-spec` surface; anything else is told nothing. A stage prompt that
+    fails to render degrades to that same default rather than breaking the run.
     """
     feature_id = task.get("feature_id")
-    if task.get("kind") != TASK_KIND_SPEC or feature_id is None:
+    if feature_id is None:
         return ""
-    from lib.features import store as feature_store  # noqa: PLC0415
+    from lib.features import stages  # noqa: PLC0415
     from lib.prompts import render_surface  # noqa: PLC0415
     from lib.prompts.surfaces.tasks import SPEC_SURFACE_ID  # noqa: PLC0415
 
-    feature = feature_store.get(feature_id)
+    stage = stages.resolve(feature.project_id if feature else None,
+                           task.get("stage_key"), include_archived=True)
     named = f"#{feature_id}" + (f" ({feature.title})" if feature else "")
-    return "\n\n" + render_surface(SPEC_SURFACE_ID, {
+    context = {
         "feature_named": named,
         "spec_cmd": _cli_command("feature", "spec", str(feature_id),
-                                 "--file", SPEC_FILE_PLACEHOLDER)})
+                                 "--file", SPEC_FILE_PLACEHOLDER),
+        "stage_label": stage["label"] if stage else "",
+    }
+    text = _stage_prompt(stage, context)
+    if not text and task.get("kind") == TASK_KIND_SPEC:
+        text = render_surface(SPEC_SURFACE_ID, context)
+    return "\n\n" + text if text else ""
 
 
 def _cited_refs(task: dict, feature) -> list[str]:
@@ -488,7 +517,7 @@ def _prompt(task: dict, run_id: int, params: Optional[dict] = None) -> str:
         "tracker": _tracker_block(feature),
         "followup": _followup_block(task["id"]),
         "feature": _feature_block(task),
-        "spec": _spec_block(task),
+        "spec": _stage_block(task, feature),
         "references": _references_block(task, feature),
         "finish": finish})
     # An envelope edited to drop `{{finish}}` renders fine — a *missing*

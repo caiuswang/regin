@@ -1,9 +1,14 @@
-"""A feature's spec and build steps, created from the feature's own verbs.
+"""A feature's steps, one per stage of its project's stage list.
 
 The same shape as a defect's fix task (`lib/defects/fix_items.py`): the key
-`feature:<id>:<kind>` makes it one step of each kind per feature, so a second
-click, a second tab or the CLI after the browser all resolve to the first row.
-A second attempt is another run of that row, never another row.
+`feature:<id>:<stage key>` makes it one step per stage per feature, so a
+second click, a second tab or the CLI after the browser all resolve to the
+first row. A second attempt is another run of that row, never another row.
+The default stages keep the keys `spec` and `build`, which is why step tasks
+opened before stages existed still match.
+
+The stage's `role` becomes the task's `kind` — what the ledger and the run
+read — and its key lands in `stage_key`, so a custom stage needs no new kind.
 
 The title cites the feature as an `@` reference rather than copying its name
 — the feature's title has one home, `features` — so a rename reads through on
@@ -15,40 +20,43 @@ from __future__ import annotations
 
 from typing import Optional
 
+from lib.features import stages
 from lib.features import store as feature_store
-from lib.orm.models.tasks import TASK_KIND_BUILD, TASK_KIND_SPEC
 from lib.refs.grammar import format_ref
 
 SOURCE = "feature"
-VERB_KINDS: tuple[str, ...] = (TASK_KIND_SPEC, TASK_KIND_BUILD)
-_LABEL = {TASK_KIND_SPEC: "Spec", TASK_KIND_BUILD: "Build"}
 
 
 class StepRejected(ValueError):
-    """A kind the feature verbs do not create — a 400 naming `kind`."""
+    """A stage the feature's project does not offer — a 400 naming `stage`."""
 
-    field = "kind"
-
-
-def external_id(feature_id: int, kind: str) -> str:
-    return f"feature:{int(feature_id)}:{kind}"
+    field = "stage"
 
 
-def open_step(feature_id: int, kind: str,
+def external_id(feature_id: int, stage_key: str) -> str:
+    return f"feature:{int(feature_id)}:{stage_key}"
+
+
+def open_step(feature_id: int, stage_key,
               body: Optional[str] = None) -> tuple[dict, bool]:
-    """The feature's step of this kind, created on first use.
+    """The feature's step for this stage, created on first use.
 
     Returns `(task, created)`. Raises `FeatureError` for an unknown feature
-    and `StepRejected` for a kind other than spec or build.
+    and `StepRejected` for a key that is not a live stage of the feature's
+    project (the global defaults when it has none).
     """
     from lib.tasks import store as task_store  # noqa: PLC0415
 
-    if kind not in VERB_KINDS:
-        raise StepRejected(
-            f"kind must be one of {', '.join(VERB_KINDS)}")
     feature = feature_store.require(feature_id)
-    title = f"{_LABEL[kind]} · {format_ref('feature', str(feature.id), feature.title)}"
+    stage = (stages.resolve(feature.project_id, stage_key)
+             if isinstance(stage_key, str) else None)
+    if stage is None:
+        live = stages.list_stages(feature.project_id, include_archived=False)
+        raise StepRejected("stage must be one of "
+                           + ", ".join(s["key"] for s in live["stages"]))
+    title = (f"{stage['label']} · "
+             f"{format_ref('feature', str(feature.id), feature.title)}")
     return task_store.capture_task(
         title=title, body=(body or "").strip() or None, source=SOURCE,
-        external_id=external_id(feature_id, kind), feature_id=feature_id,
-        kind=kind)
+        external_id=external_id(feature_id, stage["key"]),
+        feature_id=feature_id, kind=stage["role"], stage_key=stage["key"])

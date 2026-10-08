@@ -198,6 +198,9 @@ def create_app(replica: bool = False):
     from web.blueprints.features import features_bp
     app.register_blueprint(features_bp)
 
+    from web.blueprints.project_stages import project_stages_bp
+    app.register_blueprint(project_stages_bp)
+
     from web.blueprints.defects import defects_bp
     app.register_blueprint(defects_bp)
 

@@ -420,8 +420,10 @@ def api_get_feature_image(feature_id: int, idx: int):
 @features_bp.route("/api/features/<int:feature_id>/steps", methods=["POST"])
 @require_editor
 def api_feature_step(feature_id: int):
-    """Open the feature's spec or build step, creating it on first use.
+    """Open the feature's step for one stage, creating it on first use.
 
+    `stage` is a key of the feature's project's stage list; the older `kind`
+    field is read as the stage key, which is what `spec` and `build` are.
     201 when this call created it, 200 when it returned the existing row — a
     second attempt is another run of that row, not another task.
     """
@@ -433,7 +435,7 @@ def api_feature_step(feature_id: int):
                                  "characters", "field": "body"}), 400
     try:
         task, created = steps_module.open_step(
-            feature_id, payload.get("kind"), body)
+            feature_id, payload.get("stage", payload.get("kind")), body)
     except steps_module.StepRejected as exc:
         return jsonify({"error": str(exc), "field": exc.field}), 400
     except feature_store.FeatureError as exc:

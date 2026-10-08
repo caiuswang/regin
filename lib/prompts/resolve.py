@@ -80,4 +80,12 @@ def render_surface(surface_id: str, context: Mapping[str, object] | None = None)
         return render(default_body, ctx, include_loader=_include_loader)
 
 
-__all__ = ["render_surface"]
+def render_body(body: str, context: Mapping[str, object] | None = None) -> str:
+    """Render a stored body that belongs to no registered surface, with
+    ``{{include:slug}}`` resolved as ``render_surface`` resolves it. Raises
+    ``PromptRenderError``: the caller owns the fallback, having no registered
+    default to fall back to."""
+    return render(body, context or {}, include_loader=_include_loader)
+
+
+__all__ = ["render_body", "render_surface"]

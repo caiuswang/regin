@@ -29,6 +29,7 @@ from lib.orm.models.proposals import (
     TopicRefDigest,
 )
 from lib.orm.models.rules import Experiment, RuleTrigger, RuleTriggerSuppression
+from lib.orm.models.stages import ProjectStage
 from lib.orm.models.features import Feature, FeatureEvent
 from lib.orm.models.sync import Branch, Repo
 from lib.orm.models.tasks import AgentTask
@@ -56,6 +57,7 @@ __all__ = [
     "Repo", "Branch",
     "PatternDoc", "Tag", "DocTag", "PatternDeployment", "PatternEmbedding",
     "PayloadSchemaDrift",
+    "ProjectStage",
     "PromptTemplate",
     "ProposalRun", "ProposalTopic", "ProposalRevision", "ProposalRevisionTopic",
     "ProposalFeedbackThread", "ProposalFeedbackComment",
