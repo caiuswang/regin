@@ -56,7 +56,7 @@ async function stub(page) {
       body: JSON.stringify({
         groups: [{ key: 'ideas', label: 'Ideas', hint: '', n: rows.length,
                    rows, more: 0, page: 0, size: 50 }],
-        open: rows.length, done_hidden: 0, population: rows.length,
+        open: rows.length, population: rows.length,
       }) })
   })
 }

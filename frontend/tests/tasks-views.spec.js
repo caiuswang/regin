@@ -85,7 +85,7 @@ test('test_tasks_list_board_graph_views', async ({ page }) => {
   await expect(groupN(page, 'blocked')).toHaveText('2')
   await expect(groupN(page, 'failed')).toHaveText('1')
   await expect(groupN(page, 'ideas')).toHaveText('5')
-  await expect(page.getByTestId('list-count')).toHaveText('11 open · 2 done hidden')
+  await expect(page.getByTestId('list-count')).toHaveText('11 open · 2 done')
   await expect(page.getByTestId(`next-step-row-${ids.g_run}`)).toBeVisible()
   await expect(page.getByTestId(`next-step-row-${ids.g_wait}`)).toBeVisible()
 
@@ -134,10 +134,10 @@ test('test_tasks_list_board_graph_views', async ({ page }) => {
   await expect(page.getByTestId('task-chip-priority')).toContainText('Priority')
   await expect(page.getByTestId('task-chip-priority')).toContainText('High, Urgent')
   await expect(page).toHaveURL(/priority=urgent(,|%2C)high/)
-  await expect(page.getByTestId('list-count')).toHaveText('3 open · 0 done hidden')
+  await expect(page.getByTestId('list-count')).toHaveText('3 open · 0 done')
   await page.getByTestId('task-chip-remove-priority').click()
   await expect(page).not.toHaveURL(/priority=/)
-  await expect(page.getByTestId('list-count')).toHaveText('11 open · 2 done hidden')
+  await expect(page.getByTestId('list-count')).toHaveText('11 open · 2 done')
 
   // Board: four columns with server counts; failed only behind Done's footer.
   await page.getByTestId('list-views').getByRole('tab', { name: 'Board' }).click()
@@ -889,7 +889,7 @@ test('test_tasks_mobile_group_and_sort_menus', async ({ page }) => {
   // Next step ignores sort, so only Group is offered; the count still shows.
   await page.goto(`/tasks?tag=${tag}`)
   await expect(page.getByTestId('next-step-list')).toBeVisible()
-  await expect(page.getByTestId('list-count')).toHaveText('11 open · 2 done hidden')
+  await expect(page.getByTestId('list-count')).toHaveText('11 open · 2 done')
   await expect(page.getByTestId('task-sort')).toHaveCount(0)
   await page.getByTestId('task-group-menu').click()
   await page.getByTestId('task-group-none').click()

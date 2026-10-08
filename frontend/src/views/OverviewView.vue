@@ -119,7 +119,7 @@ onActivated(() => { if (arrived) load(); arrived = true })
       />
 
       <div class="ov-grid" :class="{ 'is-busy': loading }">
-        <RunNextPanel :run-next="data.run_next" :running="data.running" :compact="!isMdUp" :tasks-to="tasksTo" @ran="changed" />
+        <RunNextPanel :run-next="data.run_next" :running="data.running" :recently-done="data.recently_done" :compact="!isMdUp" :tasks-to="tasksTo" @ran="changed" />
         <NeedsDecisionPanel
           :decision="data.needs_decision"
           :compact="!isMdUp"

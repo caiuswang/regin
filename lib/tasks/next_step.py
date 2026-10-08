@@ -10,10 +10,11 @@ header count is the backlog's and never a loaded page's:
 | blocked | armed, some dependency unsatisfied             | priority (urgent first), id  |
 | failed  | failed                                         | latest attempt ended, desc   |
 | ideas   | idea                                           | priority (urgent first), id  |
-| hidden  | done — counted, never listed                   | —                            |
+| done    | done                                           | latest attempt ended, else last change, desc |
 
-The five listed groups partition the unsettled tasks, so their counts sum to
-`open`. A failed task is listed rather than hidden because it still wants a
+The six groups partition every unarchived task. The first five are the
+unsettled ones and their counts sum to `open`; done is listed last, collapsed
+to a preview, and never counted as open. A failed task is listed rather than hidden because it still wants a
 decision — Retry, Re-arm or Mark done. A legacy `queued` row is read as armed;
 nothing writes that status and no surface names it. "Satisfied" is `lib.tasks.deps`' per-edge-kind rule, stated once more
 here as SQL so it can count and page; a dependency whose task row is gone
@@ -44,8 +45,10 @@ GROUP_RUNNING = "running"
 GROUP_BLOCKED = "blocked"
 GROUP_FAILED = "failed"
 GROUP_IDEAS = "ideas"
-GROUP_KEYS = (GROUP_READY, GROUP_RUNNING, GROUP_BLOCKED, GROUP_FAILED,
-              GROUP_IDEAS)
+GROUP_DONE = "done"
+OPEN_GROUP_KEYS = (GROUP_READY, GROUP_RUNNING, GROUP_BLOCKED, GROUP_FAILED,
+                   GROUP_IDEAS)
+GROUP_KEYS = (*OPEN_GROUP_KEYS, GROUP_DONE)
 
 GROUP_COPY = {
     GROUP_READY: ("Ready to run", "armed, dependencies clear"),
@@ -53,11 +56,14 @@ GROUP_COPY = {
     GROUP_BLOCKED: ("Blocked", "armed, waiting on another task"),
     GROUP_FAILED: ("Failed", "the last attempt failed — retry, re-arm or mark done"),
     GROUP_IDEAS: ("Ideas", "not armed — nothing runs until you arm it"),
+    GROUP_DONE: ("Done", "newest finished first"),
 }
 
 #: Ideas open collapsed: the backlog of unarmed ideas is the longest group and
 #: the one least likely to be acted on, so it previews and says how many more.
 IDEAS_PREVIEW = 3
+DONE_PREVIEW = 5
+_PREVIEW = {GROUP_IDEAS: IDEAS_PREVIEW, GROUP_DONE: DONE_PREVIEW}
 
 BOARD_COLUMNS = (TASK_STATUS_IDEA, TASK_STATUS_ARMED, TASK_STATUS_RUNNING,
                  TASK_STATUS_DONE)
@@ -107,6 +113,7 @@ def membership(group: str):
         GROUP_BLOCKED: and_(runnable, has_unmet_dependency()),
         GROUP_FAILED: AgentTask.status == TASK_STATUS_FAILED,
         GROUP_IDEAS: AgentTask.status == TASK_STATUS_IDEA,
+        GROUP_DONE: AgentTask.status == TASK_STATUS_DONE,
     }[group]
 
 
@@ -122,6 +129,12 @@ def _latest_end():
             .correlate(AgentTask).scalar_subquery())
 
 
+def finished_at():
+    """When a task finished: its latest attempt's end, or — having none — its
+    row's last change."""
+    return func.coalesce(_latest_end(), AgentTask.updated_at)
+
+
 def _by_priority(stmt):
     return stmt.order_by(AgentTask.priority_rank.asc(), AgentTask.id.asc())
 
@@ -135,6 +148,8 @@ def group_order(stmt, group: str):
         return _by_recency(stmt, _latest_start())
     if group == GROUP_FAILED:
         return _by_recency(stmt, _latest_end())
+    if group == GROUP_DONE:
+        return _by_recency(stmt, finished_at())
     return _by_priority(stmt)
 
 
@@ -196,7 +211,7 @@ def _window_for(key: str, only: Optional[str], size: int,
                 page: int) -> Window:
     if only is not None:
         return Window(size=size, page=page)
-    return Window(size=IDEAS_PREVIEW if key == GROUP_IDEAS else size)
+    return Window(size=_PREVIEW.get(key, size))
 
 
 def parse_only(raw, allowed: tuple[str, ...], field: str) -> Optional[str]:
@@ -213,16 +228,16 @@ def groups(session, filters: dict, *, size: int, page: int = 0,
     """The feed grouped by next step, under every non-status filter.
 
     With `only` naming a group, that group alone is returned at `page`; without
-    it every group returns its first rows and Ideas previews three.
+    it every group returns its first rows, Ideas previews three and Done five.
     """
     keys = (only,) if only else GROUP_KEYS
     out = [_group(session, filters, key, _window_for(key, only, size, page))
            for key in keys]
-    hidden = _count(session, filters, AgentTask.status == TASK_STATUS_DONE)
-    open_n = sum(_count(session, filters, membership(key))
-                 for key in GROUP_KEYS) if only else sum(
-        g["n"] for g in out)
-    return {"groups": out, "open": open_n, "done_hidden": hidden}
+    counted = {g["key"]: g["n"] for g in out}
+    open_n = sum(counted[key] if key in counted
+                 else _count(session, filters, membership(key))
+                 for key in OPEN_GROUP_KEYS)
+    return {"groups": out, "open": open_n}
 
 
 def _column(session, filters: dict, status: str, window: Window) -> dict:
@@ -253,14 +268,13 @@ def board(session, filters: dict, *, size: int, page: int = 0,
                for status in statuses]
     failed = _count(session, filters, AgentTask.status == TASK_STATUS_FAILED)
     return {"columns": columns, "failed": failed,
-            "done_week": _count(session, filters, _done_since(DONE_WEEK))}
+            "done_week": _count(session, filters, done_since(DONE_WEEK))}
 
 
-def _done_since(window: timedelta):
-    """Done tasks whose latest run ended inside `window`, or — having no ended
-    run — whose row last changed inside it. The cutoff is written in the
-    columns' own `%Y-%m-%d %H:%M:%S` UTC form so the comparison is textual."""
+def done_since(window: timedelta):
+    """Done tasks that finished (`finished_at`) inside `window`. The cutoff is
+    written in the columns' own `%Y-%m-%d %H:%M:%S` UTC form so the comparison
+    is textual."""
     cutoff = (datetime.now(timezone.utc) - window).strftime("%Y-%m-%d %H:%M:%S")
-    finished = func.coalesce(_latest_end(), AgentTask.updated_at)
-    return and_(AgentTask.status == TASK_STATUS_DONE, finished >= cutoff)
+    return and_(AgentTask.status == TASK_STATUS_DONE, finished_at() >= cutoff)
 

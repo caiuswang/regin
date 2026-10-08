@@ -1,8 +1,8 @@
 <script setup>
-// The Tasks tab's default reading: the open backlog grouped by what each task
-// needs next — Ready to run, Running, Blocked, Failed, Ideas — every header
-// counted by the server (`/api/tasks?group=next_step`), done counted and
-// hidden. Each group pages on its own; Ideas opens on three.
+// The Tasks tab's default reading: the backlog grouped by what each task
+// needs next — Ready to run, Running, Blocked, Failed, Ideas, then Done —
+// every header counted by the server (`/api/tasks?group=next_step`). Each
+// group pages on its own; Ideas opens on three, Done on five.
 import { computed, nextTick, ref, watch } from 'vue'
 import api from '../../api'
 import BulkRejected from './BulkRejected.vue'
@@ -49,7 +49,8 @@ const { items: projects, ensure: ensureProjects } = useProjects()
 const bulkRejected = ref([])
 
 const groups = computed(() => (feed.body.value?.groups || []).filter(g => g.n > 0))
-const empty = computed(() => feed.body.value && !groups.value.length)
+const empty = computed(() => feed.body.value && !feed.body.value.open)
+const doneN = computed(() => feed.body.value?.groups.find(g => g.key === 'done')?.n || 0)
 
 // The rows on screen: a collapsed group draws none of its own.
 function shownIds() {
@@ -77,7 +78,7 @@ async function reload() {
   selection.retain(shownIds())
   const body = feed.body.value
   emit('count', body && !feed.error.value
-    ? `${body.open} open · ${body.done_hidden} done hidden` : '')
+    ? `${body.open} open · ${doneN.value} done` : '')
 }
 
 async function afterWrite() {
@@ -90,9 +91,9 @@ const { refusals, busyId, act } = useTaskVerbs(afterWrite, {
 })
 
 function moreLabel(group) {
-  return group.key === 'ideas'
-    ? `${group.more} more ideas · sorted by priority`
-    : `${group.more} more`
+  if (group.key === 'ideas') return `${group.more} more ideas · sorted by priority`
+  if (group.key === 'done') return `${group.more} more done`
+  return `${group.more} more`
 }
 
 async function runAll(group) {

@@ -65,9 +65,10 @@ def test_tasks_next_step_groups(flask_client, backlog):
     body = _get(flask_client, "/api/tasks?group=next_step")
     groups = _groups(body)
 
-    assert list(groups) == ["ready", "running", "blocked", "failed", "ideas"]
-    assert [groups[k]["n"] for k in groups] == [2, 1, 2, 1, 5]
-    assert (body["open"], body["done_hidden"]) == (11, 1)
+    assert list(groups) == ["ready", "running", "blocked", "failed", "ideas",
+                            "done"]
+    assert [groups[k]["n"] for k in groups] == [2, 1, 2, 1, 5, 1]
+    assert body["open"] == 11
     assert _ids(groups["ready"]["rows"]) == [backlog["urgent"], backlog["low"]]
     assert groups["ready"]["bulk"] == 2
     assert set(_ids(groups["blocked"]["rows"])) == {
@@ -82,7 +83,7 @@ def test_next_step_rows_offer_one_action(flask_client, backlog):
 
     assert actions == {"ready": {"run"}, "running": {"watch"},
                        "blocked": {None}, "failed": {"retry"},
-                       "ideas": {"arm"}}
+                       "ideas": {"arm"}, "done": {None}}
     assert running["live"]["trace_id"] == "t-live"
     assert groups["blocked"]["rows"][0]["waits_on"] == {
         "id": backlog["running"], "status": "running"}
@@ -99,7 +100,7 @@ def test_next_step_pages_one_group_and_honours_filters(flask_client,
     assert _ids(page["groups"][0]["rows"]) == [backlog["ideas"][4]]
     assert (page["groups"][0]["more"], page["open"]) == (0, 11)
     # Every non-status filter narrows the counts; status is the groups' own.
-    assert [searched[k]["n"] for k in searched] == [2, 0, 0, 0, 0]
+    assert [searched[k]["n"] for k in searched] == [2, 0, 0, 0, 0, 0]
 
 
 def test_next_step_rejects_an_unknown_group(flask_client):
@@ -192,3 +193,62 @@ def test_task_board_done_week(flask_client, native_task, task_run_row):
     assert tagged["done_week"] == 3
     assert done["n"] == 5
     assert everything["done_week"] == 4
+
+
+def test_done_group_is_last_and_newest_first(flask_client, native_task,
+                                             task_run_row):
+    ran = []
+    for days in (6, 1, 4, 3, 2, 5):
+        task_id = native_task(title=f"ran {days}d ago", status="done")
+        task_run_row(task_id, ended_at=_stamp(days))
+        _touched(task_id, 30)
+        ran.append((days, task_id))
+    no_run = native_task(title="never ran", status="done")
+    _touched(no_run, 3.5)
+    native_task(title="armed", status="armed")
+
+    body = _get(flask_client, "/api/tasks?group=next_step")
+    done = body["groups"][-1]
+    newest = [task_id for _, task_id in sorted(ran)]
+    newest.insert(3, no_run)
+
+    assert done["key"] == "done"
+    assert (done["label"], done["n"]) == ("Done", 7)
+    assert (_ids(done["rows"]), done["more"]) == (newest[:5], 2)
+    page = _get(flask_client, "/api/tasks?group=next_step&only=done&size=5"
+                              "&page=1")
+    assert [g["key"] for g in page["groups"]] == ["done"]
+    assert _ids(page["groups"][0]["rows"]) == newest[5:]
+
+
+def test_open_excludes_done_and_done_hidden_removed(flask_client, backlog,
+                                                    native_task):
+    for i in range(3):
+        native_task(title=f"done {i}", status="done")
+
+    body = _get(flask_client, "/api/tasks?group=next_step")
+    only = _get(flask_client, "/api/tasks?group=next_step&only=done")
+    groups = _groups(body)
+
+    assert "done_hidden" not in body and "done_hidden" not in only
+    assert groups["done"]["n"] == 4
+    assert body["open"] == sum(groups[k]["n"] for k in (
+        "ready", "running", "blocked", "failed", "ideas")) == 11
+    assert only["open"] == 11
+
+
+def test_every_unarchived_task_in_exactly_one_group(flask_client, backlog,
+                                                    native_task):
+    native_task(title="legacy", status="queued")
+    every = set()
+    with SessionLocal() as session:
+        every = {row[0] for row in session.exec(text(
+            "SELECT id FROM agent_tasks WHERE status != 'archived'")).all()}
+
+    seen = []
+    for key in ("ready", "running", "blocked", "failed", "ideas", "done"):
+        body = _get(flask_client,
+                    f"/api/tasks?group=next_step&only={key}&size=200")
+        seen += _ids(body["groups"][0]["rows"])
+
+    assert sorted(seen) == sorted(every)

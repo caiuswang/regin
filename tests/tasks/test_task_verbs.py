@@ -86,13 +86,13 @@ def test_next_step_failed_group_and_retry(flask_client, native_task,
     body, groups = _groups(flask_client)
 
     assert [g["key"] for g in body["groups"]] == [
-        "ready", "running", "blocked", "failed", "ideas"]
+        "ready", "running", "blocked", "failed", "ideas", "done"]
     failed = groups["failed"]
     assert [r["id"] for r in failed["rows"]] == [newer, older]
     assert {r["action"] for r in failed["rows"]} == {"retry"}
     assert failed["rows"][0]["menu"] == ["arm", "mark_done", "archive",
                                          "delete"]
-    assert body["done_hidden"] == 1
+    assert groups["done"]["n"] == 1
 
     # Retry is Run: the attempt spends the last attempt's parameters.
     retried = flask_client.post(f"/api/tasks/{newer}/run")
