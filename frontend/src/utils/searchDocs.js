@@ -28,10 +28,20 @@ export function idPrefixOf(trimmed) {
 export const MAX_COUNTED_BODY_HITS = 9
 export const TITLE_WEIGHT = 100
 export const SUB_WEIGHT = 20
-// Rows per group. Spans get more because they are the session you are
-// looking at; everything else is context.
+// Rows per group in the all-kinds list (R1). Spans get more because they are
+// the session you are looking at; sessions one more than the rest because
+// they are what the reader most often came for. Every other group overflows
+// into a "Show all N" row that opens the kind's Drill.
 export const SPAN_ROW_CAP = 14
-export const OTHER_ROW_CAP = 6
+export const SESSION_ROW_CAP = 4
+export const GROUP_ROW_CAP = 3
+// A Drill pages its one kind by `offset`, this many rows at a time.
+export const DRILL_PAGE = 12
+
+export function groupCap(kind) {
+  if (kind === 'span') return SPAN_ROW_CAP
+  return kind === 'session' ? SESSION_ROW_CAP : GROUP_ROW_CAP
+}
 export const PREVIEW_SOURCE_LINES = 60
 export const PREVIEW_WINDOW_LINES = 34
 export const SNIPPET_BEFORE = 16
@@ -45,13 +55,34 @@ export const HIT_TRAIL = 150
 // `@media (max-width: 900px)` blocks in the search components — change both.
 export const NARROW_MAX_PX = 900
 
-export const KIND_ORDER = ['span', 'pattern', 'session', 'file']
+// Process first (R1): Feature → Task → Defect → Session, then the documents.
+// `span` leads because it only ever appears under This session, where its
+// sole neighbour is `file`.
+export const KIND_ORDER = ['span', 'feature', 'task', 'defect', 'session', 'pattern', 'file']
 
 // `tagStyle` picks how the row's right-hand meta renders, because the four
 // kinds put genuinely different things there (spec §02): a span's category,
 // a pattern's space slug, a session's span count, a file's ± diff. Rendering
 // all four as one muted run made every row look alike.
 export const KIND_META = {
+  feature: {
+    label: 'Features',
+    accent: 'var(--search-accent-feature)',
+    icon: 'flag',
+    tagStyle: 'plain',
+  },
+  task: {
+    label: 'Tasks',
+    accent: 'var(--search-accent-task)',
+    icon: 'list-checks',
+    tagStyle: 'plain',
+  },
+  defect: {
+    label: 'Defects',
+    accent: 'var(--search-accent-defect)',
+    icon: 'alert-triangle',
+    tagStyle: 'plain',
+  },
   span: {
     label: 'This session · spans',
     accent: 'var(--search-accent-span)',
@@ -118,11 +149,80 @@ export const SCOPES = [
 // touched anywhere.
 export const SCOPE_KINDS = {
   session: ['span', 'file'],
-  global: ['pattern', 'session', 'file'],
+  global: ['feature', 'task', 'defect', 'session', 'pattern', 'file'],
 }
 
 const KIND_FACET_LABEL = {
   span: 'Spans', pattern: 'Patterns', session: 'Sessions', file: 'Files',
+  feature: 'Features', task: 'Tasks', defect: 'Defects',
+}
+
+export const kindFacetLabel = kind => KIND_FACET_LABEL[kind] || 'All'
+
+const KIND_NOUN = {
+  span: ['span', 'spans'], pattern: ['pattern', 'patterns'],
+  session: ['session', 'sessions'], file: ['file', 'files'],
+  feature: ['feature', 'features'], task: ['task', 'tasks'],
+  defect: ['defect', 'defects'],
+}
+
+export function kindNoun(kind, n) {
+  const [one, many] = KIND_NOUN[kind] || ['result', 'results']
+  return n === 1 ? one : many
+}
+
+// What a facet or group header prints for a kind whose answer is
+// `{ status, total }`. The marks are the Invariants' vocabulary: `…` still
+// loading, `!` this kind failed, `—` nothing could be asked at all.
+export function countText(state, offline = false) {
+  if (offline) return '—'
+  if (state?.status === 'pending') return '…'
+  if (state?.status === 'failed') return '!'
+  return String(state?.total ?? 0)
+}
+
+// F146 / f:146 / T… / D… address one entity; a bare number addresses every
+// kind that has the id. Mirrors `_ENTITY_REF` / `_NUMBER` in
+// lib/palette/resolve.py — a query the server would not read as an address
+// must not be sent there, or it comes back `address: null` with nothing shown.
+const ENTITY_REF = /^([ftd]):?(\d{1,18})$/i
+const BARE_NUMBER = /^\d{1,18}$/
+const REF_KIND = { f: 'feature', t: 'task', d: 'defect' }
+
+// The server reads the id as an integer, so `T0146` and `T146` name one task
+// and the text it searches for is the normalised digits.
+const digits = raw => raw.replace(/^0+(?=\d)/, '')
+
+export function addressOf(trimmed) {
+  const q = String(trimmed || '')
+  const ref = ENTITY_REF.exec(q)
+  if (ref) return { kind: REF_KIND[ref[1].toLowerCase()], needle: digits(ref[2]) }
+  if (BARE_NUMBER.test(q)) return { kind: 'number', needle: digits(q) }
+  return null
+}
+
+// A row is held by kind AND id: feature, task and defect ids are all small
+// integers, so F146, T146 and D146 share `id` and would share a cursor.
+export const rowKey = doc => `${doc.kind}:${doc.id}`
+export const rowDomId = key => `search-row-${String(key).replace(':', '-')}`
+
+const REF_ROUTE = { F: 'features', T: 'tasks', D: 'defects' }
+
+// A resolver row carries its `ref`, not a document: the entity route is read
+// back off it. A session ref is only the id's first eight characters, so it
+// has no route — it re-addresses through `#`, whose lookup knows the full id.
+export function rowDoc(row) {
+  const m = /^([FTD])(\d+)$/.exec(row.ref || '')
+  return {
+    kind: row.kind,
+    id: m ? m[2] : row.ref,
+    title: row.title,
+    sub: row.context || '',
+    body: row.context || '',
+    href: m ? `/${REF_ROUTE[m[1]]}/${m[2]}` : undefined,
+    readdress: m ? undefined : row.ref,
+    row,
+  }
 }
 
 export function facetsFor(scope) {

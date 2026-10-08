@@ -34,7 +34,9 @@ defineEmits(['scope', 'facet', 'recent'])
       >{{ s.label }}</button>
     </div>
 
-    <p class="rail-label">Kind</p>
+    <p class="rail-label">Kind · matches</p>
+    <!-- A kind that answered 0 is disabled rather than hidden: the chip still
+         says that kind was searched, and ⇥ skips it. -->
     <button
       v-for="f in facets"
       :key="f.label"
@@ -42,6 +44,8 @@ defineEmits(['scope', 'facet', 'recent'])
       class="facet focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       :class="{ 'is-active': f.active }"
       :aria-pressed="f.active"
+      :disabled="f.disabled && !f.active"
+      :data-kind="f.kind || 'all'"
       @click="$emit('facet', f.label)"
     >
       <Icon class="facet-glyph" :name="f.icon" :size="14" />
@@ -152,7 +156,9 @@ defineEmits(['scope', 'facet', 'recent'])
   transition: background-color 150ms, color 150ms;
 }
 
-.facet:hover { background: var(--color-surface-2); color: var(--color-fg); }
+.facet:hover:not(:disabled) { background: var(--color-surface-2); color: var(--color-fg); }
+
+.facet:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .facet.is-active {
   background: var(--color-info-soft);

@@ -13,7 +13,7 @@ import { useMediaQuery } from '../../composables/useMediaQuery.js'
 import { useQuickCapture } from '../../composables/useQuickCapture.js'
 import { openFilePreview } from '../../composables/useFilePreview.js'
 import {
-  KIND_META, MIN_ID_CHARS, NARROW_MAX_PX, SCOPES, hitLines,
+  KIND_META, MIN_ID_CHARS, NARROW_MAX_PX, SCOPES, hitLines, rowDomId,
 } from '../../utils/searchDocs.js'
 
 const router = useRouter()
@@ -51,7 +51,8 @@ const switcherEmpty = computed(() => {
   if (!lookupMode.value) return undefined
   const prefix = search.idPrefix.value
   if (prefix.length < MIN_ID_CHARS) {
-    return `Keep typing — ${MIN_ID_CHARS} or more characters of a session id.`
+    return `Keep typing the session id — ids resolve from ${MIN_ID_CHARS} characters, `
+      + `and “#${prefix}” could be several sessions.`
   }
   return `No session id starts with ${prefix}.`
 })
@@ -110,12 +111,13 @@ function selectSwitcher(row) {
 const switcherCount = computed(() => {
   const n = switcherRows.value.length
   if (!lookupMode.value) return `${n} ${n === 1 ? 'session' : 'sessions'}`
+  if (search.idPrefix.value.length < MIN_ID_CHARS) return 'keep typing'
   return n === 1 ? '1 match' : `${n} matches`
 })
 
 const activeDescendant = computed(() => {
-  const id = switcherMode.value ? switcherId.value : search.activeId.value
-  return id ? `search-row-${id}` : undefined
+  if (switcherMode.value) return switcherId.value ? `search-row-${switcherId.value}` : undefined
+  return search.activeId.value ? rowDomId(search.activeId.value) : undefined
 })
 
 // Which hit inside the highlighted result the preview is parked on, and
@@ -161,7 +163,7 @@ function togglePreviewMode() {
 
 const railLegend = computed(() => {
   const out = [{ keys: ['↑', '↓'], label: 'move' }]
-  if (!lookupMode.value) out.push({ keys: ['⇥'], label: 'cycle kind' })
+  if (!lookupMode.value) out.push({ keys: ['⇥'], label: 'next kind' })
   out.push({ keys: ['↵'], label: switcherMode.value ? 'attach' : 'open' })
   if (previewHits.value.length) {
     out.push({ keys: ['⌥', '↑↓'], label: 'walk hits' })
@@ -181,17 +183,19 @@ const inputEl = ref(null)
 const narrow = useMediaQuery(`(max-width: ${NARROW_MAX_PX}px)`)
 const sheetOpen = ref(false)
 
-const facets = computed(() => search.facets.value.map(f => ({
-  ...f,
-  icon: f.kind ? (KIND_META[f.kind]?.icon || 'list') : 'list',
-  active: f.label === search.activeFacet.value,
+const facets = computed(() => search.facetView.value.map((f) => {
   // In the switcher the Sessions chip counts the ROSTER, not the search
   // corpus: with an empty query the corpus is empty by definition, so the chip
   // would read 0 beside a list of twelve rows.
-  count: (switcherMode.value && f.kind === 'session')
-    ? switcherRows.value.length
-    : (search.counts.value[f.kind ?? 'All'] ?? 0),
-})))
+  const roster = switcherMode.value && f.kind === 'session'
+  return {
+    ...f,
+    icon: f.kind ? (KIND_META[f.kind]?.icon || 'list') : 'list',
+    active: f.label === search.activeFacet.value,
+    count: roster ? String(switcherRows.value.length) : f.text,
+    disabled: roster ? false : f.disabled,
+  }
+}))
 
 const scopes = computed(() => SCOPES.map(s => ({
   ...s,
@@ -201,17 +205,9 @@ const scopes = computed(() => SCOPES.map(s => ({
   disabled: s.value === 'session' && !search.sessionAvailable.value,
 })))
 
-// The header quotes the same number the active chip does. It used to count the
-// RENDERED rows, which are capped per group and filtered by facet, so it
-// contradicted the chip beside it the moment a group overflowed.
-const activeKind = computed(() => search.facets.value
-  .find(f => f.label === search.activeFacet.value)?.kind ?? 'All')
-
-const resultCount = computed(() => {
-  if (search.held.value) return 'Everything indexed'
-  const n = search.counts.value[activeKind.value] ?? 0
-  return `${n} ${n === 1 ? 'result' : 'results'}`
-})
+// The header quotes the same number the active chip does (`group.total`), never
+// the RENDERED rows, which are capped per group.
+const resultCount = search.headerCount
 
 // `counts.span` counts MATCHING spans, so it cannot be phrased as a fact
 // about the session — "0 spans in this session" inside a 900-span trace is
@@ -230,8 +226,7 @@ const placeholder = computed(() => (search.activeScope.value === 'session'
   ? 'Search this session — spans, diffs, output, files touched…'
   : 'Search every session, wiki page and touched file…'))
 
-const noMatches = computed(() =>
-  !search.held.value && !search.remotePending.value && !search.flatRows.value.length)
+const noMatches = search.noMatches
 
 watch(() => search.open.value, async (isOpen) => {
   if (!isOpen) { sheetOpen.value = false; return }
@@ -242,14 +237,14 @@ watch(() => search.open.value, async (isOpen) => {
 
 function scrollActiveIntoView(explicitId = null) {
   nextTick(() => {
-    const id = explicitId ?? search.activeId.value
-    if (!id) return
-    document.getElementById(`search-row-${id}`)?.scrollIntoView({ block: 'nearest' })
+    const domId = explicitId ? `search-row-${explicitId}` : rowDomId(search.activeId.value)
+    if (!explicitId && !search.activeId.value) return
+    document.getElementById(domId)?.scrollIntoView({ block: 'nearest' })
   })
 }
 
 function select(row) {
-  search.activeId.value = row.doc.id
+  search.activeId.value = row.key
   // On a narrow viewport the preview is a sheet the list slides out from
   // under, and Enter was the only way in — leaving a tap on a phone with
   // nothing to show for it. A pointer selecting a row IS the request to read
@@ -264,6 +259,9 @@ function openRow(row) {
   if (!row) return
   const doc = row.doc
   const query = search.trimmed.value
+  // A resolver's session row knows only the id's first characters; `#` is
+  // the lookup that turns them back into a session to attach.
+  if (doc.readdress) { search.setQuery(doc.readdress); return }
   search.rememberQuery(query)
   search.closePalette()
   if (doc.kind === 'span' && search.source.value?.openSpan) {
@@ -290,20 +288,36 @@ function move(delta) {
   scrollActiveIntoView()
 }
 
-// Escape peels one layer: the sheet if it is covering the list, else the
-// palette itself.
+// Escape peels one layer (R8): the sheet covering the list, then the Drill,
+// then the query, and only then the palette itself.
 function closeTopLayer() {
   if (narrow.value && sheetOpen.value) { sheetOpen.value = false; return }
+  if (search.inDrill.value) { search.leaveDrill(); return }
+  if (search.trimmed.value) { clearQuery(); return }
   search.closePalette()
+}
+
+// The cursor can rest on a row, a "Show all N" row, or the Drill's load row;
+// ↵ and a click do the one thing each of them is for.
+function activate(entry) {
+  if (!entry) return
+  if (entry.type === 'more') search.drillInto(entry.kind)
+  else if (entry.type === 'doc') openRow(entry)
+  else search.loadMore()
 }
 
 // Where the preview is a sheet, ↵ has to reveal it before it can open
 // anything — otherwise the reader never sees what they are committing to.
 function openOrReveal() {
-  if (narrow.value && !sheetOpen.value) { sheetOpen.value = true; return }
   // ↵ is `switch-client`, not `open`: in the Sessions facet it attaches.
-  if (switcherMode.value) { attach(switcherRow.value); return }
-  openRow(search.activeRow.value)
+  if (switcherMode.value) {
+    if (narrow.value && !sheetOpen.value) { sheetOpen.value = true; return }
+    attach(switcherRow.value)
+    return
+  }
+  const entry = search.activeEntry.value
+  if (entry?.type === 'doc' && narrow.value && !sheetOpen.value) { sheetOpen.value = true; return }
+  activate(entry)
 }
 
 // Capture an idea without searching for one. It lives here rather than on a
@@ -388,6 +402,11 @@ function onKeydown(e) {
   if (e.key === 'Tab') {
     e.preventDefault()
     search.cycleFacet(e.shiftKey ? -1 : 1)
+    return
+  }
+  if (e.key === 'Backspace' && !search.query.value && search.inDrill.value) {
+    e.preventDefault()
+    search.leaveDrill()
     return
   }
   if (isRosterDigit(e) && attachByNumber(Number(e.key))) {
@@ -512,14 +531,20 @@ function widen() {
               role="listbox"
               aria-label="Search results"
               :groups="search.groups.value"
+              :drill="search.drillView.value"
+              :address="search.addressView.value"
               :query="search.trimmed.value"
               :active-id="search.activeId.value"
               :no-matches="noMatches"
+              :offline="search.offline.value"
               :held="search.held.value"
               :can-widen="canWiden"
               @select="select"
               @open="openRow"
-              @retry="search.retry()"
+              @activate="activate"
+              @retry="search.retryKind"
+              @retry-all="search.retry()"
+              @leave-drill="search.leaveDrill()"
               @widen="widen"
             />
             <div v-if="narrow && sheetOpen" class="sheet-back">

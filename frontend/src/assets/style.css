@@ -151,6 +151,9 @@
   --search-accent-pattern: var(--color-violet-600);
   --search-accent-session: var(--color-cyan-600);
   --search-accent-file: var(--color-amber-600);
+  --search-accent-feature: var(--color-emerald-600);
+  --search-accent-task: var(--color-purple-600);
+  --search-accent-defect: var(--color-red-600);
 
   /* Spans are ~14 of the ~20 rows on screen, so within that group it is the
      category — not the kind — that has to make the list scannable. One hue

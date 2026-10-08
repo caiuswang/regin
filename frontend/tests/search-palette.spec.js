@@ -142,11 +142,20 @@ test.describe('full-text search palette', () => {
       () => document.querySelector('.content-scroll')?.scrollTop ?? 0)).toBe(before)
   })
 
-  test('esc closes and keeps the query for the next open', async ({ page }) => {
+  test('esc peels the query before the palette; closing keeps the query', async ({ page }) => {
     await seed(page)
     await openPalette(page)
     await search(page, NEEDLE)
+    // R8: one layer per esc — the query goes first, the palette second.
     await page.keyboard.press('Escape')
+    await expect(page.locator(PANEL)).toHaveCount(1)
+    await expect(page.locator(INPUT)).toHaveValue('')
+    await page.keyboard.press('Escape')
+    await expect(page.locator(PANEL)).toHaveCount(0)
+    // Closing by the header's esc keeps what was typed for the next open.
+    await openPalette(page)
+    await search(page, NEEDLE)
+    await page.locator(`${PANEL} .query-esc`).click()
     await expect(page.locator(PANEL)).toHaveCount(0)
     await openPalette(page)
     await expect(page.locator(INPUT)).toHaveValue(NEEDLE)
@@ -279,7 +288,7 @@ test.describe('full-text search palette', () => {
     // The hydrate really did happen — otherwise this asserts nothing.
     await expect(page.locator(`${PANEL} .present-term-cmd`)).toContainText(`grep ${NEEDLE}`)
 
-    await page.keyboard.press('Escape')
+    await page.locator(`${PANEL} .query-esc`).click()
     await expect(page.locator(PANEL)).toHaveCount(0)
     await expectViewMode(page, 'Log')
     expect(await page.evaluate(
@@ -428,18 +437,23 @@ test.describe('full-text search palette', () => {
     await openPalette(page)
     await expect(page.locator(SCOPE('This session'))).toHaveAttribute('aria-pressed', 'true')
     await search(page, NEEDLE)
-    const inSession = urls.at(-1)
-    expect(inSession).toContain('kinds=span%2Cfile')
-    expect(inSession).toContain('session=')
+    // One request per kind, so each group can load and fail on its own.
+    const kindsOf = list => list.map(u => new URL(u).searchParams.get('kinds')).sort()
+    const inSession = urls.splice(0)
+    expect(kindsOf(inSession)).toEqual(['file', 'span'])
+    for (const u of inSession) expect(u).toContain('session=')
 
     await setScope(page, 'Everywhere')
     await page.waitForTimeout(1500)
-    const everywhere = urls.at(-1)
-    expect(everywhere).toContain('kinds=pattern%2Csession%2Cfile')
-    expect(everywhere).toContain('scope=global')
-    // The trace id rides along under BOTH scopes — under `global` it is the
-    // session to leave out of "other sessions", not a corpus to search.
-    expect(everywhere).toContain('session=')
+    const everywhere = urls.splice(0)
+    expect(kindsOf(everywhere)).toEqual(
+      ['defect', 'feature', 'file', 'pattern', 'session', 'task'])
+    for (const u of everywhere) {
+      expect(u).toContain('scope=global')
+      // The trace id rides along under BOTH scopes — under `global` it is the
+      // session to leave out of "other sessions", not a corpus to search.
+      expect(u).toContain('session=')
+    }
   })
 
   test('a slow session-scoped answer cannot land on top of a global one',
@@ -495,7 +509,7 @@ test.describe('full-text search palette', () => {
       await expect(page.locator(SCOPE('Everywhere'))).toHaveAttribute('aria-pressed', 'true')
       // The kind chips follow: a Spans chip here could only ever read 0.
       await expect(page.locator(`${PANEL} .facet`)).toHaveText([
-        /All/, /Patterns/, /Sessions/, /Files/,
+        /All/, /Features/, /Tasks/, /Defects/, /Sessions/, /Patterns/, /Files/,
       ])
     })
 
@@ -533,7 +547,7 @@ test.describe('full-text search palette', () => {
     await search(page, NEEDLE)
     const chip = await page.locator(`${PANEL} .facet.is-active .facet-count`).textContent()
     await expect(page.locator(`${PANEL} .query-count`))
-      .toHaveText(new RegExp(`^${Number(chip)} results?$`))
+      .toHaveText(new RegExp(`^${Number(chip)} spans?$`))
   })
 
   test('arrowing down then ↵ opens exactly the highlighted row', async ({ page }) => {
@@ -544,7 +558,7 @@ test.describe('full-text search palette', () => {
     for (let n = 0; n < 2; n += 1) await page.keyboard.press('ArrowDown')
     const activeId = await page.locator(`${PANEL} [aria-selected="true"]`)
       .getAttribute('id')
-    const spanId = activeId.replace('search-row-', '')
+    const spanId = activeId.replace('search-row-span-', '')
     const marker = markers[spanId]
     expect(marker, `row ${spanId} should be one of the seeded spans`).toBeTruthy()
 
@@ -580,8 +594,13 @@ test.describe('full-text search palette', () => {
     await page.keyboard.type('abc')
     await expect(page.locator(INPUT)).toHaveValue(/abc/)
 
-    // ...and Escape must retire the PALETTE, leaving the reader standing.
-    await page.keyboard.press('Escape')
+    // ...and Escape must retire the PALETTE, leaving the reader standing. It
+    // peels one layer per press (the Spans pick, then the query), so the
+    // reader must survive every one of them, not just the last.
+    for (let n = 0; n < 3 && await page.locator(PANEL).count(); n += 1) {
+      await page.keyboard.press('Escape')
+      await expect(reader(page)).toBeVisible()
+    }
     await expect(page.locator(PANEL)).toHaveCount(0)
     await expect(reader(page)).toBeVisible()
     expect(someSpanId).toBeTruthy()
@@ -627,7 +646,8 @@ test.describe('full-text search palette', () => {
     await search(page, NEEDLE)
     const labels = await page.locator(`${PANEL} #search-listbox [role="group"]`)
       .evaluateAll(els => els.map(e => e.getAttribute('aria-label')))
-    const ORDER = ['This session · spans', 'Patterns & wiki', 'Sessions', 'Files & diffs']
+    const ORDER = ['This session · spans', 'Features', 'Tasks', 'Defects', 'Sessions',
+      'Patterns & wiki', 'Files & diffs']
     expect(labels).toEqual(ORDER.filter(l => labels.includes(l)))
     // The order holds across the scope switch too, over the other kind set.
     await setScope(page, 'Everywhere')
