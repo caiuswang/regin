@@ -222,19 +222,18 @@ export const rowDomId = key => `search-row-${String(key).replace(':', '-')}`
 
 const REF_ROUTE = { F: 'features', T: 'tasks', D: 'defects' }
 
-// A resolver row carries its `ref`, not a document: the entity route is read
-// back off it. A session ref is only the id's first eight characters, so it
-// has no route — it re-addresses through `#`, whose lookup knows the full id.
+// A resolver row carries its `ref` and `id`, not a document: the entity
+// route is read back off them.
 export function rowDoc(row) {
   const m = /^([FTD])(\d+)$/.exec(row.ref || '')
+  const id = String(row.id ?? (m ? m[2] : ''))
   return {
     kind: row.kind,
-    id: m ? m[2] : row.ref,
+    id,
     title: row.title,
     sub: row.context || '',
     body: row.context || '',
-    href: m ? `/${REF_ROUTE[m[1]]}/${m[2]}` : undefined,
-    readdress: m ? undefined : row.ref,
+    href: m ? `/${REF_ROUTE[m[1]]}/${m[2]}` : `/trace/sessions/${encodeURIComponent(id)}`,
     row,
   }
 }
@@ -598,7 +597,7 @@ export function caretAtEnd(input) {
 // means "not searched" beside a disabled chip that means "searched, none".
 export function railFacet(f, { switcher, held, rosterCount, activeLabel }) {
   const roster = switcher && f.kind === 'session'
-  const unasked = held && !roster
+  const unasked = held && !roster && !f.text
   let count = f.text
   if (roster) count = String(rosterCount)
   else if (unasked) count = ''

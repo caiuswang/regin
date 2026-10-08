@@ -11,6 +11,10 @@ from __future__ import annotations
 
 from lib.palette import rows as R
 from lib.trace.alias import trace_group
+from lib.trace.merge import merge_spans
+from lib.trace.projection import _fetch_spans_for_group
+from lib.trace.projection_agents import _agent_id_of
+from lib.trace.session_tags import strip_prompt_tag_marker
 
 LIST_CAP = 5
 
@@ -157,16 +161,19 @@ def _defect(conn, did: int) -> dict | None:
 
 def _latest_prompts(conn, group: list[str]) -> list[dict]:
     """The main agent's newest prompts, each with the span id its turn is
-    addressed by."""
+    addressed by. Read through the trace view's serve-time merge: the store
+    holds a live `promptlive-` placeholder beside each real anchor, and a
+    slash command's anchor carries only the echo while the placeholder holds
+    the expansion — a raw read lists one turn two or three times."""
+    raw = [s for s in _fetch_spans_for_group(conn, group, names=("prompt",))
+           if not _agent_id_of(s)]
     out = []
-    for span_id, start, raw in conn.execute(
-            "SELECT span_id, start_time, attributes FROM session_spans "
-            f"WHERE trace_id IN ({_marks(group)}) AND name = 'prompt' "
-            "AND agent_id IS NULL ORDER BY start_time DESC, id DESC LIMIT ?",
-            [*group, LIST_CAP]):
-        text = R.prompt_text(raw)
-        if text:
-            out.append({"span_id": span_id, "ts": start, "text": text})
+    for span in reversed(merge_spans(raw)):
+        text = strip_prompt_tag_marker((span.get("attributes") or {}).get("text"))
+        if span.get("name") == "prompt" and not _agent_id_of(span) and text:
+            out.append({"span_id": span["span_id"], "ts": span["start_time"], "text": text})
+            if len(out) == LIST_CAP:
+                break
     return out
 
 

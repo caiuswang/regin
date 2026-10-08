@@ -279,9 +279,6 @@ function openRow(row) {
   if (!row) return
   const doc = row.doc
   const query = search.trimmed.value
-  // A resolver's session row knows only the id's first characters; `#` is
-  // the lookup that turns them back into a session to attach.
-  if (doc.readdress) { search.setQuery(doc.readdress); return }
   search.rememberQuery(query)
   search.closePalette()
   if (doc.kind === 'span' && search.source.value?.openSpan) {
@@ -328,16 +325,11 @@ function activate(entry) {
   else search.loadMore()
 }
 
-// A Home group's "Show all" has no query to Drill on. Features have their own
-// page; every session group lands on the ⌘J roster, which ranks the waiting
-// sessions first.
+// A Home group's "Show all" pages every entry behind that group; the
+// Sessions group's is every session, since the desk only held back the
+// ones it had not shown above.
 function showAllHome(entry) {
-  if (entry.href) {
-    search.closePalette()
-    router.push(entry.href)
-    return
-  }
-  search.showRoster()
+  search.showHomeList(entry.home === 'sessions' ? 'session' : entry.home)
   inputEl.value?.focus()
 }
 
@@ -616,6 +608,7 @@ function widen() {
               :empty-text="switcherEmpty.body"
               :empty-title="switcherEmpty.title"
               :show-hotkeys="!lookupMode"
+              :walked="walk.pivoted.value"
               :loading-text="lookupMode ? 'resolving that id…' : undefined"
               @select="selectSwitcher"
               @attach="attach"
@@ -847,8 +840,7 @@ function widen() {
 
 /* While the preview is walked away from it, the origin row keeps a dashed
    outline: still the list's cursor, no longer what ↵ acts on. */
-.search-panes.is-pivoted :deep(.result-row.is-active),
-.search-panes.is-pivoted :deep(.switcher-row.is-active) {
+.search-panes.is-pivoted :deep(.result-row.is-active) {
   background: transparent;
   box-shadow: none;
   outline: 1.5px dashed var(--color-border-strong);

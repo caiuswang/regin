@@ -5,7 +5,7 @@ import {
   addressOf, countText, facetsFor, groupCap, idPrefixOf, kindFacetLabel,
   kindNoun, rowDoc, rowKey, searchLocalSpans,
 } from '../utils/searchDocs.js'
-import { usePaletteDrill } from './usePaletteDrill.js'
+import { listDrillId, usePaletteDrill } from './usePaletteDrill.js'
 import { chainSection, deskSections, usePaletteHome } from './usePaletteHome.js'
 import { useTraceSearchSource } from './useTraceSearchSource.js'
 
@@ -18,6 +18,12 @@ const MAX_RECENTS = 6
 // pass runs on every keystroke.
 const DEBOUNCE_MS = 140
 const DRILL_TAIL = 'drill:tail'
+// Kinds the empty query can list without a search: picking one pages
+// `/api/palette/list/<kind>`. Sessions are not here — their empty query is
+// the roster.
+const LISTED_KINDS = new Set(['feature', 'task', 'defect'])
+const LIST_LABEL = { needs_me: 'Needs me', active_now: 'Active now', active_features: 'Active features' }
+const LIST_NOUN = { needs_me: 'waiting', active_now: 'active', active_features: 'features' }
 
 function readStored(key, fallback) {
   try {
@@ -64,6 +70,8 @@ const resolved = ref({ status: 'idle', data: null })
 // kind left picked by an earlier search must not turn `T999` into a text
 // search for 999 — an address reaches a Drill only by the reader asking.
 const addressDrill = ref(null)
+// The Home group whose "Show all" was opened — a list with no query behind it.
+const homeList = ref(null)
 const recents = ref(readRecents())
 // Set when ⌃S asks for a scope that has no referent (R8: a no-op with a
 // notice). Cleared by the next thing the reader does to the query or scope,
@@ -143,11 +151,22 @@ export function useFullTextSearch() {
     if (!kind || kind === 'span') return null
     return (mode.value === 'search' || mode.value === 'address') ? kind : null
   })
+  // The empty query's Drill: a Home group's "Show all", or a kind picked
+  // before typing. Without it the pick changed nothing and every kind
+  // showed the same desk.
+  const browseKey = computed(() => {
+    if (mode.value !== 'held' || trimmed.value || switcherMode.value) return null
+    if (homeList.value) return homeList.value
+    return LISTED_KINDS.has(activeKind.value) ? activeKind.value : null
+  })
   const drillQuery = computed(() => address.value?.needle ?? trimmed.value)
-  const drillId = computed(() => (drillKind.value
-    ? JSON.stringify([drillKind.value, drillQuery.value, activeScope.value,
-      source.value?.traceId || ''])
-    : ''))
+  const drillId = computed(() => {
+    if (browseKey.value) return listDrillId(browseKey.value)
+    return drillKind.value
+      ? JSON.stringify([drillKind.value, drillQuery.value, activeScope.value,
+        source.value?.traceId || ''])
+      : ''
+  })
 
   const localSpans = computed(() => {
     if (mode.value !== 'search' || !source.value) return []
@@ -222,8 +241,17 @@ export function useFullTextSearch() {
     return { status, total: hits + text }
   }
 
+  // The empty query asked no kind anything; its chips read each kind's
+  // total from the desk instead.
+  function heldState(kind) {
+    const { status, data } = home.value
+    const total = data?.totals?.[kind]
+    return status === 'ok' && total != null ? { status, total } : { status: 'idle' }
+  }
+
   function kindState(kind) {
     if (mode.value === 'address') return addressState(kind)
+    if (mode.value === 'held') return heldState(kind)
     if (kind === 'span') return { status: statusOf('span'), total: spanRows.value.total }
     return { status: statusOf(kind), total: kindStates.value[kind]?.total ?? 0 }
   }
@@ -237,11 +265,11 @@ export function useFullTextSearch() {
 
   // The rail's chips. A kind that answered 0 is disabled, and ⇥ skips it.
   const facetView = computed(() => facets.value.map((f) => {
-    if (!f.kind) return { ...f, text: allText(), disabled: false }
+    if (!f.kind) return { ...f, text: mode.value === 'held' ? '' : allText(), disabled: false }
     const st = kindState(f.kind)
     return {
       ...f,
-      text: countText(st, offline.value),
+      text: st.status === 'idle' ? '' : countText(st, offline.value),
       disabled: offline.value || (st.status === 'ok' && !st.total),
     }
   }))
@@ -256,13 +284,17 @@ export function useFullTextSearch() {
   })
 
   const drillView = computed(() => {
-    const kind = drillKind.value
+    const listed = browseKey.value
+    const kind = drillKind.value || listed
     if (!kind) return null
     const d = drill.value
     const st = kindState(kind)
     // The header quotes the kind's group total — the same number its chip
     // says — and falls back to the Drill's own once only the Drill has asked.
-    const total = st.status === 'ok' && mode.value === 'search' ? st.total : d.total
+    let total = st.status === 'ok' && mode.value === 'search' ? st.total : d.total
+    // Before its first page a listed Drill quotes the count the desk already
+    // showed for it, not the empty page's 0.
+    if (listed && d.status !== 'ok') total = home.value.data?.[listed]?.total ?? st.total ?? total
     let tail = null
     if (d.status === 'failed') tail = { type: 'retry', key: DRILL_TAIL }
     else if (d.items.length < d.total) {
@@ -270,7 +302,8 @@ export function useFullTextSearch() {
         loading: d.status === 'loading' }
     }
     return {
-      kind, label: KIND_META[kind]?.label || kind, total, query: drillQuery.value,
+      kind, label: LIST_LABEL[kind] || KIND_META[kind]?.label || kind, total,
+      query: listed ? '' : drillQuery.value, back: listed ? '← Home' : '← All kinds',
       rows: d.items, tail, status: d.status,
       done: d.status === 'ok' && d.items.length >= d.total,
     }
@@ -279,7 +312,7 @@ export function useFullTextSearch() {
   // The empty query (R1 Home): the desk Everywhere, the chain inside a
   // session. The Sessions facet keeps its roster, which IS its empty query.
   const homeView = computed(() => {
-    if (mode.value !== 'held' || trimmed.value || switcherMode.value) return null
+    if (mode.value !== 'held' || trimmed.value || switcherMode.value || browseKey.value) return null
     const { status, data } = home.value
     if (activeScope.value === 'session') {
       const traceId = source.value?.traceId || ''
@@ -352,9 +385,9 @@ export function useFullTextSearch() {
     const hv = homeView.value
     if (hv?.chain) return 'this session'
     if (hv?.status === 'ok') return hv.waiting ? `${hv.waiting} waiting on you` : 'nothing waiting'
-    if (mode.value === 'held') return 'Everything indexed'
     const dv = drillView.value
-    if (dv) return `${dv.total} ${kindNoun(dv.kind, dv.total)}`
+    if (dv) return `${dv.total} ${LIST_NOUN[dv.kind] || kindNoun(dv.kind, dv.total)}`
+    if (mode.value === 'held') return 'Everything indexed'
     if (mode.value === 'address') {
       const st = addressState(null)
       if (st.status === 'pending') return 'resolving…'
@@ -486,6 +519,7 @@ export function useFullTextSearch() {
   function setQuery(next) {
     query.value = next
     addressDrill.value = null
+    homeList.value = null
     scopeNotice.value = ''
     scheduleRemote()
   }
@@ -503,6 +537,7 @@ export function useFullTextSearch() {
       return
     }
     facetOverride.value = null
+    homeList.value = null
     facet.value = label
     writeStored(FACET_KEY, label)
     if (open.value && mode.value === 'held') syncHome()
@@ -522,10 +557,10 @@ export function useFullTextSearch() {
     || (facetOverride.value !== null && !address.value))
   // Esc and ⌫ step out of a kind the reader picked; a kind ⌘J or `#` forced
   // is not a layer they stepped into.
-  // With no query there is no Drill to be in — only a kind chip chosen ahead
-  // of typing — so esc there closes, and the choice persists.
-  const inDrill = computed(() => activeKind.value !== null && !drillForced.value
-    && (mode.value === 'search' || mode.value === 'address'))
+  // With no query the Drill is a listed kind or a Home group's "Show all";
+  // esc steps back to the desk.
+  const inDrill = computed(() => browseKey.value !== null || (activeKind.value !== null
+    && !drillForced.value && (mode.value === 'search' || mode.value === 'address')))
 
   function drillInto(kind) {
     activeId.value = null
@@ -535,6 +570,12 @@ export function useFullTextSearch() {
   function leaveDrill() {
     activeId.value = null
     setFacet('All')
+  }
+
+  // A Home group's "Show all": every entry behind it, paged.
+  function showHomeList(key) {
+    activeId.value = null
+    homeList.value = key
   }
 
   function setScope(next) {
@@ -597,8 +638,6 @@ export function useFullTextSearch() {
     scheduleRemote()
   }
 
-  // The roster without reopening: where a Home group's "Show all" lands for
-  // sessions, since it already ranks the waiting ones first.
   function showRoster() {
     scopeOverride.value = 'global'
     facetOverride.value = 'Sessions'
@@ -617,6 +656,7 @@ export function useFullTextSearch() {
     scopeOverride.value = null
     facetOverride.value = null
     scopeNotice.value = ''
+    homeList.value = null
     resetHome()
     if (debounceTimer) clearTimeout(debounceTimer)
     if (drillTimer) clearTimeout(drillTimer)
@@ -648,8 +688,8 @@ export function useFullTextSearch() {
     counts, entries, held, trimmed, idPrefix, mode, offline, settling,
     activeScope, activeFacet, activeKinds, facets, facetView, sessionAvailable,
     switcherMode, rosterMode, drillView, addressView, homeView, noMatches, headerCount, inDrill,
-    scopeNotice, openPalette, openSwitcher, showRoster, closePalette, setQuery, setFacet, cycleFacet,
-    moveActive, drillInto, leaveDrill, loadMore, retryKind,
+    scopeNotice, openPalette, openSwitcher, closePalette, setQuery, setFacet, cycleFacet,
+    moveActive, drillInto, leaveDrill, showHomeList, loadMore, retryKind,
     setScope, toggleScope, rememberQuery, retry, source,
   }
 }

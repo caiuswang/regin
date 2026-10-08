@@ -137,8 +137,10 @@ def _chip(kind: str, ident, title: str | None = None) -> dict:
     return {"kind": kind, "id": ident, "ref": f"{prefix}{ident}", "title": title or ""}
 
 
-def _row(kind: str, ref: str, title: str, status: dict, **extra) -> dict:
-    row = {"kind": kind, "ref": ref, "title": title, "status": status,
+def _row(kind: str, ident, ref: str, title: str, status: dict, **extra) -> dict:
+    """`id` is the entity's own key — a session's full trace id, which `ref`
+    only abbreviates — so a holder of the row can route without a lookup."""
+    row = {"kind": kind, "id": ident, "ref": ref, "title": title, "status": status,
            "owners": extra.pop("owners", [])}
     row.update({k: v for k, v in extra.items() if v})
     return row
@@ -461,7 +463,7 @@ def session_rows(conn, trace_ids, *, phases: dict | None = None,
         context = (f"asks: {_clip(_needs_text(blocker), CONTEXT_CLIP)}" if blocker
                    else _prompt_line(latest))
         out[trace_id] = _row(
-            "session", f"#{trace_id[:8]}",
+            "session", trace_id, f"#{trace_id[:8]}",
             _session_title(meta.get(trace_id), tasks.get(trace_id), (first, latest)),
             session_status(phase),
             owners=_owner_chips(features.get(trace_id, []), tasks.get(trace_id)),
@@ -526,7 +528,7 @@ def task_rows(conn, task_ids) -> dict:
         task_runs = runs.get(tid, [])
         latest = task_runs[0] if task_runs else None
         out[tid] = _row(
-            "task", f"T{tid}", title, _task_status(status, task_runs, awaiting),
+            "task", tid, f"T{tid}", title, _task_status(status, task_runs, awaiting),
             owners=[_chip("feature", fid, ftitle)] if fid is not None else [],
             context=f"run {latest[0]} · {latest[1]}" if latest else None)
     return out
@@ -568,7 +570,7 @@ def feature_rows(conn, feature_ids) -> dict:
         word = (f"building · round {rounds}" if stage == feature_events.STAGE_BUILDING
                 else stage)
         out[fid] = _row(
-            "feature", f"F{fid}", title,
+            "feature", fid, f"F{fid}", title,
             _status(word, _FEATURE_BUCKET.get(stage, QUIET)),
             context=f"{done}/{tasks} done · {_plural(open_defects, 'open defect')}")
     return out
@@ -610,7 +612,7 @@ def defect_rows(conn, defect_ids) -> dict:
         owner = (_chip("feature", fid, ftitle) if fid is not None
                  else {"kind": "none", "id": None, "ref": "no feature", "title": ""})
         out[did] = _row(
-            "defect", f"D{did}", _first_line(symptom) or f"D{did}",
+            "defect", did, f"D{did}", _first_line(symptom) or f"D{did}",
             _status(word, _DEFECT_BUCKET[word]), owners=[owner],
             aside=f"fix T{fix_id}" if fix_id else "no fix",
             context=_defect_detail(symptom, missing))

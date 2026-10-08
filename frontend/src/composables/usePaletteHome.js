@@ -9,15 +9,12 @@ const DESK = [
   { key: 'needs_me', noun: 'waiting', tone: 'needs', aside: 'sessions first · oldest wait first',
     calm: 'Nothing is waiting on you. Active work is below.' },
   { key: 'active_now', noun: 'active', aside: 'running tasks fold into their session' },
-  { key: 'active_features', noun: 'features', href: '/features' },
+  { key: 'active_features', noun: 'features' },
   { key: 'sessions', noun: 'sessions', aside: 'latest not shown above' },
 ]
 
-// The payload's session ref is the id's first eight characters, which is all
-// a client-side HERE can be matched on.
 function markHere(row, traceId) {
-  const here = row.here || (row.kind === 'session' && !!traceId
-    && row.ref === `#${traceId.slice(0, 8)}`)
+  const here = row.here || (row.kind === 'session' && !!traceId && row.id === traceId)
   return here ? { ...row, here: true } : row
 }
 
@@ -30,7 +27,7 @@ export function deskSections(data, traceId) {
     const rows = (group.items || []).map(r => toEntry(markHere(r, traceId)))
     if (!rows.length && !spec.calm) return null
     const more = group.total > rows.length ? {
-      type: 'more', key: `more:home:${spec.key}`, home: spec.key, href: spec.href,
+      type: 'more', key: `more:home:${spec.key}`, home: spec.key,
       total: group.total, label: `Show all ${group.total} ${spec.noun} →`,
     } : null
     return {

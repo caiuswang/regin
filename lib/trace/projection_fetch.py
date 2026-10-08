@@ -275,7 +275,7 @@ def _agent_root_span(own_markers: list[dict], out: list[dict]) -> dict | None:
 
 
 def _fetch_spans_for_group(conn, trace_ids, *, window_start=None,
-                           window_end=None) -> list[dict]:
+                           window_end=None, names=None) -> list[dict]:
     """Span rows for a whole alias group, re-keyed to the canonical id.
 
     An SDK run's two traces are one session (see `lib/trace/alias.py`). The
@@ -287,6 +287,9 @@ def _fetch_spans_for_group(conn, trace_ids, *, window_start=None,
     column can't tell it (the runner's rows persist under the default
     `'hook'`). A single-id group tags everything `'hook'`, so the cross-source
     rules downstream are a no-op and unaliased sessions read exactly as before.
+
+    `names` keeps only spans of those names — for a reader that merges one
+    span kind and need not load the whole session to do it.
 
     `window_start`/`window_end` bound the paginated reader's window. Both
     readers share this one explicit column list: a column added to the store
@@ -308,6 +311,9 @@ def _fetch_spans_for_group(conn, trace_ids, *, window_start=None,
     if window_end is not None:
         clauses.append("start_time < ?")
         params.append(window_end)
+    if names:
+        clauses.append(f"name IN ({','.join('?' * len(names))})")
+        params.extend(names)
     rows = conn.execute(f"""
         SELECT {_SPAN_COLUMNS}
         FROM session_spans

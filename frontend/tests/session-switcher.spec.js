@@ -288,6 +288,49 @@ test.describe('roster rows (F146 S8)', () => {
     await expect(page.locator(`${PANEL} .facet-rail`)).toHaveCount(0)
   })
 
+  test('a row walked away from keeps its text readable', async ({ page }) => {
+    await fakeRoster(page)
+    await page.route('**/api/palette/relations/**', (route) => {
+      const [kind, id] = new URL(route.request().url()).pathname.split('/').slice(-2)
+      if (kind === 'feature') {
+        route.fulfill({ json: {
+          kind, id: 150, relations: [], lists: [], body: 'spec',
+          row: { kind, id: 150, ref: 'F150', title: 'Feature 150', owners: [],
+            status: { word: 'building · round 1', bucket: 'active' } },
+        } })
+        return
+      }
+      const row = ROSTER.find(r => r.trace_id === decodeURIComponent(id))?.row
+      route.fulfill({ json: {
+        kind, id, row, lists: [], body: '', prompts: [],
+        relations: [{ rel: 'Belongs to', target: chip('feature', 150, 'F150') }],
+      } })
+    })
+    await page.goto('/trace/sessions')
+    await openSwitcher(page)
+    const row = rowOf(AWAITING)(page)
+    await expect(row).toHaveClass(/is-active/)
+    await expect(page.locator(`${PANEL} .entity-preview[data-kind="session"]`)).toContainText('F150')
+
+    await page.keyboard.press('Alt+ArrowRight')
+    await expect(page.locator(`${PANEL} .entity-preview[data-kind="feature"]`)).toBeVisible()
+    await expect(row).toHaveClass(/is-walked/)
+    await expect(row).not.toHaveClass(/is-active/)
+    // Reverse video is gone with its fill: the title must not be painted in
+    // the surface colour it would then sit on.
+    const [title, surface] = await row.evaluate((el) => {
+      const probe = document.createElement('span')
+      probe.style.color = 'var(--color-surface)'
+      el.appendChild(probe)
+      const out = [getComputedStyle(el.querySelector('.pr-title')).color,
+        getComputedStyle(probe).color]
+      probe.remove()
+      return out
+    })
+    expect(title).not.toBe(surface)
+    await expect(row.locator('.pr-title')).toHaveText('Draft the NOW zone data loader')
+  })
+
   test('test_roster_number_attach_kept', async ({ page }) => {
     await openFakeRoster(page)
     // Server rank, not recency: awaiting, retrying, working, ended.

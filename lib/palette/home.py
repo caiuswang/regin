@@ -35,10 +35,6 @@ _PARKED_SQL = (
     f"OR span_id LIKE '{PERM_PENDING_PREFIX}%')")
 
 
-def _group(label: str, items: list, total: int) -> dict:
-    return {"label": label, "total": total, "items": items}
-
-
 def _marks(values) -> str:
     return ",".join("?" * len(values))
 
@@ -84,23 +80,35 @@ def _last_seen(conn, trace_ids) -> dict:
         list(trace_ids)).fetchall())
 
 
-def _queued_defects(limit: int) -> tuple[list[int], int]:
+def _queued_defects() -> list[int]:
     """The triage queue, oldest report first — through the store's own
     predicate, so this list and the queue badge cannot disagree."""
-    from sqlalchemy import func  # noqa: PLC0415
-
     from lib.defects.store import in_queue  # noqa: PLC0415
 
     with SessionLocal() as session:
-        total = session.exec(select(func.count()).select_from(Defect)
-                             .where(in_queue())).one()
-        ids = list(session.exec(select(Defect.id).where(in_queue())
-                                .order_by(Defect.opened_at, Defect.id)
-                                .limit(limit)).all()) if limit > 0 else []
-    return ids, total
+        return list(session.exec(select(Defect.id).where(in_queue())
+                                 .order_by(Defect.opened_at, Defect.id)).all())
 
 
-def _needs_me(conn, waiting: list[str], phases: dict) -> dict:
+def _page(conn, label: str, entries: list, offset: int, limit: int,
+          phases: dict | None = None) -> dict:
+    """One page of a group's ordered `(kind, key)` entries as PaletteRows,
+    one builder call per kind; `total` counts every entry."""
+    window = entries[offset:offset + limit]
+    keys: dict = {}
+    for kind, key in window:
+        keys.setdefault(kind, []).append(key)
+    built = {kind: (R.session_rows(conn, ids, phases=phases) if kind == "session"
+                    else _BUILDERS[kind](conn, ids))
+             for kind, ids in keys.items()}
+    items = [built[kind][key] for kind, key in window if key in built[kind]]
+    return {"label": label, "total": len(entries), "offset": offset, "items": items}
+
+
+_BUILDERS = {"task": R.task_rows, "feature": R.feature_rows, "defect": R.defect_rows}
+
+
+def _needs_me(conn, waiting: list[str]) -> list:
     """Parked sessions oldest wait first, then the triage queue oldest first.
     The two never interleave: a session waits on the user right now, a defect
     waits on a decision."""
@@ -108,13 +116,8 @@ def _needs_me(conn, waiting: list[str], phases: dict) -> dict:
     seen = _last_seen(conn, waiting)
     waiting = sorted(waiting, key=lambda t: _local(
         R.blocker_since(blockers[t]) if t in blockers else seen.get(t), utc=False))
-    shown = waiting[:NEEDS_ME_CAP]
-    defect_ids, queued = _queued_defects(NEEDS_ME_CAP - len(shown))
-    session_rows = R.session_rows(conn, shown, phases=phases)
-    defect_rows = R.defect_rows(conn, defect_ids)
-    items = ([session_rows[t] for t in shown if t in session_rows]
-             + [defect_rows[d] for d in defect_ids if d in defect_rows])
-    return _group("Needs me", items, len(waiting) + queued)
+    return ([("session", t) for t in waiting]
+            + [("defect", d) for d in _queued_defects()])
 
 
 def _running_tasks(conn) -> dict:
@@ -139,7 +142,7 @@ def _running_tasks(conn) -> dict:
     return runs
 
 
-def _active_now(conn, working: list[str], shown: set, phases: dict) -> dict:
+def _active_now(conn, working: list[str], shown: set) -> list:
     """Working sessions and running tasks, newest first. A running task folds
     into its session — the session row already carries its `T` chip — and
     stands alone only when no session of its runs is on the desk."""
@@ -150,13 +153,7 @@ def _active_now(conn, working: list[str], shown: set, phases: dict) -> dict:
         if not traces & on_desk:
             entries.append((_local(started, utc=True), "task", task_id))
     entries.sort(key=lambda e: e[0], reverse=True)
-    top = entries[:ACTIVE_CAP]
-    session_rows = R.session_rows(conn, [k for _, kind, k in top if kind == "session"],
-                                  phases=phases)
-    task_rows = R.task_rows(conn, [k for _, kind, k in top if kind == "task"])
-    built = {"session": session_rows, "task": task_rows}
-    items = [built[kind][k] for _, kind, k in top if k in built[kind]]
-    return _group("Active now", items, len(entries))
+    return [(kind, key) for _, kind, key in entries]
 
 
 _BUILDING_SQL = """
@@ -171,43 +168,102 @@ WHERE {stage} = 'building'
 ORDER BY le.at DESC, le.feature_id DESC"""
 
 
-def _active_features(conn) -> dict:
+def _active_features(conn) -> list:
     from lib.features import events as feature_events  # noqa: PLC0415
 
-    ids = [r[0] for r in conn.execute(_BUILDING_SQL.format(
+    return [("feature", r[0]) for r in conn.execute(_BUILDING_SQL.format(
         stage=feature_events.stage_sql("le.kind", "le.escapes")))]
-    rows = R.feature_rows(conn, ids[:FEATURES_CAP])
-    return _group("Active features",
-                  [rows[f] for f in ids[:FEATURES_CAP] if f in rows], len(ids))
 
 
-def _sessions(conn, where: str, params: list, shown: set) -> dict:
-    skip = list(shown)
+def _session_ids(conn, where: str, params: list, skip=()) -> list:
+    skip = list(skip)
     clause = f"{where} AND trace_id NOT IN ({_marks(skip)})" if skip else where
-    args = [*params, *skip]
-    total = conn.execute(f"SELECT COUNT(*) FROM sessions WHERE {clause}", args).fetchone()[0]
-    ids = [r[0] for r in conn.execute(
-        f"SELECT trace_id FROM sessions WHERE {clause} "
-        "ORDER BY last_seen DESC LIMIT ?", [*args, SESSIONS_CAP])]
-    rows = R.session_rows(conn, ids)
-    return _group("Sessions", [rows[t] for t in ids if t in rows], total)
+    return [("session", r[0]) for r in conn.execute(
+        f"SELECT trace_id FROM sessions WHERE {clause} ORDER BY last_seen DESC",
+        [*params, *skip])]
 
 
-def home(conn) -> dict:
+def _desk(conn):
+    """The phased candidates every desk group is cut from."""
     where, params = _eligible()
     candidates = _candidates(conn, where, params)
     phases = R.session_phases(conn, candidates)
     buckets = {t: R.session_status(p)["bucket"] for t, p in phases.items()}
     waiting = [t for t in candidates if buckets[t] == R.NEEDS_YOU]
     working = [t for t in candidates if buckets[t] == R.ACTIVE]
-    needs_me = _needs_me(conn, waiting, phases)
-    active_now = _active_now(conn, working, set(waiting), phases)
+    return where, params, phases, waiting, working
+
+
+# Every kind the palette lists, newest first; closed work sinks to the end.
+_KIND_SQL = {
+    "feature": ("SELECT f.id FROM features f ORDER BY "
+                "(SELECT MAX(e.id) FROM feature_events e WHERE e.feature_id = f.id) DESC, "
+                "f.id DESC"),
+    "task": ("SELECT id FROM agent_tasks WHERE status <> 'archived' "
+             "ORDER BY status = 'done', updated_at DESC, id DESC"),
+    "defect": ("SELECT id FROM defects "
+               "ORDER BY status <> 'open', opened_at DESC, id DESC"),
+}
+KIND_LABEL = {"feature": "Features", "task": "Tasks", "defect": "Defects",
+              "session": "Sessions"}
+DESK_LABEL = {"needs_me": "Needs me", "active_now": "Active now",
+              "active_features": "Active features"}
+LIST_KEYS = (*KIND_LABEL, *DESK_LABEL)
+
+
+def _kind_entries(conn, kind: str) -> list:
+    if kind == "session":
+        where, params = _eligible()
+        return _session_ids(conn, where, params)
+    return [(kind, r[0]) for r in conn.execute(_KIND_SQL[kind])]
+
+
+def _desk_entries(conn, key: str) -> tuple[list, dict]:
+    _where, _params, phases, waiting, working = _desk(conn)
+    if key == "needs_me":
+        return _needs_me(conn, waiting), phases
+    if key == "active_now":
+        return _active_now(conn, working, set(waiting)), phases
+    return _active_features(conn), phases
+
+
+def listing(conn, key: str, offset: int, limit: int) -> dict | None:
+    """One page of every entry behind a Home group or a kind — the paged
+    source a "Show all" or an empty-query kind pick reads. None for an
+    unknown key."""
+    if key in KIND_LABEL:
+        return {"key": key, **_page(conn, KIND_LABEL[key], _kind_entries(conn, key),
+                                    offset, limit)}
+    if key in DESK_LABEL:
+        entries, phases = _desk_entries(conn, key)
+        return {"key": key, **_page(conn, DESK_LABEL[key], entries, offset, limit, phases)}
+    return None
+
+
+def kind_totals(conn) -> dict:
+    """`{kind: how many entries its list holds}` — the empty query's rail counts."""
+    where, params = _eligible()
+    totals = {k: conn.execute(f"SELECT COUNT(*) FROM ({sql})").fetchone()[0]
+              for k, sql in _KIND_SQL.items()}
+    totals["session"] = conn.execute(
+        f"SELECT COUNT(*) FROM sessions WHERE {where}", params).fetchone()[0]
+    return totals
+
+
+def home(conn) -> dict:
+    where, params, phases, waiting, working = _desk(conn)
     shown = set(waiting) | set(working)
+    sessions = _page(conn, "Sessions", _session_ids(conn, where, params, shown),
+                     0, SESSIONS_CAP)
     return {
-        "needs_me": needs_me,
-        "active_now": active_now,
-        "active_features": _active_features(conn),
-        "sessions": _sessions(conn, where, params, shown),
+        "needs_me": _page(conn, DESK_LABEL["needs_me"], _needs_me(conn, waiting),
+                          0, NEEDS_ME_CAP, phases),
+        "active_now": _page(conn, DESK_LABEL["active_now"],
+                            _active_now(conn, working, set(waiting)), 0, ACTIVE_CAP, phases),
+        "active_features": _page(conn, DESK_LABEL["active_features"],
+                                 _active_features(conn), 0, FEATURES_CAP),
+        "sessions": sessions,
+        "totals": kind_totals(conn),
         "server_now": datetime.now().isoformat(),
         "server_now_utc": datetime.now(timezone.utc).isoformat(),
     }

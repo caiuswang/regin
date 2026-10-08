@@ -31,6 +31,9 @@ const props = defineProps({
   // The 1–9 chord is disarmed wherever the query can contain digits, and a
   // chip for a key that does nothing is worse than no chip.
   showHotkeys: { type: Boolean, default: true },
+  // The preview has walked away from the cursor row: it keeps its place but
+  // drops the reverse video, whose light text would sit on no fill.
+  walked: { type: Boolean, default: false },
 })
 defineEmits(['select', 'attach'])
 
@@ -89,7 +92,7 @@ const decorated = computed(() => {
         role="option"
         :aria-selected="item.id === activeId"
         class="switcher-row cursor-pointer hover:bg-surface-2"
-        :class="{ 'is-active': item.id === activeId }"
+        :class="{ 'is-active': item.id === activeId && !walked, 'is-walked': item.id === activeId && walked }"
         :data-testid="'switcher-row'"
         :data-trace-id="item.id"
         :data-group="item.group"
@@ -184,6 +187,11 @@ const decorated = computed(() => {
    outrank the `hover:bg-surface-2` utility the row also carries, which is
    otherwise the same specificity. */
 .switcher-list .switcher-row.is-active { background: var(--color-fg); }
+
+.switcher-list .switcher-row.is-walked {
+  outline: 1.5px dashed var(--color-border-strong);
+  outline-offset: -1.5px;
+}
 
 .switcher-hotkey {
   flex-shrink: 0;

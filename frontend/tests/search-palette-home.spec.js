@@ -21,7 +21,7 @@ const status = (word, bucket) => ({ word, bucket })
 
 function session(ref, title, word = 'working', bucket = 'active', extra = {}) {
   return {
-    kind: 'session', ref, title, status: status(word, bucket),
+    kind: 'session', id: `${ref.slice(1)}-0000-4000-8000-000000000000`, ref, title, status: status(word, bucket),
     owners: [{ kind: 'feature', id: 146, ref: 'F146', title: '' }],
     context: `prompt for ${title}`, ...extra,
   }
@@ -29,14 +29,14 @@ function session(ref, title, word = 'working', bucket = 'active', extra = {}) {
 
 function defect(id, title) {
   return {
-    kind: 'defect', ref: `D${id}`, title, status: status('triage', 'needs_you'),
+    kind: 'defect', id, ref: `D${id}`, title, status: status('triage', 'needs_you'),
     owners: [{ kind: 'none', id: null, ref: 'no feature', title: '' }], aside: 'no fix',
   }
 }
 
 function feature(id, title) {
   return {
-    kind: 'feature', ref: `F${id}`, title, status: status('building · round 2', 'active'),
+    kind: 'feature', id, ref: `F${id}`, title, status: status('building · round 2', 'active'),
     owners: [], context: '1/5 done · 2 open defects',
   }
 }
@@ -67,7 +67,29 @@ function desk({ waiting = WAITING, waitingTotal = 6 } = {}) {
       session('#e4410b9c', 'roster backoff', 'inactive', 'quiet'),
       session('#9921ffab', 'Sketch the NOW zone', 'ended', 'done'),
     ] },
+    totals: { feature: 3, task: 2, defect: 0, session: 25 },
   }
+}
+
+const task = (id, title) => ({
+  kind: 'task', id, ref: `T${id}`, title, status: status('idea', 'quiet'), owners: [],
+})
+
+// `/api/palette/list/<key>`: the paged list behind a Home group or a kind.
+async function mockLists(page, lists) {
+  const calls = []
+  await page.route('**/api/palette/list/**', async (route) => {
+    const url = new URL(route.request().url())
+    const key = url.pathname.split('/').pop()
+    calls.push(key)
+    const items = lists[key] || []
+    const offset = Number(url.searchParams.get('offset') || 0)
+    const limit = Number(url.searchParams.get('limit') || 12)
+    await route.fulfill({ json: {
+      key, label: key, total: items.length, offset, items: items.slice(offset, offset + limit),
+    } })
+  })
+  return calls
 }
 
 async function mockHome(page, answer) {
@@ -113,6 +135,7 @@ test.describe('search palette — Home', () => {
     await page.addInitScript(() => localStorage.setItem(
       'regin.search.recents', JSON.stringify(['palette', 'limit=6'])))
     await mockHome(page, () => desk())
+    await mockLists(page, { needs_me: [...WAITING, defect(290, 'Sixth waiting item')] })
     await openFromInbox(page)
 
     await expect(page.locator(`${HOME}[data-home="desk"]`)).toBeVisible()
@@ -139,11 +162,45 @@ test.describe('search palette — Home', () => {
       .toBeVisible()
     await expect(page.locator(`${PANEL} .facet.is-recent`)).toHaveCount(2)
 
-    // ↵ on "Show all" lands on the roster, which ranks waiting sessions first.
+    // ↵ on "Show all" pages every waiting item, the sixth included; esc is
+    // the way back to the desk.
     await page.keyboard.press('Enter')
-    await expect(page.locator(`${PANEL} .switcher-list`)).toBeVisible()
-    await expect(page.locator(`${PANEL} .facet-rail`)).toHaveCount(0)
     await expect(page.locator(HOME)).toHaveCount(0)
+    await expect(page.locator(`${PANEL} .drill-back`)).toHaveText('← Home')
+    await expect(page.locator(`${PANEL} .drill-head .drill-count`)).toHaveText('6')
+    await expect(page.locator(`${PANEL} [role="option"]:not([data-entry])`)).toHaveCount(6)
+    await expect(page.locator(`${PANEL} [role="option"]`, { hasText: 'D290' })).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(page.locator(`${HOME}[data-home="desk"]`)).toBeVisible()
+  })
+
+  test('an empty-query kind pick lists that kind, counted from the desk', async ({ page }) => {
+    await mockHome(page, () => desk())
+    const calls = await mockLists(page, {
+      feature: [feature(146, 'Search Palette'), feature(139, 'Composer'), feature(12, 'Old')],
+      task: [task(430, 'Make Show all reachable'), task(431, 'Second task')],
+    })
+    await openFromInbox(page)
+    await expect(page.locator(homeGroup('needs_me'))).toBeVisible()
+
+    await expect(page.locator(`${PANEL} .facet[data-kind="feature"] .facet-count`)).toHaveText('3')
+    await expect(page.locator(`${PANEL} .facet[data-kind="task"] .facet-count`)).toHaveText('2')
+    await expect(page.locator(`${PANEL} .facet[data-kind="defect"]`)).toBeDisabled()
+
+    const listed = page.locator(`${PANEL} [role="option"]:not([data-entry])`)
+    await page.locator(`${PANEL} .facet[data-kind="feature"]`).click()
+    await expect(page.locator(HOME)).toHaveCount(0)
+    await expect(listed).toHaveCount(3)
+    await expect(listed.first()).toContainText('F146')
+
+    await page.locator(`${PANEL} .facet[data-kind="task"]`).click()
+    await expect(listed).toHaveCount(2)
+    await expect(listed.first()).toContainText('T430')
+    await expect(page.locator(`${PANEL} .drill-end`)).toHaveText('end of list · all 2 shown')
+    expect(calls).toEqual(['feature', 'task'])
+
+    await page.keyboard.press('Escape')
+    await expect(page.locator(`${HOME}[data-home="desk"]`)).toBeVisible()
   })
 
   test('test_calm_home_collapses_needs_me', async ({ page }) => {
@@ -235,7 +292,10 @@ test.describe('search palette — Home', () => {
     await expect(page.locator(homeGroup('needs_me'))).toBeVisible()
     const asked = calls.length
 
+    await mockLists(page, { feature: [feature(146, 'Search Palette')] })
     await page.locator(`${PANEL} .facet[data-kind="feature"]`).click()
+    await expect(page.locator(`${PANEL} .drill-back`)).toHaveText('← Home')
+    await page.locator(`${PANEL} .drill-back`).click()
     await expect(page.locator(homeGroup('needs_me'))).toBeVisible()
     expect(calls.length).toBe(asked)
 

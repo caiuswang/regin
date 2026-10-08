@@ -20,10 +20,9 @@ const ROUTE = {
   session: id => `/trace/sessions/${id}`,
 }
 
-// A session is known by its full trace id where the payload carries one (a
-// search document, a relation target), and only by the `#` ref's eight
-// characters where it does not (a relation list's rows). The prefix is
-// resolved through the same lookup `#` addressing uses.
+// A session is known by its full trace id where the payload carries one —
+// every PaletteRow does — and only by the `#` ref's eight characters where it
+// does not. The prefix is resolved through the same lookup `#` addressing uses.
 function sessionNode(ref, id) {
   const full = id && !String(id).startsWith('#') ? String(id) : null
   return { kind: 'session', id: full, prefix: full || String(ref || id || '').replace(/^#/, '') }

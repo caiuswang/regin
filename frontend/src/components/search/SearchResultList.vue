@@ -97,10 +97,10 @@ const drillPending = computed(() => props.drill
 
     <template v-if="drill">
       <header class="drill-head">
-        <Button size="sm" class="drill-back" @click="$emit('leave-drill')">← All kinds</Button>
+        <Button size="sm" class="drill-back" @click="$emit('leave-drill')">{{ drill.back }}</Button>
         <span class="drill-label">{{ drill.label }}</span>
         <span class="drill-count">{{ drill.total }}</span>
-        <span class="drill-query">matching “{{ drill.query }}”</span>
+        <span v-if="drill.query" class="drill-query">matching “{{ drill.query }}”</span>
       </header>
       <SearchResultSection
         :kind="drill.kind"
