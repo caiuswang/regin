@@ -114,9 +114,7 @@ def test_one_task_from_three_defects(flask_client, feature_row):
         TASK_KIND_FIX, "defect", feature.id)
     assert task.external_id == f"defect:{d10.id}"
     assert {store.get(d.id).fix_task_id for d in (d10, d11, d12)} == {task_id}
-    head = f"Fix #{d10.id}, #{d11.id}, #{d12.id}: "
-    assert task.title.startswith(head + "ten broke")
-    assert len(task.title) <= 200
+    assert task.title == f"Fix #{d10.id}, #{d11.id}, #{d12.id}"
     assert task.auto_title == task.title
     assert [d["id"] for d in resp.get_json()["defects"]] == [
         d10.id, d11.id, d12.id]
@@ -208,7 +206,7 @@ def test_linking_a_second_defect_retitles_an_auto_titled_task(feature_row):
 
     store.set_fix_item(d11.id, task_id)
 
-    assert _task(task_id).title == f"Fix #{d10.id}, #{d11.id}: ten symptom"
+    assert _task(task_id).title == f"Fix #{d10.id}, #{d11.id}"
 
     store.clear_fix_item(d11.id)
 
@@ -229,7 +227,7 @@ def test_re_pointing_a_defect_retitles_the_task_it_left(feature_row):
     store.set_fix_item(d11.id, second)
 
     assert _task(first).title == "ten"
-    assert _task(second).title == f"Fix #{d11.id}, #{d12.id}: eleven"
+    assert _task(second).title == f"Fix #{d11.id}, #{d12.id}"
 
 
 def test_a_hand_made_task_is_never_retitled(feature_row, native_task):

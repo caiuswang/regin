@@ -680,14 +680,15 @@ def clear_fix_item(defect_id: int) -> Defect:
 
 def fix_task_title(rows: Iterable[Defect]) -> str:
     """One defect's task is labelled by its symptom; a task several defects
-    share names them all, so the board shows which ones it fixes."""
+    share names only their ids — one symptom cut to fit would read as the
+    whole task, and the body cites each in full."""
     from lib.orm.models.tasks import TITLE_MAX  # noqa: PLC0415
 
     rows = sorted(rows, key=lambda r: r.id)
     if len(rows) == 1:
         return rows[0].symptom[:TITLE_MAX]
     ids = ", ".join(f"#{r.id}" for r in rows)
-    return f"Fix {ids}: {rows[0].symptom}"[:TITLE_MAX]
+    return f"Fix {ids}"[:TITLE_MAX]
 
 
 def retitle(session, *task_ids: Optional[int]) -> None:
