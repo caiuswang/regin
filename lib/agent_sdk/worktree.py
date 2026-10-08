@@ -165,8 +165,16 @@ def _add_arguments(root: Path, branch: str, base: str) -> list[str]:
 def _provider_config_dirs() -> list[str]:
     from lib.providers.registry import (  # noqa: PLC0415
         build_provider, list_provider_ids)
-    return list(dict.fromkeys(build_provider(pid).project_config_dir()
-                              for pid in list_provider_ids()))
+    # Every top-level dir the skill catalog reads, not only the config dir:
+    # kimi also resolves `.agents/skills`, and a catalog that offers a skill
+    # the worktree lacks arms a run the CLI answers "Unknown ACP command".
+    names: list[str] = []
+    for pid in list_provider_ids():
+        provider = build_provider(pid)
+        names.append(provider.project_config_dir())
+        names.extend(parts[0] for parts in
+                     provider.skill_catalog_layout().skill_dirs if parts)
+    return list(dict.fromkeys(names))
 
 
 def _sync_project_config(path: Path) -> None:

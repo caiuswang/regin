@@ -6,6 +6,7 @@ import Button from '../ui/Button.vue'
 import Input from '../ui/Input.vue'
 import FeaturePicker from './FeaturePicker.vue'
 import PlGlyph from './PlGlyph.vue'
+import RefInlineText from '../refs/RefInlineText.vue'
 import DefectImages from '../defects/DefectImages.vue'
 import DefectMergePicker from '../defects/DefectMergePicker.vue'
 import DefectRefusal from '../defects/DefectRefusal.vue'
@@ -73,7 +74,7 @@ defineExpose({ focus: () => card.value?.focus() })
       <span class="tc-spacer" />
       <span class="tc-when" :title="utcTitle(defect.opened_at)" data-pl-part="card-meta">{{ monthDay(defect.opened_at) }}</span>
     </div>
-    <p class="tc-symptom">{{ defect.symptom }}</p>
+    <p class="tc-symptom"><RefInlineText :text="defect.symptom" /></p>
     <p v-if="defect.suspect_paths?.length" class="tc-paths" title="Where it was seen, not who caused it" data-pl-part="card-meta">
       {{ defect.suspect_paths.join(' · ') }}
     </p>

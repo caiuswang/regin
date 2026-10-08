@@ -139,7 +139,14 @@ def test_skill_invocation_is_provider_owned():
     assert kimi_line.startswith("/skill:goal-verified fast\n\n")
     assert "Skill tool" not in kimi_line
     assert "`tdd`" in kimi_line
-    assert _armed_prompt("kimi", {"name": "tdd"}) == "/skill:tdd\n\n"
+    assert _armed_prompt("kimi", {"name": "tdd"}).startswith("/skill:tdd ")
+
+
+def test_kimi_skill_name_is_ended_by_a_space_even_without_args():
+    # kimi 2.1.1 ACP reads the command name up to the first space, so a bare
+    # `/skill:tdd\n\n<prompt>` is answered "Unknown ACP command".
+    line = build_provider("kimi").skill_invocation("tdd", "", [])
+    assert line.split("\n", 1)[0] == "/skill:tdd "
 
 
 def test_claude_skill_invocation_unchanged():
@@ -223,3 +230,21 @@ def test_worktree_syncs_provider_project_dir(tmp_path):
     assert (made / ".claude" / "skills" / "claude-skill" / "SKILL.md").is_file()
     assert (made / ".kimi-code" / "skills" / "kimi-skill" / "SKILL.md").is_file()
     assert not (made / ".claude" / "worktrees").exists()
+
+
+def test_worktree_syncs_every_skill_dir_a_provider_catalogs(tmp_path):
+    from lib.agent_sdk import worktree
+
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    _git(repo, "config", "user.email", "t@example.com")
+    _git(repo, "config", "user.name", "t")
+    (repo / ".gitignore").write_text(".claude/\n.kimi-code/\n.agents/\n")
+    _git(repo, "add", ".gitignore")
+    _git(repo, "commit", "-q", "-m", "init")
+    _skill(repo, ".agents", "skills", "shared-skill")
+
+    made = Path(worktree.ensure_worktree(repo, "feat/y")["path"])
+
+    assert (made / ".agents" / "skills" / "shared-skill" / "SKILL.md").is_file()
