@@ -6,6 +6,7 @@ import {
   kindNoun, rowDoc, rowKey, searchLocalSpans,
 } from '../utils/searchDocs.js'
 import { usePaletteDrill } from './usePaletteDrill.js'
+import { chainSection, deskSections, usePaletteHome } from './usePaletteHome.js'
 import { useTraceSearchSource } from './useTraceSearchSource.js'
 
 const FACET_KEY = 'regin.search.facet'
@@ -64,6 +65,10 @@ const resolved = ref({ status: 'idle', data: null })
 // search for 999 — an address reaches a Drill only by the reader asking.
 const addressDrill = ref(null)
 const recents = ref(readRecents())
+// Set when ⌃S asks for a scope that has no referent (R8: a no-op with a
+// notice). Cleared by the next thing the reader does to the query or scope,
+// so it always describes the keystroke just made.
+const scopeNotice = ref('')
 // The entry the keyboard is on, held by key rather than by index: new spans
 // stream into a live session and each kind's answer lands out of band, so an
 // index would silently point at a different row than the one highlighted.
@@ -78,6 +83,7 @@ let generation = 0
 export function useFullTextSearch() {
   const { source } = useTraceSearchSource()
   const { drill, reset: resetDrill, loadPage } = usePaletteDrill(toRow)
+  const { home, load: loadHome, reset: resetHome } = usePaletteHome()
 
   // 'This session' is only offerable while a trace is actually open; from the
   // inbox or the dashboard there is no session to be inside of. Reading it as
@@ -117,6 +123,12 @@ export function useFullTextSearch() {
     facets.value.find(f => f.label === activeFacet.value)?.kind ?? null)
 
   const held = computed(() => !address.value && trimmed.value.length < MIN_QUERY_CHARS)
+
+  // The Sessions facet with nothing typed IS the switcher; type into it and it
+  // goes back to being the cross-session digest search it already was.
+  const switcherMode = computed(() =>
+    activeFacet.value === 'Sessions'
+    && (held.value || idPrefix.value !== null))
   const mode = computed(() => {
     if (addressing.value) return 'hash'
     if (address.value) return 'address'
@@ -264,6 +276,19 @@ export function useFullTextSearch() {
     }
   })
 
+  // The empty query (R1 Home): the desk Everywhere, the chain inside a
+  // session. The Sessions facet keeps its roster, which IS its empty query.
+  const homeView = computed(() => {
+    if (mode.value !== 'held' || trimmed.value || switcherMode.value) return null
+    const { status, data } = home.value
+    if (activeScope.value === 'session') {
+      const traceId = source.value?.traceId || ''
+      return { chain: true, status, traceId, sections: status === 'ok' ? [chainSection(data)] : [] }
+    }
+    const sections = status === 'ok' ? deskSections(data, source.value?.traceId) : []
+    return { chain: false, status, sections, waiting: data?.needs_me?.total ?? 0 }
+  })
+
   const addressView = computed(() => {
     if (mode.value !== 'address' || drillKind.value) return null
     const { status, data } = resolved.value
@@ -287,7 +312,10 @@ export function useFullTextSearch() {
     const dv = drillView.value
     if (dv) return dv.tail ? [...dv.rows, dv.tail] : dv.rows
     const av = addressView.value
-    const sections = av ? [{ rows: av.hits }, ...av.text] : groups.value
+    const hv = homeView.value
+    let sections = groups.value
+    if (av) sections = [{ rows: av.hits }, ...av.text]
+    else if (hv) sections = hv.sections
     return sections.flatMap(s => (s.more ? [...s.rows, s.more] : s.rows))
   })
 
@@ -300,6 +328,7 @@ export function useFullTextSearch() {
       return d.status === 'pending' || (d.status === 'loading' && !d.items.length)
     }
     if (mode.value === 'address') return resolved.value.status === 'pending'
+    if (homeView.value) return homeView.value.status === 'pending'
     return pendingKinds.value.length > 0
   })
 
@@ -320,6 +349,9 @@ export function useFullTextSearch() {
     && !settling.value && !offline.value && !entries.value.length)
 
   const headerCount = computed(() => {
+    const hv = homeView.value
+    if (hv?.chain) return 'this session'
+    if (hv?.status === 'ok') return hv.waiting ? `${hv.waiting} waiting on you` : 'nothing waiting'
     if (mode.value === 'held') return 'Everything indexed'
     const dv = drillView.value
     if (dv) return `${dv.total} ${kindNoun(dv.kind, dv.total)}`
@@ -394,16 +426,32 @@ export function useFullTextSearch() {
     // under a list that is not showing search results.
     if (mode.value === 'held' || mode.value === 'hash') {
       kindStates.value = {}
+      syncHome()
     } else if (mode.value === 'address') {
       kindStates.value = {}
+      resetHome()
       resolved.value = { status: 'pending', data: null }
       debounceTimer = setTimeout(() => runResolve(q, gen), DEBOUNCE_MS)
     } else {
       const kinds = activeKinds.value
+      resetHome()
       markPending(kinds)
       debounceTimer = setTimeout(() => kinds.forEach(k => fetchKind(k, q, gen)), DEBOUNCE_MS)
     }
     syncDrill()
+  }
+
+  // Home is asked on every open and every return to the empty query, so the
+  // desk is as fresh as the moment it is looked at; a held query that is not
+  // empty asks nothing. The same question already pending or answered is not
+  // re-asked: a facet pick leaves the desk as it was, and the palette's two
+  // composable instances both reach here on one scope change.
+  function syncHome() {
+    if (!open.value || trimmed.value || switcherMode.value) { resetHome(); return }
+    const session = activeScope.value === 'session' ? source.value?.traceId || '' : ''
+    const { session: asked, status } = home.value
+    if (asked === session && (status === 'pending' || status === 'ok')) return
+    loadHome(session)
   }
 
   // The Drill re-asks only when its question changed. Both callers of this
@@ -432,12 +480,13 @@ export function useFullTextSearch() {
   }
 
   function retry() {
-    if (mode.value !== 'held' && mode.value !== 'hash') scheduleRemote()
+    if (mode.value !== 'hash') scheduleRemote()
   }
 
   function setQuery(next) {
     query.value = next
     addressDrill.value = null
+    scopeNotice.value = ''
     scheduleRemote()
   }
 
@@ -456,6 +505,7 @@ export function useFullTextSearch() {
     facetOverride.value = null
     facet.value = label
     writeStored(FACET_KEY, label)
+    if (open.value && mode.value === 'held') syncHome()
   }
 
   function cycleFacet(delta) {
@@ -490,13 +540,20 @@ export function useFullTextSearch() {
   function setScope(next) {
     if (addressing.value) return
     if (next === 'session' && !sessionAvailable.value) return
+    scopeNotice.value = ''
     scopeOverride.value = null
     scope.value = next
     writeStored(SCOPE_KEY, next)
   }
 
   function toggleScope() {
-    setScope(activeScope.value === 'session' ? 'global' : 'session')
+    const next = activeScope.value === 'session' ? 'global' : 'session'
+    if (next === 'session' && !sessionAvailable.value && !addressing.value) {
+      scopeNotice.value = 'No session is open, so there is no “This session” to search. '
+        + 'Open a trace to scope to it.'
+      return
+    }
+    setScope(next)
   }
 
   // Scope decides which corpora were even asked for, so the previous answer is
@@ -527,17 +584,17 @@ export function useFullTextSearch() {
   // ⌘J is not a second surface: it is ⌘K with the facet forced and the query
   // empty, the same relationship the old ⌘F had to Spans — minus the leak.
   function openSwitcher() {
-    scopeOverride.value = 'global'
-    facetOverride.value = 'Sessions'
-    setQuery('')
+    showRoster()
     openPalette()
   }
 
-  // The Sessions facet with nothing typed IS the switcher; type into it and it
-  // goes back to being the cross-session digest search it already was.
-  const switcherMode = computed(() =>
-    activeFacet.value === 'Sessions'
-    && (held.value || idPrefix.value !== null))
+  // The roster without reopening: where a Home group's "Show all" lands for
+  // sessions, since it already ranks the waiting ones first.
+  function showRoster() {
+    scopeOverride.value = 'global'
+    facetOverride.value = 'Sessions'
+    setQuery('')
+  }
 
   // The query survives close deliberately — reopening with ⌘K is how a user
   // walks back into the same result set after reading one hit.
@@ -545,6 +602,8 @@ export function useFullTextSearch() {
     open.value = false
     scopeOverride.value = null
     facetOverride.value = null
+    scopeNotice.value = ''
+    resetHome()
     if (debounceTimer) clearTimeout(debounceTimer)
     if (drillTimer) clearTimeout(drillTimer)
     generation += 1
@@ -574,8 +633,8 @@ export function useFullTextSearch() {
     open, query, facet, recents, activeId, activeRow, activeEntry, groups,
     counts, entries, held, trimmed, idPrefix, mode, offline, settling,
     activeScope, activeFacet, activeKinds, facets, facetView, sessionAvailable,
-    switcherMode, drillView, addressView, noMatches, headerCount, inDrill,
-    openPalette, openSwitcher, closePalette, setQuery, setFacet, cycleFacet,
+    switcherMode, drillView, addressView, homeView, noMatches, headerCount, inDrill,
+    scopeNotice, openPalette, openSwitcher, showRoster, closePalette, setQuery, setFacet, cycleFacet,
     moveActive, drillInto, leaveDrill, loadMore, retryKind,
     setScope, toggleScope, rememberQuery, retry, source,
   }

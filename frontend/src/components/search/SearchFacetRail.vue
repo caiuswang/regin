@@ -54,7 +54,7 @@ defineEmits(['scope', 'facet', 'recent'])
     </button>
 
     <template v-if="recents.length">
-      <p class="rail-label is-spaced">Recent</p>
+      <p class="rail-label is-spaced">Recent searches</p>
       <button
         v-for="term in recents"
         :key="term"

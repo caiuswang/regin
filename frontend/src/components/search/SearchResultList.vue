@@ -7,12 +7,14 @@ import { computed } from 'vue'
 import Button from '../ui/Button.vue'
 import SearchListAction from './SearchListAction.vue'
 import SearchResultSection from './SearchResultSection.vue'
+import SearchHome from './SearchHome.vue'
 import { KIND_META, MIN_QUERY_CHARS, countText } from '../../utils/searchDocs.js'
 
 const props = defineProps({
   groups: { type: Array, default: () => [] },
   drill: { type: Object, default: null },
   address: { type: Object, default: null },
+  home: { type: Object, default: null },
   query: { type: String, default: '' },
   activeId: { type: String, default: null },
   noMatches: { type: Boolean, default: false },
@@ -122,6 +124,16 @@ const drillPending = computed(() => props.drill
         </p>
       </SearchResultSection>
     </template>
+
+    <SearchHome
+      v-else-if="home"
+      :home="home"
+      :active-id="activeId"
+      @select="$emit('select', $event)"
+      @open="$emit('open', $event)"
+      @activate="$emit('activate', $event)"
+      @retry="$emit('retry-all')"
+    />
 
     <template v-else-if="address">
       <div v-if="address.status === 'pending'" class="shimmer-note">resolving…</div>
