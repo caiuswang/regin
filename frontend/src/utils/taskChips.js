@@ -21,7 +21,7 @@ const TEXT_CHIPS = [
  * 'graph' (grouped's axes plus "Open chains only"). A chip is only shown for an axis that reading honours — a status
  * chip over the board would name a filter the columns ignore.
  */
-export function taskChips(state, { mode = 'grouped', mobile = false, users = [] } = {}) {
+export function taskChips(state, { mode = 'grouped', mobile = false, users = [], feature = null } = {}) {
   const chips = []
   if (mode === 'graph' && state.open !== '0') {
     chips.push({ key: 'open', field: 'Show', value: 'Open chains only', patch: { open: '0' } })
@@ -39,7 +39,9 @@ export function taskChips(state, { mode = 'grouped', mobile = false, users = [] 
     if (state[key]) chips.push({ key, field, value: state[key], patch: { [key]: '' } })
   }
   if (state.feature_id) {
-    chips.push({ key: 'feature', field: 'Feature', value: `#${state.feature_id}`,
+    const resolved = feature && String(feature.id) === String(state.feature_id)
+    const value = resolved ? `#${state.feature_id} ${feature.title}` : `#${state.feature_id}`
+    chips.push({ key: 'feature', field: 'Feature', value,
                  patch: { feature_id: '' } })
   }
   if (state.assignee) {

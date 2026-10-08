@@ -214,13 +214,27 @@ test('a filter change replaces history rather than stacking it',
 
 test('the four axes the toolbar never offered are reachable and shareable',
   async ({ page }) => {
+    await page.route('**/api/features?*', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json',
+                      body: JSON.stringify({
+                        items: [{ id: 73, title: 'Backlog feature' }],
+                        pagination: { total: 1, page: 0, size: 50, has_next: false, has_prev: false },
+                        population: 1, applied: { sort: 'activity:desc' }, extras: {},
+                      }) }))
+    await page.route(new RegExp('/api/features/73$'), (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json',
+                      body: JSON.stringify({ id: 73, title: 'Backlog feature' }) }))
     const asked = stubFeed(page)
     await page.goto('/tasks?group=none')
     await openFilters(page)
 
     await page.getByTestId('task-filter-tag').fill('release')
     await page.getByTestId('task-filter-source').fill('linear')
-    await page.getByTestId('task-filter-feature').fill('73')
+    // Feature is now picked from the feature index, not typed as a number.
+    await page.getByTestId('task-filter-feature').click()
+    await expect(page.getByTestId('task-filter-feature-option-73')).toBeVisible()
+    await page.keyboard.press('Enter')
+    await expect(page.getByTestId('task-filter-feature-chosen')).toBeVisible()
     await page.getByTestId('task-more-apply').click()
 
     await expect(page).toHaveURL(/tag=release/)

@@ -303,6 +303,7 @@ test.describe('pixel theme — Features', () => {
       await openFeatures(page, 'pixel')
       await page.getByTestId('feature-toggle-131').click()
       await expect(page.getByTestId('feature-active-task-418')).toBeVisible()
+      await page.getByTestId('triage-unfold').click()
       await expect(page.getByTestId('triage-verb-accept')).toBeVisible()
 
       const audit = await page.evaluate(colourBudget)
