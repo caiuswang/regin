@@ -223,3 +223,21 @@ def test_worktree_syncs_provider_project_dir(tmp_path):
     assert (made / ".claude" / "skills" / "claude-skill" / "SKILL.md").is_file()
     assert (made / ".kimi-code" / "skills" / "kimi-skill" / "SKILL.md").is_file()
     assert not (made / ".claude" / "worktrees").exists()
+
+
+def test_worktree_syncs_every_skill_dir_a_provider_catalogs(tmp_path):
+    from lib.agent_sdk import worktree
+
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    _git(repo, "config", "user.email", "t@example.com")
+    _git(repo, "config", "user.name", "t")
+    (repo / ".gitignore").write_text(".claude/\n.kimi-code/\n.agents/\n")
+    _git(repo, "add", ".gitignore")
+    _git(repo, "commit", "-q", "-m", "init")
+    _skill(repo, ".agents", "skills", "shared-skill")
+
+    made = Path(worktree.ensure_worktree(repo, "feat/y")["path"])
+
+    assert (made / ".agents" / "skills" / "shared-skill" / "SKILL.md").is_file()
