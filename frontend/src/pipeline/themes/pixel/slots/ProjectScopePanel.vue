@@ -1,24 +1,21 @@
 <script setup>
 // One project picked (Overview, under a scope): the breadcrumb head, the
-// project's stages as one cell per feature, its three figures as keys, and its
-// most active features. Same props, emits and links as the classic panel.
+// project's stages as one cell per feature and its three figures as keys. Same
+// props, emits and links as the classic panel.
 import { computed } from 'vue'
 import Button from '../../../../components/ui/Button.vue'
 import { meterCells, METER_CELLS } from '../meter.js'
-import { STAGES, ago } from '../../../../utils/pipelineFormat'
+import { STAGES } from '../../../../utils/pipelineFormat'
 import { money } from '../../../../utils/ledgerFormat'
 
 const props = defineProps({
   head: { type: Object, required: true },
-  features: { type: Object, required: true },
   featuresTo: { type: Object, required: true },
 })
 const emit = defineEmits(['all'])
 
 // Settled work first, so the row fills left to right like a progress bar.
 const CELL_ORDER = ['shipped', 'escaped', 'building', 'spec']
-// A task strip wider than this stops reading as a count and becomes a bar.
-const TASK_CELLS = 8
 
 const legend = computed(() => STAGES.map(stage => ({ stage, n: Number(props.head.stage_bar?.[stage] || 0) })))
 
@@ -30,12 +27,7 @@ const stageCells = computed(() => {
   return meterCells(parts, Math.min(total, METER_CELLS))
 })
 
-function taskCells(f) {
-  if (!f.tasks) return []
-  const width = Math.min(f.tasks, TASK_CELLS)
-  return meterCells([{ n: f.tasks_done, tone: 'settled' }, { n: f.tasks - f.tasks_done, tone: 'unstarted' }], width)
-}
-
+const liveFeatures = computed(() => legend.value.reduce((n, l) => n + l.n, 0))
 const pct = computed(() => (props.head.shipped_pct == null ? null : `${props.head.shipped_pct}%`))
 </script>
 
@@ -55,7 +47,7 @@ const pct = computed(() => (props.head.shipped_pct == null ? null : `${props.hea
           <span aria-hidden="true">/</span>
         </nav>
         <h2 id="px-ps-title" class="pl-panel__title px-ps__name" data-pl-part="panel-title">{{ head.breadcrumb[1] }}</h2>
-        <span class="pl-panel__sub px-ps__count" data-pl-part="panel-meta" data-testid="project-head-count">{{ features.total }} features</span>
+        <span class="pl-panel__sub px-ps__count" data-pl-part="panel-meta" data-testid="project-head-count">{{ liveFeatures }} features</span>
       </header>
 
       <div class="px-ps__band">
@@ -114,62 +106,6 @@ const pct = computed(() => (props.head.shipped_pct == null ? null : `${props.hea
       </div>
     </div>
 
-    <div class="px-ps__table-box" data-testid="project-features">
-      <table v-if="features.rows.length" class="px-ps__table">
-        <thead>
-          <tr>
-            <th scope="col">Features in this project</th>
-            <th scope="col">Stage</th>
-            <th scope="col" class="px-col-tasks">Tasks</th>
-            <th scope="col" class="num">Defects</th>
-            <th scope="col" class="num px-col-active">Active</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="f in features.rows" :key="f.id" data-pl-part="row" :data-testid="`project-feature-${f.id}`">
-            <td class="px-ps__title">
-              <span class="px-ps__id" data-pl-part="row-id">#{{ f.id }}</span>
-              <router-link :to="`/features/${f.id}`" class="focus-visible:outline-2 focus-visible:outline-blue-500">{{ f.title }}</router-link>
-            </td>
-            <td>
-              <span class="px-ps__stage" :class="`is-${f.stage}`" data-testid="project-feature-stage">
-                <span class="px-cell px-cell--mark" data-pl-part="meter-cell" :data-tone="f.stage" />
-                {{ f.stage }}
-              </span>
-            </td>
-            <td class="px-col-tasks">
-              <span class="px-ps__tasks">
-                <span class="px-ps__task-cells">
-                  <span
-                    v-for="(tone, i) in taskCells(f)"
-                    :key="i"
-                    class="px-cell px-cell--task"
-                    data-pl-part="meter-cell"
-                    :data-tone="tone"
-                  />
-                </span>
-                {{ f.tasks_done }} / {{ f.tasks }}
-              </span>
-            </td>
-            <td class="num" :class="{ 'is-warn': f.defects.open }">{{ f.defects.open }} / {{ f.defects.total }}</td>
-            <td class="num px-col-active">{{ ago(f.last_activity) }}</td>
-          </tr>
-        </tbody>
-      </table>
-      <p v-else class="pl-panel__empty px-ps__empty" data-pl-part="panel-empty" data-testid="project-features-empty">
-        No feature is filed under this project yet.
-      </p>
-    </div>
-
-    <footer class="pl-panel__foot" data-pl-part="panel-foot">
-      <span data-testid="project-features-showing">Showing {{ features.rows.length }} of {{ features.total }}</span>
-      <router-link
-        :to="featuresTo"
-        class="pl-panel__link focus-visible:outline-2 focus-visible:outline-blue-500"
-        data-pl-part="panel-link"
-        data-testid="project-features-all"
-      >All {{ features.total }} in Features →</router-link>
-    </footer>
   </section>
 </template>
 
@@ -181,11 +117,10 @@ const pct = computed(() => (props.head.shipped_pct == null ? null : `${props.hea
 
 .px-ps__band {
     display: flex; align-items: center; gap: 1.5rem; flex-wrap: wrap;
-    padding: 1rem 1.1rem; border-bottom: 1px solid var(--pl-frame);
+    padding: 1rem 1.1rem;
 }
 .px-ps__progress { flex: 1 1 16rem; min-width: 0; display: flex; flex-direction: column; gap: 0.5rem; }
-.px-ps__pct, .px-ps__legend, .px-fig__label, .px-fig__value, .px-ps__table th, .px-ps__stage, .px-ps__tasks,
-.px-ps__table .num {
+.px-ps__pct, .px-ps__legend, .px-fig__label, .px-fig__value {
     font-family: var(--pl-font); letter-spacing: 0.08em; text-transform: uppercase;
 }
 .px-ps__pct { font-size: 10px; color: var(--pl-muted); }
@@ -200,15 +135,14 @@ const pct = computed(() => (props.head.shipped_pct == null ? null : `${props.hea
 .px-cell { display: inline-block; flex: none; }
 .px-cell--stage { width: 14px; height: 14px; }
 .px-cell--mark { width: 9px; height: 9px; }
-.px-cell--task { width: 8px; height: 10px; }
 .px-cell.px-cell[data-tone="spec"] { background: var(--pl-paper); box-shadow: inset 0 0 0 1px var(--pl-muted); }
 .px-cell.px-cell[data-tone="building"] { background: var(--pl-px-b); }
 .px-cell.px-cell[data-tone="shipped"] { background: var(--pl-px-g); }
 .px-cell.px-cell[data-tone="escaped"] { background: var(--pl-px-a); }
 
-:is(.px-ps__legend li, .px-ps__stage).is-building { color: var(--pl-action-text); }
-:is(.px-ps__legend li, .px-ps__stage).is-shipped { color: var(--pl-ship); }
-:is(.px-ps__legend li, .px-ps__stage).is-escaped { color: var(--pl-warn); }
+.px-ps__legend li.is-building { color: var(--pl-action-text); }
+.px-ps__legend li.is-shipped { color: var(--pl-ship); }
+.px-ps__legend li.is-escaped { color: var(--pl-warn); }
 
 .px-ps__figs { display: flex; gap: 0.75rem; flex-wrap: wrap; }
 .px-fig {
@@ -220,25 +154,4 @@ const pct = computed(() => (props.head.shipped_pct == null ? null : `${props.hea
 .px-fig__label { font-size: 9px; color: var(--pl-muted); }
 .px-fig[data-tone="warn"] .px-fig__label, .px-fig[data-tone="warn"] .px-fig__value { color: var(--pl-warn); }
 .px-fig__value { font-size: 16px; font-weight: 400; letter-spacing: 0.08em; text-align: right; font-variant-numeric: tabular-nums; }
-
-.px-ps__table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.px-ps__table th {
-    padding: 0.6rem 1.1rem; border-bottom: 2px solid var(--pl-frame);
-    text-align: left; font-size: 9px; font-weight: 400; color: var(--pl-muted);
-}
-.px-ps__table td { padding: 0.65rem 1.1rem; border-top: 1px solid var(--pl-hair); color: var(--pl-text); }
-.px-ps__table tr:first-child td { border-top: 0; }
-.px-ps__table .num { text-align: right; font-size: 10px; font-variant-numeric: tabular-nums; color: var(--pl-muted); }
-.px-ps__table .num.is-warn { color: var(--pl-warn); }
-.px-ps__title a { color: var(--pl-text); font-weight: 600; text-decoration: none; }
-.px-ps__title a:hover { text-decoration: underline; }
-.px-ps__id { margin-right: 0.5rem; }
-.px-ps__stage { display: inline-flex; align-items: center; gap: 0.5rem; font-size: 10px; color: var(--pl-muted); }
-.px-ps__tasks { display: inline-flex; align-items: center; gap: 0.6rem; font-size: 10px; color: var(--pl-muted); white-space: nowrap; }
-.px-ps__task-cells { display: inline-flex; gap: 2px; }
-.px-ps__empty { margin: 0; }
-
-@media (max-width: 1023.98px) {
-    .px-col-tasks, .px-col-active { display: none; }
-}
 </style>

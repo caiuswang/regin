@@ -1,13 +1,15 @@
 <script setup>
 // The Pipeline's landing tab (designs 1a, 1d, 2a — the Quiet loop): the loop,
-// what to run next, what needs a decision, and the projects — all from one
-// `GET /api/pipeline/overview?project=` read under the shell's scope.
+// the features in flight, what needs a decision, what to run next, and the
+// projects — all from one `GET /api/pipeline/overview?project=` read under the
+// shell's scope.
 import { computed, onActivated, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import api from '../api'
 import Button from '../components/ui/Button.vue'
 import PlSlot from '../components/pipeline/PlSlot.vue'
 import RunNextPanel from '../components/pipeline/RunNextPanel.vue'
+import FeaturesInFlightPanel from '../components/pipeline/FeaturesInFlightPanel.vue'
 import NeedsDecisionPanel from '../components/pipeline/NeedsDecisionPanel.vue'
 import TriageSheet from '../components/pipeline/TriageSheet.vue'
 import PipelineCreateButton from '../components/pipeline/PipelineCreateButton.vue'
@@ -67,13 +69,16 @@ function featuresTo(triageId, stage) {
   return { path: '/features', query }
 }
 
+const featureParts = computed(() => Object.fromEntries(
+  (data.value?.loop.stages.find(s => s.label === 'Features')?.parts || []).map(p => [p.key, p.n])))
+
 const { openCreate } = usePipelineCreate()
 const triaging = ref(false)
 const canWrite = computed(() => api.getStoredUser()?.role !== 'viewer')
 const picker = () => document.querySelector('[data-testid="pipeline-project"]')
 
 useTaskShortcuts({
-  c: () => { if (canWrite.value) openCreate('task') },
+  c: () => { if (canWrite.value) openCreate('feature') },
   // The Overview has no search of its own; the chip's picker owns it.
   '/': () => picker()?.click(),
 })
@@ -94,7 +99,7 @@ onActivated(() => { if (arrived) load(); arrived = true })
 <template>
   <div class="ov" data-testid="overview">
     <Teleport v-if="isCurrentTab && canWrite" defer to="#pipeline-actions">
-      <PipelineCreateButton kind="task" testid="task-new" />
+      <PipelineCreateButton kind="feature" testid="overview-new" />
     </Teleport>
 
     <div v-if="error && !data" class="ov-error" role="alert" data-testid="overview-error">
@@ -113,18 +118,21 @@ onActivated(() => { if (arrived) load(); arrived = true })
         name="ProjectScopePanel"
         v-if="data.project_head && isMdUp"
         :head="data.project_head"
-        :features="data.project_features"
         :features-to="featuresTo()"
         @all="setScope(SCOPE_ALL)"
       />
 
       <div class="ov-grid" :class="{ 'is-busy': loading }">
-        <RunNextPanel :run-next="data.run_next" :running="data.running" :recently-done="data.recently_done" :compact="!isMdUp" :tasks-to="tasksTo" @ran="changed" />
+        <FeaturesInFlightPanel :flight="data.features_in_flight" :parts="featureParts" :features-to="featuresTo" />
         <NeedsDecisionPanel
           :decision="data.needs_decision"
           :compact="!isMdUp"
           :features-to="featuresTo"
           @triage="triaging = true"
+        />
+        <RunNextPanel
+          class="ov-wide" :run-next="data.run_next" :running="data.running" :recently-done="data.recently_done"
+          :compact="!isMdUp" :tasks-to="tasksTo" @ran="changed"
         />
       </div>
 
@@ -148,6 +156,7 @@ onActivated(() => { if (arrived) load(); arrived = true })
     display: grid; gap: 1.25rem; align-items: start;
     grid-template-columns: repeat(2, minmax(0, 1fr));
 }
+.ov-grid > .ov-wide { grid-column: 1 / -1; }
 .ov-grid.is-busy { opacity: 0.7; }
 .ov-loading, .ov-stale { font-size: 12.5px; color: var(--color-fg-muted); }
 .ov-error {

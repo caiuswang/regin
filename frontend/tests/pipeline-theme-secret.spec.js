@@ -7,11 +7,11 @@ import { test, expect } from './auth-fixture.js'
 
 const LOOP = {
   stages: [
+    { label: 'Features', total: 6, parts: [
+      { key: 'spec', label: 'Spec', n: 3 }, { key: 'shipped', label: 'Shipped', n: 3 }] },
     { label: 'Tasks', total: 12, parts: [
       { key: 'idea', label: 'Ideas', n: 4 }, { key: 'done', label: 'Done', n: 5 },
       { key: 'failed', label: 'Failed', n: 3 }] },
-    { label: 'Features', total: 6, parts: [
-      { key: 'spec', label: 'Spec', n: 3 }, { key: 'shipped', label: 'Shipped', n: 3 }] },
     { label: 'Defects', total: 9, parts: [
       { key: 'open', label: 'Open', n: 2 }, { key: 'closed', label: 'Closed', n: 7 }] },
   ],
@@ -23,7 +23,7 @@ async function stubOverview(page) {
   await page.route(/\/api\/pipeline\/overview(\?|$)/, (route) => {
     asked.push(new URL(route.request().url()).search)
     return route.fulfill({ json: {
-      scope: 'all', loop: LOOP, running: { total: 0, rows: [] },
+      scope: 'all', loop: LOOP, features_in_flight: { total: 0, rows: [] }, running: { total: 0, rows: [] },
       run_next: { total: 0, ready: 0, blocked: 0, rows: [] }, needs_decision: { total: 0, rows: [] },
     } })
   })

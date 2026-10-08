@@ -8,8 +8,8 @@ import { test, expect } from './auth-fixture.js'
 const part = (key, n = 0) => ({ key, label: key, n, highlighted: false })
 const LOOP = {
   stages: [
-    { label: 'Tasks', total: 0, parts: ['idea', 'armed', 'running', 'done', 'failed'].map(k => part(k)) },
     { label: 'Features', total: 0, parts: ['spec', 'building', 'shipped', 'escaped'].map(k => part(k)) },
+    { label: 'Tasks', total: 0, parts: ['idea', 'armed', 'running', 'done', 'failed'].map(k => part(k)) },
     { label: 'Defects', total: 0, parts: ['triage', 'open', 'closed'].map(k => part(k)) },
   ],
   fix_tasks: 0,
@@ -32,6 +32,7 @@ const ROWS = [
 function scoped(project, { head = {}, features } = {}) {
   return {
     scope: String(project), loop: LOOP,
+    features_in_flight: { total: 0, rows: [] },
     running: { total: 0, rows: [] },
     run_next: { total: 0, ready: 0, rows: [] },
     needs_decision: { waiting: 0, rows: [] },
@@ -46,6 +47,7 @@ function scoped(project, { head = {}, features } = {}) {
 
 const ALL = {
   scope: 'all', loop: LOOP,
+  features_in_flight: { total: 0, rows: [] },
   running: { total: 0, rows: [] },
   run_next: { total: 0, ready: 0, rows: [] },
   needs_decision: { waiting: 0, rows: [] },
@@ -125,39 +127,14 @@ test.describe('pixel scoped overview', () => {
     expect(border).toBe(warn)
     await expect(page.getByTestId('project-head-spent')).toHaveText(/SPENT\s*\$1,284\.60/, inner)
 
-    const rows = page.getByTestId('project-features').locator('tbody tr')
-    await expect(rows).toHaveCount(5)
-    await expect(rows.first()).toContainText('#131')
-    await expect(rows.first().getByRole('link', { name: 'Live trace follow' })).toHaveAttribute('href', '/features/131')
-    const escaped = page.getByTestId('project-feature-118')
-    await expect(escaped.locator('td').nth(1)).toHaveText('ESCAPED', inner)
-    await expect(escaped.locator('td').nth(2)).toContainText('3 / 3')
-    await expect(escaped.locator('td').nth(3)).toHaveText('1 / 4')
-    await expect(escaped.locator('td').nth(3)).toHaveClass(/is-warn/)
-    await expect(page.getByTestId('project-feature-131').locator('td').nth(3)).not.toHaveClass(/is-warn/)
-    await expect(page.getByTestId('project-feature-131').locator('[data-pl-part="meter-cell"][data-tone="settled"]'))
-      .toHaveCount(2)
+    // The project's features are the Overview's Features panel (F148): the
+    // scope panel is the head alone.
+    await expect(panel.getByTestId('project-features')).toHaveCount(0)
+    await expect(page.getByTestId('project-features-all')).toHaveCount(0)
 
-    await expect(page.getByTestId('project-features-showing')).toHaveText('SHOWING 5 OF 10', inner)
-    await expect(page.getByTestId('project-features-all')).toHaveText('ALL 10 IN FEATURES →', inner)
-    await expect(page.getByTestId('project-features-all')).toHaveAttribute('href', '/features?project=2')
-
-    const stageWord = el => getComputedStyle(el.querySelector('.px-ps__stage')).color
-    const tokenColour = (el, token) => {
-      const probe = document.createElement('span')
-      probe.style.color = `var(${token})`
-      el.appendChild(probe)
-      const c = getComputedStyle(probe).color
-      probe.remove()
-      return c
-    }
-    expect(await escaped.evaluate(stageWord))
-      .toBe(await escaped.evaluate(tokenColour, '--pl-warn'))
-
-    // Between md and lg the panel stays, but Tasks and Active drop out.
+    // Between md and lg the panel stays, and still fits.
     await page.setViewportSize({ width: 800, height: 1000 })
     await expect(page.getByTestId('project-scope')).toBeVisible()
-    await expect(escaped.locator('td').nth(2)).toBeHidden()
     const overflow = await page.evaluate(() => {
       const el = document.querySelector('.content-scroll') || document.documentElement
       return el.scrollWidth - el.clientWidth
@@ -181,13 +158,11 @@ test.describe('pixel scoped overview', () => {
     }))
     await openScoped(page, 'pixel', 5)
 
-    await expect(page.getByTestId('project-features-empty')).toHaveText('No feature is filed under this project yet.')
-    await expect(page.getByTestId('project-features').locator('tbody tr')).toHaveCount(0)
+    await expect(page.getByTestId('project-features')).toHaveCount(0)
     await expect(page.getByTestId('project-head-cells').locator('[data-pl-part="meter-cell"]')).toHaveCount(0)
     await expect(page.getByTestId('project-head-count')).toHaveText('0 FEATURES', inner)
     await expect(page.getByTestId('project-head-pct')).toHaveText('NOTHING LIVE', inner)
     await expect(page.getByTestId('project-head-defects')).not.toHaveAttribute('data-tone', /.+/)
     await expect(page.getByTestId('project-head-spent')).toHaveText(/SPENT\s*—/, inner)
-    await expect(page.getByTestId('project-features-showing')).toHaveText('SHOWING 0 OF 0', inner)
   })
 })

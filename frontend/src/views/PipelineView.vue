@@ -1,5 +1,5 @@
 <script setup>
-// The pipeline's one workbench: Overview, Tasks and Features behind a one-line
+// The pipeline's one workbench: Overview, Features and Tasks behind a one-line
 // header. Defects and projects are not tabs — defects are reached from the
 // Overview's "Needs a decision", the Features triage rail and expanded feature
 // rows; projects from the chip's picker and the Overview's Projects panel.
@@ -32,9 +32,9 @@ const router = useRouter()
 
 const TABS = [
   { path: '/overview', key: 'overview', label: 'Overview', counted: false },
-  { path: '/tasks', key: 'tasks', label: 'Tasks', counted: true },
   // Defects are reached from the triage rail, so their pages light Features.
   { path: '/features', key: 'features', label: 'Features', counted: true, also: ['/defects'] },
+  { path: '/tasks', key: 'tasks', label: 'Tasks', counted: true },
 ]
 
 function isActive(tab) {
@@ -51,7 +51,7 @@ useShellTheme(() => themed.value)
 const { ready: themeReady } = usePipelineTheme()
 // A detail route is a page of its own, not a tab: it keeps the strip above it
 // but must never be cached, or two ids would share one mount.
-const CACHED_TABS = ['OverviewView', 'TasksView', 'FeaturesView']
+const CACHED_TABS = ['OverviewView', 'FeaturesView', 'TasksView']
 
 const header = usePipelineHeader(() => route.path)
 const { scope, setScope, restoreStored } = usePipelineScope()

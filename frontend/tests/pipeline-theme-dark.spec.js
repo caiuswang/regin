@@ -71,12 +71,19 @@ const runRow = (id, title, action) => ({
 // Fixed timestamps: the screenshot runs under the HAR's frozen clock.
 const OVERVIEW = {
   scope: 'all',
+  features_in_flight: { total: 6, rows: [
+    { id: 131, title: 'Live trace follow', stage: 'building', project_id: 3, last_activity_at: '2026-10-01T09:00:00Z' },
+    { id: 127, title: 'Conversation folding', stage: 'building', project_id: 3, last_activity_at: '2026-10-01T08:00:00Z' },
+    { id: 38, title: 'Span search facets', stage: 'building', project_id: 3, last_activity_at: '2026-09-30T08:00:00Z' },
+    { id: 133, title: 'Pipeline tab memory', stage: 'spec', project_id: 4, last_activity_at: '2026-09-29T08:00:00Z' },
+    { id: 135, title: 'Stage prompts', stage: 'spec', project_id: 4, last_activity_at: '2026-09-28T08:00:00Z' },
+  ] },
   loop: {
     stages: [
-      stage('Tasks', [part('idea', 'Ideas', 3), part('armed', 'Armed', 3), part('running', 'Running', 1),
-        part('done', 'Done', 3), part('failed', 'Failed', 2)]),
       stage('Features', [part('spec', 'Spec', 3), part('building', 'Building', 3),
         part('shipped', 'Shipped', 3), part('escaped', 'Escaped', 2)]),
+      stage('Tasks', [part('idea', 'Ideas', 3), part('armed', 'Armed', 3), part('running', 'Running', 1),
+        part('done', 'Done', 3), part('failed', 'Failed', 2)]),
       stage('Defects', [part('triage', 'Triage', 4), part('open', 'Open', 6), part('closed', 'Closed', 3)]),
     ],
     fix_tasks: 3,

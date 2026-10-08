@@ -2,7 +2,8 @@
 
 | Panel           | Drawn from                                         | Order                                   | Cap |
 |-----------------|----------------------------------------------------|-----------------------------------------|-----|
-| loop            | the three tab populations, split into their parts  | fixed                                   | —   |
+| loop            | the three tab populations, split into their parts  | Features, Tasks, Defects                | —   |
+| features_in_flight | features at spec or building                    | last activity, desc                     | 5   |
 | running         | running tasks, feature steps included              | latest attempt started, desc            | 6   |
 | run_next        | armed tasks, feature steps included                | dependency-clear first, priority, id    | 6   |
 | needs_decision  | the triage queue (`defects.store.in_queue`), unscoped | newest first                         | 3   |
@@ -12,7 +13,9 @@
 
 Every loop stage sums its parts, and the Tasks and Features stages are the
 tab strip's own statements (`lib.pipeline.counts`), so a loop total and the
-tab count under the same scope cannot disagree.
+tab count under the same scope cannot disagree. Features in flight reads the
+same feature index under a two-stage filter, so its `total` is the Features
+stage's Spec and Building parts summed.
 
 Run next is not the Tasks tab's population: the tab lists loose tasks and
 reaches a feature's steps from the feature, while "what can run next" is
@@ -34,6 +37,7 @@ from lib.features import events as events_module
 from lib.features import index as feature_index
 from lib.orm import SessionLocal
 from lib.orm.models.defects import STATUS_CLOSED, STATUS_OPEN, Defect
+from lib.orm.models.features import Feature
 from lib.orm.models.trace import Session as TraceSession, TurnUsage
 from lib.orm.models.tasks import (
     AgentTask, TASK_KIND_FIX, TASK_STATUS_ARMED,
@@ -55,6 +59,8 @@ RUNNING_CAP = 6
 NEEDS_DECISION_CAP = 3
 RECENTLY_DONE_CAP = 5
 PROJECT_FEATURES_CAP = 5
+FEATURES_IN_FLIGHT_CAP = 5
+_IN_FLIGHT = (events_module.STAGE_SPEC, events_module.STAGE_BUILDING)
 
 _TASK_PARTS = ((TASK_STATUS_IDEA, "Ideas"), (TASK_STATUS_ARMED, "Armed"),
                (TASK_STATUS_RUNNING, "Running"), (TASK_STATUS_DONE, "Done"),
@@ -130,7 +136,7 @@ def _fix_tasks_carrying_defects(session, scope) -> int:
 
 
 def _loop(session, scope) -> dict:
-    stages = [_tasks_stage(session, scope), _features_stage(scope),
+    stages = [_features_stage(scope), _tasks_stage(session, scope),
               _defects_stage(session, scope)]
     fixes = _fix_tasks_carrying_defects(session, scope)
     return {"stages": stages, "fix_tasks": fixes}
@@ -266,6 +272,19 @@ def _feature_filters(scope, **extra) -> dict:
     return {"project_id": project_id, "unassigned": unassigned, **extra}
 
 
+def _features_in_flight(session, scope) -> dict:
+    found, matched = feature_index.rows(
+        _feature_filters(scope, stages=_IN_FLIGHT, sort="activity:desc"),
+        size=FEATURES_IN_FLIGHT_CAP)
+    filed = dict(session.exec(select(Feature.id, Feature.project_id).where(
+        Feature.id.in_([row.id for row in found]))).all()) if found else {}
+    return {"total": matched,
+            "rows": [{"id": row.id, "title": row.title, "stage": row.stage,
+                      "project_id": filed.get(row.id),
+                      "last_activity_at": row.last_activity}
+                     for row in found]}
+
+
 def _project_head(scope: int) -> dict:
     summary = projects_module.summary_for(scope)
     live = summary.live_features
@@ -296,6 +315,7 @@ def overview(scope: int | str = SCOPE_ALL) -> dict:
     head = _project_head(scope) if isinstance(scope, int) else None
     with SessionLocal() as session:
         body = {"scope": str(scope), "loop": _loop(session, scope),
+                "features_in_flight": _features_in_flight(session, scope),
                 "running": _running(session, scope),
                 "run_next": _run_next(session, scope),
                 "recently_done": _recently_done(session, scope),

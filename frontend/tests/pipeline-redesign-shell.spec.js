@@ -16,11 +16,11 @@ const COUNTS = { tasks: 128, features: 24, defects: 40 }
 const part = (key, label, n, highlighted = false) => ({ key, label, n, highlighted })
 const LOOP = {
   stages: [
+    { label: 'Features', total: 24, parts: [part('spec', 'Spec', 5), part('building', 'Building', 7),
+      part('shipped', 'Shipped', 10), part('escaped', 'Escaped', 2, true)] },
     { label: 'Tasks', total: 128, parts: [part('idea', 'Ideas', 42), part('armed', 'Armed', 9),
       part('running', 'Running', 2), part('done', 'Done', 71),
       part('failed', 'Failed', 4, true)] },
-    { label: 'Features', total: 24, parts: [part('spec', 'Spec', 5), part('building', 'Building', 7),
-      part('shipped', 'Shipped', 10), part('escaped', 'Escaped', 2, true)] },
     { label: 'Defects', total: 40, parts: [part('triage', 'Triage', 3, true), part('open', 'Open', 6),
       part('closed', 'Closed', 31)] },
   ],
@@ -60,6 +60,11 @@ function overview({ empty = false, project = null, loop = LOOP } = {}) {
   const body = {
     scope: project ? String(project) : 'all',
     loop,
+    features_in_flight: empty ? { total: 0, rows: [] } : {
+      total: 12,
+      rows: FEATURES.filter(f => f.stage === 'spec' || f.stage === 'building').map(f => ({
+        id: f.id, title: f.title, stage: f.stage, project_id: project, last_activity_at: f.last_activity })),
+    },
     running: empty ? { total: 0, rows: [] } : RUNNING,
     run_next: empty ? { total: 0, ready: 0, rows: [] } : {
       total: 9, ready: 4, blocked: 5,
@@ -203,11 +208,11 @@ test('test_pipeline_shell_three_tabs_one_line_header', async ({ page }) => {
   const title = header.locator('.page-title')
   const chip = page.getByTestId('pipeline-project')
   const updated = page.getByTestId('pipeline-updated')
-  const create = page.locator('#pipeline-actions [data-testid="task-new"]')
+  const create = page.locator('#pipeline-actions [data-testid="overview-new"]')
   await expect(title).toHaveText('Pipeline')
   await expect(chip).toContainText('All projects')
   await expect(updated).toHaveText(/^Updated /)
-  await expect(create).toContainText('New task')
+  await expect(create).toContainText('New feature')
   await expect(create.locator('kbd')).toHaveText('c')
   // One row: every piece shares a vertical band with the title.
   const band = await title.boundingBox()
@@ -219,7 +224,7 @@ test('test_pipeline_shell_three_tabs_one_line_header', async ({ page }) => {
   await expect(header.locator('.page-eyebrow, .page-subtitle')).toHaveCount(0)
 
   const tabs = page.getByTestId('pipeline-tabs').locator('a')
-  await expect(tabs).toHaveText(['Overview', 'Tasks 128', 'Features 24'])
+  await expect(tabs).toHaveText(['Overview', 'Features 24', 'Tasks 128'])
   await expect(page.getByTestId('pipeline-tab-overview')).toHaveClass(/is-active/)
 })
 
@@ -254,7 +259,7 @@ test('test_pipeline_hotkeys', async ({ page }) => {
   await expect(page.getByTestId('overview-loop')).toBeVisible()
 
   await page.keyboard.press('c')
-  await expect(page.getByRole('dialog', { name: 'New task' })).toBeVisible()
+  await expect(page.getByRole('dialog', { name: /Declare a feature/ })).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(page.getByRole('dialog')).toHaveCount(0)
 
@@ -336,16 +341,16 @@ test('test_overview_panels_and_empty_states', async ({ page }) => {
   await expect(page.getByTestId('needs-decision-attribute-94')).toBeVisible()
   await expect(page.getByTestId('projects-panel').locator('li')).toHaveCount(2)
 
-  // Pick a project: the Projects panel becomes the breadcrumb head + ≤5 features.
+  // Pick a project: the Projects panel becomes the breadcrumb head; the
+  // project's features stay in the Features panel, listed once.
   await page.getByTestId('pipeline-project').click()
   await page.getByTestId('project-picker-row-3').click()
   await expect(page).toHaveURL(/project=3/)
   await expect(page.getByTestId('projects-panel')).toHaveCount(0)
   await expect(page.getByTestId('project-head')).toContainText('regin-core')
   await expect(page.getByTestId('project-head')).toContainText('57% shipped')
-  const rows = page.getByTestId('project-features').locator('tbody tr')
-  expect(await rows.count()).toBeLessThanOrEqual(5)
-  await expect(page.getByTestId('project-features-all')).toHaveText('All 14 in Features →')
+  await expect(page.getByTestId('project-features')).toHaveCount(0)
+  await expect(page.getByTestId('features-in-flight-all')).toHaveAttribute('href', '/features?project=3')
   await expect(page.getByTestId('pipeline-project')).toContainText('regin-core')
   await page.getByTestId('pipeline-project-clear').click()
   await expect(page.getByTestId('projects-panel')).toBeVisible()
@@ -474,8 +479,8 @@ test('test_overview_quiet_loop_facts_and_links', async ({ page, pipelineTheme })
   await expect(page).toHaveURL(/\/features$/)
 
   // A stage with nothing failed drops the failed fact.
-  state.loop = { ...LOOP, stages: [{ ...LOOP.stages[0], total: 124, parts: LOOP.stages[0].parts.map(p =>
-    (p.key === 'failed' ? { ...p, n: 0 } : p)) }, LOOP.stages[1], LOOP.stages[2]] }
+  state.loop = { ...LOOP, stages: [LOOP.stages[0], { ...LOOP.stages[1], total: 124, parts: LOOP.stages[1].parts.map(p =>
+    (p.key === 'failed' ? { ...p, n: 0 } : p)) }, LOOP.stages[2]] }
   await page.goto('/overview')
   await expect(facts('tasks')).toHaveText(['2 running', '4 ready'])
   await expect(page.getByTestId('loop-fact-failed')).toHaveCount(0)
@@ -1198,8 +1203,9 @@ test('test_action_toasts_link_the_object', async ({ page }) => {
   await expect(flash).toContainText('Stopped #414')
   await expect(link).toHaveAttribute('href', '/tasks/414')
 
-  // Create → links the new task.
-  await page.getByTestId('task-new').click()
+  // Create → links the new task (the Overview defaults to a feature).
+  await page.getByTestId('pipeline-new').click()
+  await page.getByTestId('pipeline-new-task').click()
   await page.getByTestId('task-title').fill('made')
   await page.getByTestId('task-submit').click()
   await expect(flash).toContainText('Task #902 created')

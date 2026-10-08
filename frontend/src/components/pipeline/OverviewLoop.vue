@@ -1,5 +1,5 @@
 <script setup>
-// Tasks → Features → Defects, the loop the three tabs read (designs 1a, 1d,
+// Features → Tasks → Defects, the loop the three tabs read (designs 1a, 1d,
 // 2a — the Quiet loop). Every part stays in the bar and its accessible name;
 // the facts line prints only the counts that move or ask for a decision.
 import { computed } from 'vue'

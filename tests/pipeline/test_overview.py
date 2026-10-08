@@ -108,7 +108,7 @@ def test_overview_loop_parts_sum_to_totals(flask_client, native_task,
     assert [p["n"] for p in stages["Defects"]["parts"]] == [1, 1, 1]
     highlighted = [p["label"] for stage in stages.values()
                    for p in stage["parts"] if p["highlighted"]]
-    assert highlighted == ["Failed", "Escaped", "Triage"]
+    assert highlighted == ["Escaped", "Failed", "Triage"]
 
 
 def test_overview_run_next_orders_dependency_clear_first(flask_client,
@@ -396,3 +396,52 @@ def test_recently_done_honours_project_scope_and_cap(flask_client,
 def test_recently_done_empty(flask_client, native_task):
     native_task(title="armed", status=TASK_STATUS_ARMED)
     assert _overview(flask_client)["recently_done"] == {"week": 0, "rows": []}
+
+
+def _active_at(feature_id: int, at: str):
+    with SessionLocal() as session:
+        session.exec(text("UPDATE feature_events SET at = :a"
+                          " WHERE feature_id = :i").bindparams(a=at, i=feature_id))
+        session.commit()
+
+
+def test_overview_loop_is_feature_first(flask_client, native_task,
+                                        feature_row, defect_row):
+    _seed_everything(native_task, feature_row, defect_row)
+
+    for scope in (None, "none"):
+        loop = _overview(flask_client, scope)["loop"]
+        assert [s["label"] for s in loop["stages"]] == [
+            "Features", "Tasks", "Defects"]
+        assert "fix_tasks" in loop
+
+
+def test_features_in_flight_total_matches_loop(flask_client, native_task,
+                                               feature_row, defect_row,
+                                               core_project):
+    _seed_everything(native_task, feature_row, defect_row)
+    old = feature_row("old spec")
+    newest = feature_row("newest build", stage=events.BUILD_STARTED)
+    _active_at(old.id, "2020-01-01 00:00:00")
+    _active_at(newest.id, "2099-01-01 00:00:00")
+
+    for scope in (None, "none", 7):
+        body = _overview(flask_client, scope)
+        parts = {p["key"]: p["n"]
+                 for p in _stages(body)["Features"]["parts"]}
+        flight = body["features_in_flight"]
+        assert flight["total"] == parts["spec"] + parts["building"]
+        assert len(flight["rows"]) == min(flight["total"], 5)
+        assert {r["stage"] for r in flight["rows"]} <= {"spec", "building"}
+        stamps = [r["last_activity_at"] for r in flight["rows"]]
+        assert stamps == sorted(stamps, reverse=True)
+
+    everything = _overview(flask_client)["features_in_flight"]
+    assert everything["total"] == 11
+    assert everything["rows"][0]["id"] == newest.id
+    assert old.id not in [r["id"] for r in everything["rows"]]
+    scoped = _overview(flask_client, 7)["features_in_flight"]
+    assert scoped["total"] == 6
+    assert {r["project_id"] for r in scoped["rows"]} == {7}
+    assert set(everything["rows"][0]) == {
+        "id", "title", "stage", "project_id", "last_activity_at"}

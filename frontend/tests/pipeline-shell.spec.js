@@ -12,8 +12,8 @@ import { test, expect } from './auth-fixture.js'
 
 const TABS = [
   { testid: 'pipeline-tab-overview', path: '/overview' },
-  { testid: 'pipeline-tab-tasks', path: '/tasks' },
   { testid: 'pipeline-tab-features', path: '/features' },
+  { testid: 'pipeline-tab-tasks', path: '/tasks' },
 ]
 
 test('one rail entry, not three', async ({ page }) => {
@@ -65,7 +65,7 @@ test("each tab's own controls ride up into the shell header", async ({ page }) =
   await expect(page.locator('#pipeline-actions [data-testid="task-new"]')).toHaveCount(0)
   await page.getByTestId('pipeline-tab-overview').click()
   await expect(page.locator('#pipeline-actions [data-testid="declare-feature"]')).toHaveCount(0)
-  await expect(page.locator('#pipeline-actions [data-testid="task-new"]')).toHaveCount(1)
+  await expect(page.locator('#pipeline-actions [data-testid="overview-new"]')).toHaveCount(1)
 })
 
 test('the shell renders no console error on a cold load of any tab',

@@ -19,12 +19,12 @@ const props = defineProps({
 const MAX_ACTORS = 4
 
 const ZONES = [
+  { key: 'workshop', name: 'Workshop', station: 'anvil', groups: [
+    { key: 'escaped', stage: 'Features', words: 'escaped', sprite: 'flag.escaped', tone: 'warn' },
+  ] },
   { key: 'board', name: 'Task board', station: 'board', groups: [
     { key: 'running', stage: 'Tasks', words: 'running', sprite: 'bot.running', tone: 'run' },
     { key: 'failed', stage: 'Tasks', words: 'failed', sprite: 'bot.failed', tone: 'fail' },
-  ] },
-  { key: 'workshop', name: 'Workshop', station: 'anvil', groups: [
-    { key: 'escaped', stage: 'Features', words: 'escaped', sprite: 'flag.escaped', tone: 'warn' },
   ] },
   { key: 'den', name: 'Bug den', station: 'den', groups: [
     { key: 'triage', stage: 'Defects', words: 'to triage', sprite: 'bug', tone: 'warn' },
@@ -67,7 +67,7 @@ const note = computed(() => loopNote(props.loop.fix_tasks))
   >
     <header class="pl-panel__head" data-pl-part="panel-head">
       <h2 class="pl-panel__title" data-pl-part="panel-title">The loop</h2>
-      <span class="pl-panel__sub px-loop__path" data-pl-part="panel-meta">Tasks → Features → Defects</span>
+      <span class="pl-panel__sub px-loop__path" data-pl-part="panel-meta">Features → Tasks → Defects</span>
     </header>
 
     <div class="px-scene-box" data-testid="loop-scene-box">

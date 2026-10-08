@@ -407,6 +407,10 @@ def _where(spec: dict) -> tuple[str, dict]:
     if spec["stage"]:
         clauses.append("stage = :stage")
         binds["stage"] = spec["stage"]
+    elif spec.get("stages"):
+        names = [f"stage_{i}" for i in range(len(spec["stages"]))]
+        clauses.append(f"stage IN ({', '.join(':' + n for n in names)})")
+        binds.update(zip(names, spec["stages"]))
     elif not spec.get("any_stage"):
         clauses.append(f"stage <> '{events_module.STAGE_ABANDONED}'")
     if spec["unassigned"]:

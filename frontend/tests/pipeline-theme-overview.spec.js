@@ -16,10 +16,10 @@ function loopOf({ running = 0, failed = 0, escaped = 0, triage = 0, open = 0, re
   const stage = (label, parts) => ({ label, total: parts.reduce((s, p) => s + p.n, 0), parts })
   return {
     stages: [
-      stage('Tasks', [part('idea', 'Ideas', rest), part('armed', 'Armed', rest), part('running', 'Running', running),
-        part('done', 'Done', rest), part('failed', 'Failed', failed)]),
       stage('Features', [part('spec', 'Spec', rest), part('building', 'Building', rest),
         part('shipped', 'Shipped', rest), part('escaped', 'Escaped', escaped)]),
+      stage('Tasks', [part('idea', 'Ideas', rest), part('armed', 'Armed', rest), part('running', 'Running', running),
+        part('done', 'Done', rest), part('failed', 'Failed', failed)]),
       stage('Defects', [part('triage', 'Triage', triage), part('open', 'Open', open), part('closed', 'Closed', rest)]),
     ],
     fix_tasks: fix,
@@ -41,6 +41,7 @@ function overview(loop, { busy = false, project = null } = {}) {
   const body = {
     scope: project ? String(project) : 'all',
     loop,
+    features_in_flight: { total: 0, rows: [] },
     running: busy
       ? { total: 1, rows: [{ id: 418, title: 'Stream span events', status: 'running', priority: 'high', kind: 'task',
           feature_id: 131, feature_title: 'Live trace follow', step: null, fixes_defects: [],
@@ -105,7 +106,7 @@ test.describe('pixel overview', () => {
       await expect(group(page, key).locator('[data-actor]')).toHaveCount(Math.min(4, Number(label.split(' ')[0])))
     }
     await expect(page.getByTestId('loop-scene')).toHaveAttribute('aria-label',
-      'Task board: 1 running, 2 failed. Workshop: 2 escaped. Bug den: 4 to triage, 6 open.')
+      'Workshop: 2 escaped. Task board: 1 running, 2 failed. Bug den: 4 to triage, 6 open.')
 
     await page.unroute(/\/api\/pipeline\/overview/)
     await stubOverview(page, overview(loopOf({ running: 1, failed: 2, escaped: 2, triage: 4, open: 7, rest: 3 })))
