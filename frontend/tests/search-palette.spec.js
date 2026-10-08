@@ -312,7 +312,9 @@ test.describe('full-text search palette', () => {
     await expect(body.locator('mark').first()).toHaveText(NEEDLE)
   })
 
-  test('sessions keep the plain line preview', async ({ page }) => {
+  // A session is a process entity (R5): its preview is the relations walk,
+  // not the matched lines a document kind gets.
+  test('sessions preview as an entity', async ({ page }) => {
     await seed(page)
     await openPalette(page)
     // Other sessions are an Everywhere answer — inside one session they are
@@ -322,7 +324,8 @@ test.describe('full-text search palette', () => {
     const rows = page.locator(`${PANEL} [role="group"][aria-label="Sessions"] [role="option"]`)
     if (!(await rows.count())) test.skip(true, 'no other sessions in this environment')
     await rows.first().click()
-    await expect(page.locator(`${PANEL} .preview-line`).first()).toBeVisible()
+    await expect(page.locator(`${PANEL} .entity-preview[data-kind="session"]`)).toBeVisible()
+    await expect(page.locator(`${PANEL} .preview-line`)).toHaveCount(0)
     await expect(page.locator(`${PANEL} .present-content`)).toHaveCount(0)
   })
 

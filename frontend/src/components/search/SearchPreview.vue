@@ -7,6 +7,7 @@ import SearchProsePreview from './SearchProsePreview.vue'
 import SearchSpanPreview from './SearchSpanPreview.vue'
 import SearchFilePreview from './SearchFilePreview.vue'
 import SearchHitList from './SearchHitList.vue'
+import SearchEntityPreview from './SearchEntityPreview.vue'
 import { HIT_LINE_CAP, KIND_META, hitLines } from '../../utils/searchDocs.js'
 
 const props = defineProps({
@@ -17,8 +18,17 @@ const props = defineProps({
   // the palette, because both are driven by keys the palette traps.
   hitIndex: { type: Number, default: 0 },
   mode: { type: String, default: 'read' },
+  // A process entity previews through the walk (useEntityWalk): its stack,
+  // the picked relation and the R6 actions. Empty for every document kind.
+  entityStack: { type: Array, default: () => [] },
+  pickKey: { type: String, default: null },
+  actions: { type: Object, default: null },
+  copied: { type: Boolean, default: false },
 })
-const emit = defineEmits(['open', 'open-file', 'step', 'pick-hit', 'mode'])
+const emit = defineEmits([
+  'open', 'open-file', 'step', 'pick-hit', 'mode',
+  'follow', 'pop-to', 'act', 'go', 'retry',
+])
 
 const doc = computed(() => props.row?.doc || null)
 const meta = computed(() => KIND_META[doc.value?.kind] || KIND_META.span)
@@ -76,7 +86,19 @@ const openLabel = computed(() => OPEN_LABEL[doc.value?.kind] || 'Open')
 </script>
 
 <template>
-  <div class="search-preview">
+  <SearchEntityPreview
+    v-if="entityStack.length"
+    :stack="entityStack"
+    :pick-key="pickKey"
+    :actions="actions"
+    :copied="copied"
+    @follow="k => emit('follow', k)"
+    @pop-to="d => emit('pop-to', d)"
+    @act="w => emit('act', w)"
+    @go="h => emit('go', h)"
+    @retry="() => emit('retry')"
+  />
+  <div v-else class="search-preview">
     <template v-if="doc">
       <div class="preview-head">
         <div class="preview-kind">
