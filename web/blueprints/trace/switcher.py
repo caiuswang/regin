@@ -23,6 +23,7 @@ from lib.fulltext.span_docs import category_of, span_body
 from lib.orm.engine import get_connection
 from lib.orm.models import Session as SessionModel
 from lib.orm import SessionLocal
+from lib.palette.rows import session_rows
 from lib.trace.alias import aliased_run_ids, trace_group
 from lib.trace.pending_spans import HUMAN_BLOCKER_NAMES
 from web.blueprints.trace import trace_bp
@@ -325,6 +326,21 @@ def _row_payload(conn, row, phase: str, *, with_tail: bool) -> dict:
     }
 
 
+def _with_rows(conn, sessions: list[dict]) -> list[dict]:
+    """Each roster row's `PaletteRow`, built for the page in one batch and
+    phased by the verdict the roster already ranked on. A builder failure
+    costs the rows, never the roster."""
+    try:
+        rows = session_rows(conn, [s['trace_id'] for s in sessions],
+                            phases={s['trace_id']: s['phase'] for s in sessions})
+    except Exception:
+        log.error('palette_rows_failed', exc_info=True)
+        rows = {}
+    for entry in sessions:
+        entry['row'] = rows.get(entry['trace_id'])
+    return sessions
+
+
 def _payload(sessions: list[dict]) -> dict:
     return jsonify({
         'sessions': sessions,
@@ -352,8 +368,9 @@ def _id_lookup(prefix: str, *, with_tail: bool):
     rows = _rows_by_id_prefix(prefix, ID_LOOKUP_LIMIT)
     conn = get_connection()
     try:
-        sessions = [_row_payload(conn, row, _phase_of(row), with_tail=with_tail)
-                    for row in rows]
+        sessions = _with_rows(conn, [
+            _row_payload(conn, row, _phase_of(row), with_tail=with_tail)
+            for row in rows])
     finally:
         conn.close()
     log.read('switcher_id_lookup', prefix_len=len(prefix), count=len(sessions))
@@ -395,8 +412,9 @@ def api_sessions_switcher():
     ranked.sort(key=lambda pair: _rank(pair[1]))
     conn = get_connection()
     try:
-        sessions = [_row_payload(conn, row, phase, with_tail=with_tail)
-                    for row, phase in ranked[:limit]]
+        sessions = _with_rows(conn, [
+            _row_payload(conn, row, phase, with_tail=with_tail)
+            for row, phase in ranked[:limit]])
     finally:
         conn.close()
     log.read('switcher_roster', count=len(sessions))

@@ -8,6 +8,7 @@ from lib.activity_log import get_activity_logger
 from lib.fulltext import DEFAULT_LIMIT, SCOPE_GLOBAL, SCOPE_SESSION, search
 from lib.fulltext.docs import KIND_ORDER
 from lib.orm.engine import get_connection
+from lib.palette.rows import attach_rows
 from lib.trace.alias import trace_group
 
 search_bp = Blueprint("search", __name__)
@@ -60,6 +61,15 @@ def _scoped_trace_ids(conn, raw: str) -> list[str]:
     return group or [trace_id]
 
 
+def _attach_rows(conn, payload: dict) -> None:
+    """Rows ride on top of the documents rather than inside the fan-out, so a
+    row builder failing costs the rows — never the matches."""
+    try:
+        attach_rows(conn, payload.get("groups") or [])
+    except Exception:
+        log.error("palette_rows_failed", exc_info=True)
+
+
 @search_bp.route("/api/search")
 def api_search():
     query = (request.args.get("q") or "").strip()
@@ -71,6 +81,7 @@ def api_search():
         trace_ids = _scoped_trace_ids(conn, request.args.get("session") or "")
         payload = search(conn, query, _requested_kinds(), trace_ids, _limit(),
                          scope, _offset())
+        _attach_rows(conn, payload)
     finally:
         conn.close()
     return jsonify(payload)
