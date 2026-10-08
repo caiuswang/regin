@@ -105,9 +105,11 @@ def create_app(replica: bool = False):
     from web.blueprints.meta import meta_bp
     app.register_blueprint(meta_bp)
 
-    # ── Full-text search across spans, patterns, sessions, files ─
+    # ── Full-text search + the palette's address resolver ───────
     from web.blueprints.search import search_bp
     app.register_blueprint(search_bp)
+    from web.blueprints.palette import palette_bp
+    app.register_blueprint(palette_bp)
 
     # ── Plans + plan-sessions (extracted to blueprint) ───────────
     from web.blueprints.plans import plans_bp

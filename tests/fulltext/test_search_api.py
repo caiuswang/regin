@@ -9,7 +9,7 @@ import pytest
 
 from lib import fulltext
 from lib.fulltext import SCOPE_GLOBAL, search
-from lib.fulltext.docs import KIND_ORDER, MIN_QUERY_CHARS
+from lib.fulltext.docs import ENTITY_KINDS, KIND_ORDER, MIN_QUERY_CHARS
 
 
 @pytest.fixture
@@ -39,7 +39,8 @@ def conn(tmp_path, monkeypatch):
 
 def test_groups_render_in_the_fixed_kind_order(conn):
     payload = search(conn, "redis", None, ["t1"])
-    assert [g["kind"] for g in payload["groups"]] == list(KIND_ORDER)
+    assert [g["kind"] for g in payload["groups"]] == [
+        k for k in KIND_ORDER if k not in ENTITY_KINDS]
 
 
 def test_a_short_query_is_held_and_issues_no_group(conn):
