@@ -104,6 +104,19 @@ export function elapsedLabel(row, clock) {
   return ACTIVE_STATES.has(stateOf(row)) ? _duration(ms) : `${_duration(ms)} ago`
 }
 
+// The entity preview's compact age ("14m", "2h", "3d"). Session stamps are
+// naive host-local, so they go through the server clock like the roster's do;
+// read as UTC, every session in a UTC+N browser is hours in the future.
+export function sessionAge(iso, clock) {
+  const ms = serverAgeMs(iso, clock)
+  if (ms == null) return ''
+  const min = Math.floor(ms / 60000)
+  if (min < 1) return 'just now'
+  if (min < 60) return `${min}m`
+  const hr = Math.floor(min / 60)
+  return hr < 24 ? `${hr}h` : `${Math.floor(hr / 24)}d`
+}
+
 export function rosterMeta(row, clock) {
   const parts = [`t${row?.turn ?? 0}`]
   if (row?.context_pct != null) parts.push(`ctx ${Math.round(row.context_pct)}%`)

@@ -18,6 +18,20 @@ export const MIN_QUERY_CHARS = 2
 export const ID_SIGIL = '#'
 export const MIN_ID_CHARS = 4
 
+// Why a `#` lookup lists nothing: still too short to be an id, or no id has
+// that prefix. `title` is empty for the second — it is a plain answer, not a
+// state to wait out.
+export function lookupNote(prefix) {
+  if (prefix.length < MIN_ID_CHARS) {
+    return {
+      title: 'Keep typing the session id',
+      body: `Session ids resolve from ${MIN_ID_CHARS} characters — “#${prefix}” could be several `
+        + `sessions. Type ${MIN_ID_CHARS - prefix.length} more, or search the prompt text instead.`,
+    }
+  }
+  return { title: '', body: `No session id starts with ${prefix}.` }
+}
+
 // The trace-id prefix a query addresses, or null if it is an ordinary search.
 // Returns '' for a bare '#' — the reader has declared intent and has not
 // finished typing, which is a different state from "not addressing anything".
@@ -575,4 +589,24 @@ export function caretAtEnd(input) {
   if (input?.selectionStart == null) return true
   const end = input.value.length
   return input.selectionStart === end && input.selectionEnd === end
+}
+
+// One rail chip as the palette shows it. In the switcher the Sessions chip
+// counts the ROSTER, not the search corpus: with an empty query the corpus is
+// empty by definition, so the chip would read 0 beside a list of twelve rows.
+// With nothing typed no kind was asked anything, so a count would be a 0 that
+// means "not searched" beside a disabled chip that means "searched, none".
+export function railFacet(f, { switcher, held, rosterCount, activeLabel }) {
+  const roster = switcher && f.kind === 'session'
+  const unasked = held && !roster
+  let count = f.text
+  if (roster) count = String(rosterCount)
+  else if (unasked) count = ''
+  return {
+    ...f,
+    icon: KIND_META[f.kind]?.icon || 'list',
+    active: f.label === activeLabel,
+    count,
+    disabled: !roster && !unasked && f.disabled,
+  }
 }

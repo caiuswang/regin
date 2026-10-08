@@ -34,16 +34,18 @@ export function nodeOf({ kind, id, ref, title }) {
   const base = kind === 'session'
     ? sessionNode(ref, id)
     : { kind, id: id ?? REF_ID.exec(ref || '')?.[1] ?? null }
-  return { ...base, ref: ref || '', title: title || '', status: 'loading', data: null, session: null }
+  return {
+    ...base, ref: ref || '', title: title || '', status: 'loading', data: null, session: null, clock: null,
+  }
 }
 
 // A roster row is already the switcher's answer for that session — its tail
 // included — so the walk starts from it instead of looking the id up again.
-export function sessionOrigin(row) {
+export function sessionOrigin(row, clock = null) {
   if (!row?.trace_id) return null
   const { ref, title } = paletteRowOf(row)
   const node = nodeOf({ kind: 'session', id: row.trace_id, ref, title })
-  return { ...node, session: row }
+  return { ...node, session: row, clock }
 }
 
 export function originOf(entry) {
@@ -52,8 +54,10 @@ export function originOf(entry) {
   return nodeOf({ kind: doc.kind, id: doc.id, ref: doc.row.ref, title: doc.row.title })
 }
 
-async function lookupSession(prefix) {
+async function lookupSession(node) {
+  const prefix = node.prefix
   const data = await api.get(`/session-switcher?id=${encodeURIComponent(prefix)}&tail=1`)
+  node.clock = { local: data.server_now, utc: data.server_now_utc, atMs: Date.now() }
   const rows = data.sessions || []
   return rows.find(r => r.trace_id === prefix)
     || rows.find(r => r.trace_id.startsWith(prefix)) || rows[0] || null
@@ -61,7 +65,7 @@ async function lookupSession(prefix) {
 
 async function hydrate(node) {
   if (node.kind === 'session' && !node.session) {
-    node.session = await lookupSession(node.prefix)
+    node.session = await lookupSession(node)
     if (!node.id) node.id = node.session?.trace_id || null
     if (!node.id) throw new Error(`no session ${node.ref}`)
   }
@@ -225,7 +229,7 @@ export function useEntityWalk() {
 // search cursor otherwise. Keyed on the row, not the row object: a streaming
 // group (or the roster's poll) rebuilds its rows without the cursor moving,
 // and that must not unwind a walk. Closing the palette drops the walk.
-export function trackWalkOrigin(walk, { open, roster, rosterRow, activeRow }) {
+export function trackWalkOrigin(walk, { open, roster, rosterRow, activeRow, clock }) {
   const key = computed(() => {
     if (!open.value) return null
     if (roster.value) return rosterRow.value ? `roster:${rosterRow.value.trace_id}` : null
@@ -233,13 +237,16 @@ export function trackWalkOrigin(walk, { open, roster, rosterRow, activeRow }) {
   })
   watch(key, () => {
     if (!key.value) walk.start(null)
-    else if (roster.value) walk.start(sessionOrigin(rosterRow.value))
+    else if (roster.value) walk.start(sessionOrigin(rosterRow.value, clock?.value))
     else walk.reset(activeRow.value)
   }, { immediate: true })
   // The origin was seeded from the roster row; each poll brings a fresher tail
   // for the same session, and the preview should read it.
   watch(rosterRow, (row) => {
     const origin = walk.origin.value
-    if (roster.value && row && origin?.id === row.trace_id) origin.session = row
+    if (roster.value && row && origin?.id === row.trace_id) {
+      origin.session = row
+      origin.clock = clock?.value ?? origin.clock
+    }
   })
 }

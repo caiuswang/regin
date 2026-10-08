@@ -58,12 +58,15 @@ def _text(payload):
 def test_entity_ref_resolves_exactly(conn, ref):
     _feature(conn, 146, "Search palette")
     _feature(conn, 145, "Neighbour")
+    _task(conn, 425, "Address resolver", body="covers F146")
     conn.commit()
     payload = resolve(conn, ref)
     assert payload["address"] == "feature"
     assert _refs(payload["hits"]) == ["F146"]
     assert payload["hits"][0]["match"] == "id"
     assert "miss" not in payload
+    # Screen 4/5: an exact hit is the one row; text quoting the ref is not shown.
+    assert payload["text"] == []
 
 
 def test_bare_number_resolves_every_kind(conn):

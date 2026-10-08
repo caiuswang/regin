@@ -15,7 +15,7 @@ import { trackWalkOrigin, useEntityWalk } from '../../composables/useEntityWalk.
 import { useCopy } from '../../composables/useCopy.js'
 import { openFilePreview } from '../../composables/useFilePreview.js'
 import {
-  KIND_META, MIN_ID_CHARS, NARROW_MAX_PX, SCOPES, caretAtEnd, hitLines, rowDomId,
+  MIN_ID_CHARS, NARROW_MAX_PX, SCOPES, caretAtEnd, hitLines, lookupNote, railFacet, rowDomId,
 } from '../../utils/searchDocs.js'
 
 const router = useRouter()
@@ -51,16 +51,8 @@ watch(() => search.open.value && search.idPrefix.value, (prefix) => {
 
 // Three different empty lists, three different reasons — an address that is
 // still being typed, one that resolved to nothing, and a roster with nothing
-// in it.
-const switcherEmpty = computed(() => {
-  if (!lookupMode.value) return undefined
-  const prefix = search.idPrefix.value
-  if (prefix.length < MIN_ID_CHARS) {
-    return `Keep typing the session id — ids resolve from ${MIN_ID_CHARS} characters, `
-      + `and “#${prefix}” could be several sessions.`
-  }
-  return `No session id starts with ${prefix}.`
-})
+// in it (the list's own default).
+const switcherEmpty = computed(() => (lookupMode.value ? lookupNote(search.idPrefix.value) : {}))
 
 const switcherRow = computed(() =>
   switcherRows.value.find(r => r.trace_id === switcherId.value)
@@ -140,6 +132,7 @@ const entityStack = walk.stack
 const walking = computed(() => entityStack.value.length > 0)
 trackWalkOrigin(walk, {
   open: search.open, roster: switcherMode, rosterRow: switcherRow, activeRow: search.activeRow,
+  clock: switcher.clock,
 })
 
 const previewHits = computed(() => {
@@ -217,19 +210,12 @@ const inputEl = ref(null)
 const narrow = useMediaQuery(`(max-width: ${NARROW_MAX_PX}px)`)
 const sheetOpen = ref(false)
 
-const facets = computed(() => search.facetView.value.map((f) => {
-  // In the switcher the Sessions chip counts the ROSTER, not the search
-  // corpus: with an empty query the corpus is empty by definition, so the chip
-  // would read 0 beside a list of twelve rows.
-  const roster = switcherMode.value && f.kind === 'session'
-  return {
-    ...f,
-    icon: f.kind ? (KIND_META[f.kind]?.icon || 'list') : 'list',
-    active: f.label === search.activeFacet.value,
-    count: roster ? String(switcherRows.value.length) : f.text,
-    disabled: roster ? false : f.disabled,
-  }
-}))
+const facets = computed(() => search.facetView.value.map(f => railFacet(f, {
+  switcher: switcherMode.value,
+  held: search.held.value,
+  rosterCount: switcherRows.value.length,
+  activeLabel: search.activeFacet.value,
+})))
 
 const scopes = computed(() => SCOPES.map(s => ({
   ...s,
@@ -257,8 +243,8 @@ const canWiden = computed(() =>
   search.activeScope.value === 'session' && search.sessionAvailable.value)
 
 const placeholder = computed(() => (search.activeScope.value === 'session'
-  ? 'Search this session — spans, diffs, output, files touched…'
-  : 'Search every session, wiki page and touched file…'))
+  ? 'Search this session’s spans and files…'
+  : 'Search features, tasks, sessions… or F146 / T419 / #id'))
 
 const noMatches = search.noMatches
 
@@ -571,7 +557,7 @@ function widen() {
               :aria-label="switcherMode ? 'Filter sessions' : 'Search'"
               class="query-input"
               :placeholder="switcherMode
-                ? 'Search sessions, or #session-id to jump straight to one…'
+                ? 'Filter sessions, or #id to jump straight to one…'
                 : placeholder"
               spellcheck="false"
               autocomplete="off"
@@ -609,6 +595,7 @@ function widen() {
               v-if="!rosterMode"
               :scopes="scopes"
               :facets="facets"
+              :counted="!search.held.value"
               :recents="search.held.value ? search.recents.value : []"
               :legend="railLegend"
               @scope="search.setScope"
@@ -626,7 +613,8 @@ function widen() {
               :clock="switcher.clock.value"
               :loading="lookupMode ? switcher.lookupLoading.value : switcher.loading.value"
               :error="lookupMode ? switcher.lookupError.value : switcher.error.value"
-              :empty-text="switcherEmpty"
+              :empty-text="switcherEmpty.body"
+              :empty-title="switcherEmpty.title"
               :show-hotkeys="!lookupMode"
               :loading-text="lookupMode ? 'resolving that id…' : undefined"
               @select="selectSwitcher"
@@ -940,7 +928,11 @@ kbd {
   /* The preview stops being a column and becomes a push-over sheet the
      result list slides out from under. */
   .search-panes > :deep(.search-preview) { display: none; }
-  .search-panes.is-sheet > :deep(.search-results) { display: none; }
+  /* The sheet is the preview alone: the strip stays behind with the results,
+     or it sits under the absolutely-placed back bar and pushes the preview
+     down by its own height. */
+  .search-panes.is-sheet > :deep(.search-results),
+  .search-panes.is-sheet > :deep(.facet-rail) { display: none; }
   .search-panes.is-sheet > :deep(.search-preview) { display: flex; padding-top: 2.25rem; }
 }
 

@@ -26,6 +26,7 @@ const props = defineProps({
   // nothing to offer and an address resolving to nothing are different
   // answers, and one message cannot be both.
   emptyText: { type: String, default: 'No sessions yet. Start one and it appears here.' },
+  emptyTitle: { type: String, default: '' },
   loadingText: { type: String, default: 'reading the roster…' },
   // The 1–9 chord is disarmed wherever the query can contain digits, and a
   // chip for a key that does nothing is worse than no chip.
@@ -69,6 +70,10 @@ const decorated = computed(() => {
     <p v-else-if="loading && !decorated.length" class="switcher-empty">
       {{ loadingText }}
     </p>
+    <div v-else-if="!decorated.length && emptyTitle" class="switcher-empty is-card">
+      <p class="switcher-empty-title">{{ emptyTitle }}</p>
+      <p class="switcher-empty-body">{{ emptyText }}</p>
+    </div>
     <p v-else-if="!decorated.length" class="switcher-empty">{{ emptyText }}</p>
 
     <template v-for="item in decorated" :key="item.id">
@@ -115,6 +120,25 @@ const decorated = computed(() => {
   padding: 1.25rem;
   font-size: var(--sp-t-body);
   color: var(--color-fg-subtle);
+}
+
+.switcher-empty.is-card {
+  margin: 0.75rem;
+  padding: 0.875rem 1rem;
+  border: 1px dashed var(--color-border-strong, var(--color-border));
+  border-radius: 12px;
+}
+
+.switcher-empty-title {
+  margin: 0;
+  font-weight: 600;
+  color: var(--color-fg);
+}
+
+.switcher-empty-body {
+  margin: 0.375rem 0 0;
+  font-size: var(--sp-t-meta);
+  line-height: 1.6;
 }
 
 .group-head {

@@ -11,6 +11,7 @@ import Icon from '../ui/Icon.vue'
 defineProps({
   scopes: { type: Array, default: () => [] },
   facets: { type: Array, default: () => [] },
+  counted: { type: Boolean, default: true },
   recents: { type: Array, default: () => [] },
   legend: { type: Array, default: () => [] },
 })
@@ -34,7 +35,7 @@ defineEmits(['scope', 'facet', 'recent'])
       >{{ s.label }}</button>
     </div>
 
-    <p class="rail-label">Kind · matches</p>
+    <p class="rail-label">{{ counted ? 'Kind · matches' : 'Kind' }}</p>
     <!-- A kind that answered 0 is disabled rather than hidden: the chip still
          says that kind was searched, and ⇥ skips it. -->
     <button

@@ -3,12 +3,14 @@
     #a1          keep typing: 1–3 characters could be several sessions, so no
                  query runs
     #a1b2…       sessions whose id starts with that prefix
-    F146 / f:146 that feature (T… task, D… defect); on a miss, "No task T999"
-    146          one row per kind that has id 146
+    F146 / f:146 that feature (T… task, D… defect) and nothing else; on a
+                 miss, "No task T999" and then the text mentioning 999
+    146          one row per kind that has id 146, then the text mentioning it
 
-Every numeric form is followed by the text that mentions the number, grouped
-by kind and labelled `text`. A miss never offers the nearest ids: T998 is not
-a better answer to T999 than nothing, it is a different task.
+Text that mentions the number is grouped by kind and labelled `text`. A typed
+F/T/D ref that hits names one entity, so it carries no text: every session that
+quotes "F146" would bury the one row asked for. A miss never offers the nearest
+ids: T998 is not a better answer to T999 than nothing, it is a different task.
 
 Anything else is not an address (`address: None`) and the caller searches it
 as text. Nothing here writes.
@@ -115,10 +117,10 @@ def _text_groups(conn, needle: str, exclude: set[tuple[str, str]]) -> list[dict]
 
 def _entity(conn, raw: str, kind: str, ident: int) -> dict:
     hit = _exact(conn, kind, ident)
-    exclude = {(kind, str(ident))} if hit else set()
-    text = _text_groups(conn, str(ident), exclude)
-    miss = None if hit else f"No {kind} {_REF_PREFIX[kind]}{ident}"
-    return _payload(raw, kind, [hit] if hit else [], text, miss=miss)
+    if hit:
+        return _payload(raw, kind, [hit])
+    text = _text_groups(conn, str(ident), set())
+    return _payload(raw, kind, [], text, miss=f"No {kind} {_REF_PREFIX[kind]}{ident}")
 
 
 def _number(conn, raw: str, ident: int) -> dict:

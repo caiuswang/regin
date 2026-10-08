@@ -7,7 +7,7 @@ import { computed } from 'vue'
 import Button from '../ui/Button.vue'
 import SearchEntityList from './SearchEntityList.vue'
 import SearchEntitySession from './SearchEntitySession.vue'
-import { ago } from '../../utils/pipelineFormat.js'
+import { sessionAge } from '../../utils/sessionSwitcher.js'
 
 const props = defineProps({
   stack: { type: Array, required: true },
@@ -34,19 +34,19 @@ function featureMeta(d) {
   return `${p.done ?? 0}/${p.tasks ?? 0} done · ${defects}`
 }
 
-function sessionMeta(s) {
+function sessionMeta(s, clock) {
   if (!s) return ''
   const parts = []
   if (s.turn != null) parts.push(`t${s.turn}`)
   if (s.context_pct != null) parts.push(`ctx ${Math.round(s.context_pct)}%`)
-  if (s.last_seen) parts.push(ago(s.last_seen))
+  if (s.last_seen) parts.push(sessionAge(s.last_seen, clock))
   return parts.join(' · ')
 }
 
 const meta = computed(() => {
   if (!data.value) return ''
   if (node.value.kind === 'feature') return featureMeta(data.value)
-  if (node.value.kind === 'session') return sessionMeta(node.value.session)
+  if (node.value.kind === 'session') return sessionMeta(node.value.session, node.value.clock)
   return row.value?.aside || ''
 })
 

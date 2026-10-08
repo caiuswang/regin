@@ -3,13 +3,18 @@
 //   ref · title · HERE · owner chips
 //   status word · context · aside
 // Each line clips on its own, so a long prompt cannot push the row to three.
+import { computed } from 'vue'
 import SearchMark from './SearchMark.vue'
 import { snippet } from '../../utils/searchDocs.js'
 
-defineProps({
+const props = defineProps({
   row: { type: Object, required: true },
   query: { type: String, default: '' },
 })
+
+// A defect's aside ("fix T430" / "no fix") qualifies its status, so it reads
+// next to it; a session's ("approval · 18m") is a clock and keeps the edge.
+const asideLeads = computed(() => props.row.kind === 'defect')
 </script>
 
 <template>
@@ -31,8 +36,9 @@ defineProps({
     </span>
     <span class="pr-line is-sub">
       <span class="pr-status">{{ row.status?.word }}</span>
+      <span v-if="row.aside && asideLeads" class="pr-aside">{{ row.aside }}</span>
       <SearchMark class="pr-context" :part="snippet(row.context || '', query)" tone="soft" />
-      <span v-if="row.aside" class="pr-aside">{{ row.aside }}</span>
+      <span v-if="row.aside && !asideLeads" class="pr-aside">{{ row.aside }}</span>
       <slot name="meta" />
     </span>
   </span>

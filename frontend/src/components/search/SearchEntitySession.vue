@@ -4,7 +4,7 @@
 // tail of what it last did.
 import { computed } from 'vue'
 import SearchWaitingCard from './SearchWaitingCard.vue'
-import { ago } from '../../utils/pipelineFormat.js'
+import { sessionAge } from '../../utils/sessionSwitcher.js'
 
 const props = defineProps({
   node: { type: Object, required: true },
@@ -16,7 +16,7 @@ const TAIL_ROWS = 6
 const prompts = computed(() => (props.node.data?.prompts || []).map(p => ({
   key: p.span_id,
   text: p.text,
-  when: ago(p.ts),
+  when: sessionAge(p.ts, props.node.clock),
   href: `/trace/sessions/${props.node.id}?span=${encodeURIComponent(p.span_id)}`,
 })))
 
