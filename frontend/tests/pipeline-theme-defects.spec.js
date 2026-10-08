@@ -145,6 +145,7 @@ test.describe('pixel theme — All defects', () => {
     await usePixel(page)
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto('/features')
+    await page.getByTestId('triage-unfold').click()
     await expect.poll(() => plTheme(page)).toBe('pixel')
     // The card hooks are shared with the triage rail; the defects rules stay on their page.
     const verbs = page.getByTestId('triage-card-97').locator('[data-pl-part="verbs"]')

@@ -134,6 +134,7 @@ test('Symptom references render on every symptom surface', async ({ page }) => {
 
   await pinToTriage(page, s.Q)
   await page.goto('/features')
+  await page.getByTestId('triage-unfold').click()
   await expectTaskChip(page.getByTestId(`triage-card-${s.Q}`).locator('.tc-symptom'), s)
 
   await pinToNeedsDecision(page, s.Q)

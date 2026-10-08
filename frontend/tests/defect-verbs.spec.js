@@ -346,6 +346,7 @@ test('test_triage_accept_same_on_rail_and_sheet', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   let state = await stubTriage(page, [defect(94, { images: [{ idx: 1 }] }), defect(93), defect(92)])
   await page.goto('/features')
+  await page.getByTestId('triage-unfold').click()
 
   // Triage cards carry the report's screenshots.
   await expect(page.getByTestId('triage-card-94').getByTestId('defect-image-thumb')).toHaveCount(1)
@@ -414,6 +415,7 @@ test('a refused fix task after Accept is reported about its own defect', async (
       error: '#94 already points at task #7, which was not created from it' } })
   })
   await page.goto('/features')
+  await page.getByTestId('triage-unfold').click()
   await page.getByTestId('triage-card-94').click({ position: { x: 8, y: 8 } })
   await blame(page, 'triage-blame')
   await page.keyboard.press('a')

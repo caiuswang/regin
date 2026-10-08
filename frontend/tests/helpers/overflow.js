@@ -70,8 +70,11 @@ export async function squishedColumns(page) {
       const hasText = [...el.childNodes].some(
         (n) => n.nodeType === 3 && n.textContent.trim().length > 8)
       if (!hasText) continue
+      const style = getComputedStyle(el)
+      // Vertical text is narrow and tall on purpose, not starved.
+      if (style.writingMode.startsWith('vertical')) continue
       const b = el.getBoundingClientRect()
-      const lh = parseFloat(getComputedStyle(el).lineHeight) || 16
+      const lh = parseFloat(style.lineHeight) || 16
       if (b.width > 0 && b.width < 24 && b.height > lh * 4) {
         out.push(`${el.tagName.toLowerCase()} w=${Math.round(b.width)} "${el.textContent.trim().slice(0, 24)}"`)
         if (out.length >= 5) break

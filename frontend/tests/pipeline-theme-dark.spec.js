@@ -124,6 +124,7 @@ async function replay(page, testInfo, baseURL, appearance) {
 
 async function open(page, path) {
   await page.goto(path)
+  if (path === '/features') await page.getByTestId('triage-unfold').click()
   await expect(page.getByTestId('pipeline-tabs')).toBeVisible()
   await expect.poll(() => page.evaluate(() => document.documentElement.getAttribute('data-pl-theme'))).toBe('pixel')
   await expect(page.locator(READY[path]).first()).toBeVisible()

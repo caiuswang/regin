@@ -234,6 +234,7 @@ test('test_pipeline_retired_tabs_are_gone', async ({ page }) => {
   }
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto('/features')
+  await page.getByTestId('triage-unfold').click()
   await page.getByTestId('triage-permalink-94').click()
   await expect(page).toHaveURL(/\/defects\/94$/)
   await expect(page.getByTestId('defect-detail')).toBeVisible()
@@ -605,6 +606,7 @@ test('test_features_stage_tabs_expand_and_triage_keys', async ({ page, pipelineT
   const state = await stubPipeline(page)
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto('/features')
+  await page.getByTestId('triage-unfold').click()
 
   // Stage tabs: server counts, and All is the sum of the four.
   const counts = {}
@@ -711,12 +713,14 @@ test('test_features_triage_rail_folds', async ({ page }) => {
   const state = await stubPipeline(page)
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto('/features')
+  await page.getByTestId('triage-unfold').click()
   await expect(page.getByTestId('triage-count')).toHaveText('3')
   const table = page.getByTestId('feature-table')
   const railWidth = async () => (await page.getByTestId('triage-rail').boundingBox()).width
   // The count's text is in the DOM while the shell is still hidden behind a
   // loading theme chunk; a hidden table has no box.
   await expect(table).toBeVisible()
+  await expect.poll(railWidth).toBeGreaterThan(300)
   const open = (await table.boundingBox()).width
 
   // The header button folds the rail to a strip that still counts the queue,
@@ -883,6 +887,7 @@ test('test_new_defect_dialog_unattributed_lands_in_triage', async ({ page }) => 
     return { outcome: 'opened', defect: made, __status: 201 }
   })
   await page.goto('/features')
+  await page.getByTestId('triage-unfold').click()
   await expect(page.getByTestId('triage-card-94')).toBeVisible()
 
   await page.getByTestId('pipeline-new').click()
@@ -1051,6 +1056,7 @@ test('test_detail_back_link_returns_to_origin', async ({ page }) => {
   // Opened from a filtered list → back to that list, query and all, and Back
   // is a real history step, so no forward entry is left behind.
   await page.goto('/features?stage=escaped')
+  await page.getByTestId('triage-unfold').click()
   await page.getByTestId('triage-permalink-94').click()
   await expect(page).toHaveURL(/\/defects\/94$/)
   const defectBack = page.getByTestId('defect-back')
@@ -1245,6 +1251,7 @@ test('test_triage_rail_snoozed_count_from_server', async ({ page }) => {
   const state = await stubPipeline(page)
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto('/features')
+  await page.getByTestId('triage-unfold').click()
   const rail = page.getByTestId('triage-rail')
   await expect(rail.getByTestId('triage-card-94')).toBeVisible()
   // `unattributed_defects − queue` would print 5; the server says 2 are snoozed.
@@ -1255,6 +1262,7 @@ test('test_triage_rail_snoozed_count_from_server', async ({ page }) => {
 
   state.snoozed = 0
   await page.reload()
+  await page.getByTestId('triage-unfold').click()
   await expect(rail.getByTestId('triage-card-94')).toBeVisible()
   await expect(rail.getByTestId('triage-snoozed')).toHaveCount(0)
 })

@@ -167,6 +167,7 @@ test('test_triage_rail_ignores_project_scope', async ({ page }) => {
   const rail = page.getByTestId('triage-rail')
 
   await page.goto('/features')
+  await page.getByTestId('triage-unfold').click()
   await expect(rail.getByText('the gutter folds')).toBeVisible()
   await expect(rail.getByTestId('triage-all-projects')).toHaveCount(0)
 
@@ -189,6 +190,7 @@ test('test_no_row_is_invisible_under_every_scope', async ({ page }) => {
   // the address bar, which is invisibility with extra steps.
   await stubFeatures(page)
   await page.goto('/features')
+  await page.getByTestId('triage-unfold').click()
   await expect(page.getByTestId('pipeline-project')).toBeVisible()
 
   await page.getByTestId('pipeline-project').click()
@@ -212,6 +214,7 @@ test('the default scope is asked for by saying nothing, never by name',
     const defects = await stubDefects(page)
     const features = await stubFeatures(page)
     await page.goto('/features?project=all')
+    await page.getByTestId('triage-unfold').click()
     await expect(page.getByText('Filed row')).toBeVisible()
     expect(last(features).get('project_id')).toBeNull()
     await expect(page.getByTestId('triage-rail').getByText('the gutter folds')).toBeVisible()
@@ -223,6 +226,7 @@ test('a narrowing does not widen the scope on the features tab either',
     const seen = await stubFeatures(page)
 
     await page.goto('/features?project=7')
+    await page.getByTestId('triage-unfold').click()
     await expect(page.getByText('Filed row')).toBeVisible()
     const search = page.getByLabel(
       'Search features by title, spec or tracker reference')
