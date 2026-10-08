@@ -17,7 +17,10 @@ from __future__ import annotations
 import json
 import re
 from datetime import datetime
+from types import SimpleNamespace
 
+from lib.defects.query import TRIAGE_QUEUE
+from lib.defects.store import queue_position
 from lib.features import events as feature_events
 from lib.orm.models.tasks import RUN_STATUS_RUNNING, RUN_STATUS_STARTING
 from lib.trace.pending_spans import (
@@ -78,6 +81,18 @@ _SKILL_TOKEN = re.compile(r"^/[a-zA-Z][\w:-]*(\s+|$)")
 
 # What a waiting session is asked, quoted from the blocker's own attributes.
 _NEEDS_KEYS = ("question", "prompt", "plan", "description", "command", "tool_name")
+_QUESTION_TOOLS = ("AskUserQuestion", "ExitPlanMode")
+
+# Commands whose effect cannot be walked back from the trace: deletes, history
+# rewrites, dropped tables. A waiting card flags these red before anyone opens
+# the session to answer it.
+_DESTRUCTIVE = re.compile(
+    r"\brm\s+-[a-zA-Z]*[rRf]"
+    r"|\bgit\s+(push\b[^|;&]*\s(--force(-with-lease)?|-f)\b|reset\s+--hard"
+    r"|clean\s+-[a-zA-Z]*f|branch\s+-D|checkout\s+--\s)"
+    r"|\b(drop|truncate)\s+(table|database|schema)\b"
+    r"|\bmkfs\b|\bdd\s+if=",
+    re.IGNORECASE)
 
 
 def _marks(values) -> str:
@@ -210,6 +225,11 @@ def _span_phase(meta: tuple, parked, activity: dict, owned: dict,
     return _age_phase(max(stamps) if stamps else None, now)
 
 
+def session_status(phase: str) -> dict:
+    """R4's `{word, bucket}` for a server phase."""
+    return _status(*_SESSION_STATUS.get(phase, ("inactive", QUIET)))
+
+
 def _age_phase(last_ts, now: datetime) -> str:
     last = parse_naive_ts(last_ts)
     if last is None:
@@ -240,6 +260,10 @@ def _session_meta(conn, trace_ids) -> dict:
     return {r[0]: tuple(r) for r in conn.execute(sql, list(trace_ids))}
 
 
+def prompt_text(raw_attributes) -> str:
+    return strip_prompt_tag_marker(_attrs(raw_attributes).get("text")) or ""
+
+
 def _prompts(conn, trace_ids) -> dict:
     """`{trace: (first prompt text, latest prompt text)}` for the main agent."""
     sql = ("SELECT trace_id, attributes, rn_first, rn_last FROM ("
@@ -253,13 +277,13 @@ def _prompts(conn, trace_ids) -> dict:
     out: dict = {}
     for trace_id, raw, rn_first, rn_last in conn.execute(sql, list(trace_ids)):
         first, latest = out.get(trace_id, (None, None))
-        text = strip_prompt_tag_marker(_attrs(raw).get("text")) or ""
+        text = prompt_text(raw)
         out[trace_id] = (text if rn_first == 1 else first,
                          text if rn_last == 1 else latest)
     return out
 
 
-def _aliases(conn, trace_ids) -> dict:
+def alias_map(conn, trace_ids) -> dict:
     """`{linked trace id: {page trace ids}}` — each page id plus the other half
     of a regin-launched run (`lib/trace/alias.py`). The roster shows a run
     under its child's id while `agent_task_runs` records the run's own, so a
@@ -284,10 +308,10 @@ def _add_feature(features: dict, trace_id: str, fid, title) -> None:
         chips.append(_chip("feature", fid, title))
 
 
-def _session_links(conn, trace_ids) -> tuple[dict, dict]:
+def session_links(conn, trace_ids) -> tuple[dict, dict]:
     """`({trace: [feature chip…]}, {trace: task chip})` — the declared features
     (primary first) plus the latest task run's task and that task's feature."""
-    alias = _aliases(conn, trace_ids)
+    alias = alias_map(conn, trace_ids)
     marks = _marks(alias)
     features: dict = {}
     for trace_id, fid, title in conn.execute(
@@ -339,17 +363,75 @@ def _session_title(meta, task, prompts) -> str:
     return first or UNTITLED
 
 
-def _needs_text(blocker) -> str:
-    attrs = _attrs(blocker[5])
-    for key in _NEEDS_KEYS:
-        value = attrs.get(key)
+def _tool_input(attrs: dict) -> dict:
+    raw = attrs.get("tool_input")
+    return raw if isinstance(raw, dict) else {}
+
+
+def _question_text(attrs: dict) -> str:
+    """The first question a park asks. The hook tier files it under
+    `tool_input.questions`, the SDK tier at the top level."""
+    for source in (attrs, _tool_input(attrs)):
+        questions = source.get("questions")
+        if isinstance(questions, list) and questions and isinstance(questions[0], dict):
+            text = questions[0].get("question")
+            if isinstance(text, str) and text.strip():
+                return text
+    return ""
+
+
+def _command(attrs: dict) -> str:
+    for value in (attrs.get("command_preview"), attrs.get("command"),
+                  _tool_input(attrs).get("command")):
         if isinstance(value, str) and value.strip():
             return value
-    return blocker[2]
+    return ""
+
+
+def _needs_text(blocker) -> str:
+    attrs = _attrs(blocker[5])
+    candidates = (_question_text(attrs), *(attrs.get(k) for k in _NEEDS_KEYS[:4]),
+                  _command(attrs), attrs.get("requested_permission"),
+                  attrs.get("tool_name"))
+    return next((v for v in candidates if isinstance(v, str) and v.strip()),
+                blocker[2])
+
+
+def _is_question(blocker) -> bool:
+    """A `permission.request` parked on AskUserQuestion is a question too —
+    the hook tier routes every park through that one span name."""
+    attrs = _attrs(blocker[5])
+    return (blocker[2] in _ASK_BLOCKERS
+            or attrs.get("tool_name") in _QUESTION_TOOLS
+            or attrs.get("kind") in ("question", "plan"))
+
+
+def parked_blockers(conn, trace_ids) -> dict:
+    """`{trace: newest blocker row}` for the sessions parked on a human."""
+    trace_ids = list(dict.fromkeys(t for t in trace_ids if t))
+    if not trace_ids:
+        return {}
+    return _parked(_agent_activity(conn, trace_ids), _pending_blockers(conn, trace_ids))
+
+
+def blocker_since(blocker):
+    return blocker[4]
+
+
+def waiting_block(blocker) -> dict:
+    """What a parked session asks, as text to read — never something to answer
+    here. `destructive` marks an approval whose command cannot be undone."""
+    question = _is_question(blocker)
+    return {
+        "kind": "question" if question else "approval",
+        "text": _needs_text(blocker),
+        "destructive": not question and bool(_DESTRUCTIVE.search(_command(_attrs(blocker[5])))),
+        "since": blocker[4],
+    }
 
 
 def _waiting_aside(blocker, now: datetime) -> str:
-    kind = "question" if blocker[2] in _ASK_BLOCKERS else "approval"
+    kind = "question" if _is_question(blocker) else "approval"
     since = _age(blocker[4], now)
     return f"{kind} · {since}" if since else kind
 
@@ -368,13 +450,12 @@ def session_rows(conn, trace_ids, *, phases: dict | None = None,
     activity = _agent_activity(conn, trace_ids)
     parked = _parked(activity, _pending_blockers(conn, trace_ids))
     prompts = _prompts(conn, trace_ids)
-    features, tasks = _session_links(conn, trace_ids)
+    features, tasks = session_links(conn, trace_ids)
     owned, now = _owned_phases(), datetime.now()
     out = {}
     for trace_id in trace_ids:
         phase = phases.get(trace_id) or _span_phase(
             meta.get(trace_id), parked.get(trace_id), activity, owned, trace_id, now)
-        word, bucket = _SESSION_STATUS.get(phase, ("inactive", QUIET))
         blocker = parked.get(trace_id) if phase in _WAITING_PHASES else None
         first, latest = prompts.get(trace_id, (None, None))
         context = (f"asks: {_clip(_needs_text(blocker), CONTEXT_CLIP)}" if blocker
@@ -382,7 +463,7 @@ def session_rows(conn, trace_ids, *, phases: dict | None = None,
         out[trace_id] = _row(
             "session", f"#{trace_id[:8]}",
             _session_title(meta.get(trace_id), tasks.get(trace_id), (first, latest)),
-            _status(word, bucket),
+            session_status(phase),
             owners=_owner_chips(features.get(trace_id, []), tasks.get(trace_id)),
             aside=_waiting_aside(blocker, now) if blocker else None,
             context=context, here=trace_id == here)
@@ -414,7 +495,7 @@ def _awaiting_traces(conn, runs: dict) -> set:
                                 if r[2] and r[1] in _OPEN_RUNS))
     if not traces:
         return set()
-    alias = _aliases(conn, traces)
+    alias = alias_map(conn, traces)
     phases = session_phases(conn, list(alias))
     return {run_id for linked, run_ids in alias.items()
             if phases.get(linked) in _WAITING_PHASES for run_id in run_ids}
@@ -493,14 +574,16 @@ def feature_rows(conn, feature_ids) -> dict:
     return out
 
 
-def _defect_word(status: str, triage_state) -> str:
-    if status == "closed":
+def _defect_word(row: SimpleNamespace) -> str:
+    """R4's one word. The queue is a position the store derives (`triage_state`
+    NULL means *not yet routed*, a broken snooze rejoins it), so it is read
+    through `queue_position` rather than off the column."""
+    if row.status == "closed":
         return "closed"
-    if triage_state == "queue":
+    position = queue_position(row)
+    if position == TRIAGE_QUEUE:
         return "triage"
-    if triage_state in ("snoozed", "declined"):
-        return triage_state
-    return "open"
+    return position or "open"
 
 
 def _defect_detail(symptom, missing_check) -> str:
@@ -514,12 +597,16 @@ def defect_rows(conn, defect_ids) -> dict:
     if not defect_ids:
         return {}
     out = {}
-    for did, symptom, status, triage, missing, fix_id, fid, ftitle in conn.execute(
-            "SELECT d.id, d.symptom, d.status, d.triage_state, d.missing_check, "
-            "       d.fix_task_id, f.id, f.title "
+    for (did, symptom, status, triage, watermark, seq, missing, fix_id, own_fid,
+         fid, ftitle) in conn.execute(
+            "SELECT d.id, d.symptom, d.status, d.triage_state, d.snooze_watermark, "
+            "       d.activity_seq, d.missing_check, d.fix_task_id, d.feature_id, "
+            "       f.id, f.title "
             "FROM defects d LEFT JOIN features f ON f.id = d.feature_id "
             f"WHERE d.id IN ({_marks(defect_ids)})", defect_ids):
-        word = _defect_word(status, triage)
+        word = _defect_word(SimpleNamespace(
+            status=status, triage_state=triage, feature_id=own_fid,
+            snooze_watermark=watermark, activity_seq=seq))
         owner = (_chip("feature", fid, ftitle) if fid is not None
                  else {"kind": "none", "id": None, "ref": "no feature", "title": ""})
         out[did] = _row(

@@ -111,6 +111,10 @@ def create_app(replica: bool = False):
     from web.blueprints.palette import palette_bp
     app.register_blueprint(palette_bp)
 
+    # ── Search palette's empty-query desk + entity preview (read-only) ─
+    from web.blueprints.palette_home import palette_home_bp
+    app.register_blueprint(palette_home_bp)
+
     # ── Plans + plan-sessions (extracted to blueprint) ───────────
     from web.blueprints.plans import plans_bp
     app.register_blueprint(plans_bp)
