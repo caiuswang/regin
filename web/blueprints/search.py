@@ -38,6 +38,13 @@ def _limit() -> int:
         return DEFAULT_LIMIT
 
 
+def _offset() -> int:
+    try:
+        return max(0, int(request.args.get("offset") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _scoped_trace_ids(conn, raw: str) -> list[str]:
     """The open session plus every trace id aliased to it — a resumed or
     forked session keeps its spans under the old id, so searching the route's
@@ -63,7 +70,7 @@ def api_search():
     try:
         trace_ids = _scoped_trace_ids(conn, request.args.get("session") or "")
         payload = search(conn, query, _requested_kinds(), trace_ids, _limit(),
-                         scope)
+                         scope, _offset())
     finally:
         conn.close()
     return jsonify(payload)

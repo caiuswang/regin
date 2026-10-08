@@ -80,7 +80,7 @@ def test_endpoint_defaults_to_session_scope_when_none_is_named(flask_client,
     from web.blueprints import search as search_bp_mod
     captured = {}
 
-    def fake_search(conn, q, kinds, trace_ids, limit, scope):
+    def fake_search(conn, q, kinds, trace_ids, limit, scope, offset=0):
         captured["scope"] = scope
         return {"q": q, "groups": []}
 
@@ -157,7 +157,7 @@ def test_endpoint_clamps_an_absurd_limit(flask_client, monkeypatch):
     from web.blueprints import search as search_bp_mod
     captured = {}
 
-    def fake_search(conn, q, kinds, trace_ids, limit, scope):
+    def fake_search(conn, q, kinds, trace_ids, limit, scope, offset=0):
         captured["limit"] = limit
         return {"q": q, "groups": []}
 
@@ -170,7 +170,7 @@ def test_endpoint_ignores_an_unknown_kind(flask_client, monkeypatch):
     from web.blueprints import search as search_bp_mod
     captured = {}
 
-    def fake_search(conn, q, kinds, trace_ids, limit, scope):
+    def fake_search(conn, q, kinds, trace_ids, limit, scope, offset=0):
         captured["kinds"] = kinds
         return {"q": q, "groups": []}
 

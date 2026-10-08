@@ -71,7 +71,7 @@ def _titles_for(conn, trace_ids: list[str]) -> dict[str, tuple[str, str, int]]:
     }
 
 
-def search_sessions(conn, query: str, limit: int,
+def search_sessions(conn, query: str, limit: int | None = None,
                     exclude_traces: list[str] | None = None) -> list[Scored]:
     """Rank other sessions by how well their spans match `query`.
 
@@ -151,7 +151,7 @@ def _touched_sql(query: str, trace_ids: list[str]) -> tuple[str, list]:
     return f"{head}({likes}){tail}", list(patterns)
 
 
-def touched_files(conn, query: str, limit: int,
+def touched_files(conn, query: str, limit: int | None = None,
                   trace_ids: list[str] | None = None) -> list[dict]:
     """Files an agent edited or wrote, most recent first — the candidate set
     the `file` kind then greps on disk."""
@@ -171,6 +171,6 @@ def touched_files(conn, query: str, limit: int,
             "path": path, "span_id": span_id, "trace_id": trace_id,
             "additions": attrs.get("additions"), "deletions": attrs.get("deletions"),
         })
-        if len(out) >= limit * 4:
+        if limit is not None and len(out) >= limit * 4:
             break
     return out

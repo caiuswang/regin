@@ -38,13 +38,17 @@ SCOPE_SESSION = "session"
 SCOPE_GLOBAL = "global"
 
 
-def _group(kind: str, scored: list[Scored], limit: int, query: str) -> dict:
+def _group(kind: str, scored: list[Scored], limit: int, query: str,
+           offset: int = 0) -> dict:
+    """One page of a kind. `scored` must be the kind's whole ranked set:
+    `total` is read off it, and a total taken after a cut is the cut."""
     items = []
-    for hit in scored[:limit]:
+    for hit in scored[offset:offset + limit]:
         payload = hit.doc.as_json()
         payload["body"] = body_window(payload["body"], query)
         items.append(payload)
-    return {"kind": kind, "total": len(scored), "items": items}
+    return {"kind": kind, "total": len(scored), "offset": offset,
+            "items": items}
 
 
 def _span_group(conn, trace_ids, query, limit) -> dict:
@@ -52,16 +56,17 @@ def _span_group(conn, trace_ids, query, limit) -> dict:
     return _group(KIND_SPAN, scored, limit, query)
 
 
-def _file_group(conn, trace_ids, query, limit) -> dict:
-    candidates = touched_files(conn, query, limit, trace_ids)
-    return _group(KIND_FILE, search_file_docs(candidates, query, limit * 2),
-                  limit, query)
+def _file_group(conn, trace_ids, query, limit, offset) -> dict:
+    candidates = touched_files(conn, query, trace_ids=trace_ids)
+    return _group(KIND_FILE, search_file_docs(candidates, query),
+                  limit, query, offset)
 
 
 def search(conn, query: str, kinds: list[str] | None = None,
            trace_ids: list[str] | None = None,
            limit: int = DEFAULT_LIMIT,
-           scope: str = SCOPE_SESSION) -> dict:
+           scope: str = SCOPE_SESSION,
+           offset: int = 0) -> dict:
     """Run `query` across `kinds`, returning the wire shape the palette reads.
 
     Each group is independent: one kind raising leaves the others usable, so
@@ -73,6 +78,9 @@ def search(conn, query: str, kinds: list[str] | None = None,
     drawn from, under `global` those two look past it. `session` — the kind
     that answers "which OTHER sessions match" — always treats it as the set to
     exclude, because a session is never one of its own others.
+
+    `offset` pages every kind but `span`, whose in-session group is a fixed
+    window rather than a list the reader drills into.
     """
     query = (query or "").strip()
     if len(query) < MIN_QUERY_CHARS:
@@ -84,12 +92,12 @@ def search(conn, query: str, kinds: list[str] | None = None,
     builders = {
         KIND_SPAN: lambda: _span_group(conn, corpus_ids, query, SPAN_LIMIT),
         KIND_PATTERN: lambda: _group(
-            KIND_PATTERN, search_pattern_docs(query, limit * 2), limit, query),
+            KIND_PATTERN, search_pattern_docs(query), limit, query, offset),
         KIND_SESSION: lambda: _group(
             KIND_SESSION,
-            search_sessions(conn, query, limit * 2, trace_ids),
-            limit, query),
-        KIND_FILE: lambda: _file_group(conn, corpus_ids, query, limit),
+            search_sessions(conn, query, exclude_traces=trace_ids),
+            limit, query, offset),
+        KIND_FILE: lambda: _file_group(conn, corpus_ids, query, limit, offset),
     }
 
     groups = []

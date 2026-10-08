@@ -146,14 +146,16 @@ def _rule_docs() -> list[SearchDoc]:
     return out
 
 
-def search_pattern_docs(query: str, limit: int) -> list[Scored]:
+def search_pattern_docs(query: str, limit: int | None = None) -> list[Scored]:
     scored: list[Scored] = []
     seen_docs: set[tuple[str, str]] = set()
     order = 0
     for root, tag, href_prefix in _pattern_roots():
         counts = count_matches([root], query, globs=MARKDOWN_GLOBS + VENDOR_GLOBS,
                                suffixes=MARKDOWN_SUFFIXES)
-        for path in sorted(counts, key=lambda p: -counts[p]):
+        # ripgrep reports files in thread-completion order, so equal counts
+        # need a fixed tie-break or an offset page repeats and skips rows.
+        for path in sorted(counts, key=lambda p: (-counts[p], p)):
             text = clip_body(read_text(path))
             if not text:
                 continue
@@ -188,7 +190,8 @@ def search_pattern_docs(query: str, limit: int) -> list[Scored]:
     return rank(scored)[:limit]
 
 
-def search_file_docs(touched: list[dict], query: str, limit: int) -> list[Scored]:
+def search_file_docs(touched: list[dict], query: str,
+                     limit: int | None = None) -> list[Scored]:
     """Rank files an agent touched. `touched` rows come from the span store
     (`{path, span_id, trace_id, additions, deletions}`), so a hit both
     deep-links to the edit span that produced the state and names the
@@ -200,11 +203,18 @@ def search_file_docs(touched: list[dict], query: str, limit: int) -> list[Scored
         return []
     counts = count_matches(existing, query, globs=[], suffixes=())
     scored: list[Scored] = []
-    for order, path in enumerate(sorted(counts, key=lambda p: -counts[p])):
+    for order, path in enumerate(_by_count_then_recency(counts, existing)):
         hit = _score_file(path, by_path.get(path) or {}, query, order)
         if hit:
             scored.append(hit)
     return rank(scored)[:limit]
+
+
+def _by_count_then_recency(counts: dict[str, int], newest_first: list[str]) -> list[str]:
+    """ripgrep reports files in thread-completion order, so equal counts need
+    a fixed tie-break or an offset page repeats and skips rows."""
+    recency = {path: i for i, path in enumerate(newest_first)}
+    return sorted(counts, key=lambda p: (-counts[p], recency.get(p, len(recency)), p))
 
 
 def _score_file(path: str, row: dict, query: str, order: int) -> Scored | None:
