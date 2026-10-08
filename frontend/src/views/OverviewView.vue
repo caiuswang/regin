@@ -119,6 +119,7 @@ onActivated(() => { if (arrived) load(); arrived = true })
         v-if="data.project_head && isMdUp"
         :head="data.project_head"
         :features-to="featuresTo()"
+        :manage-to="`/projects/${scope}`"
         @all="setScope(SCOPE_ALL)"
       />
 

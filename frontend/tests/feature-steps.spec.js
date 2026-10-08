@@ -62,7 +62,7 @@ test('Write spec creates the step with the instruction as its body',
     await page.getByTestId('feature-step-submit').click()
 
     await expect(page).toHaveURL(/\/tasks\/90$/)
-    expect(posted).toEqual([{ kind: 'spec', body: 'settle the key shape' }])
+    expect(posted).toEqual([{ stage: 'spec', body: 'settle the key shape' }])
   })
 
 test('Build opens the existing build step instead of creating one',

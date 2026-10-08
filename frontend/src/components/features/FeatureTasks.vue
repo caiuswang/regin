@@ -29,6 +29,7 @@ import TaskStatusIcon from '../tasks/TaskStatusIcon.vue'
 import { TASKS_ANCHOR, tasksGraphLink, tasksListLink } from '../../utils/featureLinks'
 import { sessionsByTask } from '../../utils/ledgerFormat'
 import { taskTitle } from '../../utils/taskTitle.js'
+import { useProjectStages } from '../../composables/useProjectStages'
 
 const props = defineProps({
   featureId: { type: Number, required: true },
@@ -49,7 +50,7 @@ const items = ref([])
 const loading = ref(true)
 const loadError = ref('')
 const stepOpen = ref(false)
-const stepKind = ref('spec')
+const stepStage = ref(null)
 const byTask = computed(() => sessionsByTask(props.sessions))
 
 // Creation order, oldest first, and no regrouping by kind: grouping put a new
@@ -59,14 +60,20 @@ const byTask = computed(() => sessionsByTask(props.sessions))
 // would push the newest row off the only page this card reads.
 const LIST_QUERY = 'sort=created:asc&size=200'
 
-// One spec step and one build step per feature: a verb whose step exists is a
-// link to it, not a second one. Matched by the verb's own key, not by kind —
-// transcribed slice tasks are `build` too, and are not the Build step.
-function startStep(kind) {
-  const key = `feature:${props.featureId}:${kind}`
+// One button per live stage of the feature's project, in the project's order.
+// An archived stage loses its button; the tasks it opened stay listed below.
+const { live: liveStages, error: stagesError } = useProjectStages(() => props.projectId)
+const stageVerbs = computed(() => liveStages.value
+  .filter(stage => !(props.hasSlices && stage.role === 'build')))
+
+// One step per stage per feature: a stage whose step exists is a link to it,
+// not a second one. Matched by the stage's own key, not by kind — transcribed
+// slice tasks are `build` too, and are not the Build step.
+function startStep(stage) {
+  const key = `feature:${props.featureId}:${stage.key}`
   const existing = items.value.find(t => t.external_id === key)
   if (existing) return router.push(`/tasks/${existing.id}`)
-  stepKind.value = kind
+  stepStage.value = stage
   stepOpen.value = true
 }
 
@@ -113,14 +120,10 @@ defineExpose({ load })
         </div>
         <div v-if="canWrite" class="ft-verbs">
           <Button
-            variant="secondary" size="sm" data-testid="feature-verb-spec"
-            @click="startStep('spec')"
-          >Write spec</Button>
-          <Button
-            v-if="!hasSlices"
-            variant="secondary" size="sm" data-testid="feature-verb-build"
-            @click="startStep('build')"
-          >Build</Button>
+            v-for="stage in stageVerbs" :key="stage.key"
+            variant="secondary" size="sm" :data-testid="`feature-verb-${stage.key}`"
+            @click="startStep(stage)"
+          >{{ stage.label }}</Button>
           <Button
             variant="ghost" size="sm" class="ft-free" data-testid="feature-new-task"
             @click="emit('new-task')"
@@ -134,8 +137,11 @@ defineExpose({ load })
 
     <FeatureStepDialog
       v-if="canWrite" v-model:open="stepOpen"
-      :feature-id="featureId" :project="props.projectId" :kind="stepKind"
+      :feature-id="featureId" :project="props.projectId" :stage="stepStage"
     />
+    <p v-if="canWrite && stagesError" class="ft-fail" role="alert" data-testid="feature-stages-error">
+      The project's stages could not be read — {{ stagesError }}
+    </p>
 
     <!-- Only before the first read: a push re-read keeps the rows mounted. -->
     <p v-if="loading && !items.length" class="ft-note">Loading…</p>

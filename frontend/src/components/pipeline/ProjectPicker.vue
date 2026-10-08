@@ -116,6 +116,7 @@ function pick(scope) {
 }
 
 const selected = row => String(row.scope) === props.scope
+const manageTo = computed(() => (/^\d+$/.test(props.scope) ? `/projects/${props.scope}` : null))
 
 defineExpose({ open: () => { open.value = true } })
 </script>
@@ -221,6 +222,18 @@ defineExpose({ open: () => { open.value = true } })
           @click="load({ more: true })"
         >{{ more }} more</Button>
         <p v-if="!error && !items.length && q" class="pp-empty">No project matches “{{ q }}”.</p>
+        <router-link
+          v-if="manageTo"
+          :to="manageTo"
+          class="pp-row pp-row--manage focus-visible:outline-2 focus-visible:outline-blue-500"
+          data-pl-part="picker-row"
+          data-testid="project-picker-manage"
+          @click="open = false"
+        >
+          <span class="pp-check" />
+          <Icon name="settings" :size="13" />
+          <span class="pp-name">Manage project…</span>
+        </router-link>
       </PopoverContent>
     </PopoverPortal>
   </PopoverRoot>
@@ -280,6 +293,7 @@ defineExpose({ open: () => { open.value = true } })
 .pp-panel .pp-row.is-active { box-shadow: inset 2px 0 0 var(--color-primary); background: var(--color-surface-2); }
 .pp-panel .pp-row.is-selected { background: var(--color-info-soft); font-weight: 600; }
 .pp-row--all { border-bottom: 1px solid var(--color-border); }
+.pp-panel .pp-row--manage { border-top: 1px solid var(--color-border); margin-top: 0.35rem; text-decoration: none; color: var(--color-fg-muted); }
 .pp-panel .pp-more { width: 100%; justify-content: flex-start; padding-left: 2.1rem; font-size: 12px; color: var(--color-fg-muted); }
 .pp-check { width: 12px; flex: none; color: var(--color-info); }
 .pp-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

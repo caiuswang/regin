@@ -2,6 +2,7 @@
 // One project picked (1d): the breadcrumb head replaces the Projects panel.
 // The project's features are the Overview's Features panel, not listed here.
 import Button from '../ui/Button.vue'
+import Icon from '../ui/Icon.vue'
 import SegmentBar from './SegmentBar.vue'
 import { loopBar } from '../../utils/pipelineFormat'
 import { money } from '../../utils/ledgerFormat'
@@ -9,6 +10,8 @@ import { money } from '../../utils/ledgerFormat'
 defineProps({
   head: { type: Object, required: true },
   featuresTo: { type: Object, required: true },
+  // The project's settings page; absent where there is no project to manage.
+  manageTo: { type: String, default: '' },
 })
 const emit = defineEmits(['all'])
 </script>
@@ -23,7 +26,15 @@ const emit = defineEmits(['all'])
           </Button>
           <span aria-hidden="true">/</span>
         </nav>
-        <h2 id="ps-title" class="ps-name">{{ head.breadcrumb[1] }}</h2>
+        <div class="ps-title-row">
+          <h2 id="ps-title" class="ps-name">{{ head.breadcrumb[1] }}</h2>
+          <router-link
+            v-if="manageTo" :to="manageTo"
+            class="ps-manage focus-visible:outline-2 focus-visible:outline-blue-500"
+            aria-label="Manage project" title="Manage project"
+            data-testid="project-head-manage"
+          ><Icon name="settings" :size="14" /></router-link>
+        </div>
       </div>
       <div class="ps-progress">
         <SegmentBar :parts="loopBar(head.stage_bar)" :height="6" />
@@ -55,6 +66,9 @@ const emit = defineEmits(['all'])
 .ps-crumb { min-width: 0; }
 .ps-trail { display: flex; align-items: center; gap: 0.3rem; font-size: 12px; color: var(--color-fg-faint); }
 .ps-trail .ps-trail__all { font-size: 12px; color: var(--color-fg-muted); }
+.ps-title-row { display: flex; align-items: center; gap: 0.4rem; }
+.ps-manage { display: inline-flex; padding: 0.2rem; border-radius: var(--radius-sm); color: var(--color-fg-muted); }
+.ps-manage:hover { color: var(--color-fg); background: var(--color-surface-2); }
 .ps-name { font-size: 17px; font-weight: 700; color: var(--color-fg); }
 .ps-progress { flex: 1 1 12rem; min-width: 10rem; display: flex; flex-direction: column; gap: 0.25rem; align-items: flex-end; }
 .ps-pct { font-size: 12px; font-weight: 600; color: var(--color-fg); }

@@ -18,6 +18,7 @@ const FeaturesView = () => import('./views/FeaturesView.vue')
 const FeatureLedgerView = () => import('./views/FeatureLedgerView.vue')
 const DefectDetailView = () => import('./views/DefectDetailView.vue')
 const DefectsView = () => import('./views/DefectsView.vue')
+const ProjectStagesView = () => import('./views/ProjectStagesView.vue')
 const SkillDetailView = () => import('./views/SkillDetailView.vue')
 const PromptTemplatesView = () => import('./views/PromptTemplatesView.vue')
 const PlansView = () => import('./views/PlansView.vue')
@@ -88,6 +89,8 @@ const routes = [
       { path: '/features/:id', name: 'feature-ledger', component: FeatureLedgerView },
       { path: '/defects', name: 'defects', component: DefectsView },
       { path: '/defects/:id', name: 'defect-detail', component: DefectDetailView },
+      // A project's settings: under the strip, but no tab's reading of the loop.
+      { path: '/projects/:id(\\d+|default)', name: 'project-manage', component: ProjectStagesView },
     ],
   },
   { path: '/skills/:id', name: 'skill-detail', component: SkillDetailView },

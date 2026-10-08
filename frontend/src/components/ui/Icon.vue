@@ -18,6 +18,12 @@ const ICONS = {
   'more-horizontal': ['M5 12h.01', 'M12 12h.01', 'M19 12h.01'],
   'chevron-right': ['m9 18 6-6-6-6'],
   'chevron-down': ['m6 9 6 6 6-6'],
+  'chevron-up': ['m18 15-6-6-6 6'],
+  'grip-vertical': ['M9 5h.01', 'M9 12h.01', 'M9 19h.01', 'M15 5h.01', 'M15 12h.01', 'M15 19h.01'],
+  settings: [
+    'M20 7h-9', 'M14 17H5',
+    'M17 14a3 3 0 1 0 0 6 3 3 0 1 0 0-6Z', 'M7 4a3 3 0 1 0 0 6 3 3 0 1 0 0-6Z',
+  ],
   'chevron-left': ['m15 18-6-6 6-6'],
   'arrow-up-right': ['M7 7h10v10', 'M7 17 17 7'],
   'arrow-up': ['M12 19V5', 'm5 12 7-7 7 7'],

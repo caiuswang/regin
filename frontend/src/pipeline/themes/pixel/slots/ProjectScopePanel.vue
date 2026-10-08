@@ -4,6 +4,7 @@
 // props, emits and links as the classic panel.
 import { computed } from 'vue'
 import Button from '../../../../components/ui/Button.vue'
+import Icon from '../../../../components/ui/Icon.vue'
 import { meterCells, METER_CELLS } from '../meter.js'
 import { STAGES } from '../../../../utils/pipelineFormat'
 import { money } from '../../../../utils/ledgerFormat'
@@ -11,6 +12,7 @@ import { money } from '../../../../utils/ledgerFormat'
 const props = defineProps({
   head: { type: Object, required: true },
   featuresTo: { type: Object, required: true },
+  manageTo: { type: String, default: '' },
 })
 const emit = defineEmits(['all'])
 
@@ -48,6 +50,13 @@ const pct = computed(() => (props.head.shipped_pct == null ? null : `${props.hea
         </nav>
         <h2 id="px-ps-title" class="pl-panel__title px-ps__name" data-pl-part="panel-title">{{ head.breadcrumb[1] }}</h2>
         <span class="pl-panel__sub px-ps__count" data-pl-part="panel-meta" data-testid="project-head-count">{{ liveFeatures }} features</span>
+        <router-link
+          v-if="manageTo" :to="manageTo"
+          class="px-ps__manage focus-visible:outline-2 focus-visible:outline-blue-500"
+          data-pl-part="panel-link"
+          aria-label="Manage project" title="Manage project"
+          data-testid="project-head-manage"
+        ><Icon name="settings" :size="14" /></router-link>
       </header>
 
       <div class="px-ps__band">
@@ -114,6 +123,8 @@ const pct = computed(() => (props.head.shipped_pct == null ? null : `${props.hea
 .px-ps__trail { display: flex; align-items: center; gap: 0.5rem; color: var(--pl-muted); }
 .px-ps .px-ps__all { height: auto; padding: 0; }
 .px-ps__count { margin-left: auto; }
+.px-ps__manage { display: inline-flex; padding: 0.2rem; color: var(--pl-muted); }
+.px-ps__manage:hover { color: var(--pl-text); }
 
 .px-ps__band {
     display: flex; align-items: center; gap: 1.5rem; flex-wrap: wrap;
