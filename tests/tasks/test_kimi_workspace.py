@@ -139,7 +139,14 @@ def test_skill_invocation_is_provider_owned():
     assert kimi_line.startswith("/skill:goal-verified fast\n\n")
     assert "Skill tool" not in kimi_line
     assert "`tdd`" in kimi_line
-    assert _armed_prompt("kimi", {"name": "tdd"}) == "/skill:tdd\n\n"
+    assert _armed_prompt("kimi", {"name": "tdd"}).startswith("/skill:tdd ")
+
+
+def test_kimi_skill_name_is_ended_by_a_space_even_without_args():
+    # kimi 2.1.1 ACP reads the command name up to the first space, so a bare
+    # `/skill:tdd\n\n<prompt>` is answered "Unknown ACP command".
+    line = build_provider("kimi").skill_invocation("tdd", "", [])
+    assert line.split("\n", 1)[0] == "/skill:tdd "
 
 
 def test_claude_skill_invocation_unchanged():

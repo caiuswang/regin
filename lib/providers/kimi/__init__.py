@@ -414,11 +414,10 @@ class KimiProvider(AgentProvider):
     def skill_invocation(self, name: str, args: str, also: list[str]) -> str:
         """`/skill:<name>` — probed on kimi 2.1.1 over ACP: the SKILL.md body
         is expanded into the turn (the bare `/<name>` form also works, but can
-        collide with a built-in command of the same name)."""
-        line = f"/skill:{name}"
-        if args:
-            line += f" {args}"
-        line += "\n\n"
+        collide with a built-in command of the same name). The space after the
+        name is load-bearing even with no args: kimi ends the command name at
+        the first space, not at a newline."""
+        line = f"/skill:{name} {args}".rstrip("\n") + "\n\n"
         if also:
             named = ", ".join(f"`{n}`" for n in also)
             line += ("Also read and follow these skills — each is "
