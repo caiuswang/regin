@@ -288,7 +288,7 @@ def test_defect_row_titles_by_symptom_and_names_fix(conn):
     _feature(conn, 146, 'Search palette')
     conn.execute(
         "INSERT INTO defects (id, feature_id, symptom, symptom_key, fix_task_id, "
-        " triage_state) VALUES (276, NULL, ?, 'k1', NULL, 'queue'), "
+        " triage_state) VALUES (276, NULL, ?, 'k1', NULL, NULL), "
         " (277, 146, 'Drill skips a page', 'k2', 430, NULL)",
         ('Show all row is a dead p\nIt cannot be focused',))
     conn.commit()
