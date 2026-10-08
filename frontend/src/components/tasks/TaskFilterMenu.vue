@@ -152,16 +152,18 @@ function apply() {
         </label>
       </div>
       <div class="tfm-pair">
-        <label class="tfm-field" data-pl-part="field">
+        <!-- Not a <label>: a label re-clicks its first labelable descendant, which after a pick is the chip's clear button. -->
+        <div class="tfm-field" data-pl-part="field">
           <span class="tfm-label" data-pl-part="field-label">Feature</span>
           <FeaturePicker
             v-model="draft.feature_id"
             :current="feature"
+            label="Filter by feature"
             placeholder="Search features…"
             data-pl-part="input"
             testid="task-filter-feature"
           />
-        </label>
+        </div>
         <label class="tfm-field" data-pl-part="field">
           <span class="tfm-label" data-pl-part="field-label">Assignee</span>
           <Select v-model="draft.assignee" :options="userOptions" data-pl-part="input" data-testid="task-filter-assignee" />

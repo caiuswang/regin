@@ -175,6 +175,20 @@ test.describe('feature filter picker', () => {
     await expect(chip).toContainText(FEATURE.title)
   })
 
+  test('Clicking a feature option fills the Feature field', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto('/tasks?group=none')
+    await expect(page.getByTestId('task-list')).toBeVisible()
+
+    await openFilters(page)
+    await page.getByTestId('task-filter-feature').click()
+    await page.getByTestId(`task-filter-feature-option-${FEATURE.id}`).click()
+
+    await expect(page.getByTestId('task-filter-feature-chosen')).toContainText(FEATURE.title)
+    await page.getByTestId('task-more-apply').click()
+    await expect(page).toHaveURL(new RegExp(`feature_id=${FEATURE.id}`))
+  })
+
   test('Arriving with feature_id shows the title in the chip', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto(`/tasks?feature_id=${FEATURE.id}&group=none`)
