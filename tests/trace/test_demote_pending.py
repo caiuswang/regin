@@ -290,3 +290,29 @@ def test_a_started_agents_pending_shell_is_not_never_ran():
                   ('t1', 'pending-a1', 'tool.Bash', 'PENDING', 'a1'),
                   ('t1', 'pending-main', 'tool.Bash', 'PENDING', None))
     assert never_ran_pending_agents(conn, ['t1']) == set()
+
+
+# ── a call the owning live run still reports open ────────────────
+
+def _parked_mcp_call(now):
+    return [_row('pending-tool_isY65', 'tool.mcp__linear__authenticate',
+                 {'tool_use_id': 'tool_isY65'}, status='PENDING',
+                 start=_iso(now - timedelta(minutes=12)), id=1)]
+
+
+def test_no_demote_for_a_call_the_live_run_reports_open():
+    """A kimi ACP run parked on an MCP OAuth login goes silent past the
+    inactive window, but its wire still names the call in progress."""
+    now = datetime(2026, 10, 8, 4, 58)
+    served = _served(_parked_mcp_call(now), session_activity={
+        'status': 'active', 'last_seen': _iso(now - timedelta(minutes=12)),
+        'now': now, 'open_tool_ids': {'tool_isY65'}})
+    assert served['pending-tool_isY65']['status_code'] == 'PENDING'
+
+
+def test_the_same_silence_demotes_once_the_run_no_longer_reports_it():
+    now = datetime(2026, 10, 8, 4, 58)
+    served = _served(_parked_mcp_call(now), session_activity={
+        'status': 'active', 'last_seen': _iso(now - timedelta(minutes=12)),
+        'now': now, 'open_tool_ids': set()})
+    assert served['pending-tool_isY65']['status_code'] == 'ERROR'

@@ -322,9 +322,16 @@ def _stamp_tool_spans(conn, trace_id: str, agent_id: str, tool_ids: list[str]) -
     return cur.rowcount
 
 
-def _enrich_marker(conn, row, agent_id: str, info: dict) -> None:
-    """Add agent_id / identity / result_preview to an existing
-    `subagent.start` or `subagent.stop` span, preserving other attributes."""
+def _enrich_marker(conn, row, agent_id: str, info: dict, kind: str) -> None:
+    """Add agent_id / identity to an existing `subagent.start` or
+    `subagent.stop` span, preserving other attributes, and the result preview
+    to the stop alone.
+
+    The preview is the run's LAST assistant text, and a start is enriched on
+    the first pass over a still-running run, when that is its opening line.
+    Stamped there it outranked the real answer on the card (which reads the
+    start's own `result_preview` first) and was never refreshed, so a start
+    that carries one is cleared."""
     attrs = json.loads(row["attributes"])
     attrs["agent_id"] = agent_id
     _apply_kind(attrs, info.get("agent_name"))
@@ -332,7 +339,9 @@ def _enrich_marker(conn, row, agent_id: str, info: dict) -> None:
         attrs.setdefault("agent_name", info["agent_name"])
     if info.get("description"):
         attrs.setdefault("description", info["description"])
-    if info.get("result_preview") and not attrs.get("result_preview"):
+    if kind == "start":
+        attrs.pop("result_preview", None)
+    elif info.get("result_preview") and not attrs.get("result_preview"):
         attrs["result_preview"] = info["result_preview"]
     conn.execute(
         "UPDATE session_spans SET attributes = ?, agent_id = ? "
@@ -452,11 +461,11 @@ def _place_one_marker(conn, trace_id: str, kind: str, agent_id: str, info: dict,
     mine = _take_own_synthetic(pool, kind, agent_id)
     hook = _match_marker(pool, key, attr, by_content_only=not closed)
     if hook is not None:
-        _enrich_marker(conn, hook, agent_id, info)
+        _enrich_marker(conn, hook, agent_id, info, kind)
         if mine is not None:
             _delete_marker(conn, trace_id, mine["span_id"])
     elif mine is not None and closed:
-        _enrich_marker(conn, mine, agent_id, info)
+        _enrich_marker(conn, mine, agent_id, info, kind)
     elif mine is not None:
         _delete_marker(conn, trace_id, mine["span_id"])
     elif ts and closed:

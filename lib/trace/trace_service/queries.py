@@ -13,6 +13,7 @@ in `turn_usage`, and the serve-time prompt expansions in
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Optional
 
@@ -488,6 +489,20 @@ def _fetch_window_rows(conn, trace_id, window_start, window_end):
                                   window_end=window_end)
 
 
+# Enough of the newest prompt rows to hold the newest anchor, its own
+# placeholder, and the anchor before it — what `prompt_births` needs to date
+# the newest turn — with room for stray placeholders between them.
+_CEILING_PROMPT_ROWS = 16
+
+
+def _json_attrs(raw) -> dict:
+    try:
+        value = json.loads(raw) if raw else {}
+    except (TypeError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
 def _prompt_ceiling(conn, trace_id):
     """The GLOBAL max MAIN-agent prompt id, threaded into merge_spans so a stray
     prompt placeholder still drops when it happens to be the newest anchor
@@ -501,6 +516,7 @@ def _prompt_ceiling(conn, trace_id):
     serves is agent-scoped, so keeping it would leave the ceiling NULL and
     forfeit the guard entirely."""
     from lib.trace.alias import sql_in
+    from lib.trace.merge_pending import prompt_births
     from lib.trace.pending_spans import AGENT_ID_SQL
     from lib.trace.subagent_trace import agent_span_scope
     agent = agent_span_scope(conn, trace_id)
@@ -510,12 +526,20 @@ def _prompt_ceiling(conn, trace_id):
         placeholders, params = sql_in(trace_id)
         scope = f"trace_id IN {placeholders}"
         main_only = f" AND {AGENT_ID_SQL} IS NULL"
-    ceiling_row = conn.execute(
-        "SELECT MAX(id) FROM session_spans "
-        f"WHERE {scope} AND name = 'prompt'{main_only}",
-        params,
-    ).fetchone()
-    return ceiling_row[0] if ceiling_row else None
+    rows = conn.execute(
+        "SELECT id, trace_id, span_id, attributes FROM session_spans "
+        f"WHERE {scope} AND name = 'prompt'{main_only} "
+        "ORDER BY id DESC LIMIT ?",
+        [*params, _CEILING_PROMPT_ROWS],
+    ).fetchall()
+    if not rows:
+        return None
+    prompts = [{'id': r[0], 'trace_id': r[1], 'span_id': r[2],
+                'name': 'prompt', 'attributes': _json_attrs(r[3])}
+               for r in rows]
+    births = prompt_births(prompts)
+    return max(births.get((p['trace_id'], p['span_id']), p['id'])
+               for p in prompts)
 
 
 def _session_activity(conn, trace_id):
@@ -540,9 +564,11 @@ def _session_activity(conn, trace_id):
     ).fetchone()
     if row is None:
         return None
+    from lib.agent_acp.registry import open_tool_use_ids
     from lib.trace.pending_spans import never_ran_pending_agents
     return {'status': row['status'], 'last_seen': row['last_seen'],
-            'never_ran': never_ran_pending_agents(conn, params)}
+            'never_ran': never_ran_pending_agents(conn, params),
+            'open_tool_ids': open_tool_use_ids(params)}
 
 
 def _compute_retired_ids(raw, grafted):

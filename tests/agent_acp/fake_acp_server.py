@@ -8,8 +8,10 @@ the turn.agent_busy error the real server raises mid-turn.
 Lifecycle knobs: FAKE_ACP_STOP_REASON sets the prompt ack's stopReason,
 FAKE_ACP_NO_IMAGE=1 declares no image prompt support, FAKE_ACP_NO_LOAD=1
 declares no loadSession (session/load then errors), FAKE_ACP_REJECT_MODEL=1
-errors session/set_model, and FAKE_ACP_RECORD=<path> appends every request
-received to that file, one JSON object per line.
+errors session/set_model, FAKE_ACP_TOOL=<title> announces a tool call in
+progress under that title (with a usage_update) before the stall and completes
+it after, and FAKE_ACP_RECORD=<path> appends every request received to that
+file, one JSON object per line.
 """
 
 from __future__ import annotations
@@ -69,9 +71,21 @@ def _handle_prompt(params, msg_id, sessions, busy, serial, open_turns,
                {"code": "turn.agent_busy"})
         return
     open_turns.add(sid)
+    tool = os.environ.get("FAKE_ACP_TOOL")
+    if tool:
+        _update(sid, {"sessionUpdate": "tool_call", "toolCallId": "0:fake-1",
+                      "title": "Bash", "kind": "execute", "status": "pending"})
+        _update(sid, {"sessionUpdate": "tool_call_update",
+                      "toolCallId": "0:fake-1", "title": tool,
+                      "status": "in_progress"})
+        _update(sid, {"sessionUpdate": "usage_update", "used": 65536,
+                      "size": 262144})
     if stall:
         import time
         time.sleep(stall)
+    if tool:
+        _update(sid, {"sessionUpdate": "tool_call_update",
+                      "toolCallId": "0:fake-1", "status": "completed"})
     for word in ("ac", "p", "-", "ok"):
         _update(sid, {"sessionUpdate": "agent_message_chunk",
                       "content": {"type": "text", "text": word}})

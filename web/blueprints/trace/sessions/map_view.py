@@ -186,8 +186,9 @@ def _map_session_activity(stored: list[str]) -> dict | None:
         never_ran = never_ran_pending_agents(conn, stored)
     finally:
         conn.close()
+    from lib.agent_acp.registry import open_tool_use_ids
     return {'status': act_row[0], 'last_seen': act_row[1],
-            'never_ran': never_ran}
+            'never_ran': never_ran, 'open_tool_ids': open_tool_use_ids(stored)}
 
 
 def _structural_map_spans(trace_id: str) -> list[dict]:

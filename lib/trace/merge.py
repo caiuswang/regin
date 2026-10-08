@@ -54,6 +54,7 @@ from lib.trace.merge_pending import (
     INTERRUPT_SOURCE_STALE,
     _demote_stale_pending,
     _drop_stale_blockers,
+    prompt_births,
 )
 
 
@@ -169,6 +170,7 @@ def merge_spans(
     the same-agent-moved-on path fires."""
     if not raw:
         return raw
+    births = prompt_births(raw)
     spans = _drop_superseded_placeholders(raw)
     spans = _drop_resolved_permission_requests(spans)
     # After the resolved-gate drop, so only a gate that is still open — the
@@ -181,7 +183,8 @@ def merge_spans(
     # cross-writer pair earlier strips the `pending-` row `_inherit_turn_linkage`
     # reads from and leaves a slash expansion stranded on the SDK row.
     spans = _dedup_cross_source(spans)
-    spans = _drop_stale_blockers(spans, prompt_id_ceiling=prompt_id_ceiling)
+    spans = _drop_stale_blockers(spans, prompt_id_ceiling=prompt_id_ceiling,
+                                 births=births)
     spans = _demote_stale_pending(spans, session_activity=session_activity)
     # Last: it reads the survivors, and stamps attributes no earlier rule keys on.
     spans = _link_background_tasks(spans)

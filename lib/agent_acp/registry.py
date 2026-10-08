@@ -54,6 +54,23 @@ def get(trace_id: str):
         return _handles.get(trace_id)
 
 
+def handles() -> list:
+    """Every live handle this process holds."""
+    with _lock:
+        return list(_handles.values())
+
+
+def open_tool_use_ids(trace_ids) -> set[str]:
+    """tool_use_ids a live run here still has in flight, across `trace_ids`
+    (an alias group). Empty for an id no live run owns."""
+    with _lock:
+        held = [_handles[t] for t in trace_ids if t in _handles]
+    ids: set[str] = set()
+    for handle in held:
+        ids |= handle.open_tool_use_ids()
+    return ids
+
+
 def was_owned(trace_id: str) -> bool:
     """Whether a channel run here ever owned `trace_id`, live or closed."""
     with _lock:

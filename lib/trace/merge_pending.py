@@ -9,9 +9,12 @@ from lib.trace.pending_spans import (
     INACTIVE_THRESHOLD_SEC,
     is_agent_scoped_prompt,
     is_human_blocker,
+    is_pending_span_id,
     parse_naive_ts as _merge_ts,
+    pending_id_for_resolved,
 )
 from lib.trace.merge_anchors import _attrs, _is_live_prompt_placeholder
+from lib.trace.merge_gates import _tool_use_id
 
 
 _STALE_PENDING_NAMES = ('permission.request', 'prompt')
@@ -21,7 +24,59 @@ def _is_stale_pending_name(name: str) -> bool:
     return name.startswith('tool.') or name in _STALE_PENDING_NAMES
 
 
-def _drop_stale_blockers(spans: list[dict], prompt_id_ceiling=None) -> list[dict]:
+def prompt_births(spans: list[dict]) -> dict[tuple, int]:
+    """(trace_id, span_id) → the id its turn was born at, for each resolved
+    main prompt whose `promptlive-` placeholder was written before it.
+
+    A turn is born when its UserPromptSubmit hook writes the placeholder; the
+    resolved anchor is only the transcript's later echo of the same turn. A
+    provider whose transcript is tailed lazily (kimi) writes that echo AFTER
+    the turn's first PreToolUse placeholder, so keying "a newer prompt" on the
+    anchor's own id retires the turn's in-flight tool as if a later turn had
+    abandoned it. The placeholder only counts when it is newer than the
+    previous anchor: a repeated prompt text hashes to the first turn's
+    placeholder id, which must not lend that old birth to the new turn. The
+    floor is the previous turn's birth, not its anchor's id: that echo can
+    itself land after the next turn's placeholder."""
+    placeholders: dict[tuple, int] = {}
+    anchors: list[dict] = []
+    for s in spans:
+        if s.get('name') != 'prompt' or s.get('id') is None \
+                or is_agent_scoped_prompt(s):
+            continue
+        if is_pending_span_id(s.get('span_id')):
+            key = (s.get('trace_id'), s.get('span_id'))
+            placeholders[key] = min(s['id'], placeholders.get(key, s['id']))
+        else:
+            anchors.append(s)
+    births: dict[tuple, int] = {}
+    previous: dict = {}
+    for s in sorted(anchors, key=lambda a: a['id']):
+        tid = s.get('trace_id')
+        floor = previous.get(tid, -1)
+        for pid in pending_id_for_resolved(s, _attrs(s)):
+            ph_id = placeholders.get((tid, pid))
+            if ph_id is not None and floor < ph_id < s['id']:
+                births[(tid, s.get('span_id'))] = ph_id
+        previous[tid] = births.get((tid, s.get('span_id')), s['id'])
+    return births
+
+
+def _window_prompt_max(spans: list[dict], births: dict) -> dict[str, int]:
+    """trace_id → the newest main prompt's birth id within this window."""
+    window_max: dict[str, int] = {}
+    for s in spans:
+        if s.get('name') != 'prompt' or is_agent_scoped_prompt(s):
+            continue
+        tid = s.get('trace_id')
+        sid = births.get((tid, s.get('span_id')), s.get('id'))
+        if sid is not None and sid > window_max.get(tid, -1):
+            window_max[tid] = sid
+    return window_max
+
+
+def _drop_stale_blockers(spans: list[dict], prompt_id_ceiling=None,
+                         births: dict | None = None) -> list[dict]:
     """Drop stale PENDING rows superseded by a newer prompt — anything PENDING
     from a prior turn that the user implicitly abandoned by submitting again.
     Keyed on the monotonic `id` (not start_time: anchors are tz-aware,
@@ -42,25 +97,21 @@ def _drop_stale_blockers(spans: list[dict], prompt_id_ceiling=None) -> list[dict
     window* still drops — the window-local max alone would wrongly keep it.
     Full-session readers pass None (window == whole session). The genuinely
     newest prompt session-wide equals the ceiling, so it is never < cutoff and
-    is always kept."""
-    window_max: dict[str, int] = {}
-    for s in spans:
-        if s.get('name') != 'prompt' or is_agent_scoped_prompt(s):
-            continue
-        sid = s.get('id')
-        if sid is None:
-            continue
-        tid = s.get('trace_id')
-        if sid > window_max.get(tid, -1):
-            window_max[tid] = sid
+    is always kept.
+
+    A prompt counts at its turn's birth id (`prompt_births`), not its own: the
+    echo of the turn a pending tool belongs to is not a newer prompt."""
+    window_max = _window_prompt_max(spans, births or {})
     if not window_max and prompt_id_ceiling is None:
         return spans
 
     def cutoff_for(tid) -> int | None:
-        wm = window_max.get(tid)
+        # The ceiling is the session-wide newest birth, so it bounds every
+        # window's own max; a window can only exceed it by holding a turn's
+        # anchor without the placeholder that dates it.
         if prompt_id_ceiling is None:
-            return wm
-        return prompt_id_ceiling if wm is None else max(wm, prompt_id_ceiling)
+            return window_max.get(tid)
+        return prompt_id_ceiling
 
     def stale(s: dict) -> bool:
         if s.get('status_code') != 'PENDING':
@@ -228,6 +279,11 @@ def _demote_stale_pending(
           whole store by `pending_spans.never_ran_pending_agents`): a side
           fork's placeholder that no one can ever answer.
 
+    None of them demotes a call the live run that owns the session still
+    reports open (`session_activity['open_tool_ids']`): an ACP run names its
+    in-flight calls outright, so a call parked for twenty minutes on an MCP
+    OAuth login is a wait, not a crash, whatever the clock says.
+
     INVARIANT: a legitimately-running long tool on an ACTIVE session with no
     same-agent completion activity after it is never demoted — (a) needs a
     later same-agent move-on past the grace, (b) needs an inactive session,
@@ -249,8 +305,11 @@ def _demote_stale_pending(
     latest_span_ts = _latest_span_ts(spans)
 
     never_ran = (session_activity or {}).get('never_ran') or set()
+    open_tools = (session_activity or {}).get('open_tool_ids') or set()
 
     def demote(s: dict) -> bool:
+        if _tool_use_id(s) in open_tools:
+            return False
         if _moved_on_past_grace(s, move_on_ts):
             return True
         if (s.get('trace_id'), _attrs(s).get('agent_id')) in never_ran:

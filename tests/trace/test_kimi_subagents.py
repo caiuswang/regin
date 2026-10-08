@@ -650,3 +650,29 @@ def test_stale_synthetic_is_swept_when_the_agent_id_rekeys(tmp_db, kimi_home):
         tmp_db, "SELECT span_id FROM session_spans WHERE trace_id = ? "
                 "AND name = 'subagent.start'")}
     assert starts == {"sa-start-launch-0", f"sa-start-{_SID}:agent-1"}
+
+
+def test_start_marker_never_carries_the_result(tmp_db, kimi_home):
+    """The card reads the start's own `result_preview` before the answer the
+    stop reported. Stamped on a live pass, it froze the subagent's opening
+    line there and the card showed it as the RESULT; a start still holding
+    one from such a pass is cleared."""
+    _seed(tmp_db, with_prompt_preview=True)
+    conn = sqlite3.connect(str(tmp_db))
+    try:
+        conn.execute(
+            "UPDATE session_spans SET attributes = json_set(attributes, "
+            "'$.result_preview', 'I will explore first.') "
+            "WHERE trace_id = ? AND span_id = 'S0'", (_SID,))
+        conn.commit()
+    finally:
+        conn.close()
+    reconcile_kimi_subagents(_SID)
+    starts = _rows(tmp_db, "SELECT json_extract(attributes, '$.result_preview') "
+                           "AS rp FROM session_spans WHERE trace_id = ? "
+                           "AND name = 'subagent.start'")
+    assert [r["rp"] for r in starts] == [None, None]
+    stops = _rows(tmp_db, "SELECT json_extract(attributes, '$.result_preview') "
+                          "AS rp FROM session_spans WHERE trace_id = ? "
+                          "AND name = 'subagent.stop' ORDER BY span_id")
+    assert [r["rp"] for r in stops] == ["alpha done", "beta done"]

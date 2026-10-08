@@ -836,6 +836,9 @@ def run_live_state(trace_id: str) -> RunLiveState:
     cannot be working, and reporting the turn it was holding would leave a
     busy dot lit on a session nothing can move.
     """
+    handle = _acp_handle(trace_id)
+    if handle is not None:
+        return RunLiveState(True, handle.live_state())
     runner, _refusal = _live_runner(trace_id)
     if runner is not None:
         return RunLiveState(True, runner.live_state())
@@ -861,6 +864,9 @@ def run_live_states() -> dict:
         state = run_live_state(trace_id).state
         if state is not None:
             states[children.get(trace_id) or trace_id] = state
+    from lib.agent_acp import registry as acp_registry
+    for handle in acp_registry.handles():
+        states[handle.trace_id] = handle.live_state()
     return states
 
 

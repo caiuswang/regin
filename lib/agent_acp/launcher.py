@@ -41,6 +41,7 @@ from lib.activity_log import get_activity_logger
 from lib.settings import settings
 
 from . import registry as acp_registry
+from .activity import AcpActivity
 from .client import (AcpClient, AcpError, AcpLaunchRefused, AcpTurnBusy)
 
 log = get_activity_logger("agent_acp")
@@ -79,11 +80,15 @@ class AcpRunHandle:
     `supervisor.RunHandle` for the contract this mirrors)."""
 
     def __init__(self, trace_id: str, future: Future,
-                 client: AcpClient, session_id: str) -> None:
+                 client: AcpClient, session_id: str,
+                 cwd: str | None = None, model: str = "") -> None:
         self.trace_id = trace_id
         self._future = future
         self._client = client
         self._session_id = session_id
+        self._cwd = cwd
+        self._model = model
+        self._activity = AcpActivity()
         # Every turn that ran, launch turn first. Written by the pump thread
         # only; readers poll it from other threads (a list append is atomic
         # under the GIL, and each outcome is a frozen dataclass).
@@ -197,6 +202,20 @@ class AcpRunHandle:
         with self._cond:
             return self._in_flight
 
+    def live_state(self):
+        """This run's status now, as a `ScreenState` — what the SDK runner's
+        `live_state` answers for its tier, read here off the ACP update
+        stream (`AcpActivity`)."""
+        return self._activity.screen_state(session_id=self._session_id,
+                                           cwd=self._cwd, model=self._model)
+
+    def open_tool_use_ids(self) -> set[str]:
+        return self._activity.open_tool_use_ids()
+
+    def _on_update(self, session_id: str | None, update: dict) -> None:
+        if session_id == self._session_id:
+            self._activity.apply(update)
+
     # ── lifecycle ────────────────────────────────────────────────
 
     def stop(self) -> tuple[bool, str]:
@@ -264,6 +283,10 @@ class AcpRunHandle:
     def _set_in_flight(self, value: bool) -> None:
         with self._cond:
             self._in_flight = value
+        if value:
+            self._activity.turn_started()
+        else:
+            self._activity.turn_ended()
 
 
 def _spawn_client(env: dict | None, cwd: str | None,
@@ -417,7 +440,9 @@ def launch_run(prompt: str, *, cwd: str | None = None,
             client.close()
         raise
     future: Future = Future()
-    handle = AcpRunHandle(session_id, future, client, session_id)
+    handle = AcpRunHandle(session_id, future, client, session_id,
+                          cwd=cwd, model=model)
+    client.on_update(handle._on_update)
     acp_registry.register(handle)
     _record_run_started(handle, cwd, model)
     threading.Thread(target=_pump, daemon=True,

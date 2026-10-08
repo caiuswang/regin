@@ -76,6 +76,7 @@ class AcpClient:
             "session/request_permission": _cancel_permission,
         }
         self._update_callbacks: list[object] = []
+        self._update_listeners: list[object] = []
         self._send_lock = threading.Lock()
         self._closed = False
 
@@ -182,6 +183,11 @@ class AcpClient:
 
     # ── wire ───────────────────────────────────────────────────
 
+    def on_update(self, listener: object) -> None:
+        """Call `listener(session_id, update)` for every `session/update`
+        notification, on the reader thread."""
+        self._update_listeners.append(listener)
+
     def on_request(self, method: str, handler: object) -> None:
         """Answer an agent→client reverse-RPC; the callable returns the
         `result` object echoed back."""
@@ -233,7 +239,13 @@ class AcpClient:
     def _fan_out(self, msg: dict) -> None:
         if msg.get("method") != "session/update":
             return
-        update = (msg.get("params") or {}).get("update") or {}
+        params = msg.get("params") or {}
+        update = params.get("update") or {}
+        for listener in list(self._update_listeners):
+            try:
+                listener(params.get("sessionId"), update)
+            except Exception:  # noqa: BLE001 — a listener must not kill the reader
+                log.error("acp_update_listener_failed", exc_info=True)
         if update.get("sessionUpdate") != "agent_message_chunk":
             return
         text = ((update.get("content") or {}).get("text")) or ""

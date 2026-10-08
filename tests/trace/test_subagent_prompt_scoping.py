@@ -107,7 +107,7 @@ def _ceiling_conn():
     conn = sqlite3.connect(':memory:')
     conn.row_factory = sqlite3.Row
     conn.execute(
-        "CREATE TABLE session_spans (id INTEGER PRIMARY KEY, trace_id TEXT, "
+        "CREATE TABLE session_spans (id INTEGER PRIMARY KEY, trace_id TEXT, span_id TEXT, "
         "name TEXT, agent_id TEXT, attributes TEXT)"
     )
     return conn
