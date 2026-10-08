@@ -11,6 +11,8 @@ import { useFullTextSearch } from '../../composables/useFullTextSearch.js'
 import { useSessionSwitcher } from '../../composables/useSessionSwitcher.js'
 import { useMediaQuery } from '../../composables/useMediaQuery.js'
 import { useQuickCapture } from '../../composables/useQuickCapture.js'
+import { useEntityWalk } from '../../composables/useEntityWalk.js'
+import { useCopy } from '../../composables/useCopy.js'
 import { openFilePreview } from '../../composables/useFilePreview.js'
 import {
   KIND_META, MIN_ID_CHARS, NARROW_MAX_PX, SCOPES, hitLines, rowDomId,
@@ -127,6 +129,20 @@ const activeDescendant = computed(() => {
 const hitIndex = ref(0)
 const previewMode = ref('read')
 
+// Axis 2 (preview focus), independent of the list cursor: the entity the
+// right pane shows, and the relations walked from the highlighted row.
+const walk = useEntityWalk()
+const { copyText, isCopied } = useCopy()
+const entityStack = computed(() => (switcherMode.value ? [] : walk.stack.value))
+const walking = computed(() => entityStack.value.length > 0)
+// Keyed on the row, not the row object: a streaming group rebuilds its rows
+// without the cursor moving, and that must not unwind a walk. Closing the
+// palette drops the walk; reopening starts again from the highlighted row.
+const walkOrigin = computed(() => (search.open.value && !switcherMode.value
+  ? search.activeRow.value?.key ?? null : null))
+watch(walkOrigin, () => walk.reset(walkOrigin.value ? search.activeRow.value : null),
+  { immediate: true })
+
 const previewHits = computed(() => {
   const row = switcherMode.value ? null : search.activeRow.value
   return row ? hitLines(row.doc.body, search.trimmed.value) : []
@@ -141,6 +157,11 @@ watch(previewHits, (hits) => {
   if (!hits.length) { hitIndex.value = 0; previewMode.value = 'read' }
   else if (hitIndex.value >= hits.length) hitIndex.value = 0
 })
+
+function pickOrStep(delta) {
+  if (walking.value) walk.movePick(delta)
+  else stepHit(delta)
+}
 
 function stepHit(delta) {
   const n = previewHits.value.length
@@ -165,7 +186,13 @@ const railLegend = computed(() => {
   const out = [{ keys: ['↑', '↓'], label: 'move' }]
   if (!lookupMode.value) out.push({ keys: ['⇥'], label: 'next kind' })
   out.push({ keys: ['↵'], label: switcherMode.value ? 'attach' : 'open' })
-  if (previewHits.value.length) {
+  if (walking.value) {
+    out.push({ keys: ['⌘', '↵'], label: 'secondary' })
+    out.push({ keys: ['⌥', '↑↓'], label: 'pick relation' })
+    out.push({ keys: ['⌥', '→'], label: 'follow' })
+    const prev = walk.stack.value[walk.stack.value.length - 2]
+    if (prev) out.push({ keys: ['⌥', '←'], label: `back to ${prev.ref}` })
+  } else if (previewHits.value.length) {
     out.push({ keys: ['⌥', '↑↓'], label: 'walk hits' })
     out.push({ keys: ['⌥', 'L'], label: 'hit list' })
   }
@@ -288,10 +315,11 @@ function move(delta) {
   scrollActiveIntoView()
 }
 
-// Escape peels one layer (R8): the sheet covering the list, then the Drill,
-// then the query, and only then the palette itself.
+// Escape peels one layer (R8): the sheet covering the list, then one step of
+// the walk, then the Drill, then the query, and only then the palette itself.
 function closeTopLayer() {
   if (narrow.value && sheetOpen.value) { sheetOpen.value = false; return }
+  if (walk.back()) return
   if (search.inDrill.value) { search.leaveDrill(); return }
   if (search.trimmed.value) { clearQuery(); return }
   search.closePalette()
@@ -320,6 +348,29 @@ function showAllHome(entry) {
   inputEl.value?.focus()
 }
 
+// R6. Every action is a route change, a pivot inside the preview, or a
+// clipboard copy — the palette changes no state, so none of them posts.
+function runAction(action) {
+  if (!action || action.disabled) return
+  if (action.type === 'pivot') { walk.push(action.target); return }
+  if (action.type === 'copy') { copyText(action.text); return }
+  search.rememberQuery(search.trimmed.value)
+  if (action.type === 'tab') { window.open(action.href, '_blank', 'noopener'); return }
+  search.closePalette()
+  router.push(action.href)
+}
+
+// Unpivoted, ↵ keeps the row's own verb (a resolver's session row
+// re-addresses through `#`); once walked, it acts on the focused entity.
+function act(which) {
+  if (which === 'primary' && !walk.pivoted.value) { openRow(search.activeRow.value); return }
+  runAction(walk.actions.value?.[which])
+}
+
+function followPicked(key) {
+  runAction(walk.follow(key))
+}
+
 // Where the preview is a sheet, ↵ has to reveal it before it can open
 // anything — otherwise the reader never sees what they are committing to.
 function openOrReveal() {
@@ -331,6 +382,7 @@ function openOrReveal() {
   }
   const entry = search.activeEntry.value
   if (entry?.type === 'doc' && narrow.value && !sheetOpen.value) { sheetOpen.value = true; return }
+  if (walk.pivoted.value) { act('primary'); return }
   activate(entry)
 }
 
@@ -365,8 +417,10 @@ const PLAIN_KEYS = {
 // two axes were collapsed onto one pair of keys before, which is why reading
 // a page with eighty hits meant leaving the palette.
 const ALT_KEYS = {
-  arrowdown: () => stepHit(1),
-  arrowup: () => stepHit(-1),
+  arrowdown: () => pickOrStep(1),
+  arrowup: () => pickOrStep(-1),
+  arrowright: () => { if (walking.value) followPicked() },
+  arrowleft: () => walk.back(),
   l: togglePreviewMode,
 }
 
@@ -375,7 +429,7 @@ const ALT_KEYS = {
 // — six `&&` clauses spread across two branches is what pushed `onKeydown`
 // past the complexity gate.
 function chordFor(e) {
-  if (e.metaKey) return undefined
+  if (e.metaKey) return e.key === 'Enter' && walking.value ? () => act('secondary') : undefined
   if (e.ctrlKey && !e.altKey) return CTRL_KEYS[e.key.toLowerCase()]
   // On macOS ⌥ composes a character, so the caller must preventDefault or
   // ⌥L drops a `¬` into the query.
@@ -518,7 +572,11 @@ function widen() {
             data-testid="scope-notice"
           >{{ search.scopeNotice.value }}</p>
 
-          <div class="search-panes" :class="{ 'is-sheet': narrow && sheetOpen }">
+          <div
+            class="search-panes"
+            :class="{ 'is-sheet': narrow && sheetOpen, 'is-pivoted': walk.pivoted.value }"
+            :data-pivoted="walk.pivoted.value ? '' : undefined"
+          >
             <SearchFacetRail
               :scopes="scopes"
               :facets="facets"
@@ -592,6 +650,15 @@ function widen() {
               @step="stepHit"
               @pick-hit="pickHit"
               @mode="m => previewMode = m"
+              :entity-stack="entityStack"
+              :pick-key="walk.pickKey.value"
+              :actions="walk.actions.value"
+              :copied="!!walk.actions.value && isCopied(walk.actions.value.copy.text)"
+              @follow="followPicked"
+              @pop-to="walk.popTo"
+              @act="act"
+              @go="href => runAction({ type: 'route', href })"
+              @retry="walk.retry()"
             />
           </div>
 
@@ -746,6 +813,15 @@ function widen() {
   color: var(--color-warning-strong);
   background: var(--color-warning-soft);
   border-bottom: 1px solid var(--color-border);
+}
+
+/* While the preview is walked away from it, the origin row keeps a dashed
+   outline: still the list's cursor, no longer what ↵ acts on. */
+.search-panes.is-pivoted :deep(.result-row.is-active) {
+  background: transparent;
+  box-shadow: none;
+  outline: 1.5px dashed var(--color-border-strong);
+  outline-offset: -1.5px;
 }
 
 
