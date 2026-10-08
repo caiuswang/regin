@@ -11,11 +11,11 @@ import { useFullTextSearch } from '../../composables/useFullTextSearch.js'
 import { useSessionSwitcher } from '../../composables/useSessionSwitcher.js'
 import { useMediaQuery } from '../../composables/useMediaQuery.js'
 import { useQuickCapture } from '../../composables/useQuickCapture.js'
-import { useEntityWalk } from '../../composables/useEntityWalk.js'
+import { trackWalkOrigin, useEntityWalk } from '../../composables/useEntityWalk.js'
 import { useCopy } from '../../composables/useCopy.js'
 import { openFilePreview } from '../../composables/useFilePreview.js'
 import {
-  KIND_META, MIN_ID_CHARS, NARROW_MAX_PX, SCOPES, hitLines, rowDomId,
+  KIND_META, MIN_ID_CHARS, NARROW_MAX_PX, SCOPES, caretAtEnd, hitLines, rowDomId,
 } from '../../utils/searchDocs.js'
 
 const router = useRouter()
@@ -37,6 +37,9 @@ const switcherId = ref(null)
 // roster is twelve rows and the trace view holds a paginated window, so the
 // answer can only come from the server — the lookup leg below is that request.
 const lookupMode = computed(() => search.idPrefix.value !== null)
+// No rail (R1) and its own key legend — only under ⌘J. A `#` address, or the
+// Sessions kind picked in ⌘K, is a search state and keeps the rail.
+const rosterMode = search.rosterMode
 
 const switcherRows = computed(() => (lookupMode.value
   ? switcher.lookupRows.value
@@ -133,15 +136,11 @@ const previewMode = ref('read')
 // right pane shows, and the relations walked from the highlighted row.
 const walk = useEntityWalk()
 const { copyText, isCopied } = useCopy()
-const entityStack = computed(() => (switcherMode.value ? [] : walk.stack.value))
+const entityStack = walk.stack
 const walking = computed(() => entityStack.value.length > 0)
-// Keyed on the row, not the row object: a streaming group rebuilds its rows
-// without the cursor moving, and that must not unwind a walk. Closing the
-// palette drops the walk; reopening starts again from the highlighted row.
-const walkOrigin = computed(() => (search.open.value && !switcherMode.value
-  ? search.activeRow.value?.key ?? null : null))
-watch(walkOrigin, () => walk.reset(walkOrigin.value ? search.activeRow.value : null),
-  { immediate: true })
+trackWalkOrigin(walk, {
+  open: search.open, roster: switcherMode, rosterRow: switcherRow, activeRow: search.activeRow,
+})
 
 const previewHits = computed(() => {
   const row = switcherMode.value ? null : search.activeRow.value
@@ -181,6 +180,14 @@ function togglePreviewMode() {
   if (!previewHits.value.length) return
   previewMode.value = previewMode.value === 'read' ? 'hits' : 'read'
 }
+
+const ROSTER_LEGEND = [
+  { key: '↑↓', label: 'move' },
+  { key: '1–9', label: 'attach' },
+  { key: '#', label: 'address' },
+  { key: '↵', label: 'attach' },
+  { key: '⌘K', label: 'search' },
+]
 
 const railLegend = computed(() => {
   const out = [{ keys: ['↑', '↓'], label: 'move' }]
@@ -349,7 +356,11 @@ function runAction(action) {
 // Unpivoted, ↵ keeps the row's own verb (a resolver's session row
 // re-addresses through `#`); once walked, it acts on the focused entity.
 function act(which) {
-  if (which === 'primary' && !walk.pivoted.value) { openRow(search.activeRow.value); return }
+  if (which === 'primary' && !walk.pivoted.value) {
+    if (switcherMode.value) attach(switcherRow.value)
+    else openRow(search.activeRow.value)
+    return
+  }
   runAction(walk.actions.value?.[which])
 }
 
@@ -361,15 +372,28 @@ function followPicked(key) {
 // anything — otherwise the reader never sees what they are committing to.
 function openOrReveal() {
   // ↵ is `switch-client`, not `open`: in the Sessions facet it attaches.
-  if (switcherMode.value) {
-    if (narrow.value && !sheetOpen.value) { sheetOpen.value = true; return }
-    attach(switcherRow.value)
-    return
-  }
-  const entry = search.activeEntry.value
-  if (entry?.type === 'doc' && narrow.value && !sheetOpen.value) { sheetOpen.value = true; return }
-  if (walk.pivoted.value) { act('primary'); return }
-  activate(entry)
+  if (revealSheet()) return
+  if (switcherMode.value || walk.pivoted.value) { act('primary'); return }
+  activate(search.activeEntry.value)
+}
+
+// Below the split, ↵ and → both open the preview sheet before anything else (R8).
+// Only a row has a preview; a "Show all" or load row acts straight away.
+function revealSheet() {
+  if (!narrow.value || sheetOpen.value) return false
+  const previewable = switcherMode.value
+    ? !!switcherRow.value
+    : search.activeEntry.value?.type === 'doc'
+  if (previewable) sheetOpen.value = true
+  return previewable
+}
+
+// → is a caret key in the query, so it only opens the sheet once the caret
+// has nothing left to its right.
+const hasModifier = e => e.shiftKey || e.metaKey || e.ctrlKey || e.altKey
+
+function arrowRight(e) {
+  return caretAtEnd(e.target) && revealSheet()
 }
 
 // Capture an idea without searching for one. It lives here rather than on a
@@ -467,6 +491,10 @@ function onKeydown(e) {
     e.preventDefault()
     return
   }
+  if (e.key === 'ArrowRight' && !hasModifier(e) && arrowRight(e)) {
+    e.preventDefault()
+    return
+  }
   const plain = PLAIN_KEYS[e.key]
   if (!plain) return
   e.preventDefault()
@@ -558,6 +586,7 @@ function widen() {
             :data-pivoted="walk.pivoted.value ? '' : undefined"
           >
             <SearchFacetRail
+              v-if="!rosterMode"
               :scopes="scopes"
               :facets="facets"
               :recents="search.held.value ? search.recents.value : []"
@@ -614,9 +643,15 @@ function widen() {
             </div>
             <SessionSwitcherPreview
               v-if="switcherMode"
-              :row="switcherRow"
-              :clock="switcher.clock.value"
-              @attach="attach"
+              :stack="entityStack"
+              :pick-key="walk.pickKey.value"
+              :actions="walk.actions.value"
+              :copied="!!walk.actions.value && isCopied(walk.actions.value.copy.text)"
+              @follow="followPicked"
+              @pop-to="walk.popTo"
+              @act="act"
+              @go="href => runAction({ type: 'route', href })"
+              @retry="walk.retry()"
             />
             <SearchPreview
               v-else
@@ -640,6 +675,13 @@ function widen() {
               @retry="walk.retry()"
             />
           </div>
+
+          <footer v-if="rosterMode" class="roster-foot" aria-label="Roster keys">
+            <span v-for="hint in ROSTER_LEGEND" :key="hint.label" class="roster-hint">
+              <kbd>{{ hint.key }}</kbd>{{ hint.label }}
+            </span>
+            <span class="roster-hint is-end"><kbd>esc</kbd>close roster</span>
+          </footer>
 
           <p class="sr-only" role="status" aria-live="polite">
             <template v-if="switcherMode">{{ switcherCount }}</template>
@@ -786,7 +828,8 @@ function widen() {
 
 /* While the preview is walked away from it, the origin row keeps a dashed
    outline: still the list's cursor, no longer what ↵ acts on. */
-.search-panes.is-pivoted :deep(.result-row.is-active) {
+.search-panes.is-pivoted :deep(.result-row.is-active),
+.search-panes.is-pivoted :deep(.switcher-row.is-active) {
   background: transparent;
   box-shadow: none;
   outline: 1.5px dashed var(--color-border-strong);
@@ -794,6 +837,23 @@ function widen() {
 }
 
 
+
+.roster-foot {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.5rem 0.875rem;
+  border-top: 1px solid var(--color-border);
+  font-size: var(--sp-t-micro);
+  color: var(--color-fg-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.roster-hint { display: inline-flex; align-items: center; gap: 0.375rem; }
+
+.roster-hint.is-end { margin-left: auto; }
 
 kbd {
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);

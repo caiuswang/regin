@@ -33,6 +33,7 @@ defineProps({
       <span class="pr-status">{{ row.status?.word }}</span>
       <SearchMark class="pr-context" :part="snippet(row.context || '', query)" tone="soft" />
       <span v-if="row.aside" class="pr-aside">{{ row.aside }}</span>
+      <slot name="meta" />
     </span>
   </span>
 </template>

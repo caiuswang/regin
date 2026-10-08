@@ -518,9 +518,16 @@ export function useFullTextSearch() {
     writeStored(RECENTS_KEY, JSON.stringify(next))
   }
 
+  // ⌘K over the open roster is the way back to search: the roster has no rail
+  // to pick a kind from, so the chord drops ⌘J's forcing instead of no-oping.
   function openPalette() {
-    restoreFocusTo = document.activeElement
-    open.value = true
+    if (open.value) {
+      scopeOverride.value = null
+      facetOverride.value = null
+    } else {
+      restoreFocusTo = document.activeElement
+      open.value = true
+    }
     scheduleRemote()
   }
 
@@ -530,7 +537,9 @@ export function useFullTextSearch() {
     scopeOverride.value = 'global'
     facetOverride.value = 'Sessions'
     setQuery('')
-    openPalette()
+    if (!open.value) restoreFocusTo = document.activeElement
+    open.value = true
+    scheduleRemote()
   }
 
   // The Sessions facet with nothing typed IS the switcher; type into it and it
@@ -538,6 +547,11 @@ export function useFullTextSearch() {
   const switcherMode = computed(() =>
     activeFacet.value === 'Sessions'
     && (held.value || idPrefix.value !== null))
+
+  // The ⌘J roster proper: the switcher reached by the chord, not by a reader
+  // who picked the Sessions kind in ⌘K and still wants the rail they clicked.
+  const rosterMode = computed(() =>
+    switcherMode.value && idPrefix.value === null && facetOverride.value === 'Sessions')
 
   // The query survives close deliberately — reopening with ⌘K is how a user
   // walks back into the same result set after reading one hit.
@@ -574,7 +588,7 @@ export function useFullTextSearch() {
     open, query, facet, recents, activeId, activeRow, activeEntry, groups,
     counts, entries, held, trimmed, idPrefix, mode, offline, settling,
     activeScope, activeFacet, activeKinds, facets, facetView, sessionAvailable,
-    switcherMode, drillView, addressView, noMatches, headerCount, inDrill,
+    switcherMode, rosterMode, drillView, addressView, noMatches, headerCount, inDrill,
     openPalette, openSwitcher, closePalette, setQuery, setFacet, cycleFacet,
     moveActive, drillInto, leaveDrill, loadMore, retryKind,
     setScope, toggleScope, rememberQuery, retry, source,

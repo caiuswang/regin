@@ -1,17 +1,18 @@
 <script setup>
 // The palette's row body when it is offering sessions rather than search hits
 // — the ⌘J roster, and the rows a `#<session-id>` address resolved to.
-// It replaces `SearchResultList` and nothing else: the shell, the focus trap,
-// the facet bar and the key handling are the palette's, unchanged.
+// It replaces `SearchResultList` and nothing else: the focus trap and the key
+// handling are the palette's, unchanged. Each row is the same `PaletteRow`
+// search renders, with the 1–9 hotkey in front of it.
 //
-// Selection is reverse-video rather than a ring, because a row here carries
-// four lines of its own and a 1.5px outline around that reads as a box, not as
-// a cursor. tmux' choose-tree is the model: moving the selection previews and
-// never commits.
+// Selection is reverse-video rather than a ring, because a row here is two
+// lines tall and a 1.5px outline around that reads as a box, not as a cursor.
+// tmux' choose-tree is the model: moving the selection previews and never
+// commits.
 import { computed } from 'vue'
+import SearchPaletteRow from './SearchPaletteRow.vue'
 import {
-  GROUP_LABEL, groupOf, hotkeyFor, lastLine, rowName, stateMeta,
-  elapsedLabel,
+  GROUP_LABEL, groupOf, hotkeyFor, paletteRowOf, rosterMeta,
 } from '../../utils/sessionSwitcher.js'
 
 const props = defineProps({
@@ -32,6 +33,15 @@ const props = defineProps({
 })
 defineEmits(['select', 'attach'])
 
+const groupCounts = computed(() => {
+  const out = {}
+  for (const row of props.rows) {
+    const g = groupOf(row)
+    out[g] = (out[g] || 0) + 1
+  }
+  return out
+})
+
 const decorated = computed(() => {
   let previous = null
   return props.rows.map((row, index) => {
@@ -42,13 +52,12 @@ const decorated = computed(() => {
       row,
       id: row.trace_id,
       first,
+      group,
       groupLabel: GROUP_LABEL[group],
-      groupCount: props.rows.filter(r => groupOf(r) === group).length,
-      hotkey: props.showHotkeys ? hotkeyFor(index) : '',
-      state: stateMeta(row),
-      name: rowName(row),
-      meta: `${elapsedLabel(row, props.clock)} · turn ${row.turn ?? 0}`,
-      lastLine: lastLine(row),
+      groupCount: groupCounts.value[group],
+      hotkey: props.showHotkeys ? (hotkeyFor(index) || '·') : '',
+      palette: { ...paletteRowOf(row), here: row.trace_id === props.attachedId },
+      meta: rosterMeta(row, props.clock),
     }
   })
 })
@@ -63,7 +72,8 @@ const decorated = computed(() => {
     <p v-else-if="!decorated.length" class="switcher-empty">{{ emptyText }}</p>
 
     <template v-for="item in decorated" :key="item.id">
-      <header v-if="item.first" class="group-head">
+      <header v-if="item.first" class="group-head" :data-group="item.group">
+        <span class="group-dot" aria-hidden="true" />
         <span class="group-label">{{ item.groupLabel }}</span>
         <span class="group-count">{{ item.groupCount }}</span>
         <span class="group-rule" />
@@ -77,31 +87,16 @@ const decorated = computed(() => {
         :class="{ 'is-active': item.id === activeId }"
         :data-testid="'switcher-row'"
         :data-trace-id="item.id"
+        :data-group="item.group"
         @click="$emit('select', item.row)"
         @dblclick="$emit('attach', item.row)"
       >
         <span class="switcher-hotkey">{{ item.hotkey }}</span>
-        <span
-          class="switcher-dot"
-          :class="{ 'is-pulsing': item.state.pulse }"
-          :style="{ '--dot': item.state.dot }"
-          :aria-hidden="true"
-        >{{ item.state.glyph }}</span>
-
-        <div class="switcher-body">
-          <div class="switcher-title-row">
-            <span class="switcher-name">{{ item.name }}</span>
-            <span v-if="item.id === attachedId" class="switcher-here">here</span>
+        <SearchPaletteRow :row="item.palette">
+          <template #meta>
             <span class="switcher-meta">{{ item.meta }}</span>
-          </div>
-          <div class="switcher-sub">
-            <span class="switcher-repo">{{ item.row.repo || item.row.cwd || '—' }}</span>
-            <span class="switcher-state" :style="{ color: item.state.strong }">
-              {{ item.state.label }}
-            </span>
-          </div>
-          <p v-if="item.lastLine" class="switcher-line">{{ item.lastLine }}</p>
-        </div>
+          </template>
+        </SearchPaletteRow>
       </div>
     </template>
   </div>
@@ -112,13 +107,13 @@ const decorated = computed(() => {
   flex: 1;
   min-width: 0;
   overflow-y: auto;
-  padding: 0.5rem 0;
+  padding: 0.5rem 0.625rem;
   border-right: 1px solid var(--color-border);
 }
 
 .switcher-empty {
   padding: 1.25rem;
-  font-size: 0.8125rem;
+  font-size: var(--sp-t-body);
   color: var(--color-fg-subtle);
 }
 
@@ -126,19 +121,26 @@ const decorated = computed(() => {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.5rem 1.25rem 0.375rem;
+  padding: 0.625rem 0.625rem 0.375rem;
+}
+
+.group-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--color-fg-faint);
 }
 
 .group-label {
-  font-size: 0.6875rem;
+  font-size: var(--sp-t-micro);
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--color-fg-subtle);
+  letter-spacing: 0.085em;
+  color: var(--color-fg-muted);
 }
 
 .group-count {
-  font-size: 0.65625rem;
+  font-size: var(--sp-t-micro);
   color: var(--color-fg-faint);
   font-variant-numeric: tabular-nums;
 }
@@ -149,138 +151,52 @@ const decorated = computed(() => {
   display: flex;
   align-items: flex-start;
   gap: 0.625rem;
-  padding: 0.5rem 1.25rem;
+  padding: 0.4375rem 0.625rem;
+  border-radius: 8px;
   cursor: pointer;
 }
 
-/* Reverse video, not a ring — the row is four lines tall and an outline
-   around it reads as a container rather than as the cursor. The extra
-   ancestor is deliberate: it must outrank the `hover:bg-surface-2` utility
-   the row also carries, which is otherwise the same specificity. */
+/* Reverse video, not a ring. The extra ancestor is deliberate: it must
+   outrank the `hover:bg-surface-2` utility the row also carries, which is
+   otherwise the same specificity. */
 .switcher-list .switcher-row.is-active { background: var(--color-fg); }
 
 .switcher-hotkey {
   flex-shrink: 0;
-  width: 18px;
-  height: 18px;
-  margin-top: 1px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 5px;
-  background: var(--color-surface-2);
-  color: var(--color-fg-subtle);
+  width: 12px;
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  font-size: 0.625rem;
+  font-size: var(--sp-t-micro);
+  line-height: 1.38rem;
+  text-align: right;
+  color: var(--color-fg-subtle);
   font-variant-numeric: tabular-nums;
-}
-
-/* On the inverted row every accent is mixed from the row's OWN text colour,
-   never from literal white: under dark the row is light and a white chip would
-   vanish into it. */
-.is-active .switcher-hotkey {
-  background: color-mix(in srgb, var(--color-surface) 16%, transparent);
-  color: var(--color-surface);
-}
-
-.switcher-dot {
-  flex-shrink: 0;
-  margin-top: 1px;
-  font-size: 0.5625rem;
-  line-height: 18px;
-  color: var(--dot);
-}
-
-.switcher-dot.is-pulsing { animation: switcher-pulse 2s ease-in-out infinite; }
-
-@keyframes switcher-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.35; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .switcher-dot.is-pulsing { animation: none; }
-}
-
-.switcher-body { min-width: 0; flex: 1; }
-
-.switcher-title-row {
-  display: flex;
-  align-items: baseline;
-  gap: 0.4375rem;
-}
-
-.switcher-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.8125rem;
-  font-weight: 600;
-  color: var(--color-fg);
-}
-
-.is-active .switcher-name { color: var(--color-surface); }
-
-.switcher-here {
-  flex-shrink: 0;
-  font-size: 0.625rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  padding: 1px 5px;
-  border-radius: 5px;
-  background: var(--color-info-soft);
-  color: var(--color-info-strong);
-}
-
-.is-active .switcher-here {
-  background: color-mix(in srgb, var(--color-surface) 18%, transparent);
-  color: var(--color-surface);
 }
 
 .switcher-meta {
   margin-left: auto;
   flex-shrink: 0;
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  font-size: 0.65625rem;
   color: var(--color-fg-faint);
   font-variant-numeric: tabular-nums;
 }
 
-.switcher-sub {
-  display: flex;
-  align-items: baseline;
-  gap: 0.4375rem;
-  margin-top: 1px;
-  font-size: 0.6875rem;
-}
+/* On the inverted row every accent is mixed from the row's OWN text colour,
+   never from literal white: under dark the row is light and a white chip would
+   vanish into it. */
+.is-active .switcher-hotkey,
+.is-active :deep(.pr-title),
+.is-active :deep(.pr-ref),
+.is-active :deep(.pr-status) { color: var(--color-surface); }
 
-.switcher-repo {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  color: var(--color-fg-muted);
-}
-
-.switcher-state { font-weight: 600; }
-
-.switcher-line {
-  margin-top: 2px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.6875rem;
-  color: var(--color-fg-subtle);
-}
-
-.is-active .switcher-meta,
-.is-active .switcher-repo,
-.is-active .switcher-line {
+.is-active :deep(.pr-line.is-sub),
+.is-active :deep(.pr-aside),
+.is-active .switcher-meta {
   color: color-mix(in srgb, var(--color-surface) 66%, var(--color-fg));
 }
 
-.is-active .switcher-state { color: var(--color-surface) !important; }
+.is-active :deep(.pr-chip) {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--color-surface) 40%, transparent);
+  color: var(--color-surface);
+}
 </style>

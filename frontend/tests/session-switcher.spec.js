@@ -84,9 +84,8 @@ test.describe('session switcher', () => {
 
     await expect(page.locator(INPUT)).toBeFocused()
     await expect(page.locator(INPUT)).toHaveValue('')
-    await expect(
-      page.locator(`${PANEL} .facet.is-active`),
-    ).toHaveText(/Sessions/)
+    // The roster has no left rail (R1): nothing to scope or filter by.
+    await expect(page.locator(`${PANEL} .facet-rail`)).toHaveCount(0)
     // The shell is the palette's, not a second dialog.
     await expect(page.locator(PANEL)).toHaveCount(1)
     await expect(page.locator(`${PANEL} .query-count`)).toHaveText(/session/)
@@ -180,10 +179,9 @@ test.describe('session switcher', () => {
   })
 
   test('an untitled row shows an id it can be found by', async ({ page }) => {
-    // A session names itself late, so the fallback is the trace id — and the
-    // fallback must never render a string that is not a visible prefix of the
-    // real id. `manual-gate` sliced to 8 reads `manual-g`, which resolves to
-    // nothing and is indistinguishable from a real short id.
+    // Every row leads with its `#` ref, so an untitled session's title never
+    // repeats the id (R3) — and the ref is a visible prefix of the real id,
+    // one `#` lookup can resolve.
     const short = 'sw-short-id'
     await page.goto('/trace/sessions')
     const token = await page.evaluate(() => localStorage.getItem('regin_auth_token'))
@@ -198,20 +196,194 @@ test.describe('session switcher', () => {
     })).ok()).toBeTruthy()
 
     await openSwitcher(page)
-    const row = page.locator(`${ROW}[data-trace-id="${short}"] .switcher-name`)
-    await expect(row).toBeVisible()
-    // Truncated with a visible marker, never silently mangled.
-    await expect(row).toHaveText(`${short.slice(0, 8)}\u2026`)
+    const row = page.locator(`${ROW}[data-trace-id="${short}"]`)
+    await expect(row.locator('.pr-ref')).toHaveText(`#${short.slice(0, 8)}`)
+    await expect(row.locator('.pr-title')).toHaveText('untitled · no prompts')
   })
 
-  test('the preview leads with what a session wants', async ({ page }) => {
+  test('the preview is the same entity preview search shows', async ({ page }) => {
     await seedSessions(page)
     await page.goto('/trace/sessions')
     await openSwitcher(page)
-    // One view only — a role-labelled tail, no raw/terminal toggle.
-    await expect(page.locator(`${PANEL} .switcher-chat`)).toBeVisible()
-    await expect(page.locator(`${PANEL} .switcher-turn`).first()).toBeVisible()
-    await expect(page.getByTestId('switcher-attach')).toContainText('Attach')
+    const preview = page.locator(`${PANEL} .entity-preview[data-kind="session"]`)
+    await expect(preview).toBeVisible()
+    await expect(preview.locator('[data-action="primary"]')).toContainText('Attach')
+    await expect(preview.locator('[data-action="secondary"]')).toContainText('New tab')
+    await expect(preview.locator('[data-action="copy"]')).toContainText('Copy id')
+  })
+})
+
+// The roster answered from fixtures: what these pin is how the client groups,
+// numbers and draws rows the server built — `tests/palette/test_rows.py` owns
+// the builder itself.
+const chip = (kind, id, ref) => ({ kind, id, ref, title: '' })
+const ago = s => new Date(Date.now() - s * 1000).toISOString().replace('Z', '')
+
+function rosterRow(traceId, phase, row) {
+  return {
+    trace_id: traceId, phase, title: row.title, turn: 9, context_pct: 41,
+    started_at: ago(1800), last_start_at: ago(1800), last_seen: ago(30),
+    tail: [{ ts: ago(30), name: 'assistant_response', kind: 'assistant', text: 'tail line' }],
+    row: { kind: 'session', owners: [], ...row },
+  }
+}
+
+const AWAITING = rosterRow('aaaa1111-0000-4000-8000-000000000001', 'waiting-permission', {
+  ref: '#aaaa1111', title: 'Draft the NOW zone data loader',
+  status: { word: 'needs you', bucket: 'needs_you' }, owners: [chip('feature', 150, 'F150')],
+  context: 'asks: run the migration?', aside: 'approval · 18m',
+})
+const RETRYING = rosterRow('bbbb2222-0000-4000-8000-000000000002', 'retrying', {
+  ref: '#bbbb2222', title: 'paginate group search',
+  status: { word: 'reconnecting', bucket: 'active' },
+  owners: [chip('feature', 146, 'F146'), chip('task', 421, 'T421')],
+  context: 'Return total per group',
+})
+const WORKING = rosterRow('cccc3333-0000-4000-8000-000000000003', 'working', {
+  ref: '#cccc3333', title: 'Composer keeps its draft',
+  status: { word: 'working', bucket: 'active' }, owners: [chip('feature', 139, 'F139')],
+  context: 'Keep the draft in sessionStorage',
+})
+const ENDED = rosterRow('dddd4444-0000-4000-8000-000000000004', 'ended', {
+  ref: '#dddd4444', title: 'Write the palette spec',
+  status: { word: 'ended', bucket: 'done' }, context: 'Draft the brief',
+})
+const ROSTER = [ENDED, WORKING, RETRYING, AWAITING]
+
+async function fakeRoster(page) {
+  await page.route('**/api/session-switcher*', (route) => {
+    const id = new URL(route.request().url()).searchParams.get('id')
+    const sessions = id ? ROSTER.filter(r => r.trace_id.startsWith(id)) : ROSTER
+    route.fulfill({ json: { sessions, server_now: ago(0), server_now_utc: ago(0) } })
+  })
+  await page.route('**/api/palette/relations/**', (route) => {
+    const id = decodeURIComponent(route.request().url().split('/').pop())
+    const row = ROSTER.find(r => r.trace_id === id)?.row
+    route.fulfill({
+      json: { kind: 'session', id, row, relations: [], lists: [], body: '', prompts: [] },
+    })
+  })
+}
+
+async function openFakeRoster(page) {
+  await fakeRoster(page)
+  await page.goto('/trace/sessions')
+  await openSwitcher(page)
+}
+
+const rowOf = r => page => page.locator(`${ROW}[data-trace-id="${r.trace_id}"]`)
+
+test.describe('roster rows (F146 S8)', () => {
+  test('test_roster_row_names_owners', async ({ page }) => {
+    await openFakeRoster(page)
+    const row = rowOf(RETRYING)(page)
+    await expect(row.locator('.pr-ref')).toHaveText('#bbbb2222')
+    await expect(row.locator('.pr-title')).toHaveText('paginate group search')
+    await expect(row.locator('.pr-chip')).toHaveText(['F146', 'T421'])
+    await expect(row.locator('.pr-status')).toHaveText('reconnecting')
+    await expect(row.locator('.pr-context')).toContainText('Return total per group')
+    // Two lines, never more.
+    await expect(row.locator('.pr-line')).toHaveCount(2)
+    await expect(rowOf(AWAITING)(page).locator('.pr-chip')).toHaveText(['F150'])
+    await expect(page.locator(`${PANEL} .facet-rail`)).toHaveCount(0)
+  })
+
+  test('test_roster_number_attach_kept', async ({ page }) => {
+    await openFakeRoster(page)
+    // Server rank, not recency: awaiting, retrying, working, ended.
+    await expect(page.locator(`${ROW} .switcher-hotkey`)).toHaveText(['1', '2', '3', '4'])
+
+    // `#` addresses by id and gives the digits back to the query.
+    await page.locator(INPUT).fill('#bbbb')
+    await expect(page.locator(ROW)).toHaveCount(1)
+    await expect(page.locator(`${ROW} .switcher-hotkey`)).toHaveText([''])
+    await page.locator(INPUT).fill('')
+    await expect(page.locator(ROW)).toHaveCount(4)
+
+    await page.keyboard.press('2')
+    await expect(page.locator(PANEL)).toHaveCount(0)
+    await expect(page).toHaveURL(new RegExp(`/trace/sessions/${RETRYING.trace_id}`))
+  })
+
+  test('picking Sessions in ⌘K keeps the rail', async ({ page }) => {
+    await fakeRoster(page)
+    await page.goto('/trace/sessions')
+    await ready(page)
+    await page.keyboard.press('Meta+k')
+    await page.waitForSelector(PANEL)
+    await page.locator(INPUT).fill('')
+    await page.locator(`${PANEL} .facet`, { hasText: 'Sessions' }).click()
+    await expect(page.locator(ROW).first()).toBeVisible({ timeout: 15_000 })
+    await expect(page.locator(`${PANEL} .facet-rail`)).toBeVisible()
+    await expect(page.locator(`${PANEL} .roster-foot`)).toHaveCount(0)
+  })
+
+  test('a row the server could not build still renders', async ({ page }) => {
+    const bare = { ...ENDED, trace_id: 'eeee5555-0000-4000-8000-000000000005', title: null, row: null }
+    ROSTER.push(bare)
+    try {
+      await openFakeRoster(page)
+      const row = rowOf(bare)(page)
+      await expect(row.locator('.pr-ref')).toHaveText('#eeee5555')
+      await expect(row.locator('.pr-title')).toHaveText('untitled · no prompts')
+      await expect(row.locator('.pr-dot')).toHaveAttribute('data-bucket', 'done')
+    } finally {
+      ROSTER.pop()
+    }
+  })
+
+  test('test_retrying_counts_active', async ({ page }) => {
+    await openFakeRoster(page)
+    await expect(page.locator(`${PANEL} .group-head .group-label`))
+      .toHaveText(['Needs you', 'Active', 'Recent'])
+    await expect(rowOf(RETRYING)(page)).toHaveAttribute('data-group', 'active')
+    await expect(rowOf(AWAITING)(page)).toHaveAttribute('data-group', 'needs_you')
+    await expect(page.locator(`${PANEL} .group-head[data-group="needs_you"] .group-count`))
+      .toHaveText('1')
+    await expect(page.locator(`${PANEL} .group-head[data-group="active"] .group-count`))
+      .toHaveText('2')
+  })
+
+  test('test_narrow_opens_sheet_first', async ({ page }) => {
+    await fakeRoster(page)
+    await page.goto('/trace/sessions')
+    // The shell's search button collapses away at 760px, so wait for it first.
+    await ready(page)
+    await page.setViewportSize({ width: 760, height: 900 })
+
+    // Search lays the rail down as a horizontal scope + kind strip.
+    await page.keyboard.press('Meta+k')
+    await page.waitForSelector(PANEL)
+    const rail = page.locator(`${PANEL} .facet-rail`)
+    await expect(rail).toBeVisible()
+    expect(await rail.evaluate(el => getComputedStyle(el).flexDirection)).toBe('row')
+    await page.keyboard.press('Escape')
+    await expect(page.locator(PANEL)).toHaveCount(0)
+
+    await page.keyboard.press('Meta+j')
+    await expect(page.locator(ROW).first()).toBeVisible({ timeout: 15_000 })
+    const preview = page.locator(`${PANEL} .entity-preview`)
+    const list = page.locator(`${PANEL} .switcher-list`)
+    await expect(preview).toBeHidden()
+    const before = page.url()
+
+    // ↵ opens the sheet; it does not attach.
+    await page.keyboard.press('Enter')
+    await expect(preview).toBeVisible()
+    await expect(list).toBeHidden()
+    expect(page.url()).toBe(before)
+
+    // esc closes only the sheet; → reopens it.
+    await page.keyboard.press('Escape')
+    await expect(page.locator(PANEL)).toHaveCount(1)
+    await expect(preview).toBeHidden()
+    await page.keyboard.press('ArrowRight')
+    await expect(preview).toBeVisible()
+
+    // With the sheet up, ↵ attaches the highlighted session.
+    await page.keyboard.press('Enter')
+    await expect(page.locator(PANEL)).toHaveCount(0)
+    await expect(page).toHaveURL(new RegExp(`/trace/sessions/${AWAITING.trace_id}`))
   })
 })
 

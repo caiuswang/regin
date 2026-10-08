@@ -570,3 +570,9 @@ export function splitOnQuery(text, query) {
   if (from < src.length) out.push({ text: src.slice(from), hit: false })
   return out
 }
+
+export function caretAtEnd(input) {
+  if (input?.selectionStart == null) return true
+  const end = input.value.length
+  return input.selectionStart === end && input.selectionEnd === end
+}

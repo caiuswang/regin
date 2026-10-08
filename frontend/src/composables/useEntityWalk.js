@@ -5,8 +5,9 @@
 //
 // Every request here is a GET. The palette navigates and copies; it never
 // changes state (Non-goals), so nothing in this module may post.
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import api from '../api'
+import { paletteRowOf } from '../utils/sessionSwitcher.js'
 
 export const ENTITY_KINDS = new Set(['feature', 'task', 'defect', 'session'])
 
@@ -36,6 +37,15 @@ export function nodeOf({ kind, id, ref, title }) {
   return { ...base, ref: ref || '', title: title || '', status: 'loading', data: null, session: null }
 }
 
+// A roster row is already the switcher's answer for that session — its tail
+// included — so the walk starts from it instead of looking the id up again.
+export function sessionOrigin(row) {
+  if (!row?.trace_id) return null
+  const { ref, title } = paletteRowOf(row)
+  const node = nodeOf({ kind: 'session', id: row.trace_id, ref, title })
+  return { ...node, session: row }
+}
+
 export function originOf(entry) {
   const doc = entry?.doc
   if (!doc?.row || !ENTITY_KINDS.has(doc.kind)) return null
@@ -50,7 +60,7 @@ async function lookupSession(prefix) {
 }
 
 async function hydrate(node) {
-  if (node.kind === 'session') {
+  if (node.kind === 'session' && !node.session) {
     node.session = await lookupSession(node.prefix)
     if (!node.id) node.id = node.session?.trace_id || null
     if (!node.id) throw new Error(`no session ${node.ref}`)
@@ -158,7 +168,10 @@ export function useEntityWalk() {
   }
 
   function reset(entry) {
-    const node = originOf(entry)
+    start(originOf(entry))
+  }
+
+  function start(node) {
     generation += 1
     stack.value = []
     pickKey.value = null
@@ -204,6 +217,29 @@ export function useEntityWalk() {
 
   return {
     stack, focus, origin, pivoted, pickables, picked, pickKey, actions,
-    reset, retry, movePick, follow, back, popTo, push,
+    reset, start, retry, movePick, follow, back, popTo, push,
   }
+}
+
+// Which row the walk starts from: the roster's highlighted session in ⌘J, the
+// search cursor otherwise. Keyed on the row, not the row object: a streaming
+// group (or the roster's poll) rebuilds its rows without the cursor moving,
+// and that must not unwind a walk. Closing the palette drops the walk.
+export function trackWalkOrigin(walk, { open, roster, rosterRow, activeRow }) {
+  const key = computed(() => {
+    if (!open.value) return null
+    if (roster.value) return rosterRow.value ? `roster:${rosterRow.value.trace_id}` : null
+    return activeRow.value?.key ?? null
+  })
+  watch(key, () => {
+    if (!key.value) walk.start(null)
+    else if (roster.value) walk.start(sessionOrigin(rosterRow.value))
+    else walk.reset(activeRow.value)
+  }, { immediate: true })
+  // The origin was seeded from the roster row; each poll brings a fresher tail
+  // for the same session, and the preview should read it.
+  watch(rosterRow, (row) => {
+    const origin = walk.origin.value
+    if (roster.value && row && origin?.id === row.trace_id) origin.session = row
+  })
 }

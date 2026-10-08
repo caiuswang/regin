@@ -30,14 +30,40 @@ export function stateMeta(row) {
 // wedged a minute ago. Listing those as active drowns the ones that are.
 export const ACTIVE_STATES = new Set(['working', 'retrying', 'idle', 'awaiting'])
 
-export function isActiveRow(row) {
-  return ACTIVE_STATES.has(stateOf(row))
+export const GROUP_LABEL = { needs_you: 'Needs you', active: 'Active', recent: 'Recent' }
+
+// R4: "needs you" is `awaiting` and nothing else. `retrying` is a run stalled
+// on the network, not on a human, so it groups with the working — the same
+// verdict Home reaches from the server's bucket.
+export function groupOf(row) {
+  const state = stateOf(row)
+  if (state === 'awaiting') return 'needs_you'
+  return ACTIVE_STATES.has(state) ? 'active' : 'recent'
 }
 
-export const GROUP_LABEL = { active: 'Active now', recent: 'Recent' }
+// Mirrors `_SESSION_STATUS` in lib/palette/rows.py, so a fallback row is toned
+// the way the server would have toned it.
+function fallbackBucket(row) {
+  const group = groupOf(row)
+  if (group !== 'recent') return group
+  return ['ended', 'closed'].includes(stateOf(row)) ? 'done' : 'quiet'
+}
 
-export function groupOf(row) {
-  return isActiveRow(row) ? 'active' : 'recent'
+// The server's builder fills `row`, but it is best-effort per page — a failure
+// there leaves `row: null` rather than failing the roster, so the list still
+// needs a row of the same shape to render.
+export function paletteRowOf(row) {
+  if (row?.row) return row.row
+  const id = row?.trace_id || ''
+  const meta = stateMeta(row)
+  return {
+    kind: 'session',
+    ref: `#${id.slice(0, ID_PREFIX_LEN)}`,
+    title: row?.title || 'untitled · no prompts',
+    status: { word: meta.label, bucket: fallbackBucket(row) },
+    owners: [],
+    context: lastLine(row),
+  }
 }
 
 // `title` is nullable until the session names itself; the id prefix is what
@@ -78,9 +104,11 @@ export function elapsedLabel(row, clock) {
   return ACTIVE_STATES.has(stateOf(row)) ? _duration(ms) : `${_duration(ms)} ago`
 }
 
-// What the preview's meta grid should CALL that number.
-export function elapsedKey(row) {
-  return ACTIVE_STATES.has(stateOf(row)) ? 'running for' : 'last seen'
+export function rosterMeta(row, clock) {
+  const parts = [`t${row?.turn ?? 0}`]
+  if (row?.context_pct != null) parts.push(`ctx ${Math.round(row.context_pct)}%`)
+  parts.push(elapsedLabel(row, clock))
+  return parts.join(' · ')
 }
 
 export function tokensLabel(row) {
