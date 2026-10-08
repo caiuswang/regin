@@ -19,11 +19,12 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import delete, select
+from sqlmodel import delete, select, update
 
 from lib.activity_log import get_activity_logger
 from lib.orm import SessionLocal
 from lib.pipeline import live  # noqa: F401  (registers the `pipeline` frames on commit)
+from lib.orm.models.defects import Defect
 from lib.orm.models.features import Feature
 from lib.orm.models.sync import Repo
 from lib.orm.models.tasks import (
@@ -537,6 +538,10 @@ def _delete_children(session, task_id: int) -> None:
     The dep edges go in *both* directions. An edge left behind pointing at a
     deleted blocker makes `blocking()` return an id that no longer resolves,
     and the dependent then waits on it forever with nothing reporting why.
+
+    Defects that point at this task as their fix item are unpointed rather
+    than deleted: the bug report is still real, only the scheduled work for
+    it is gone.
     """
     session.exec(delete(AgentTaskRun).where(AgentTaskRun.task_id == task_id))
     session.exec(
@@ -544,6 +549,8 @@ def _delete_children(session, task_id: int) -> None:
     session.exec(delete(AgentTaskDep).where(
         (AgentTaskDep.task_id == task_id)
         | (AgentTaskDep.depends_on_id == task_id)))
+    session.exec(update(Defect).where(Defect.fix_task_id == task_id)
+                 .values(fix_task_id=None))
     # The comment tables carry no foreign key to the subject — a subject id is
     # opaque to them — so the subject's own delete path is what removes its
     # threads. `comments.thread_id` cascades from there.

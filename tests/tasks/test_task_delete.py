@@ -15,6 +15,7 @@ import pytest
 from sqlmodel import select
 
 from lib.auth import create_token
+from lib.defects import store as defect_store
 from lib.orm import SessionLocal
 from lib.orm.models.tasks import (
     AgentTask, AgentTaskDep, AgentTaskImage, AgentTaskRun,
@@ -78,6 +79,36 @@ def test_delete_cascades_runs_images_and_deps(tmp_db, no_live_runs):
     store.delete_task(task["id"])
 
     assert _counts(task["id"]) == {"runs": 0, "images": 0, "deps": 0}
+
+
+def test_delete_clears_defect_fix_item(tmp_db, no_live_runs, feature_row,
+                                       native_task):
+    """A defect pointing at a deleted task must not keep a dangling id — the
+    bug report survives, only the scheduled work for it is gone."""
+    feature = feature_row()
+    task_id = native_task(title="the fix")
+    defect = defect_store.record("it broke", feature_id=feature.id)
+    defect_store.set_fix_item(defect.id, task_id)
+
+    store.delete_task(task_id)
+
+    assert defect_store.get(defect.id).fix_task_id is None
+
+
+def test_delete_clears_fix_item_for_every_defect_pointing_at_task(
+        tmp_db, no_live_runs, feature_row, native_task):
+    """One task may close many defects; deleting it unpoints all of them."""
+    feature = feature_row()
+    task_id = native_task(title="shared fix")
+    first = defect_store.record("first broke", feature_id=feature.id)
+    second = defect_store.record("second broke", feature_id=feature.id)
+    defect_store.set_fix_item(first.id, task_id)
+    defect_store.set_fix_item(second.id, task_id)
+
+    store.delete_task(task_id)
+
+    assert defect_store.get(first.id).fix_task_id is None
+    assert defect_store.get(second.id).fix_task_id is None
 
 
 def test_delete_removes_edges_in_both_directions(tmp_db, no_live_runs):
