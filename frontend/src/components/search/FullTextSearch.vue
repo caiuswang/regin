@@ -627,6 +627,7 @@ function widen() {
               :no-matches="noMatches"
               :offline="search.offline.value"
               :held="search.held.value && !search.homeView.value"
+              :held-label="search.activeFacet.value === 'All' ? '' : search.activeFacet.value"
               :can-widen="canWiden"
               @select="select"
               @open="openRow"

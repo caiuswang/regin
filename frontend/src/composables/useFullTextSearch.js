@@ -313,6 +313,9 @@ export function useFullTextSearch() {
   // session. The Sessions facet keeps its roster, which IS its empty query.
   const homeView = computed(() => {
     if (mode.value !== 'held' || trimmed.value || switcherMode.value || browseKey.value) return null
+    // A kind with no empty-query list (Patterns, Files, Spans) waits for a
+    // query of its own; the desk under it would read as that kind's answer.
+    if (activeKind.value) return null
     const { status, data } = home.value
     if (activeScope.value === 'session') {
       const traceId = source.value?.traceId || ''
@@ -387,7 +390,7 @@ export function useFullTextSearch() {
     if (hv?.status === 'ok') return hv.waiting ? `${hv.waiting} waiting on you` : 'nothing waiting'
     const dv = drillView.value
     if (dv) return `${dv.total} ${LIST_NOUN[dv.kind] || kindNoun(dv.kind, dv.total)}`
-    if (mode.value === 'held') return 'Everything indexed'
+    if (mode.value === 'held') return activeScope.value === 'session' ? 'this session' : 'Everything indexed'
     if (mode.value === 'address') {
       const st = addressState(null)
       if (st.status === 'pending') return 'resolving…'

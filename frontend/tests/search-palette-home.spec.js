@@ -199,6 +199,17 @@ test.describe('search palette — Home', () => {
     await expect(page.locator(`${PANEL} .drill-end`)).toHaveText('end of list · all 2 shown')
     expect(calls).toEqual(['feature', 'task'])
 
+    // A kind with no empty-query list waits for a query; it never shows the desk.
+    const awaitQuery = page.locator(`${PANEL} .await-query`)
+    for (const [kind, label] of [['pattern', 'Patterns'], ['file', 'Files']]) {
+      await page.locator(`${PANEL} .facet[data-kind="${kind}"]`).click()
+      await expect(page.locator(HOME)).toHaveCount(0)
+      await expect(listed).toHaveCount(0)
+      await expect(awaitQuery).toHaveText(`Type 2 characters to search ${label}.`)
+    }
+    await page.locator(`${PANEL} .facet[data-kind="feature"]`).click()
+    await expect(listed).toHaveCount(3)
+
     await page.keyboard.press('Escape')
     await expect(page.locator(`${HOME}[data-home="desk"]`)).toBeVisible()
   })
@@ -248,6 +259,16 @@ test.describe('search palette — Home', () => {
     await expect(chain.locator('[role="option"]').first().locator('.pr-here')).toHaveText('HERE')
     await expect(page.locator(`${PANEL} .query-count`)).toHaveText('this session')
     expect(calls).toContain(traceId)
+
+    // Spans or Files picked on the empty query wait for a query, not the chain.
+    for (const kind of ['span', 'file']) {
+      await page.locator(`${PANEL} .facet[data-kind="${kind}"]`).click()
+      await expect(page.locator(HOME)).toHaveCount(0)
+      await expect(page.locator(`${PANEL} .await-query`)).toBeVisible()
+      await expect(page.locator(`${PANEL} .query-count`)).toHaveText('this session')
+    }
+    await page.locator(`${PANEL} .facet[data-kind="all"]`).click()
+    await expect(page.locator(`${HOME}[data-home="chain"]`)).toBeVisible()
 
     // ⌃S widens to the desk.
     await page.keyboard.press('Control+s')

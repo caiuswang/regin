@@ -23,6 +23,7 @@ const props = defineProps({
   // The query is too short to run. Distinct from `noMatches`, which means it
   // ran and found nothing — the two want opposite things said.
   held: { type: Boolean, default: false },
+  heldLabel: { type: String, default: '' },
 })
 defineEmits(['select', 'open', 'activate', 'retry', 'retry-all', 'leave-drill', 'widen'])
 
@@ -62,7 +63,7 @@ const drillPending = computed(() => props.drill
          beside a populated rail reads as a failed load rather than as a
          waiting one. -->
     <p v-if="held && !groups.length && !drill" class="await-query">
-      Type {{ MIN_QUERY_CHARS }} characters to search.
+      Type {{ MIN_QUERY_CHARS }} characters to search{{ heldLabel ? ` ${heldLabel}` : '' }}.
     </p>
 
     <div v-if="showOffline" class="list-note" data-testid="search-offline">
