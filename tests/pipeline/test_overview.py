@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from sqlmodel import text
 
@@ -352,3 +354,45 @@ def test_triage_queue_ignores_project_scope(flask_client, core_project,
         assert overview["waiting"] == listed["pagination"]["total"] == 1
         assert overview["all_projects"] is (scope == 7)
         assert "project" not in listed["applied"]["filters"]
+
+
+def _finished(task_id: int, days_ago: float):
+    stamp = (datetime.now(timezone.utc) - timedelta(days=days_ago)).strftime(
+        "%Y-%m-%d %H:%M:%S")
+    with SessionLocal() as session:
+        session.exec(text("UPDATE agent_tasks SET updated_at = :u WHERE id = :i")
+                     .bindparams(u=stamp, i=task_id))
+        session.commit()
+
+
+def test_recently_done_honours_project_scope_and_cap(flask_client,
+                                                     native_task):
+    _repo(7, "regin-core")
+    filed = []
+    for days in (3, 1, 2):
+        task_id = native_task(title=f"core {days}d", status=TASK_STATUS_DONE,
+                              project_id=7)
+        _finished(task_id, days)
+        filed.append((days, task_id))
+    for i in range(overview_module.RECENTLY_DONE_CAP):
+        _finished(native_task(title=f"loose {i}", status=TASK_STATUS_DONE),
+                  0.5 + i / 10)
+    _finished(native_task(title="core, long ago", status=TASK_STATUS_DONE,
+                          project_id=7), 10)
+    native_task(title="core armed", status=TASK_STATUS_ARMED, project_id=7)
+
+    everywhere = _overview(flask_client)["recently_done"]
+    scoped = _overview(flask_client, 7)["recently_done"]
+    unfiled = _overview(flask_client, "none")["recently_done"]
+
+    assert everywhere["week"] == overview_module.RECENTLY_DONE_CAP + 3
+    assert len(everywhere["rows"]) == overview_module.RECENTLY_DONE_CAP
+    assert scoped["week"] == 3
+    assert [r["id"] for r in scoped["rows"]] == [
+        task_id for _, task_id in sorted(filed)]
+    assert unfiled["week"] == overview_module.RECENTLY_DONE_CAP
+
+
+def test_recently_done_empty(flask_client, native_task):
+    native_task(title="armed", status=TASK_STATUS_ARMED)
+    assert _overview(flask_client)["recently_done"] == {"week": 0, "rows": []}

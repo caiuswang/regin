@@ -197,9 +197,9 @@ test.describe('pixel theme — tasks', () => {
         sprite: g.querySelector('[data-pl-part="group-head"] [data-pl-glyph]')?.getAttribute('data-sprite') ?? null,
       }
     }))
-    expect(heads.map(h => h.key)).toEqual(['ready', 'running', 'blocked', 'failed', 'ideas'])
+    expect(heads.map(h => h.key)).toEqual(['ready', 'running', 'blocked', 'failed', 'ideas', 'done'])
     for (const h of heads) expect(h.before, h.key).toBe('none')
-    expect(heads.map(h => h.sprite)).toEqual(['bot', 'bot.running', 'lock', 'bot.failed', 'bulb'])
+    expect(heads.map(h => h.sprite)).toEqual(['bot', 'bot.running', 'lock', 'bot.failed', 'bulb', 'check'])
     for (const h of heads) {
       expect(h.transform).toBe('uppercase')
       expect(h.font).toMatch(/^"?Silkscreen/)

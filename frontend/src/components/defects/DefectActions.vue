@@ -284,6 +284,7 @@ async function onRemedy(remedy) {
       v-else-if="form"
       v-model="value"
       :form="form" :spec="FORMS[form]" :defect-id="defect.id" :busy="busy"
+      :feature="defect.feature_id"
       @submit="submit()"
       @paste="form === 'edit' && onPaste($event)"
     />

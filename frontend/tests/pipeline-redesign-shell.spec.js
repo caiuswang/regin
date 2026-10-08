@@ -179,7 +179,7 @@ async function stubPipeline(page, opts = {}) {
         return json(route, { groups: ['ready', 'running', 'blocked', 'ideas'].map(key => ({ key, n: 0, rows: [], more: 0 })) })
       }
       const task = (id, title, status, extra = {}) => ({ id, title, status, waits_on: null, live: null, ...extra })
-      return json(route, { open: 5, done_hidden: 9, groups: [
+      return json(route, { open: 5, groups: [
         { key: 'ready', n: 1, more: 0, rows: [task(416, 'Backoff jitter for reconnect attempts', 'armed')] },
         { key: 'running', n: 1, more: 0, rows: [task(414, 'Reconnect tail when the socket drops mid-turn', 'running',
           { live: { run_id: 7, trace_id: 'tr-414', attempt: 2, started_at: minutesAgo(3) } })] },
@@ -992,7 +992,7 @@ test('test_overview_every_fact_links_to_filtered_tab', async ({ page }) => {
     const url = new URL(route.request().url())
     if (url.searchParams.get('group') !== 'next_step') return route.fallback()
     const rows = n => Array.from({ length: n }, (_, i) => ({ id: 600 + i, title: `row ${i}`, status: 'idea', waits_on: null, live: null }))
-    return json(route, { open: 41, done_hidden: 0, groups: [
+    return json(route, { open: 41, groups: [
       { key: 'ready', n: 20, more: 0, rows: rows(20) },
       { key: 'ideas', n: 20, more: 0, rows: rows(20).map(r => ({ ...r, id: r.id + 50 })) },
       { key: 'failed', n: 1, more: 0, rows: [{ id: 700, title: 'broke', status: 'failed', waits_on: null, live: null }] },

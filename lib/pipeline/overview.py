@@ -6,6 +6,7 @@
 | running         | running tasks, feature steps included              | latest attempt started, desc            | 6   |
 | run_next        | armed tasks, feature steps included                | dependency-clear first, priority, id    | 6   |
 | needs_decision  | the triage queue (`defects.store.in_queue`), unscoped | newest first                         | 3   |
+| recently_done   | done tasks finished this week, feature steps included | newest finished first (Done group) | 5   |
 | projects        | scope `all` only — `projects.panel`                | attention                               | 5   |
 | project_head / project_features | scope = one project                | last activity                           | 5   |
 
@@ -52,6 +53,7 @@ log = get_activity_logger("features")
 RUN_NEXT_CAP = 6
 RUNNING_CAP = 6
 NEEDS_DECISION_CAP = 3
+RECENTLY_DONE_CAP = 5
 PROJECT_FEATURES_CAP = 5
 
 _TASK_PARTS = ((TASK_STATUS_IDEA, "Ideas"), (TASK_STATUS_ARMED, "Armed"),
@@ -171,6 +173,25 @@ def _run_next(session, scope) -> dict:
             "rows": [_run_next_row(t) for t in tasks]}
 
 
+def _recently_done(session, scope) -> dict:
+    """Done tasks of every grain that finished inside the week the board's
+    `done_week` counts; `week` is that count, `rows` its newest five."""
+    def week(stmt):
+        return _task_scoped(stmt.where(
+            next_step.done_since(next_step.DONE_WEEK)), scope)
+    stmt = next_step.group_order(week(select(AgentTask)), next_step.GROUP_DONE)
+    tasks = [task_store.serialize(t)
+             for t in session.exec(stmt.limit(RECENTLY_DONE_CAP)).all()]
+    for enrich in (task_rows.feature_titles, task_rows.fix_defects,
+                   task_rows.steps):
+        enrich(tasks)
+    keep = ("id", "title", "status", "priority", "kind", "feature_id",
+            "feature_title", "step", "fixes_defects")
+    total = session.exec(week(select(func.count(AgentTask.id)))).one()
+    return {"week": int(total),
+            "rows": [{k: t[k] for k in keep} for t in tasks]}
+
+
 def _running_stmt(stmt, scope):
     return _task_scoped(stmt.where(AgentTask.status == TASK_STATUS_RUNNING),
                         scope)
@@ -277,6 +298,7 @@ def overview(scope: int | str = SCOPE_ALL) -> dict:
         body = {"scope": str(scope), "loop": _loop(session, scope),
                 "running": _running(session, scope),
                 "run_next": _run_next(session, scope),
+                "recently_done": _recently_done(session, scope),
                 "needs_decision": _needs_decision(session, scope)}
     if scope == SCOPE_ALL:
         body["projects"] = projects_module.panel()

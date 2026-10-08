@@ -57,7 +57,7 @@ function usePager(latest) {
   }
 }
 
-/** `GET /api/tasks?group=next_step` — Ready / Running / Blocked / Ideas. */
+/** `GET /api/tasks?group=next_step` — Ready / Running / Blocked / Failed / Ideas / Done. */
 export function useNextStep(params, size = 50) {
   const body = ref(null)
   const error = ref('')

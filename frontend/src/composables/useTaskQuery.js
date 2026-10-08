@@ -71,7 +71,7 @@ export const VIEWS = ['board', 'list', 'graph']
 // `lib/tasks/next_step.py::GROUP_KEYS`. A `?group=` naming one of them is an
 // ADDRESS, not a grouping: the next-step list, opened on that group — which is
 // what a count on the Overview links to. The grouping reads as `next_step`.
-export const NEXT_STEP_GROUPS = ['ready', 'running', 'blocked', 'failed', 'ideas']
+export const NEXT_STEP_GROUPS = ['ready', 'running', 'blocked', 'failed', 'ideas', 'done']
 
 // The stored axes that reach the server. `group` is not one: it decides how
 // the loaded rows are split into feeds, never which rows those are.

@@ -166,7 +166,7 @@ export function waitsLabel(task) {
 const STATUS_GLYPH = { idea: 'task.idea', armed: 'task.ready', queued: 'task.ready',
                        running: 'task.running', failed: 'task.failed', done: 'task.done' }
 const NEXT_STEP_GLYPH = { ready: 'task.ready', running: 'task.running', blocked: 'task.blocked',
-                          failed: 'task.failed', ideas: 'task.idea' }
+                          failed: 'task.failed', ideas: 'task.idea', done: 'task.done' }
 
 export function statusGlyph(status) {
   return STATUS_GLYPH[status] || 'task.idea'

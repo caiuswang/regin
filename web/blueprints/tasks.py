@@ -234,8 +234,8 @@ def _grouped_read(read, only_field: str, allowed: tuple[str, ...]):
 
 
 def _next_step_groups():
-    """`group=next_step`: Ready / Running / Blocked / Ideas, each with its
-    server count and first rows; done and failed counted, never listed."""
+    """`group=next_step`: Ready / Running / Blocked / Failed / Ideas / Done,
+    each with its server count and first rows."""
     return _grouped_read(next_step.groups, "only", next_step.GROUP_KEYS)
 
 

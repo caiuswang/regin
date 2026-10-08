@@ -2,7 +2,8 @@
 // "Run next" (1a / 2a): armed tasks, dependency-clear first. A row shows the
 // one action it needs — Run, or a link to the task it waits on, dimmed. A
 // refused Run stays beside its row, its blocking tasks linked.
-// The card opens with "Running now" while any agent is working. Mobile shows
+// The card opens with "Running now" while any agent is working and closes
+// with "Done recently" once anything in scope finished this week. Mobile shows
 // the same blocks and rows as desktop; `compact` only changes row density.
 import { computed } from 'vue'
 import api from '../../api'
@@ -17,6 +18,7 @@ import { taskTitle } from '../../utils/taskTitle.js'
 const props = defineProps({
   runNext: { type: Object, required: true },
   running: { type: Object, default: null },
+  recentlyDone: { type: Object, default: null },
   compact: { type: Boolean, default: false },
   tasksTo: { type: Object, required: true },
 })
@@ -34,6 +36,10 @@ const groupTo = group => ({ path: props.tasksTo.path,
 // into the text `runNextSub` prints.
 const subOf = row => runNextSub({ ...row, feature_id: null })
   .replace(/^No feature$/, '')
+
+const doneSub = row => (row.feature_id
+  ? `#${row.feature_id} ${row.feature_title || ''}${row.step ? ` · step ${row.step.n} of ${row.step.of}` : ''}`
+  : 'No feature')
 
 // The first row is the one to run when its dependencies are clear; a theme
 // may lift it into an "up next" hero with the panel's one primary key.
@@ -111,6 +117,32 @@ const isHero = (row, i) => i === 0 && row.action.kind === 'run'
         />
       </li>
     </ul>
+    <template v-if="recentlyDone?.rows.length">
+      <header class="pl-panel__head rn-head--after" data-pl-part="panel-head" data-testid="run-next-done">
+        <h3 class="pl-panel__title" data-pl-part="panel-title">Done recently</h3>
+        <span class="pl-panel__sub" data-pl-part="panel-meta" data-testid="run-next-done-week">· {{ recentlyDone.week }} this week</span>
+        <router-link :to="groupTo('done')" class="pl-panel__link focus-visible:outline-2 focus-visible:outline-blue-500" data-pl-part="panel-link"
+                     data-testid="run-next-done-all"
+        >All done →</router-link>
+      </header>
+      <ul class="rn-rows">
+        <li
+          v-for="row in recentlyDone.rows"
+          :key="row.id"
+          class="rn-row"
+          data-pl-part="row"
+          :data-testid="`run-next-done-row-${row.id}`"
+        >
+          <span v-if="!compact" class="rn-id" data-pl-part="row-id">#{{ row.id }}</span>
+          <span class="rn-main">
+            <router-link :to="`/tasks/${row.id}`" class="rn-title focus-visible:outline-2 focus-visible:outline-blue-500" data-pl-part="row-title">
+              {{ taskTitle(row) }}
+            </router-link>
+            <span class="rn-sub">{{ compact ? `#${row.id} · ` : '' }}{{ doneSub(row) }}</span>
+          </span>
+        </li>
+      </ul>
+    </template>
   </section>
 </template>
 
