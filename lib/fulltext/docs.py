@@ -1,5 +1,5 @@
 """The one record shape every searchable surface reduces to, plus the
-matching / scoring / windowing primitives shared by all four kinds.
+matching / scoring / windowing primitives shared by every kind.
 
 Deliberately dependency-free (no ORM, no Flask) so the scoring rules can be
 tested directly and so the frontend's mirror of them
@@ -29,9 +29,15 @@ KIND_SPAN = "span"
 KIND_PATTERN = "pattern"
 KIND_SESSION = "session"
 KIND_FILE = "file"
+KIND_FEATURE = "feature"
+KIND_TASK = "task"
+KIND_DEFECT = "defect"
 # Fixed render order — groups are never re-ordered by score, so the eye
-# learns the layout.
-KIND_ORDER = (KIND_SPAN, KIND_PATTERN, KIND_SESSION, KIND_FILE)
+# learns the layout. Process entities lead: the reader's work is organised
+# Feature → Task → Defect → Session, and the documents follow.
+KIND_ORDER = (KIND_FEATURE, KIND_TASK, KIND_DEFECT, KIND_SESSION,
+              KIND_PATTERN, KIND_FILE, KIND_SPAN)
+ENTITY_KINDS = (KIND_FEATURE, KIND_TASK, KIND_DEFECT)
 
 
 @dataclass

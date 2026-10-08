@@ -1,8 +1,11 @@
 """Full-text search across every indexed surface, in one fan-out call.
 
-Four document kinds reduce to one record shape (`docs.SearchDoc`), and each
-is served by whichever backend can actually *address* its results:
+Every kind reduces to one record shape (`docs.SearchDoc`), and each is
+served by whichever backend can actually *address* its results:
 
+    feature  SQL LIKE over `features` title + spec          (global only)
+    task     SQL LIKE over `agent_tasks` title + body        (global only)
+    defect   SQL LIKE over `defects` symptom + missing check (global only)
     span     SQL over `session_spans`, scoped by the indexed `trace_id`
     pattern  ripgrep over the patterns / skills / wiki markdown trees
     session  SQL — a row must carry `trace_id` + `span_id` to deep-link
@@ -18,9 +21,10 @@ from __future__ import annotations
 
 from lib.activity_log import get_activity_logger
 from lib.fulltext.docs import (
-    KIND_FILE, KIND_ORDER, KIND_PATTERN, KIND_SESSION, KIND_SPAN,
+    ENTITY_KINDS, KIND_FILE, KIND_ORDER, KIND_PATTERN, KIND_SESSION, KIND_SPAN,
     MIN_QUERY_CHARS, Scored, body_window,
 )
+from lib.fulltext.entity_docs import ENTITY_SEARCHES
 from lib.fulltext.file_docs import search_file_docs, search_pattern_docs
 from lib.fulltext.session_docs import search_sessions, touched_files
 from lib.fulltext.span_docs import search_session_spans
@@ -29,6 +33,10 @@ log = get_activity_logger("fulltext")
 
 DEFAULT_LIMIT = 6
 SPAN_LIMIT = 14
+# R1: a feature / task / defect group in the all-kinds list shows this many
+# rows and a "Show all N" row; a Drill asks for the one kind and pages by its
+# own `limit`.
+ENTITY_FANOUT_CAP = 3
 
 # The two questions the palette can ask. They are not the same query narrowed:
 # they decide what `trace_ids` MEANS to each kind, which is why the caller
@@ -62,6 +70,26 @@ def _file_group(conn, trace_ids, query, limit, offset) -> dict:
                   limit, query, offset)
 
 
+def _entity_builders(conn, query, wanted, limit, offset) -> dict:
+    cap = limit if len(wanted) == 1 else min(limit, ENTITY_FANOUT_CAP)
+    return {
+        kind: (lambda run=run, kind=kind: _group(
+            kind, run(conn, query), cap, query, offset))
+        for kind, run in ENTITY_SEARCHES.items()
+    }
+
+
+def _wanted(kinds, scope) -> set[str]:
+    """An explicit `kinds` is honoured as asked. Otherwise the session scope
+    leaves the process entities out: they have no session to be scoped to,
+    and "this session" never meant "every feature that mentions it"."""
+    if kinds:
+        return set(kinds)
+    if scope == SCOPE_SESSION:
+        return set(KIND_ORDER) - set(ENTITY_KINDS)
+    return set(KIND_ORDER)
+
+
 def search(conn, query: str, kinds: list[str] | None = None,
            trace_ids: list[str] | None = None,
            limit: int = DEFAULT_LIMIT,
@@ -86,7 +114,7 @@ def search(conn, query: str, kinds: list[str] | None = None,
     if len(query) < MIN_QUERY_CHARS:
         return {"q": query, "groups": [], "truncated": False}
 
-    wanted = set(kinds) if kinds else set(KIND_ORDER)
+    wanted = _wanted(kinds, scope)
     trace_ids = trace_ids or []
     corpus_ids = trace_ids if scope == SCOPE_SESSION else []
     builders = {
@@ -98,6 +126,7 @@ def search(conn, query: str, kinds: list[str] | None = None,
             search_sessions(conn, query, exclude_traces=trace_ids),
             limit, query, offset),
         KIND_FILE: lambda: _file_group(conn, corpus_ids, query, limit, offset),
+        **_entity_builders(conn, query, wanted, limit, offset),
     }
 
     groups = []
