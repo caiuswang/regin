@@ -14,6 +14,7 @@ defineEmits(['activate'])
 
 const label = computed(() => {
   const e = props.entry
+  if (e.label) return e.label
   if (e.type === 'more') return `Show all ${e.total} ${kindNoun(e.kind, e.total)} →`
   if (e.type === 'retry') return "Couldn't load the next page · retry"
   if (e.loading) return 'Loading…'

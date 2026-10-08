@@ -336,9 +336,23 @@ function closeTopLayer() {
 // ↵ and a click do the one thing each of them is for.
 function activate(entry) {
   if (!entry) return
-  if (entry.type === 'more') search.drillInto(entry.kind)
+  if (entry.type === 'more' && entry.home) showAllHome(entry)
+  else if (entry.type === 'more') search.drillInto(entry.kind)
   else if (entry.type === 'doc') openRow(entry)
   else search.loadMore()
+}
+
+// A Home group's "Show all" has no query to Drill on. Features have their own
+// page; every session group lands on the ⌘J roster, which ranks the waiting
+// sessions first.
+function showAllHome(entry) {
+  if (entry.href) {
+    search.closePalette()
+    router.push(entry.href)
+    return
+  }
+  search.showRoster()
+  inputEl.value?.focus()
 }
 
 // R6. Every action is a route change, a pivot inside the preview, or a
@@ -579,6 +593,12 @@ function widen() {
               @click="search.closePalette()"
             >esc</button>
           </div>
+          <p
+            v-if="search.scopeNotice.value"
+            class="scope-notice"
+            role="status"
+            data-testid="scope-notice"
+          >{{ search.scopeNotice.value }}</p>
 
           <div
             class="search-panes"
@@ -620,11 +640,12 @@ function widen() {
               :groups="search.groups.value"
               :drill="search.drillView.value"
               :address="search.addressView.value"
+              :home="search.homeView.value"
               :query="search.trimmed.value"
               :active-id="search.activeId.value"
               :no-matches="noMatches"
               :offline="search.offline.value"
-              :held="search.held.value"
+              :held="search.held.value && !search.homeView.value"
               :can-widen="canWiden"
               @select="select"
               @open="openRow"
@@ -825,6 +846,16 @@ function widen() {
 
 
 .search-panes { flex: 1; min-height: 0; display: flex; position: relative; }
+
+.scope-notice {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 0.4375rem 1.125rem;
+  font-size: var(--sp-t-meta);
+  color: var(--color-warning-strong);
+  background: var(--color-warning-soft);
+  border-bottom: 1px solid var(--color-border);
+}
 
 /* While the preview is walked away from it, the origin row keeps a dashed
    outline: still the list's cursor, no longer what ↵ acts on. */
