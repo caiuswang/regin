@@ -77,6 +77,43 @@ def test_cli_reference_is_complete():
     assert not missing, f"COMMAND_GROUPS misses {missing}"
 
 
+def _png_size(path: Path) -> tuple[int, int]:
+    head = path.read_bytes()[:24]
+    assert head[:8] == b"\x89PNG\r\n\x1a\n", f"{path.name} is not a PNG"
+    return int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big")
+
+
+@pytest.mark.parametrize("view", ["PipelineView", "RunsView"])
+def test_new_pages_show_the_real_product(view):
+    source = (WEBSITE / "src/views" / f"{view}.vue").read_text(encoding="utf-8")
+    imported = set(re.findall(r"from '\.\./assets/shots/([\w-]+)\.(?:png|webp)'", source))
+    bases = {name.rsplit("-", 1)[0] for name in imported if name.endswith(("-light", "-dark"))}
+    assert bases, f"{view} shows no dashboard screenshot"
+    for name in (f"{base}-{theme}" for base in bases for theme in ("light", "dark")):
+        assert name in imported, f"{view} does not import {name}"
+        _assert_dashboard_capture(name)
+    _assert_shots_wired_by_theme(view, source)
+
+
+def _assert_shots_wired_by_theme(view: str, source: str) -> None:
+    files = dict(re.findall(r"import (\w+) from '\.\./assets/shots/([\w-]+)\.(?:png|webp)'", source))
+    shot_objects = {name: (files.get(png), files.get(webp)) for name, png, webp
+                    in re.findall(r"const (\w+) = \{ png: (\w+), webp: (\w+) \}", source)}
+    props = re.findall(r"<ThemedShot :light=\"(\w+)\" :dark=\"(\w+)\"", source)
+    assert props, f"{view} renders no <ThemedShot>"
+    for light, dark in props:
+        for theme, obj in (("light", light), ("dark", dark)):
+            png, webp = shot_objects[obj]
+            assert png and png.endswith(f"-{theme}") and png == webp, f"{view} :{theme} shows {png}/{webp}"
+
+
+def _assert_dashboard_capture(name: str) -> None:
+    shots = WEBSITE / "src/assets/shots"
+    assert (shots / f"{name}.webp").is_file(), f"missing {name}.webp"
+    width, height = _png_size(shots / f"{name}.png")
+    assert width >= 1280 and height >= 720, f"{name}.png is {width}x{height}, not a full dashboard capture"
+
+
 def test_website_builds_and_routes_resolve():
     router = (WEBSITE / "src/router.js").read_text(encoding="utf-8")
     declared = dict(re.findall(r"path: '([^']*)', name: '[^']*', component: \(\) => import\('\./views/(\w+)\.vue'\)", router))

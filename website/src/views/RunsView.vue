@@ -2,6 +2,14 @@
 import DocPage from '../components/DocPage.vue'
 import Callout from '../components/Callout.vue'
 import DataTable from '../components/DataTable.vue'
+import ThemedShot from '../components/ThemedShot.vue'
+import liveLight from '../assets/shots/live-light.png'
+import liveLightWebp from '../assets/shots/live-light.webp'
+import liveDark from '../assets/shots/live-dark.png'
+import liveDarkWebp from '../assets/shots/live-dark.webp'
+
+const LIVE_LIGHT = { png: liveLight, webp: liveLightWebp }
+const LIVE_DARK = { png: liveDark, webp: liveDarkWebp }
 
 const TOC = [
   { id: 'arm', label: 'Arm, then launch' },
@@ -38,6 +46,9 @@ const PROVIDER_COLUMNS = [
 
     <h2 id="live">Follow and steer</h2>
     <p><code>/live</code> follows a running session: its current state, its recent steps, any question it is blocked on, with steer and Stop. Because regin owns a channel run’s process, an <code>AskUserQuestion</code> or a gated tool call is parked and answered from the browser rather than typed into a terminal. Sessions you started yourself can be steered through the <strong>agent bridge</strong> — guarded keystroke delivery into the session’s tmux pane, off by default (<RouterLink to="/configuration#agent-bridge">configuration</RouterLink>).</p>
+    <ThemedShot :light="LIVE_LIGHT" :dark="LIVE_DARK" :width="1440" :height="900" alt="The regin dashboard's Live view following a running agent session: recent tool calls, a Bash permission prompt waiting for an answer, the current turn, and the steer composer.">
+      <code>/live</code> following the run that captured this screenshot. Its own capture command is parked as a <strong>permission</strong> card waiting for an answer, with cancel turn, stop agent and the steer box below it.
+    </ThemedShot>
 
     <h2 id="inbox">Hearing back</h2>
     <p>Agents report progress, results, blockers and lessons through the <code>send_to_user</code> tool. Messages land in <code>/inbox</code> with a live unread badge, and high-severity ones can fan out to a webhook, Telegram or Lark. CLI: <code>regin messages</code>, <code>regin bridge</code>, <code>regin events</code>.</p>

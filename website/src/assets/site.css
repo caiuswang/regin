@@ -766,6 +766,7 @@ td code, th code { white-space: nowrap; }
 .artifact-stats { list-style: none; display: flex; flex-wrap: wrap; gap: 0.6rem; margin: 0; padding: 0; }
 .artifact-stats code { font-size: var(--text-sm); padding: 0.45rem 0.8rem; border-radius: 8px; }
 .shot-frame-sm { padding: 0.5rem 0.5rem 0.65rem; }
+[data-theme="dark"] .shot-light, :root:not([data-theme="dark"]) .shot-dark { display: none; }
 
 /* ── Secondary feature list ───────────────────────────── */
 

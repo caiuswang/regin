@@ -2,6 +2,14 @@
 import DocPage from '../components/DocPage.vue'
 import CodeBlock from '../components/CodeBlock.vue'
 import DataTable from '../components/DataTable.vue'
+import ThemedShot from '../components/ThemedShot.vue'
+import overviewLight from '../assets/shots/pipeline-light.png'
+import overviewLightWebp from '../assets/shots/pipeline-light.webp'
+import overviewDark from '../assets/shots/pipeline-dark.png'
+import overviewDarkWebp from '../assets/shots/pipeline-dark.webp'
+
+const OVERVIEW_LIGHT = { png: overviewLight, webp: overviewLightWebp }
+const OVERVIEW_DARK = { png: overviewDark, webp: overviewDarkWebp }
 
 const TOC = [
   { id: 'feature', label: 'A feature is a row' },
@@ -49,6 +57,9 @@ const LEDGER = `$ regin feature stage 153
   >
     <h2 id="feature">A feature is a row</h2>
     <p>Each piece of work you build with an agent starts as a <strong>feature</strong>. Its spec lives on the feature row (or on its tracker issue, when the feature is tracked remotely) — not in a <code>docs/</code> file nothing re-reads. The spec’s acceptance items are named tests in the repo: red before the build, green at ship.</p>
+    <ThemedShot :light="OVERVIEW_LIGHT" :dark="OVERVIEW_DARK" :width="1440" :height="900" alt="The regin dashboard's Pipeline overview: feature, task and defect counts, features being built, a defect waiting for a decision, and the task runs in progress.">
+      <code>/overview</code> in the dashboard that builds regin: features, tasks and defects counted at the top, the features being built, a defect that <strong>needs a decision</strong>, and the task runs going right now — one of them the run that wrote this page.
+    </ThemedShot>
 
     <h2 id="slices">From spec to tasks</h2>
     <p>The spec ends in a slice table. Each slice becomes a <strong>task</strong> with its dependencies, and tasks run in dependency order — an independent slice runs in parallel with its siblings.</p>
