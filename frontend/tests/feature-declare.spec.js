@@ -62,7 +62,7 @@ test('the index carries the control that declares a feature',
     expect(sent.body).toContain('thin prose')
   })
 
-test('declaring lands on the new feature page', async ({ page }) => {
+test('declaring from elsewhere lands on the new feature page', async ({ page }) => {
   await stubIndex(page)
   await page.route(/\/api\/features$/, (route) => {
     if (route.request().method() !== 'POST') return route.fallback()
@@ -71,8 +71,11 @@ test('declaring lands on the new feature page', async ({ page }) => {
   await page.route(/\/api\/features\/300$/, (route) =>
     route.fulfill({ json: { ...ledger(), stage_live: true, synced_at: null } }))
 
-  await page.goto('/features')
-  await page.getByTestId('declare-feature').click()
+  // Declared from the Features list it stays in the list (R5.4,
+  // f155-list-order.spec.js); from another tab the list is not on screen.
+  await page.goto('/tasks')
+  await page.getByTestId('pipeline-new').click()
+  await page.getByTestId('pipeline-new-feature').click()
   await page.getByTestId('declare-title').fill('declared from the browser')
   await page.getByTestId('declare-submit').click()
 

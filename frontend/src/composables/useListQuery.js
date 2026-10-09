@@ -1,4 +1,4 @@
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 // A Pipeline list's whole state, held in `location.search` and nowhere else.
@@ -20,17 +20,24 @@ export const DEFAULT_SIZE = 50
  *   a reading of the rows, not a narrowing, so Clear keeps it.
  * @param {string[]} [opts.kept]  keys a reader arrived on (`feature_id`) —
  *   Clear keeps them too, because a link's scope is not a filter to undo.
+ * @param {{key: string, legal: (v: string) => boolean}} [opts.rememberSort]
+ *   keep the sort the reader *chose* (`chooseSort`) in localStorage under
+ *   `key`. It stands in for the default only: a `sort` the URL states wins.
  */
-export function useListQuery({ defaults, facets = [], viewKey = '', kept = [] }) {
+export function useListQuery({ defaults, facets = [], viewKey = '', kept = [], rememberSort = null }) {
   const route = useRoute()
   const router = useRouter()
   const axes = Object.keys(defaults)
+  // A ref, not a read per render: choosing the sort the URL already omits
+  // changes nothing in the route, and the screen must still follow it.
+  const remembered = ref(rememberSort ? readStored(rememberSort) : '')
+  const effectiveDefault = key => (key === 'sort' && remembered.value) || defaults[key]
 
   const state = computed(() => {
     const out = {}
     for (const axis of axes) {
       const raw = String(route.query[axis] ?? '').trim()
-      out[axis] = raw || defaults[axis]
+      out[axis] = raw || effectiveDefault(axis)
     }
     out.page = Math.max(0, parseInt(route.query.page, 10) || 0)
     out.size = Math.max(1, parseInt(route.query.size, 10) || DEFAULT_SIZE)
@@ -55,13 +62,15 @@ export function useListQuery({ defaults, facets = [], viewKey = '', kept = [] })
     const query = { ...route.query }
     for (const [key, value] of Object.entries(next)) {
       const text = value == null ? '' : String(value)
-      if (!text || text === defaults[key]
+      // A stated value stays stated unless it is what a bare URL already
+      // reads as: the static default with nothing remembered over it.
+      if (!text || (text === defaults[key] && text === effectiveDefault(key))
           || (key === 'page' && text === '0')
           || (key === 'size' && text === String(DEFAULT_SIZE))) delete query[key]
       else query[key] = text
     }
     if (!('page' in next)) delete query.page
-    router.replace({ path: route.path, query })
+    return router.replace({ path: route.path, query })
   }
 
   function reset() {
@@ -69,13 +78,36 @@ export function useListQuery({ defaults, facets = [], viewKey = '', kept = [] })
     for (const key of ['project', viewKey, ...kept]) {
       if (key && route.query[key] != null) query[key] = route.query[key]
     }
-    router.replace({ path: route.path, query })
+    return router.replace({ path: route.path, query })
   }
 
-  function setSort(key, dir) { patch({ sort: `${key}:${dir}` }) }
-  function toggleDir() { setSort(sortKey.value, sortDir.value === 'asc' ? 'desc' : 'asc') }
+  /** The reader's own pick: remembered (when this list remembers), then shown. */
+  function chooseSort(value) {
+    const moved = patch({ sort: value })
+    if (rememberSort) {
+      remembered.value = value === defaults.sort ? '' : value
+      writeStored(rememberSort.key, remembered.value)
+    }
+    return moved
+  }
 
-  return { state, sortKey, sortDir, dirtyCount, patch, reset, setSort, toggleDir }
+  function setSort(key, dir) { return chooseSort(`${key}:${dir}`) }
+  function toggleDir() { return setSort(sortKey.value, sortDir.value === 'asc' ? 'desc' : 'asc') }
+
+  return { state, sortKey, sortDir, dirtyCount, patch, reset, chooseSort, setSort, toggleDir }
+}
+
+function readStored({ key, legal }) {
+  let value = ''
+  try { value = localStorage.getItem(key) || '' } catch { return '' }
+  return value && legal(value) ? value : ''
+}
+
+function writeStored(key, value) {
+  try {
+    if (value) localStorage.setItem(key, value)
+    else localStorage.removeItem(key)
+  } catch { /* private mode: the choice lasts as long as the URL does */ }
 }
 
 /**

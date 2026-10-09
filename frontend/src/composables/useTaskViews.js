@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import api from '../api'
+import { followNewest } from '../utils/followNewest.js'
 
 // The grouped reads (next step, board) own the status axis and never show
 // archived, so those two parameters are not sent: a status filter there would
@@ -89,7 +90,8 @@ export function useNextStep(params, size = 50) {
     return data
   }
 
-  async function load() {
+  const load = followNewest(loadOnce)
+  async function loadOnce() {
     const mine = latest.next()
     loading.value = true
     const query = groupedQuery(params.value, { group: 'next_step', size })
@@ -161,7 +163,8 @@ export function useTaskBoard(params, size = 20) {
     }]))
   }
 
-  async function load() {
+  const load = followNewest(loadOnce)
+  async function loadOnce() {
     const mine = latest.next()
     loading.value = true
     const query = groupedQuery(params.value, { size })

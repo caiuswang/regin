@@ -4541,3 +4541,11 @@ a.ledger-tag:hover { text-decoration: underline; }
     padding: 0.65rem 1.1rem; border-top: 1px solid var(--color-border-subtle);
     background: var(--color-surface-2); font-size: 12px; color: var(--color-fg-muted);
 }
+
+/* The row a list just created (useJustCreated). Global, because the mark is
+   set by five row components in two feeds and must read the same in each;
+   it stays until the reader next moves the list, so it is not animated. */
+[data-just-created] {
+    background: var(--color-info-soft);
+    box-shadow: inset 3px 0 0 var(--color-info);
+}

@@ -14,6 +14,8 @@ import { usePage } from '../composables/usePage'
 import { listStatusState, useListQuery } from '../composables/useListQuery'
 import { useTaskShortcuts } from '../composables/useTaskShortcuts'
 import { useBreakpoint } from '../composables/useBreakpoint'
+import { provideJustCreated } from '../composables/useJustCreated'
+import { DEFAULT_FEATURE_SORT, FEATURE_SORT_OPTIONS, FEATURE_SORT_STORAGE_KEY } from '../utils/featureSort'
 import api from '../api'
 import Button from '../components/ui/Button.vue'
 import Icon from '../components/ui/Icon.vue'
@@ -35,21 +37,14 @@ const isCurrentTab = usePipelineTabActive()
 const publish = usePipelineHeaderPublisher()
 const { isMdUp } = useBreakpoint()
 
-// `lib/features/index.py::SORT_KEYS`. Restated rather than fetched because a
-// select whose options arrive late renders a control with nothing in it.
-const SORT_OPTIONS = [
-  { value: 'activity:desc', label: 'Last activity ↓' },
-  { value: 'rounds:desc', label: 'Rounds ↓' },
-  { value: 'open_defects:desc', label: 'Open defects ↓' },
-  { value: 'escapes:desc', label: 'Escapes ↓' },
-  { value: 'cost:desc', label: 'Cost ↓' },
-  { value: 'created:desc', label: 'Newest ↓' },
-]
-
 const list = useListQuery({
-  defaults: { q: '', stage: '', sort: 'activity:desc' },
+  defaults: { q: '', stage: '', sort: DEFAULT_FEATURE_SORT },
   facets: ['stage'],
   kept: ['triage'],
+  rememberSort: {
+    key: FEATURE_SORT_STORAGE_KEY,
+    legal: v => FEATURE_SORT_OPTIONS.some(o => o.value === v),
+  },
 })
 const { state } = list
 
@@ -104,7 +99,7 @@ const draft = ref(state.value.q)
 // Any navigation drops an unsubmitted term: the box describes the rows below.
 watch(() => route.fullPath, () => { draft.value = state.value.q })
 const canWrite = computed(() => api.getStoredUser()?.role !== 'viewer')
-const { openCreate } = usePipelineCreate()
+const { openCreate, created } = usePipelineCreate()
 const { revision } = usePipelineCounts()
 const triaging = ref(false)
 
@@ -148,6 +143,19 @@ watch(revision, () => {
   rail.value?.load?.()
 })
 
+// Show is the default ordering with no narrowing, so the newest row is first.
+const root = ref(null)
+const justCreated = provideJustCreated({
+  root,
+  noun: 'Feature',
+  reveal: () => list.patch({ q: '', stage: '', sort: DEFAULT_FEATURE_SORT }),
+  reload,
+})
+watch(created, (made) => {
+  if (made?.kind !== 'feature' || !isCurrentTab.value) return
+  justCreated.land(made.id, () => Promise.all([reload(), rail.value?.load?.()]))
+})
+
 useTaskShortcuts({
   '/': () => search.value?.focus(),
   c: () => { if (canWrite.value) openCreate('feature') },
@@ -156,7 +164,7 @@ useTaskShortcuts({
 </script>
 
 <template>
-  <div class="fv">
+  <div ref="root" class="fv">
     <Teleport v-if="isCurrentTab && canWrite" defer to="#pipeline-actions">
       <PipelineCreateButton kind="feature" testid="declare-feature" />
     </Teleport>
@@ -191,13 +199,13 @@ useTaskShortcuts({
             <PlSlot
               name="MenuField"
               :model-value="appliedSort"
-              :options="SORT_OPTIONS"
+              :options="FEATURE_SORT_OPTIONS"
               field="SORT"
               head="Sort features by"
               bare
               aria-label="Sort features"
               testid="features-sort"
-              @update:model-value="v => list.patch({ sort: v })"
+              @update:model-value="list.chooseSort"
             />
           </template>
         </div>

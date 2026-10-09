@@ -6,14 +6,17 @@ import FeatureExpansion from './FeatureExpansion.vue'
 import FeatureNextStep from '../features/FeatureNextStep.vue'
 import FeatureFollowsChips from '../features/FeatureFollowsChips.vue'
 import { ago } from '../../utils/pipelineFormat'
+import { useJustCreated } from '../../composables/useJustCreated.js'
 
 defineProps({
   feature: { type: Object, required: true },
 })
+
+const justCreated = useJustCreated()
 </script>
 
 <template>
-  <article class="fc" :class="{ 'is-escaped': feature.stage === 'escaped' }" :data-testid="`feature-card-${feature.id}`" data-pl-part="card" :data-stage="feature.stage">
+  <article class="fc" :class="{ 'is-escaped': feature.stage === 'escaped' }" :data-testid="`feature-card-${feature.id}`" :data-just-created="justCreated === feature.id || undefined" data-pl-part="card" :data-stage="feature.stage">
     <header class="fc-head">
       <span class="fc-id" data-testid="feature-id" data-pl-part="row-id">#{{ feature.id }}</span>
       <router-link :to="`/features/${feature.id}`" class="fc-title focus-visible:outline-2 focus-visible:outline-blue-500">{{ feature.title }}</router-link>

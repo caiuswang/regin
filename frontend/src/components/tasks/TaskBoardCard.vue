@@ -14,6 +14,9 @@ import TaskStatusIcon from './TaskStatusIcon.vue'
 import TaskVerbMenu from './TaskVerbMenu.vue'
 import { liveFor } from '../../utils/taskMeta.js'
 import { taskTitle } from '../../utils/taskTitle.js'
+import { useJustCreated } from '../../composables/useJustCreated.js'
+
+const justCreated = useJustCreated()
 
 const props = defineProps({
   task: { type: Object, required: true },
@@ -42,6 +45,7 @@ const hasControls = computed(() => !!props.task.action || !!props.task.waits_on
     data-pl-part="card"
     :data-live="task.live ? '' : undefined"
     :data-testid="`board-card-${task.id}`"
+    :data-just-created="justCreated === task.id || undefined"
   >
     <span class="tbc-top">
       <TaskPriorityIcon :value="task.priority" :size="13" />

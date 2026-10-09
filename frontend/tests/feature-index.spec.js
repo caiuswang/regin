@@ -119,7 +119,7 @@ test('the sort control writes the URL and the request', async ({ page }) => {
   const seen = await stub(page, index())
   await page.goto('/features')
 
-  await expect(page.getByTestId('features-sort')).toContainText('Last activity')
+  await expect(page.getByTestId('features-sort')).toContainText('Newest')
   await page.getByTestId('features-sort').click()
   await page.getByRole('option', { name: 'Rounds ↓' }).click()
   await expect(page).toHaveURL(/sort=rounds(%3A|:)desc/)

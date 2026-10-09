@@ -191,7 +191,7 @@ export function useTaskQuery() {
       else delete query[axis]
     }
     if (keptAnchor) query.group = keptAnchor
-    router.replace({ path: route.path, query })
+    return router.replace({ path: route.path, query })
   }
 
   /**
@@ -201,7 +201,7 @@ export function useTaskQuery() {
    * caller that must reach a row the address itself hides.
    */
   function reset({ arrival = false } = {}) {
-    patch(Object.fromEntries(AXES
+    return patch(Object.fromEntries(AXES
       .filter(a => a !== 'view' && a !== 'group'
         && (arrival || !ARRIVAL.includes(a)))
       .map(a => [a, DEFAULTS[a]])))
