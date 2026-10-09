@@ -269,6 +269,10 @@ class _Scan:
         # agent.message.appended in 1.5). 1.4 wires have none of these
         # records, so the set stays empty and prompts are never misread.
         self.open_turns: dict[str, str] = {}
+        self.saw_turn_lifecycle = False
+        # Kept apart from open_turns: an interrupted turn may never log its
+        # turn.ended, yet steer detection must keep treating it as open.
+        self.cancelled_turns: set[str] = set()
         self.handled_steers: set[str] = set()
 
     def _step(self, uuid: str | None) -> _Step | None:
@@ -378,6 +382,7 @@ class _Scan:
         if turn_id is None:
             return
         queue_item = rec.get('queueItemId')
+        self.saw_turn_lifecycle = True
         self.open_turns[str(turn_id)] = \
             queue_item if isinstance(queue_item, str) else ''
 
@@ -407,6 +412,9 @@ class _Scan:
     def _on_cancel(self, rec: dict) -> None:
         """Flag every tool call still awaiting a result — the interrupt
         killed them mid-flight, so they never emit a tool.result."""
+        turn_id = rec.get('turnId')
+        if turn_id is not None:
+            self.cancelled_turns.add(str(turn_id))
         for call in self.calls_by_id.values():
             if call.get('is_error') is None:
                 call['interrupted'] = True
@@ -661,6 +669,8 @@ def _build_usage(scan: _Scan, turns: list[TurnUsage]) -> TranscriptUsage:
         attachments=tuple(scan.attachments),
         tool_use_to_turn_uuid=scan.tool_to_turn,
         permission_denials=tuple(scan.denials),
+        main_turn_open=(bool(scan.open_turns.keys() - scan.cancelled_turns)
+                        if scan.saw_turn_lifecycle else None),
     )
 
 

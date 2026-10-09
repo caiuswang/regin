@@ -296,3 +296,8 @@ class TranscriptUsage:
     # Each: {tool_use_id, tool_name, denial_reason, timestamp}. Empty for Claude
     # (its denials arrive live via the PermissionDenied hook).
     permission_denials: tuple[dict, ...] = ()
+    # Whether the main agent's latest turn is still open, read off the
+    # transcript's own turn lifecycle records (Kimi 1.5 `agent.turn.started` /
+    # `agent.turn.ended`). None when the format records no lifecycle — Claude,
+    # Kimi 1.4 — so callers cannot mistake "unknown" for "closed".
+    main_turn_open: bool | None = None

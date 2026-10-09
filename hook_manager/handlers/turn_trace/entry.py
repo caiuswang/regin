@@ -223,12 +223,13 @@ def _ingest_transcript_usage(
     fallback_model: str | None,
     provider,
     effort_level: str | None = None,
-) -> tuple[str | None, str | None]:
+) -> tuple[str | None, str | None, bool | None]:
     """Parse the transcript (via the provider's parser) and emit every derived
     span/event for rows the seen-uuid cache hasn't already accepted. Returns
-    `(model, last_turn_uuid)`, so callers without a cheaper model read
-    (non-Claude formats) can post the `turn` model span from the same parse and
-    tell whether the transcript actually advanced since the last one."""
+    `(model, last_turn_uuid, main_turn_open)`, so callers without a cheaper
+    model read (non-Claude formats) can post the `turn` model span from the
+    same parse, tell whether the transcript actually advanced since the last
+    one, and whether the transcript itself says the main turn closed."""
     capture_text, max_text_bytes, read_cap = _text_capture_config()
     usage = provider.parse_transcript(transcript_path, max_text_bytes=read_cap)
     _post_transcript_usage(
@@ -237,8 +238,9 @@ def _ingest_transcript_usage(
         effort_level=effort_level,
     )
     if usage is None:
-        return None, None
-    return usage.model, (usage.turns[-1].uuid if usage.turns else None)
+        return None, None, None
+    return (usage.model, (usage.turns[-1].uuid if usage.turns else None),
+            usage.main_turn_open)
 
 
 def ingest_transcript_usage_resumable(
@@ -288,13 +290,16 @@ def _emit_span(payload: HookPayload) -> None:
         # Other formats (Kimi) carry the model in the same parse, so derive the
         # `turn` model span from the ingest rather than scanning the file twice
         # (Kimi's SessionStart payload carries no model).
-        model, last_turn = _ingest_transcript_usage(
+        model, last_turn, turn_open = _ingest_transcript_usage(
             payload.session_id, transcript_path, None, provider,
             effort_level=effort)
-        # Not a turn boundary: Kimi fires a parent Stop ahead of every
-        # SubagentStop, mid-turn, so its Stop cannot say the agent parked.
+        # Kimi fires a parent Stop ahead of every SubagentStop, mid-turn, so
+        # the Stop event alone cannot say the agent parked; the main wire's
+        # own `agent.turn.ended` can.
         if model and _turn_span_wanted(payload, model, last_turn):
-            _post_turn_model_span(payload, model, marks_boundary=False)
+            _post_turn_model_span(
+                payload, model,
+                marks_boundary=(payload.event == 'Stop' and turn_open is False))
 
 
 def _emit_assistant_response_only(payload: HookPayload) -> None:
