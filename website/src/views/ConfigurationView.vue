@@ -55,10 +55,10 @@ const ENV_COLUMNS = [
     <p>Once the dispatcher is installed (see <RouterLink to="/getting-started#activate-hooks">Activate the hooks</RouterLink>), each individual handler it routes — trace capture, rule gates, memory injection, the <code>send_to_user</code> inbox — can be turned on or off per provider under <strong>Settings → Hook Handlers</strong>. Unlike the settings above, these flags live in their own file (<code>~/.claude/hook-manager-config.json</code>), not in <code>settings.json</code>.</p>
     <figure class="shot-frame shot-frame-sm">
       <picture>
-        <source type="image/webp" :srcset="handlersShotWebp" width="2720" height="1624" />
+        <source type="image/webp" :srcset="handlersShotWebp" width="2880" height="1800" />
         <img
-          :src="handlersShot" width="2720" height="1624" loading="lazy"
-          alt="The regin Settings page, Hook Handlers section: provider tabs, the hook-manager-config.json path, and a table of handlers — each with a kind badge (gate, trace) and an Enabled toggle."
+          :src="handlersShot" width="2880" height="1800" loading="lazy"
+          alt="The regin Settings page, Hook Handlers section: the provider tab, the hook-manager-config.json path, and a table of handlers — each with a kind badge (gate, trace) and an Enabled toggle."
         />
       </picture>
       <figcaption>Each handler carries a <strong>kind</strong> — <code>gate</code> (can block an action), <code>trace</code> (records spans), <code>enrich</code>, <code>notify</code> — and its own enable toggle. Edits take effect on the next hook fire; no server restart needed.</figcaption>

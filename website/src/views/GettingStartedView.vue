@@ -56,10 +56,10 @@ const STATE_COLUMNS = [
     <p>regin drives every Claude Code event through one dispatcher — <code>python -m hook_manager &lt;Event&gt;</code> — that has to be registered in the provider's settings file (<code>~/.claude/settings.json</code> for Claude). Install it once from the running dashboard, under <strong>Settings → Hook Installers</strong>:</p>
     <figure class="shot-frame shot-frame-sm">
       <picture>
-        <source type="image/webp" :srcset="installShotWebp" width="2720" height="1380" />
+        <source type="image/webp" :srcset="installShotWebp" width="2880" height="1800" />
         <img
-          :src="installShot" width="2720" height="1380" loading="lazy"
-          alt="The regin Settings page, Hook Installers section: a Claude Code card showing the settings.json path, a 'hooks supported' badge, and the recommended Hook Manager dispatcher with an install control."
+          :src="installShot" width="2880" height="1800" loading="lazy"
+          alt="The regin Settings page, Hook Installers section: a Claude Code card showing the settings.json path, a 'hooks supported' badge, and the recommended Hook Manager dispatcher, installed, with the events it routes and Refresh / Remove controls."
         />
       </picture>
       <figcaption>Settings → Hook Installers → install <strong>Hook Manager</strong> for Claude Code. It writes the dispatcher into the <code>settings.json</code> shown on the card; the optional Debug Hook only logs raw payloads.</figcaption>

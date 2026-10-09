@@ -33,10 +33,10 @@ const TOC = [
       <picture>
         <source media="(max-width: 767px)" type="image/webp" :srcset="memoryShotMobileWebp" width="1280" height="1280" />
         <source media="(max-width: 767px)" :srcset="memoryShotMobile" width="1280" height="1280" />
-        <source type="image/webp" :srcset="memoryShotWebp" width="2016" height="1232" />
-        <img :src="memoryShot" width="2016" height="1232" loading="lazy" alt="The regin memory browser: cross-session memories filterable by lessons, gotchas, facts and procedures." />
+        <source type="image/webp" :srcset="memoryShotWebp" width="2880" height="1800" />
+        <img :src="memoryShot" width="2880" height="1800" loading="lazy" alt="The regin memory browser: cross-session memories filterable by lessons, gotchas, facts and procedures." />
       </picture>
-      <figcaption>The live memory store, 2026-07-16 — the top lesson was written by the session that built the first version of this site.</figcaption>
+      <figcaption>The live memory store on 2026-10-09: 1,077 active memories. The newest lesson was written by the run that rewrote this site’s Pipeline page.</figcaption>
     </figure>
 
     <h2 id="topics">Topic wikis</h2>

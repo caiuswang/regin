@@ -16,13 +16,13 @@ import traceShotMobileWebp from '../assets/shots/trace-dark-mobile.webp'
       <picture>
         <source media="(max-width: 767px)" type="image/webp" :srcset="traceShotMobileWebp" width="1580" height="1420" />
         <source media="(max-width: 767px)" :srcset="traceShotMobile" width="1580" height="1420" />
-        <source type="image/webp" :srcset="traceShotWebp" width="2016" height="1232" />
+        <source type="image/webp" :srcset="traceShotWebp" width="2880" height="1800" />
         <img
-          :src="traceShot" width="2016" height="1232" loading="lazy"
-          alt="The regin session viewer showing this website's build session: the turn list, conversation replay, per-tool cost attribution, and a phase timeline."
+          :src="traceShot" width="2880" height="1800" loading="lazy"
+          alt="The regin session viewer on this site's first build session: span, duration, context-peak, token and cost tiles, the activity strip with each prompt flagged, and the turn list beside the conversation replay."
         />
       </picture>
-      <figcaption>Turn 8 of the site’s first build: the design critique came back 30/40, and regin logged the moment the agent was told “fix first, then re-critique” — the instruction that produced the site’s first version.</figcaption>
+      <figcaption>Trace <code>3b3adbbc</code>, the site’s first build, in today’s session viewer: 726 spans over 8 human turns, 1h59m with 64% active, $76.34 including sub-agents. The activity strip flags each prompt; the turn list costs each one.</figcaption>
     </figure>
   </section>
 </template>
