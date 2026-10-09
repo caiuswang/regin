@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-from lib.agent_sdk import client
+from lib.agent_sdk import client, worktree
 from lib.providers import registry
 from lib.tasks.capture import CaptureRejected
 
@@ -236,6 +236,18 @@ def _launch_capabilities(provider: str) -> dict:
         raise CaptureRejected(
             f"{provider} has no task launch channel", "provider")
     return caps
+
+
+def check_target(fields: dict) -> None:
+    """Refuse parsed arm fields whose launch target cannot be served, as a
+    `CaptureRejected` carrying the worktree check's own field."""
+    params = fields["params"]
+    spec = params.get("worktree") or {}
+    try:
+        worktree.check_target(params.get("cwd"), spec.get("branch") or "",
+                              spec.get("base") or "")
+    except worktree.WorktreeRefused as exc:
+        raise CaptureRejected(str(exc), exc.field) from exc
 
 
 def parse_arm(payload) -> dict:

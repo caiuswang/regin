@@ -48,7 +48,6 @@ from lib.comments import store as comments
 from lib.auth import get_current_user, require_auth, require_editor, require_scope
 from lib.orm import SessionLocal
 from lib.orm.models.api_keys import SCOPE_TASK_CAPTURE
-from lib.agent_sdk import worktree
 from lib.orm.models.tasks import AgentTask
 from lib.settings import settings
 from lib.tasks import (arm, capture, deps, feature_slices, graph_lanes,
@@ -494,6 +493,7 @@ def api_arm_task(task_id: int):
     """
     try:
         fields = arm.parse_arm(request.get_json(silent=True))
+        arm.check_target(fields)
     except capture.CaptureRejected as exc:
         log.error("task_arm_rejected", task_id=task_id, field=exc.field,
                   detail=str(exc))
@@ -551,9 +551,9 @@ def api_run_task(task_id: int):
         run = runs.start_run(task_id)
     except runs.RunRefused as exc:
         log.warn("task_run_refused", task_id=task_id, detail=str(exc))
+        if exc.field:
+            return jsonify({"error": str(exc), "field": exc.field}), 400
         return jsonify({"error": str(exc), "blocking": exc.blocking}), 409
-    except worktree.WorktreeRefused as exc:
-        return jsonify({"error": str(exc), "field": "worktree"}), 400
     if run is None:
         return _unknown_task()
     return jsonify({"run": run}), 201

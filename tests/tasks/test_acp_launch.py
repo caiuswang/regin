@@ -55,19 +55,18 @@ def acp_launcher(monkeypatch):
     return state
 
 
-def _arm_kimi(task_id: int) -> None:
-    runs.open_attempt(task_id, params={"provider": "kimi",
-                                       "cwd": "/tmp/kimi-repo"})
+def _arm_kimi(task_id: int, cwd) -> None:
+    runs.open_attempt(task_id, params={"provider": "kimi", "cwd": str(cwd)})
 
 
 def test_task_run_acp_launch_uses_provider_channel(tmp_db, native_task,
-                                                   acp_launcher):
+                                                   acp_launcher, tmp_path):
     from lib.orm import SessionLocal
     from lib.orm.models.tasks import AgentTaskRun
     from sqlmodel import select
 
     task_id = native_task(title="kimi task", status=TASK_STATUS_ARMED)
-    _arm_kimi(task_id)
+    _arm_kimi(task_id, tmp_path)
 
     view = runs.start_run(task_id)
 

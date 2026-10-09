@@ -112,10 +112,11 @@ def _dead_pid() -> int:
 
 # ── 1. arming is the privileged step ─────────────────────────
 
-def test_arm_writes_the_parameters_and_moves_idea_to_armed(flask_client):
+def test_arm_writes_the_parameters_and_moves_idea_to_armed(flask_client,
+                                                           tmp_path):
     task_id = _capture(flask_client, "wire the thing")
 
-    resp = _arm(flask_client, task_id, cwd="/tmp/repo", model="opus",
+    resp = _arm(flask_client, task_id, cwd=str(tmp_path), model="opus",
                 permission_mode="acceptEdits", one_shot=True,
                 env={"FOO": "1"}, autorun=True)
 
@@ -125,7 +126,7 @@ def test_arm_writes_the_parameters_and_moves_idea_to_armed(flask_client):
     # The parameters live on the PENDING ATTEMPT, not on the task: an attempt
     # is what spends them, and two attempts may spend different ones.
     armed = body["armed"]
-    assert armed["params"]["cwd"] == "/tmp/repo"
+    assert armed["params"]["cwd"] == str(tmp_path)
     assert armed["params"]["env"] == {"FOO": "1"}
     assert armed["params"]["one_shot"] is True
     assert armed["autorun"] is True
@@ -222,9 +223,9 @@ def test_run_refuses_with_the_blocking_ids_and_launches_nothing(flask_client,
 
 
 def test_the_release_launches_with_the_armed_params_and_records_the_attempt(
-        flask_client, launcher):
+        flask_client, launcher, tmp_path):
     dep = _armed(flask_client, "dep")
-    task_id = _armed(flask_client, "main", cwd="/tmp/repo", model="opus")
+    task_id = _armed(flask_client, "main", cwd=str(tmp_path), model="opus")
     flask_client.put(f"/api/tasks/{task_id}/deps", json={"depends_on": [dep]})
     flask_client.post(f"/api/tasks/{dep}/run")
 
@@ -234,7 +235,7 @@ def test_the_release_launches_with_the_armed_params_and_records_the_attempt(
     assert len(rows) == 1
     assert rows[0].trace_id == launcher.handles[1].trace_id
     assert (rows[0].attempt, rows[0].status) == (1, "running")
-    assert launcher.calls[1]["cwd"] == "/tmp/repo"
+    assert launcher.calls[1]["cwd"] == str(tmp_path)
     assert launcher.calls[1]["model"] == "opus"
     assert "main" in launcher.calls[1]["prompt"]
     assert _task(task_id).status == "running"
