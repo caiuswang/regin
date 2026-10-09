@@ -122,7 +122,7 @@ test('test_ledger_section_index_counts_and_jump', async ({ page }) => {
   const labels = (await nav.locator('.fsn-link').allInnerTexts())
     .map(t => t.replace(/\s+/g, ' ').trim())
   expect(labels).toEqual([
-    'Spec', 'Slices 3', 'Images 2', 'Tasks 3/7', 'Defects 1/5', 'Sessions 9'])
+    'Spec', 'Related', 'Slices 3', 'Images 2', 'Tasks 3/7', 'Defects 1/5', 'Sessions 9'])
 
   // Directly under the stage line, before the figures.
   const order = await page.evaluate(() => {

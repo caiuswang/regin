@@ -33,7 +33,12 @@ import { imageFilesFrom } from '../../utils/imageFiles'
 const open = defineModel('open', { type: Boolean, default: false })
 // The Pipeline shell's `?project=` — a repo id, `none` or `all`. Only a repo
 // id pre-selects; the other two mean nothing is known, so nothing is guessed.
-const props = defineProps({ scope: { type: String, default: '' } })
+const props = defineProps({
+  scope: { type: String, default: '' },
+  // `{ id, title }` of the feature this one is the next phase of, when the
+  // dialog was opened as a follow-up. Linked in the create's own transaction.
+  follows: { type: Object, default: null },
+})
 const emit = defineEmits(['declared'])
 const { items: projects, ensure: ensureProjects } = useProjects()
 
@@ -45,6 +50,7 @@ const provider = ref('')
 const projectId = ref('')
 const saving = ref(false)
 const failed = ref('')
+const follows = ref(null)
 // Bound to no feature: the mockup is pasted before the row exists, so it is
 // held in the browser and flushed against the new id. Nothing is staged
 // server-side for a feature abandoned mid-typing, so there is no orphan.
@@ -83,6 +89,10 @@ watch(open, async (isOpen) => {
     return
   }
   failed.value = ''
+  // Re-read on every open, even over a kept draft: each ask states its own
+  // follow-up target, and one that names none clears the last.
+  follows.value = props.follows
+  if (follows.value) mode.value = 'declare'
   if (!pristine.value) return
   await ensureProjects()
   projectId.value = carriedProject(props.scope, projects.value)
@@ -122,7 +132,8 @@ async function declare() {
   failed.value = ''
   const payload = adopting.value
     ? { ref: reference.value.trim(), provider: provider.value.trim() }
-    : { title: title.value, body: body.value }
+    : { title: title.value, body: body.value,
+        ...(follows.value ? { follows: follows.value.id } : {}) }
   payload.project_id = projectId.value ? Number(projectId.value) : null
   const ledger = await api.post('/features', payload)
   saving.value = false
@@ -193,6 +204,11 @@ async function declare() {
       </template>
 
       <template v-else>
+        <p v-if="follows" class="nf-follows" data-testid="declare-follows">
+          Follows <strong>#{{ follows.id }} {{ follows.title }}</strong>
+          <Button variant="ghost" size="sm" data-testid="declare-follows-clear"
+                  :aria-label="`Do not link to #${follows.id}`" @click="follows = null">Clear</Button>
+        </p>
         <label class="nf-label" for="nf-title" data-pl-part="field-label">Title</label>
         <Input
           id="nf-title"
@@ -265,6 +281,10 @@ async function declare() {
 .nf-label {
     font-size: 11.5px; font-weight: 600; color: var(--color-fg-subtle);
     margin-top: 0.4rem;
+}
+.nf-follows {
+    display: flex; align-items: center; gap: 0.4rem;
+    font-size: 12.5px; color: var(--color-fg-muted);
 }
 .nf-optional { font-weight: 400; color: var(--color-fg-faint); }
 .nf-fail {

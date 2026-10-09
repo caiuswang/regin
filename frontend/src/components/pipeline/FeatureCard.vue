@@ -4,6 +4,7 @@
 import PlSlot from './PlSlot.vue'
 import FeatureExpansion from './FeatureExpansion.vue'
 import FeatureNextStep from '../features/FeatureNextStep.vue'
+import FeatureFollowsChips from '../features/FeatureFollowsChips.vue'
 import { ago } from '../../utils/pipelineFormat'
 
 defineProps({
@@ -23,6 +24,7 @@ defineProps({
       <span class="fc-fig">tasks {{ feature.tasks_done }} / {{ feature.tasks }}</span>
       <span class="fc-fig" :class="{ 'is-warn': feature.defects.open }">defects {{ feature.defects.open }} / {{ feature.defects.total }}</span>
     </div>
+    <FeatureFollowsChips :ids="feature.follows || []" />
     <FeatureNextStep :step="feature.next_step" />
     <FeatureExpansion v-if="feature.stage === 'escaped' && feature.defects.open" :feature="feature" compact />
   </article>

@@ -60,6 +60,12 @@ class BranchRejected(FeatureError):
     field = "branch"
 
 
+class FollowsRejected(FeatureError):
+    """A `follows` id the new feature cannot be linked after."""
+
+    field = "follows"
+
+
 class NotRunnable(FeatureError):
     """The feature holds no task, so there is no attempt to make.
 
@@ -75,17 +81,13 @@ def create(title: str, *, body: Optional[str] = None,
            sync_error: Optional[str] = None,
            declared_by: str = OPERATOR,
            trace_id: Optional[str] = None,
-           project_id: Optional[int] = None) -> Feature:
-    """A feature row and its `specced` event, in one transaction."""
-    name = (title or "").strip()
-    if not name:
-        raise FeatureError("a feature needs a title")
-    if len(name) > TITLE_MAX:
-        raise FeatureError(f"a title is at most {TITLE_MAX} characters")
-    if body and len(body) > DESCRIPTION_MAX:
-        raise FeatureError(
-            f"a spec is at most {DESCRIPTION_MAX} characters; this one is "
-            f"{len(body)}")
+           project_id: Optional[int] = None,
+           follows: Optional[int] = None) -> Feature:
+    """A feature row and its `specced` event, in one transaction — and, given
+    `follows`, the link naming the phase it comes after, in the same one, so a
+    refused link leaves no orphan feature behind."""
+    from lib.features import links  # noqa: PLC0415  (links imports events)
+    name = _checked_new(title, body, follows)
     check_project(project_id)
     with SessionLocal() as session:
         row = Feature(title=name, body=body, origin=origin,
@@ -96,11 +98,33 @@ def create(title: str, *, body: Optional[str] = None,
         session.add(FeatureEvent(feature_id=row.id,
                                  kind=events_module.SPECCED,
                                  declared_by=declared_by, trace_id=trace_id))
+        if follows is not None:
+            try:
+                links.add(session, row.id, follows, links.LINK_FOLLOWS)
+            except links.LinkRefused as exc:
+                raise FollowsRejected(str(exc)) from exc
         session.commit()
         session.refresh(row)
     log.write("feature_created", feature_id=row.id, origin=origin,
               external_ref=external_ref)
     return row
+
+
+def _checked_new(title: str, body: Optional[str], follows) -> str:
+    """The title a new feature is stored under, or the refusal."""
+    name = (title or "").strip()
+    if not name:
+        raise FeatureError("a feature needs a title")
+    if len(name) > TITLE_MAX:
+        raise FeatureError(f"a title is at most {TITLE_MAX} characters")
+    if body and len(body) > DESCRIPTION_MAX:
+        raise FeatureError(
+            f"a spec is at most {DESCRIPTION_MAX} characters; this one is "
+            f"{len(body)}")
+    if follows is not None and (not isinstance(follows, int)
+                                or isinstance(follows, bool)):
+        raise FollowsRejected("follows must be a feature id")
+    return name
 
 
 def get(feature_id: int) -> Optional[Feature]:

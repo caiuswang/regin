@@ -31,6 +31,7 @@ from lib.defects import store as defect_store
 from lib.features import attribution as attribution_module
 from lib.features import cost as cost_module
 from lib.features import events as events_module
+from lib.features import links as links_module
 from lib.features import next_step as next_step_module
 from lib.orm import SessionLocal
 from lib.orm.models import tasks as task_model
@@ -72,6 +73,8 @@ class FeatureRow:
     next_step: Optional[dict] = None
     body: Optional[str] = field(default=None, repr=False)
     blamed_now: int = 0
+    #: The ids this feature follows, attached per page by `_with_follows`.
+    follows: tuple[int, ...] = ()
 
     def to_dict(self) -> dict:
         return {"id": self.id, "title": self.title, "origin": self.origin,
@@ -85,6 +88,7 @@ class FeatureRow:
                             "open": self.open_defects,
                             "escapes": self.escapes},
                 "last_activity": self.last_activity,
+                "follows": list(self.follows),
                 **({"next_step": self.next_step} if self.next_step else {})}
 
 
@@ -460,6 +464,11 @@ def _with_next_steps(items: list[FeatureRow]) -> list[FeatureRow]:
         facts=facts[row.id]).to_dict()) for row in items]
 
 
+def _with_follows(items: list[FeatureRow]) -> list[FeatureRow]:
+    follows = links_module.follows_of(row.id for row in items)
+    return [replace(row, follows=tuple(follows[row.id])) for row in items]
+
+
 def _spec_from(q: str, filters) -> dict:
     """One narrowing, whatever the caller named it with."""
     spec = dict(NO_FILTERS)
@@ -486,7 +495,8 @@ def page(q: str = "", *, filters: Optional[dict] = None,
     with SessionLocal() as session:
         rows = session.exec(text(query_sql(spec)).bindparams(**binds)).all()
 
-    items = _with_next_steps([_row_from(record) for record in rows])
+    items = _with_follows(
+        _with_next_steps([_row_from(record) for record in rows]))
     matched = int(rows[0][-1]) if rows else _matched_total(spec)
     population = _population_total(spec)
     sort_key, sort_dir = parse_sort(spec.get("sort", ""))

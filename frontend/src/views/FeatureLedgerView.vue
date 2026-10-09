@@ -29,7 +29,7 @@ import { usePipelineCreate } from '../composables/usePipelineCreate'
 import { useTaskShortcuts } from '../composables/useTaskShortcuts'
 import { useBreakpoint } from '../composables/useBreakpoint'
 import {
-  DEFECTS_ANCHOR, IMAGES_ANCHOR, LEDGER_ANCHORS, SESSIONS_ANCHOR, SLICES_ANCHOR,
+  DEFECTS_ANCHOR, IMAGES_ANCHOR, LEDGER_ANCHORS, RELATED_ANCHOR, SESSIONS_ANCHOR, SLICES_ANCHOR,
   SPEC_ANCHOR, TASKS_ANCHOR, reveal,
 } from '../utils/featureLinks'
 import { reopenMessage, shipMessage } from '../utils/featureConfirm'
@@ -37,11 +37,11 @@ import Button from '../components/ui/Button.vue'
 import Icon from '../components/ui/Icon.vue'
 import PipelineCreateButton from '../components/pipeline/PipelineCreateButton.vue'
 import DeclareSessionDialog from '../components/features/DeclareSessionDialog.vue'
-import RefBacklinks from '../components/refs/RefBacklinks.vue'
 import FeatureBranch from '../components/features/FeatureBranch.vue'
 import FeatureDefects from '../components/features/FeatureDefects.vue'
 import FeatureEvidence from '../components/features/FeatureEvidence.vue'
 import FeatureFigures from '../components/features/FeatureFigures.vue'
+import FeatureRelated from '../components/features/FeatureRelated.vue'
 import FeatureProjectPicker from '../components/features/FeatureProjectPicker.vue'
 import FeatureImages from '../components/features/FeatureImages.vue'
 import FeatureSlices from '../components/features/FeatureSlices.vue'
@@ -165,6 +165,7 @@ const sections = computed(() => {
   return [
     { key: 'spec', anchor: SPEC_ANCHOR, label: 'Spec',
       count: (l.body || '').trim() ? null : 'empty' },
+    { key: 'related', anchor: RELATED_ANCHOR, label: 'Related', count: relatedCount(l) },
     { key: 'slices', anchor: SLICES_ANCHOR, label: 'Slices', count: String(l.slice_tasks ?? 0) },
     { key: 'images', anchor: IMAGES_ANCHOR, label: 'Images', count: String(imageItems.value.length) },
     { key: 'tasks', anchor: TASKS_ANCHOR, label: 'Tasks', count: t ? `${t.done}/${t.total}` : null },
@@ -173,6 +174,19 @@ const sections = computed(() => {
     { key: 'sessions', anchor: SESSIONS_ANCHOR, label: 'Sessions', count: String(l.sessions.rows.length) },
   ]
 })
+
+function relatedCount(l) {
+  const n = ['follows', 'followed_by', 'related']
+    .reduce((sum, key) => sum + (l.links?.[key]?.length || 0), 0)
+  return n ? String(n) : null
+}
+
+// A follow-up names this feature as the phase it comes after; the shell's
+// dialog writes the link with the row and lands on the new feature.
+function newFollowUp() {
+  const l = ledger.value
+  if (canWrite.value && l) openCreate('feature', { follows: { id: l.id, title: l.title } })
+}
 
 async function refreshStage() {
   refreshing.value = true
@@ -370,6 +384,14 @@ function onDeclared() {
             <Icon name="plus" :size="12" />
             <span v-if="isMdUp">New task</span>
           </Button>
+          <Button
+            variant="ghost" size="sm" data-testid="section-nav-new-follow-up"
+            :aria-label="`New follow-up feature after ${ledger.title}`"
+            @click="newFollowUp"
+          >
+            <Icon name="arrow-right" :size="12" />
+            <span v-if="isMdUp">New follow-up</span>
+          </Button>
         </template>
       </FeatureSectionNav>
 
@@ -396,7 +418,13 @@ function onDeclared() {
         @saved="ledger = $event"
       />
 
-      <RefBacklinks :items="ledger.referenced_by || []" testid="feature-backlinks" />
+      <FeatureRelated
+        :feature-id="ledger.id"
+        :links="ledger.links || {}"
+        :referenced-by="ledger.referenced_by || []"
+        :can-write="canWrite"
+        @changed="onDefectsChanged"
+      />
 
       <FeatureSlices
         :feature-id="ledger.id"
@@ -487,7 +515,7 @@ function onDeclared() {
 
 <style scoped>
 /* A jump lands the section under the sticky index, not behind it. */
-.ledger :deep(:is(#feature-spec, #slices, #feature-images, #feature-tasks,
+.ledger :deep(:is(#feature-spec, #feature-related, #slices, #feature-images, #feature-tasks,
                   #feature-defects, #feature-sessions)) {
     scroll-margin-top: 3.25rem;
 }

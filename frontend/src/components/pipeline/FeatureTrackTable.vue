@@ -8,6 +8,7 @@ import StageSegments from './StageSegments.vue'
 import PlSlot from './PlSlot.vue'
 import FeatureExpansion from './FeatureExpansion.vue'
 import FeatureNextStep from '../features/FeatureNextStep.vue'
+import FeatureFollowsChips from '../features/FeatureFollowsChips.vue'
 import { ago, defectTally } from '../../utils/pipelineFormat'
 import { money } from '../../utils/ledgerFormat'
 import { defectsLink, tasksLink } from '../../utils/featureLinks'
@@ -73,6 +74,7 @@ function cost(row) {
             <span class="ftt-name">
               <router-link :to="`/features/${row.id}`" class="ftt-title focus-visible:outline-2 focus-visible:outline-blue-500">{{ row.title }}</router-link>
               <span class="ftt-meta">{{ row.external_ref || 'no ref' }} · {{ cost(row) }}</span>
+              <FeatureFollowsChips :ids="row.follows || []" />
               <FeatureNextStep :step="row.next_step" />
             </span>
           </span>

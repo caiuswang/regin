@@ -197,6 +197,9 @@ def new_cmd(
     project: Optional[str] = typer.Option(
         None, "--project", help="Registered repo name to file this under "
                                 "(see `regin repos`)"),
+    follows: Optional[int] = typer.Option(
+        None, "--follows", help="Id of the feature this is the next phase of "
+                                "— linked in the same transaction"),
 ) -> None:
     """Declare a feature. The row and its `specced` event, in one transaction.
 
@@ -215,9 +218,52 @@ def new_cmd(
             typer.echo(str(exc), err=True)
             raise typer.Exit(2)
     else:
-        row = feature_store.create(title, body=body, trace_id=session,
-                                   project_id=project_id)
+        try:
+            row = feature_store.create(title, body=body, trace_id=session,
+                                       project_id=project_id, follows=follows)
+        except feature_store.FeatureError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(2)
     typer.echo(f"#{row.id}  {row.title}  {events.stage(row.id)}")
+
+
+def _link_args(key: str, other: str, kind: str) -> tuple[int, int, str]:
+    from lib.orm.models.features import LINK_KINDS  # noqa: PLC0415
+    if kind not in LINK_KINDS:
+        typer.echo(f"--kind must be one of {', '.join(LINK_KINDS)}", err=True)
+        raise typer.Exit(2)
+    return _resolve(key, None), _resolve(other, None), kind
+
+
+@feature_app.command("link")
+def link_cmd(
+    key: str = typer.Argument(..., help="Feature id"),
+    other: str = typer.Argument(..., help="The feature to link it to"),
+    kind: str = typer.Option(..., "--kind", help="follows (KEY is the next "
+                                                 "phase of OTHER) or related"),
+) -> None:
+    """Link two features as phases of one line of work, or as related."""
+    from lib.features import links  # noqa: PLC0415
+    a, b, kind = _link_args(key, other, kind)
+    try:
+        links.link(a, b, kind)
+    except links.LinkRefused as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1)
+    typer.echo(f"#{a}  {kind}  #{b}")
+
+
+@feature_app.command("unlink")
+def unlink_cmd(
+    key: str = typer.Argument(..., help="Feature id"),
+    other: str = typer.Argument(..., help="The linked feature"),
+    kind: str = typer.Option(..., "--kind", help="follows or related"),
+) -> None:
+    """Remove one link. A link that was never there is not an error."""
+    from lib.features import links  # noqa: PLC0415
+    a, b, kind = _link_args(key, other, kind)
+    removed = links.unlink(a, b, kind)
+    typer.echo(f"#{a}  {kind}  #{b}  {'unlinked' if removed else 'not linked'}")
 
 
 def _spec_source(body: Optional[str], path: Optional[str]) -> str:

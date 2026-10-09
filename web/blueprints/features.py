@@ -28,6 +28,7 @@ from lib.features import attribution, images as images_module
 from lib.features import branches as branches_module
 from lib.features import index as index_module
 from lib.features import ledger as ledger_module
+from lib.features import links as links_module
 from lib.features import next_step as next_step_module
 from lib.features import spans
 from lib.features import steps as steps_module
@@ -105,7 +106,8 @@ def api_feature_create():
         else:
             row = feature_store.create((payload.get("title") or ""),
                                        body=payload.get("body"),
-                                       project_id=project_id)
+                                       project_id=project_id,
+                                       follows=payload.get("follows"))
     except (feature_store.FeatureError, IntegrationError) as exc:
         return jsonify({"error": str(exc),
                         "field": getattr(exc, "field", None)}), 400
@@ -137,6 +139,7 @@ def _ledger_body(feature_id: int) -> dict:
     body["slice_tasks"] = next_step_module.task_facts(
         [feature_id])[feature_id].slices
     body["referenced_by"] = backlinks.referenced_by(f"feature:{feature_id}")
+    body["links"] = links_module.for_feature(feature_id)
     return body
 
 
@@ -317,6 +320,35 @@ def api_feature_refresh(feature_id):
             "figure is local")
         return jsonify(body), 502
     return jsonify(body)
+
+
+# ── links ────────────────────────────────────────────────────
+
+@features_bp.route("/api/features/<int:feature_id>/links", methods=["POST"])
+@require_editor
+def api_feature_link(feature_id: int):
+    """Link this feature to another (R4). Answers with the fresh `links`."""
+    payload = _payload()
+    try:
+        links_module.link(feature_id, payload.get("other_id"),
+                          (payload.get("kind") or "").strip())
+    except links_module.LinkRefused as exc:
+        return jsonify({"error": str(exc), "field": exc.field}), 400
+    return jsonify({"links": links_module.for_feature(feature_id)}), 201
+
+
+@features_bp.route("/api/features/<int:feature_id>/links/<int:other_id>",
+                   methods=["DELETE"])
+@require_editor
+def api_feature_unlink(feature_id: int, other_id: int):
+    """Remove one link; one that was never there is still a success."""
+    try:
+        removed = links_module.unlink(feature_id, other_id,
+                                      (request.args.get("kind") or "").strip())
+    except links_module.LinkRefused as exc:
+        return jsonify({"error": str(exc), "field": exc.field}), 400
+    return jsonify({"removed": removed,
+                    "links": links_module.for_feature(feature_id)})
 
 
 # ── slices ───────────────────────────────────────────────────
