@@ -125,6 +125,9 @@ async function replay(page, testInfo, baseURL, appearance) {
   await page.addInitScript((t) => {
     localStorage.setItem('regin_pipeline_theme', 'pixel')
     localStorage.setItem('regin_theme', t)
+    // The HAR was recorded under the old activity default; any other sort
+    // asks for a URL it does not hold, and `notFound: 'abort'` fails the read.
+    localStorage.setItem('regin.features.sort', 'activity:desc')
   }, appearance)
   await page.setViewportSize({ width: 1440, height: 900 })
 }

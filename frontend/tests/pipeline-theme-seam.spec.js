@@ -88,6 +88,9 @@ for (const vp of VIEWPORTS) {
     test.skip(RECORD, 'recording')
     await page.routeFromHAR(harForThisPort(testInfo, baseURL), { url: '**/api/**', notFound: 'abort' })
     await page.clock.setFixedTime(recordedAt())
+    // The HAR was recorded under the old activity default; any other sort
+    // asks for a URL it does not hold, and `notFound: 'abort'` fails the read.
+    await page.addInitScript(() => localStorage.setItem('regin.features.sort', 'activity:desc'))
     await visitAll(page, vp, async (path) => {
       // The switch is new chrome in space that was empty before the seam.
       await page.getByTestId('pipeline-theme-switch').evaluate((el) => { el.style.visibility = 'hidden' })
