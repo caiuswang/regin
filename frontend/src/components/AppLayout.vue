@@ -113,34 +113,31 @@ function goTo(link) {
   router.push(link.to)
 }
 
-// Group and within-group order follows assumed usage frequency, not topic
-// alphabetization: the groups you check continuously while an agent runs
-// (Observability) sit above the ones you open to configure or reference
-// something (Library, System).
+// Group and within-group order follows assumed usage frequency: the daily
+// workbench (Pipeline + Inbox) sits on top, observability comes next, and
+// configuration/reference groups sink toward the bottom.
 const navGroups = computed(() => [
   {
-    label: 'Observability',
-    links: [
-      { to: '/live', label: 'Live', icon: 'live' },
-      { to: '/inbox', label: 'Inbox', exact: true, icon: 'inbox',
-        badge: () => inboxUnread.value, tone: () => inboxTone.value },
-      // Sessions carry no per-user owner, so Trace is admin-only (matches
-      // the ADMIN_API_ENDPOINTS gate on /api/sessions*).
-      ...(isAdmin.value ? [{ to: '/trace', label: 'Trace', icon: 'trace' }] : []),
-      { to: '/memory', label: 'Memory', exact: true, icon: 'memory' },
-      { to: '/audit', label: 'Audit', icon: 'audit' },
-    ],
-  },
-  {
-    label: 'Engineering',
+    label: 'Workbench',
     links: [
       // Tasks, features and defects are one workbench behind one entry — the
       // switcher is the tab strip in PipelineView. No role conditional: the
       // ledger reads are authenticated-any-role.
       { to: '/overview', label: 'Pipeline', icon: 'pipeline',
         match: ['/overview', '/tasks', '/features', '/defects'] },
-      { to: '/rules', label: 'Rules', exact: true, icon: 'rules' },
-      { to: '/plans', label: 'Plans', icon: 'plans' },
+      { to: '/inbox', label: 'Inbox', exact: true, icon: 'inbox',
+        badge: () => inboxUnread.value, tone: () => inboxTone.value },
+    ],
+  },
+  {
+    label: 'Observability',
+    links: [
+      // Sessions carry no per-user owner, so Trace is admin-only (matches
+      // the ADMIN_API_ENDPOINTS gate on /api/sessions*).
+      ...(isAdmin.value ? [{ to: '/trace', label: 'Trace', icon: 'trace' }] : []),
+      { to: '/memory', label: 'Memory', exact: true, icon: 'memory' },
+      { to: '/audit', label: 'Audit', icon: 'audit' },
+      { to: '/live', label: 'Live', icon: 'live' },
     ],
   },
   {
@@ -153,6 +150,13 @@ const navGroups = computed(() => [
         match: ['/patterns', '/skills'] },
       { to: '/repos', label: 'Repos', icon: 'repos' },
       { to: '/prompt-templates', label: 'Prompts', icon: 'prompts' },
+    ],
+  },
+  {
+    label: 'Engineering',
+    links: [
+      { to: '/rules', label: 'Rules', exact: true, icon: 'rules' },
+      { to: '/plans', label: 'Plans', icon: 'plans' },
     ],
   },
   ...(diagEnabled.value ? [{

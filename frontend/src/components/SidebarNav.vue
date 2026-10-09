@@ -167,6 +167,9 @@ const previewHandlers = {
 
 .sb-nav {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
   overflow-y: auto;
   overflow-x: hidden;
   padding: 0.25rem 0.75rem 0.5rem;
@@ -174,25 +177,29 @@ const previewHandlers = {
 
 .sb-nav.is-rail { padding: 0.25rem 1rem 0.5rem; }
 
-.sb-section-label {
-  font-size: 0.59375rem;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  color: var(--color-slate-400);
-  font-weight: 700;
-  padding: 0 0.75rem;
-  margin: 1rem 0 0.375rem;
-  white-space: nowrap;
+.sb-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
 }
 
-.sb-group:first-child .sb-section-label { margin-top: 0; }
+.sb-section-label {
+  font-size: 0.625rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-slate-500);
+  font-weight: 600;
+  padding: 0 0.75rem;
+  margin: 0 0 0.375rem;
+  white-space: nowrap;
+}
 
 /* The resting rail has no room for a group heading; a hairline keeps the
    grouping visible while role="group" + aria-label keeps it announced. */
 .sb-section-rule {
   height: 1px;
   background: var(--color-slate-200);
-  margin: 0.6875rem 0.5rem 0.5625rem;
+  margin: 0.75rem 0.5rem 0.5rem;
 }
 
 .sb-group:first-child .sb-section-rule { margin-top: 0.125rem; }
@@ -207,7 +214,6 @@ const previewHandlers = {
   height: auto;
   min-height: 2.375rem;
   padding: 0.5rem 0.625rem;
-  margin-bottom: 2px;
   border: 0;
   border-radius: 0.625rem;
   font-size: 0.8125rem;
@@ -230,16 +236,13 @@ const previewHandlers = {
 .sb-item.is-active :deep(.nav-icon) { opacity: 1; }
 
 .sb-item.is-active {
-  background: linear-gradient(135deg, var(--color-blue-800), var(--color-blue-500));
-  color: #fff;
+  background: var(--color-blue-50);
+  color: var(--color-blue-900);
   font-weight: 600;
-  box-shadow: 0 4px 12px rgba(30, 64, 175, 0.25);
+  box-shadow: inset 3px 0 0 0 var(--color-blue-500);
 }
 
-.sb-item.is-active:hover {
-  background: linear-gradient(135deg, var(--color-blue-800), var(--color-blue-500));
-  color: #fff;
-}
+.sb-item.is-active:hover { background: var(--color-blue-100); }
 
 .sb-item-label {
   flex: 1;
@@ -267,8 +270,6 @@ const previewHandlers = {
 
 .sb-badge-warning { background: var(--color-amber-100); color: var(--color-amber-800); }
 .sb-badge-danger { background: var(--color-red-100); color: var(--color-red-800); }
-
-.sb-item.is-active .sb-badge { background: rgba(255, 255, 255, 0.25); color: #fff; }
 
 .sb-badge-dot {
   position: absolute;

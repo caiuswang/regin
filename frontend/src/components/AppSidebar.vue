@@ -268,8 +268,8 @@ function linkName(link) {
 
 .sb-rail-toggle-wide { width: 2.25rem; }
 
-.sb-search-wrap { padding: 0 0.75rem 0.5rem; }
-.is-collapsed .sb-search-wrap { padding: 0 1rem 0.5rem; }
+.sb-search-wrap { padding: 0 0.75rem 0.75rem; }
+.is-collapsed .sb-search-wrap { padding: 0 1rem 0.75rem; }
 
 .sb-search {
   display: flex;

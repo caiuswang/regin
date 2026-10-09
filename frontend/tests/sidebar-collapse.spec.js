@@ -155,8 +155,8 @@ test.describe('Sidebar rail collapse', () => {
     await settledRailWidth(page)
     await expect(active).toHaveCount(1)
     await expect(active).toHaveAttribute('aria-current', 'page')
-    const bg = await active.evaluate(e => getComputedStyle(e).backgroundImage)
-    expect(bg, 'active gradient lost when collapsed').toContain('gradient')
+    const bg = await active.evaluate(e => getComputedStyle(e).backgroundColor)
+    expect(bg, 'active background lost when collapsed').toMatch(/^(rgb|oklch)/)
   })
 
   test('collapsing does not make the content pane scroll sideways', async ({ page }) => {
@@ -199,7 +199,7 @@ test.describe('Sidebar rail collapse', () => {
     await expect(card).toHaveCount(1)
     await expect(card).toContainText(await first.getAttribute('aria-label'))
     // The card names the group the row sits in — the heading the rail dropped.
-    await expect(card.locator('.sb-preview-group')).toHaveText('Observability')
+    await expect(card.locator('.sb-preview-group')).toHaveText('Workbench')
 
     // Moving down the rail re-targets the same single card, never stacks one.
     const last = items.last()

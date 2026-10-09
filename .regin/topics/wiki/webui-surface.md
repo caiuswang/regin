@@ -24,9 +24,10 @@ The sidebar is built from the `navGroups` computed in `AppLayout.vue:62`; the sa
 
 | Group | Sidebar links (label → route) |
 |---|---|
-| **Library** | Repos `/repos` · Patterns `/patterns` · Skills `/skills` · Prompts `/prompt-templates` |
-| **Observability** | Trace `/trace` *(admin only)* · Live `/live` · Inbox `/inbox` *(unread badge)* · Memory `/memory` · Grades `/grades` · Audit `/audit` |
-| **Engineering** | Rules `/rules` · Experiments `/experiments` *(flag: experimental_conceal)* · Plans `/plans` |
+| **Workbench** | Pipeline `/overview` *(also matches `/tasks`, `/features`, `/defects`)* · Inbox `/inbox` *(unread badge)* |
+| **Observability** | Trace `/trace` *(admin only)* · Memory `/memory` · Audit `/audit` · Live `/live` |
+| **Library** | Patterns & Skills `/patterns` *(also matches `/skills`)* · Repos `/repos` · Prompts `/prompt-templates` |
+| **Engineering** | Rules `/rules` · Plans `/plans` |
 | **Diagnostics** *(hidden unless `diagEnabled`)* | Schema drift `/schema-drift` *(pending-drift badge)* · Payload log `/payload-log` |
 | **System** | Settings `/settings` |
 
