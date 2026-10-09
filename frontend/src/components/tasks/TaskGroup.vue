@@ -68,7 +68,12 @@ async function more() {
 // drives that, not a watcher here: `scoped` changes on exactly the params
 // change the list already reloads on, so watching it too issued every open
 // group's page twice and let two in-flight loads race over one `items`.
-defineExpose({ reload: () => { fetched.value = false; if (open.value) load() } })
+defineExpose({
+  reload: () => {
+    fetched.value = false
+    return open.value ? load() : undefined
+  },
+})
 </script>
 
 <template>

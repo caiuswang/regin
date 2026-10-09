@@ -1,5 +1,6 @@
 import { computed, ref, shallowRef } from 'vue'
 import api from '../api'
+import { followNewest } from '../utils/followNewest.js'
 import { useFlash } from './useFlash.js'
 import { STATUS_FILTERS } from '../utils/taskMeta.js'
 
@@ -76,7 +77,8 @@ export function useTaskFeed(params, scope = () => ({}), size = 50) {
     return out.toString()
   }
 
-  async function load() {
+  const load = followNewest(loadOnce)
+  async function loadOnce() {
     const mine = ++generation
     loading.value = true
     error.value = null
@@ -126,7 +128,8 @@ export function useTaskCounts(params) {
 
   let issued = 0
 
-  async function load() {
+  const load = followNewest(loadOnce)
+  async function loadOnce() {
     const mine = ++issued
     loading.value = true
     try {

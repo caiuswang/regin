@@ -1,7 +1,8 @@
 import { reactive } from 'vue'
 
 // `link` is `{ to, label }` — the object the action just touched, so the
-// feedback is a way to it rather than only a sentence about it.
+// feedback is a way to it rather than only a sentence about it — or
+// `{ action, label }` when the way there is a step on this page, not a route.
 const state = reactive({ message: '', type: 'success', link: null })
 let timer = null
 

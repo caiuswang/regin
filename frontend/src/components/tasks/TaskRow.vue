@@ -25,6 +25,9 @@ import { shortDate } from '../../utils/ledgerFormat'
 import { utcTitle } from '../../utils/time.js'
 import { taskRef } from '../../utils/taskMeta.js'
 import { taskTitle } from '../../utils/taskTitle.js'
+import { useJustCreated } from '../../composables/useJustCreated.js'
+
+const justCreated = useJustCreated()
 
 const props = defineProps({
   task: { type: Object, required: true },
@@ -72,6 +75,7 @@ const runCount = computed(() => props.task.run_count || 0)
     :data-selected="selected || undefined"
     :data-feature="task.feature_id ?? undefined"
     data-testid="task-row"
+    :data-just-created="justCreated === task.id || undefined"
   >
     <!-- No expand control: a task has attempts, not child tasks, and the
          attempts open from the row's own page. The gap keeps every row's

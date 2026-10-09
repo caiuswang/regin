@@ -5,7 +5,7 @@
 // where the reader was. Below 768 px the tab is always the grouped list:
 // a board or a graph at phone width is a horizontal scroll, not a view.
 import { computed, onActivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import Button from '../components/ui/Button.vue'
 import Icon from '../components/ui/Icon.vue'
 import DropdownMenu from '../components/ui/DropdownMenu.vue'
@@ -22,6 +22,7 @@ import { usePipelineCreate } from '../composables/usePipelineCreate'
 import { usePipelineTabActive } from '../composables/usePipelineHeader'
 import { invalidatePipelineCounts } from '../composables/usePipelineCounts.js'
 import { useBreakpoint } from '../composables/useBreakpoint.js'
+import { provideJustCreated } from '../composables/useJustCreated.js'
 import { TASK_CAPTURED_EVENT } from '../composables/useQuickCapture.js'
 import { useTaskQuery } from '../composables/useTaskQuery'
 import { useTaskShortcuts } from '../composables/useTaskShortcuts.js'
@@ -32,6 +33,7 @@ import { GROUPS, SORT_KEYS } from '../utils/taskMeta.js'
 import api from '../api'
 
 const route = useRoute()
+const router = useRouter()
 const query = useTaskQuery()
 const isCurrentTab = usePipelineTabActive()
 
@@ -98,6 +100,7 @@ const count = ref('')
 const find = ref('')
 const body = ref(null)
 const toolbar = ref(null)
+const root = ref(null)
 const { openCreate } = usePipelineCreate()
 
 const groupOptions = GROUPS.map(g => ({
@@ -133,6 +136,31 @@ async function afterWrite() {
   await Promise.all([body.value?.reload?.(), loadScopeHead()])
 }
 
+// Show widens to every task, the address included — a row the scope itself
+// hides is still the row the reader just made — and to the flat list newest
+// first, the one reading where a new row is on the first page and in no
+// collapsed group. A route, not `query.patch`: a way to one row is not a
+// grouping or a filter the reader chose to keep, so nothing is stored.
+const justCreated = provideJustCreated({
+  root,
+  noun: 'Task',
+  reveal: () => router.replace({
+    path: route.path,
+    query: { ...(route.query.project ? { project: route.query.project } : {}), group: 'none' },
+  }),
+  reload: () => body.value?.reload?.(),
+})
+
+// Kept alive, this tab hears a capture made on any other: only the tab on
+// screen has rows to point at. The graph marks no rows — its finder is the
+// way to a node.
+async function captured(event) {
+  const id = event?.detail?.id
+  if (!isCurrentTab.value || view.value === 'graph' || id == null) return afterWrite()
+  invalidatePipelineCounts()
+  await justCreated.land(id, () => Promise.all([body.value?.reload?.(), loadScopeHead()]))
+}
+
 usePipelineLive(() => Promise.all([body.value?.reload?.(), loadScopeHead()]))
 
 useTaskShortcuts({
@@ -142,16 +170,16 @@ useTaskShortcuts({
 
 onMounted(() => {
   ensureUsers()
-  window.addEventListener(TASK_CAPTURED_EVENT, afterWrite)
+  window.addEventListener(TASK_CAPTURED_EVENT, captured)
 })
 // Kept alive, so a second arrival at a bare /tasks (the sidebar, a deep link)
 // restores the same stored filters a cold load would.
 onActivated(() => { query.restoreStored() })
-onBeforeUnmount(() => window.removeEventListener(TASK_CAPTURED_EVENT, afterWrite))
+onBeforeUnmount(() => window.removeEventListener(TASK_CAPTURED_EVENT, captured))
 </script>
 
 <template>
-  <div class="tv space-y-3" data-pl-part="panel">
+  <div ref="root" class="tv space-y-3" data-pl-part="panel">
     <Teleport v-if="isCurrentTab" defer to="#pipeline-actions">
       <PipelineCreateButton kind="task" testid="task-new" :prefill="createPrefill" />
     </Teleport>

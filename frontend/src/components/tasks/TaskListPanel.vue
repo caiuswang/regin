@@ -126,7 +126,7 @@ async function reload() {
     remember(flat.items.value)
     await syncLiveness(flat.items.value)
   }
-  groupRefs.value.forEach(g => g?.reload?.())
+  await Promise.all(groupRefs.value.map(g => g?.reload?.()))
 }
 
 const { refusals, liveness, busyId, syncLiveness, act } = useTaskVerbs(afterWrite, { openSheet })

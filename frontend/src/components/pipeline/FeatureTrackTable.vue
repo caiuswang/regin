@@ -12,10 +12,13 @@ import FeatureFollowsChips from '../features/FeatureFollowsChips.vue'
 import { ago, defectTally } from '../../utils/pipelineFormat'
 import { money } from '../../utils/ledgerFormat'
 import { defectsLink, tasksLink } from '../../utils/featureLinks'
+import { useJustCreated } from '../../composables/useJustCreated.js'
 
 defineProps({
   rows: { type: Array, required: true },
 })
+
+const justCreated = useJustCreated()
 
 const expanded = ref(new Set())
 function toggle(id) {
@@ -56,7 +59,7 @@ function cost(row) {
         :data-expanded="expanded.has(row.id) ? '' : undefined"
         role="rowgroup"
       >
-        <div class="ftt-row" role="row" data-pl-part="row-line" :data-testid="`feature-row-${row.id}`">
+        <div class="ftt-row" role="row" data-pl-part="row-line" :data-testid="`feature-row-${row.id}`" :data-just-created="justCreated === row.id || undefined">
           <span class="ftt-feature" role="cell">
             <Button
               variant="ghost"

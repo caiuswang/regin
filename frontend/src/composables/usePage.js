@@ -1,5 +1,6 @@
 import { ref, shallowRef, computed } from 'vue'
 import api from '../api'
+import { followNewest } from '../utils/followNewest.js'
 
 /**
  * usePage — consume an offset-limit paginated endpoint.
@@ -46,7 +47,8 @@ export function usePage({ path, buildQuery = () => ({}), size = 50 }) {
     return params.toString()
   }
 
-  async function load() {
+  const load = followNewest(loadOnce)
+  async function loadOnce() {
     const mine = ++issued
     loading.value = true
     error.value = null

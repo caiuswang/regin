@@ -15,6 +15,9 @@ import TaskStatusIcon from './TaskStatusIcon.vue'
 import TaskVerbMenu from './TaskVerbMenu.vue'
 import { taskDay, taskSub } from '../../utils/taskMeta.js'
 import { taskTitle } from '../../utils/taskTitle.js'
+import { useJustCreated } from '../../composables/useJustCreated.js'
+
+const justCreated = useJustCreated()
 
 const props = defineProps({
   task: { type: Object, required: true },
@@ -35,6 +38,7 @@ const waiting = computed(() => !!props.task.waits_on)
     :class="{ 'is-waiting': waiting, 'is-selectable': canWrite }"
     data-pl-part="row"
     :data-testid="`next-step-row-${task.id}`"
+    :data-just-created="justCreated === task.id || undefined"
   >
     <Checkbox
       v-if="canWrite"

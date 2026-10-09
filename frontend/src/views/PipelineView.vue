@@ -159,7 +159,10 @@ function featureDeclared(ledger) {
   if (!ledger?.id) return
   flash(`Feature #${ledger.id} declared`, 'success',
     { link: { to: `/features/${ledger.id}`, label: 'Open' } })
-  router.push(`/features/${ledger.id}`)
+  // Declared from the list, it lands in the list (R5.4); from anywhere else
+  // the list is not on screen, so the new feature's page is the place to be.
+  if (route.path === '/features') announceCreated('feature', ledger.id)
+  else router.push(`/features/${ledger.id}`)
 }
 
 function defectCreated({ defect, outcome }) {
