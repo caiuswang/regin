@@ -12,6 +12,7 @@ defineEmits(['go'])
         variant="bare" class="play-track-key"
         :class="{ 'is-current': t.current, 'is-ok': t.ok, 'is-locked': t.locked }"
         :disabled="t.locked" :aria-current="t.current ? 'step' : undefined"
+        :aria-label="`${t.mark} ${t.label}`"
         @click="$emit('go', i)"
       >
         <span class="play-track-mark">{{ t.mark }}</span>

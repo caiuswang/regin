@@ -176,15 +176,10 @@ body {
   color: var(--text);
   font-family: var(--font-sans);
   font-size: var(--text-body);
-  line-height: 1.65;
+  line-height: 1.6;
 }
 
-/* Light-on-dark compensation: antialiasing flatters light glyphs on dark
-   surfaces; the slight positive tracking offsets halation. */
-body {
-  -webkit-font-smoothing: antialiased;
-  letter-spacing: 0.01em;
-}
+body { -webkit-font-smoothing: antialiased; }
 
 code, pre, kbd {
   font-family: var(--font-mono);
@@ -1238,3 +1233,28 @@ h1, h2, h3 { text-wrap: balance; }
 .pl-prompt { color: var(--dim); }
 .pl-ok { color: var(--green); }
 .block-note.pl-tip { border-color: var(--edge); }
+
+/* ── Phone reflow, G4–G7 (F154 S6) ────────────────────── */
+
+/* Between 640 px and ~800 px "NEW FEATURE" is wider than its key; wrapping
+   keeps it whole where an ellipsis would cut it to "NEW FEA…". At 1440 every
+   label fits on one line, so the prototype's look is unchanged. */
+.play-track-label { white-space: normal; }
+
+@media (max-width: 639px) {
+  /* G4: a table row stacks — label cell on its own line, then the rest. The
+     column head would label nothing once stacked, so it stays for assistive
+     tech only. */
+  .block-table-row, .pl-row { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .block-table-head, .pl-head {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+  }
+  .block-table, .pl-table { position: relative; }
+
+  /* G6: a long HUD title wraps instead of running past the border. */
+  .play-hud-label { white-space: normal; }
+
+  /* G7: the kicker already names the stage, so the key shows its code only. */
+  .play-track-label { display: none; }
+}

@@ -136,8 +136,7 @@ export const PILLARS = [
     title: 'Rules the agent can\'t drift past.',
     body: 'Conventions in prose get forgotten by the next session. Patterns and skills tell the agent how before it acts; rule engines live inside hooks, so every edit is checked in flight and pushed back on-spec in the same turn. Lessons from past sessions are recalled when a new one touches the same ground.',
     pre: [
-      [['PostToolUse ▸ rule-check:', 'dim']],
-      [['2 violation(s) in SiteHeader.vue', 'gold']],
+      [['PostToolUse ▸ rule-check:', 'dim'], ['2 violation(s) in SiteHeader.vue', 'gold']],
       ['- focus_visible_styling_coverage (warn):'],
       ['  interactive element at line 15'],
       ['  lacks focus-visible styling'],
