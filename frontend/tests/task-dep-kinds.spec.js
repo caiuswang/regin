@@ -72,8 +72,7 @@ test.describe('/tasks — a dependency edge carries a kind', () => {
 
     const kind = page.getByTestId(`task-dep-kind-${dep}`)
     await expect(kind).toBeVisible()
-    await kind.click()
-    await page.getByRole('option', { name: 'just after' }).click()
+    await kind.getByRole('radio', { name: 'just after' }).click()
     await page.getByTestId('task-deps-save').click()
 
     await expect(page.getByTestId('task-deps-save')).toBeHidden()

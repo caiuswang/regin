@@ -2,6 +2,10 @@
 // One box of the lane graph. It carries the task's primary action only
 // (feature #119 R4a); clicking anywhere else on the box opens the task — the
 // title's link is stretched over it, with the action above.
+//
+// In the graph's edit mode a pick button covers the whole box, so a click
+// chooses the task instead of opening it or firing its action.
+import Button from '../ui/Button.vue'
 import TaskPrimaryAction from './TaskPrimaryAction.vue'
 import TaskStatusIcon from './TaskStatusIcon.vue'
 import { taskTitle } from '../../utils/taskTitle.js'
@@ -11,8 +15,10 @@ defineProps({
   tag: { type: String, required: true },
   busy: { type: Boolean, default: false },
   canWrite: { type: Boolean, default: true },
+  editing: { type: Boolean, default: false },
+  isSource: { type: Boolean, default: false },
 })
-const emit = defineEmits(['verb', 'hover'])
+const emit = defineEmits(['verb', 'hover', 'pick'])
 </script>
 
 <template>
@@ -42,6 +48,15 @@ const emit = defineEmits(['verb', 'hover'])
       />
     </span>
     <router-link :to="`/tasks/${node.id}`" class="tln-title" :title="taskTitle(node)">{{ taskTitle(node) }}</router-link>
+    <Button
+      v-if="editing"
+      variant="ghost"
+      class="tln-pick"
+      :aria-pressed="isSource"
+      :aria-label="`Pick task ${node.id}`"
+      :data-testid="`graph-pick-${node.id}`"
+      @click="emit('pick', node.id)"
+    />
   </div>
 </template>
 
@@ -73,6 +88,17 @@ const emit = defineEmits(['verb', 'hover'])
 }
 .tln-title:hover { text-decoration: none; }
 .tln-title:focus-visible { outline: none; }
+.tln .tln-pick {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    width: auto;
+    height: auto;
+    padding: 0;
+    background: transparent;
+    border-radius: inherit;
+    cursor: crosshair;
+}
 .tln-title::after {
     content: "";
     position: absolute;

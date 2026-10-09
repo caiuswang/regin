@@ -2,17 +2,20 @@
 // The Tasks tab as a graph: one lane per feature (and one for loose tasks),
 // columns by topological depth, so every dependency runs left to right. A
 // blocking edge — one whose dependency has not released its task — is amber
-// and dashed; an edge out of a finished task is green.
+// and dashed; an edge out of a finished task is green. Edit mode draws and
+// removes edges in place, batching one deps PUT per changed task.
 //
 // Lanes, their done/total, the chain count and the hidden-lane count are the
 // server's (`/api/tasks/graph?lanes=1`); this view only places boxes.
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
+import TaskGraphEditBar from './TaskGraphEditBar.vue'
 import TaskLaneNode from './TaskLaneNode.vue'
 import TaskRefusal from './TaskRefusal.vue'
 import TaskSheets from './TaskSheets.vue'
 import api from '../../api'
+import { useGraphEdit } from '../../composables/useGraphEdit.js'
 import { invalidatePipelineCounts } from '../../composables/usePipelineCounts.js'
 import { GRAPH_FILTERS, useLaneGraph } from '../../composables/useTaskViews.js'
 import { useTaskVerbs } from '../../composables/useTaskVerbs.js'
@@ -56,7 +59,10 @@ function tag(node) {
 const hovered = ref(null)
 
 function nodeClass(node) {
-  return [`tlg-node tlg-${tag(node)}`, { 'is-found': matches.value.has(node.id) }]
+  return [`tlg-node tlg-${tag(node)}`, {
+    'is-found': matches.value.has(node.id),
+    'is-source': edit.source.value === node.id,
+  }]
 }
 
 function edgeClass(edge) {
@@ -66,6 +72,7 @@ function edgeClass(edge) {
     'is-settled': edge.settled && !edge.blocking,
     'is-lit': lit,
     'is-dim': hovered.value != null && !lit,
+    'is-removed': edit.editing.value && edit.removed(edge.to, edge.from),
   }
 }
 
@@ -116,6 +123,31 @@ async function afterWrite() {
   await graph.load()
 }
 
+const edit = useGraphEdit({
+  edgeExists: (sourceId, dependsOnId) => (graph.body.value?.edges || [])
+    .some(e => e.task_id === sourceId && e.depends_on_id === dependsOnId),
+  afterSave: afterWrite,
+})
+
+// A pending edge is drawn straight between the two boxes: it has no place in
+// the column layout until the server has accepted it and the graph re-reads.
+const pendingEdges = computed(() => {
+  const at = new Map((layout.value?.nodes || []).map(n => [n.id, n]))
+  return edit.adds.value
+    .filter(e => at.has(e.from) && at.has(e.to))
+    .map(e => {
+      const a = at.get(e.from)
+      const b = at.get(e.to)
+      return { ...e, path: `M${a.x + NODE_W},${a.y + NODE_H / 2} L${b.x},${b.y + NODE_H / 2}` }
+    })
+})
+
+function onKey(event) {
+  if (event.key === 'Escape' && edit.editing.value) edit.clearSource()
+}
+onMounted(() => window.addEventListener('keydown', onKey))
+onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
+
 const { refusals, busyId, act } = useTaskVerbs(afterWrite, {
   openSheet: (kind, task) => { sheet.value = { kind, task } },
 })
@@ -153,6 +185,32 @@ defineExpose({ reload: graph.load })
           <TaskRefusal :refusal="r.refusal" />
         </li>
       </ul>
+      <div v-if="canWrite" class="tlg-chrome">
+        <Button
+          :variant="edit.editing.value ? 'primary' : 'secondary'"
+          size="sm"
+          class="tlg-edit-toggle"
+          :aria-pressed="edit.editing.value"
+          aria-label="Edit dependencies"
+          :disabled="edit.saving.value || edit.changedCount.value > 0"
+          :title="edit.changedCount.value ? 'Save or discard the pending changes first' : undefined"
+          data-testid="graph-edit-toggle"
+          @click="edit.setEditing(!edit.editing.value)"
+        >
+          <Icon name="pencil" :size="12" /> {{ edit.editing.value ? 'Done editing' : 'Edit dependencies' }}
+        </Button>
+        <TaskGraphEditBar
+          v-if="edit.editing.value"
+          v-model:kind="edit.kind.value"
+          :source="edit.source.value"
+          :changed="edit.changedCount.value"
+          :saving="edit.saving.value"
+          :refusal="edit.refusal.value"
+          @cancel-source="edit.clearSource"
+          @save="edit.save"
+          @discard="edit.discard"
+        />
+      </div>
       <div ref="viewport" class="tlg-viewport">
         <div
           class="tlg-canvas"
@@ -178,7 +236,7 @@ defineExpose({ reload: graph.load })
                 <span class="tlg-lane-count" data-pl-part="meta-label" data-testid="graph-lane-count">{{ lane.done }} / {{ lane.total }}</span>
               </div>
             </div>
-            <svg class="tlg-edges" :width="layout.width" :height="layout.height" aria-hidden="true">
+            <svg class="tlg-edges" :class="{ 'is-editing': edit.editing.value }" :width="layout.width" :height="layout.height" aria-hidden="true">
               <defs>
                 <marker
                   id="tlg-arrow"
@@ -203,7 +261,27 @@ defineExpose({ reload: graph.load })
                 :data-testid="`graph-edge-${edge.key}`"
                 :data-kind="edge.kind"
                 :data-blocking="edge.blocking ? '' : undefined"
+                :data-removed="edit.editing.value && edit.removed(edge.to, edge.from) ? '' : undefined"
               />
+              <template v-if="edit.editing.value">
+                <path
+                  v-for="edge in layout.edges"
+                  :key="`hit-${edge.key}`"
+                  :d="edge.path"
+                  class="tlg-edge-hit"
+                  :data-testid="`graph-edge-hit-${edge.key}`"
+                  @click="edit.toggleEdge(edge.to, edge.from)"
+                />
+                <path
+                  v-for="edge in pendingEdges"
+                  :key="`pending-${edge.key}`"
+                  :d="edge.path"
+                  class="tlg-edge is-pending"
+                  marker-end="url(#tlg-arrow)"
+                  :data-testid="`graph-pending-edge-${edge.key}`"
+                  :data-kind="edge.kind"
+                />
+              </template>
             </svg>
             <TaskLaneNode
               v-for="node in layout.nodes"
@@ -215,6 +293,9 @@ defineExpose({ reload: graph.load })
               :style="{ left: `${node.x}px`, top: `${node.y}px`, width: `${NODE_W}px`, height: `${NODE_H}px` }"
               :busy="busyId === node.id"
               :can-write="canWrite"
+              :editing="edit.editing.value"
+              :is-source="edit.source.value === node.id"
+              @pick="edit.pickNode"
               @hover="id => (hovered = id)"
               @verb="act"
             />
@@ -339,6 +420,34 @@ defineExpose({ reload: graph.load })
     stroke-dasharray: 5 4;
 }
 .tlg-edge.is-lit { stroke-width: 2.25; stroke-opacity: 1; }
+.tlg-edges.is-editing { pointer-events: none; }
+.tlg-edge-hit {
+    fill: none;
+    stroke: transparent;
+    stroke-width: 12;
+    pointer-events: stroke;
+    cursor: pointer;
+}
+.tlg-edge.is-pending {
+    stroke: var(--color-primary);
+    stroke-width: 2;
+    stroke-dasharray: 6 4;
+}
+.tlg-edge.is-removed {
+    stroke: var(--color-danger);
+    stroke-opacity: 0.35;
+    stroke-dasharray: 2 4;
+}
+.tlg-node.is-source { box-shadow: 0 0 0 3px var(--color-primary); }
+.tlg-chrome {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.625rem;
+    background: var(--color-surface);
+    border-bottom: 1px solid var(--color-border);
+}
 .tlg-edge.is-dim { opacity: 0.18; }
 /* The status is a 3px stripe on the card's leading edge rather than a whole
    tinted border: colour marks the state without outlining every box. */
