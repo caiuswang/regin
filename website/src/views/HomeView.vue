@@ -5,6 +5,8 @@ import Button from '../components/ui/Button.vue'
 import HomeProof from '../components/HomeProof.vue'
 import HomePillars from '../components/HomePillars.vue'
 import BlockShot from '../components/blocks/BlockShot.vue'
+import HeroScene from '../components/HeroScene.vue'
+import PlayTheLoop from '../components/PlayTheLoop.vue'
 import overviewShot from '../assets/shots/pixel/overview.webp'
 import { LAYERS, LOOP } from '../content/features.js'
 
@@ -57,7 +59,10 @@ async function copyQuickstart() {
         </div>
       </div>
       <p class="quickstart-caption">Runs locally — Python + Node, one setup script, then <RouterLink to="/getting-started#activate-hooks">install the hooks</RouterLink> to wire it into your agent. Early beta; pin a commit if you need stability.</p>
+      <HeroScene />
     </section>
+
+    <PlayTheLoop />
 
     <section class="section" aria-labelledby="layers-heading">
       <div class="section-head">
