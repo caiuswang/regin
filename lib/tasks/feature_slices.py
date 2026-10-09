@@ -227,11 +227,13 @@ def arm_slices(feature_id: int, items) -> dict:
     refused: list[dict] = []
     for item in items:
         task_id = item.get("task_id") if isinstance(item, dict) else None
-        reason = _arm_one(feature_id, task_id, item)
-        if reason is None:
+        refusal = _arm_one(feature_id, task_id, item)
+        if refusal is None:
             armed.append(task_id)
         else:
-            refused.append({"task_id": task_id, "reason": reason})
+            reason, field = refusal
+            refused.append({"task_id": task_id, "field": field,
+                            "reason": reason})
     log.write("slices_armed", feature_id=feature_id, armed=len(armed),
               refused=len(refused))
     return {"armed": armed, "refused": refused}
@@ -252,19 +254,22 @@ def _arm_refusal(feature_id: int, task_id) -> Optional[str]:
     return None
 
 
-def _arm_one(feature_id: int, task_id, item) -> Optional[str]:
+def _arm_one(feature_id: int, task_id,
+             item) -> Optional[tuple[str, Optional[str]]]:
+    """`(reason, field)` for a refused row, None once it is armed."""
     refusal = _arm_refusal(feature_id, task_id)
     if refusal is not None:
-        return refusal
+        return refusal, "task_id"
     try:
         fields = arm_module.parse_arm(
             {k: v for k, v in item.items() if k != "task_id"})
+        arm_module.check_target(fields)
     except CaptureRejected as exc:
-        return str(exc)
+        return str(exc), exc.field
     try:
         store.arm_task(task_id, **fields)
     except store.TransitionRejected as exc:
-        return str(exc)
+        return str(exc), "status"
     try:
         runs.fire_if_ready(task_id)
     except Exception:  # noqa: BLE001 — a launch fault is not a failed arm

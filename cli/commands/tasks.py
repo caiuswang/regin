@@ -19,6 +19,7 @@ Subcommands:
   show    — one task in full
   delete  — remove a task and everything keyed to it
   comment — reply into a comment thread, and optionally settle it
+  arm     — set a task's launch parameters (server-first, like finish)
   finish  — report a run's work done (the agent's own final step)
 
 The done-claim is **not** here. It is an act on a feature, and a feature is its
@@ -343,6 +344,115 @@ def cmd_finish(
             raise typer.Exit(code=1)
         result = _finish_here(task_id, run_id, status, reason or "")
     _emit(result, json, _render_finish)
+
+
+@tasks_app.command("arm", help="Arm a task with its launch parameters.")
+def cmd_arm(
+    task_id: int = typer.Argument(..., help="Task id."),
+    cwd: Optional[str] = typer.Option(None, "--cwd", help="Working directory."),
+    branch: Optional[str] = typer.Option(
+        None, "--branch", help="Run in a worktree on this branch."),
+    base: Optional[str] = typer.Option(
+        None, "--base", help="Ref a new --branch forks from."),
+    provider: Optional[str] = typer.Option(None, "--provider"),
+    model: Optional[str] = typer.Option(None, "--model"),
+    launch: Optional[str] = typer.Option(None, "--launch", help="sdk | tmux."),
+    skill: Optional[str] = typer.Option(
+        None, "--skill", help="Slash command the run opens with."),
+    permission_mode: Optional[str] = typer.Option(None, "--permission-mode"),
+    effort: Optional[str] = typer.Option(None, "--effort"),
+    json: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """POST to the server when it is up, so a task whose dependencies already
+    landed is released by the loop that owns launches; otherwise arm here.
+    Both paths run the same `parse_arm` → `check_target`. A refusal exits 1
+    with `field: reason` on stderr."""
+    if base and not branch:
+        _refuse_arm("worktree.base",
+                    "--base names the ref a new --branch forks from; "
+                    "pass --branch too")
+    payload = {key: value for key, value in (
+        ("cwd", cwd), ("provider", provider), ("model", model),
+        ("launch", launch), ("permission_mode", permission_mode),
+        ("effort", effort)) if value}
+    if branch:
+        payload["worktree"] = {"branch": branch, "base": base or ""}
+    if skill:
+        payload["skill"] = {"name": skill}
+    try:
+        result = _arm_via_server(task_id, payload)
+    except ConnectionRefusedError:
+        result = _arm_here(task_id, payload)
+    _emit(result, json, _render_arm)
+
+
+def _refuse_arm(field: Optional[str], reason: str) -> None:
+    typer.echo(f"{field or 'arm'}: {reason}", err=True)
+    raise typer.Exit(code=1)
+
+
+def _arm_via_server(task_id: int, payload: dict) -> dict:
+    """The server's arm route, under a token signed here.
+
+    The route is editor-only and this process holds no login, but it reads the
+    same install secret the server signs with — whoever can read that already
+    owns the DB, so the token admits nothing new. Unlike a loopback bypass it
+    does not open the route to every request a same-host proxy forwards.
+    """
+    from lib.auth import create_token
+    from lib.settings import settings
+
+    base = settings.agent_memory.inject_server_url.rstrip("/")
+    request = urllib.request.Request(
+        f"{base}/api/tasks/{task_id}/arm", data=_json.dumps(payload).encode(),
+        method="POST", headers={
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + create_token(0, "regin-cli", "editor"),
+        })
+    try:
+        with _open_loopback(request, timeout=30) as response:
+            return _json.loads(response.read() or b"{}")
+    except urllib.error.HTTPError as exc:
+        try:
+            body = _json.loads(exc.read() or b"{}")
+        except ValueError:
+            body = {}
+        _refuse_arm(body.get("field"),
+                    body.get("error") or f"server refused ({exc.code})")
+    except OSError as exc:
+        if _refused_connection(exc):
+            raise ConnectionRefusedError from exc
+        _refuse_arm(None, f"cannot reach regin at {base}: {exc}")
+
+
+def _arm_here(task_id: int, payload: dict) -> dict:
+    """Arm in this process when no server is up. Nothing is launched from
+    here — an SDK child would die with this CLI — so a task already free to
+    run waits for the server."""
+    from lib.tasks import arm, runs
+    from lib.tasks.capture import CaptureRejected
+
+    try:
+        fields = arm.parse_arm(payload)
+        arm.check_target(fields)
+        task = store.arm_task(task_id, **fields)
+    except CaptureRejected as exc:
+        _refuse_arm(exc.field, str(exc))
+    except store.TransitionRejected as exc:
+        _refuse_arm("status", str(exc))
+    if task is None:
+        _refuse_arm("task_id", f"no task #{task_id}")
+    typer.echo("task arm: regin is not running — armed here", err=True)
+    return {"task": task, "armed": runs.armed_attempt(task_id)}
+
+
+def _render_arm(result: dict) -> None:
+    task = result["task"]
+    params = (result.get("armed") or {}).get("params") or {}
+    print(f"#{task['id']} {task['status']}: {task['title']}")
+    for key in ("cwd", "provider", "launch", "worktree", "skill"):
+        if params.get(key):
+            print(f"{key + ':':<10} {_json.dumps(params[key])}")
 
 
 def _open_loopback(request, timeout: float):

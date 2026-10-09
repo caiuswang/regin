@@ -4,6 +4,7 @@ and arm-slices, each over the same `lib/tasks` function its CLI twin calls."""
 from __future__ import annotations
 
 import json
+import subprocess
 
 import pytest
 from typer.testing import CliRunner
@@ -261,9 +262,25 @@ def _arm(client, feature_id: int, items: list) -> dict:
                        headers=EDITOR, json={"items": items})
 
 
-def _assert_first_arm(client, fid, s1, s2, s3, foreign) -> None:
+@pytest.fixture
+def base_repo(tmp_path):
+    """A checkout that has `f9/integration`, the base the table names —
+    arm refuses a base git cannot resolve."""
+    root = tmp_path / "base-repo"
+    root.mkdir()
+    for args in (["-c", "init.defaultBranch=main", "init"],
+                 ["config", "user.email", "t@example.com"],
+                 ["config", "user.name", "T"],
+                 ["commit", "--allow-empty", "-m", "init"],
+                 ["branch", "f9/integration"]):
+        subprocess.run(["git", *args], cwd=root, check=True,
+                       capture_output=True)
+    return root
+
+
+def _assert_first_arm(client, fid, s1, s2, s3, foreign, cwd) -> None:
     resp = _arm(client, fid, [
-        {"task_id": s1,
+        {"task_id": s1, "cwd": str(cwd),
          "worktree": {"branch": f"f{fid}/s1", "base": "f9/integration"},
          "skill": {"name": "goal-verified"}},
         {"task_id": s2, "bogus": 1},
@@ -280,7 +297,7 @@ def _assert_first_arm(client, fid, s1, s2, s3, foreign) -> None:
 
 
 def test_arm_slices_bulk_names_refusals_and_never_runs(tmp_db, flask_client,
-                                                       monkeypatch):
+                                                       monkeypatch, base_repo):
     started = []
     monkeypatch.setattr(runs, "start_run", started.append)
     fid, other = _feature(), _feature()
@@ -290,7 +307,7 @@ def test_arm_slices_bulk_names_refusals_and_never_runs(tmp_db, flask_client,
                                 headers=EDITOR).get_json()["created"][0]
     _set_status(s3, TASK_STATUS_ARMED)
 
-    _assert_first_arm(flask_client, fid, s1, s2, s3, foreign)
+    _assert_first_arm(flask_client, fid, s1, s2, s3, foreign, base_repo)
 
     assert {t.id: t.status for t in _tasks(fid)} == {
         s1: TASK_STATUS_ARMED, s2: TASK_STATUS_IDEA, s3: TASK_STATUS_ARMED}
