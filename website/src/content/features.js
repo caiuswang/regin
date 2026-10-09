@@ -1,43 +1,82 @@
 // Every artifact below is real output from regin running on its own repo —
-// nothing invented. The hook refusal, trace numbers, and recalled lesson are
-// from the session that built this website (trace 3b3adbbc, 2026-07-16).
+// nothing invented. The Workbench and Runs artifacts are this website's own
+// feature (F153, 2026-10-09); the trace numbers and the hook refusal are from
+// the session that built the first version of the site (trace 3b3adbbc,
+// 2026-07-16).
 
-export const PILLARS = [
+export const LAYERS = [
   {
-    icon: 'shield',
-    title: 'Rules the agent can’t drift past',
-    body: 'Conventions written in prose get forgotten by the next session. regin’s rule engines live inside hooks, so every edit is checked in flight — the agent gets pushed back on-spec in the same turn, or the action is refused outright. Force, not suggestion.',
-    link: { to: '/architecture#rule-engines', label: 'How the rule engines work' },
-    artifact: 'code',
-    code: 'PostToolUse ▸ rule-check:\n2 violation(s) in SiteHeader.vue\n- focus_visible_styling_coverage (warn):\n  interactive element at line 15\n  lacks focus-visible styling\n- prefer_button_primitive (warn):\n  use the <Button> primitive,\n  not a raw <button>\nFix these before claiming\nthe edit is complete.',
-    codeCaption: 'A real push-back from the session that built this page — the hook flagged both problems and the agent had to fix them before moving on.',
+    icon: 'layers',
+    name: 'Workbench',
+    summary: 'A feature carries its spec and acceptance tests, is cut into tasks, and is held to a done-claim. Defects are declared against it.',
+    to: '/pipeline',
   },
   {
     icon: 'activity',
-    title: 'A session viewer, not a scrollback',
-    body: 'Hooks and transcripts already produce everything you need to understand a session — the terminal just flattens it. regin ingests the stream into spans you can filter by tool, agent, and phase, replay turn by turn, and roll up into token and cost attribution.',
-    link: { to: '/architecture#tracing', label: 'Trace internals' },
-    artifact: 'stats',
-    stats: ['552 spans', '8 turns', '16 tools', '$5.59 of $55.14 tool-attributed'],
-    statsCaption: 'This page’s own build session, captured at turn 8 — the same moment as the trace above. The split is the point: $5.59 was attributable to specific tool calls; the rest is shared context. A live session keeps counting, so captures taken moments apart drift upward.',
+    name: 'Runs',
+    summary: 'Tasks are launched as agent runs on Claude or Kimi, followed live, steered, stopped — and report back to an inbox.',
+    to: '/runs',
   },
   {
     icon: 'database',
-    title: 'Lessons that survive the session',
-    body: 'When a session learns something the hard way — a gotcha, a root cause, a decision that mattered — regin distills it into a lesson and recalls it when a future session touches the same ground. The store is curated: lessons are reinforced when they help and retired when they stop.',
-    link: { to: '/architecture#memory', label: 'How memory compounds' },
-    artifact: 'shot',
-    shotAlt: 'The regin memory browser: cross-session memories filterable by lessons, gotchas, facts and procedures — the newest lesson written by this website’s own build session.',
-    shotCaption: 'The live memory store — the top lesson was written by the session that built this website.',
+    name: 'Observability',
+    summary: 'Every session is traced: tool calls, edits, tokens, time, grades. Find out why a run went sideways.',
+    to: '/dashboard',
+  },
+  {
+    icon: 'shield',
+    name: 'Guidance',
+    summary: 'Patterns, skills, hook-enforced rules and cross-session memory that keep the agent on-spec while it works.',
+    to: '/guidance',
+  },
+]
+
+export const LOOP = ['Spec', 'Run', 'Watch', 'Count']
+
+export const PILLARS = [
+  {
+    layer: 'Workbench',
+    icon: 'layers',
+    title: 'A feature is a row, and done is a claim',
+    body: 'The spec lives on the feature row, its acceptance items are named tests, and the spec is cut into slices that become tasks with dependencies. Calling it done is a done-claim; anything found wrong afterwards is a defect declared against the feature. The number it is held to is rounds-to-done — counted from declarations, never inferred.',
+    link: { to: '/pipeline', label: 'How the pipeline works' },
+    artifact: 'code',
+    code: '$ regin feature ledger 153\n#153  Regin项目介绍整理\nbuilding  rounds=1  open_defects=0  escapes=0\n  being built\n\ncost (upper bound)  $3.76 across 5 sessions\nwork time  12m 30s\n\nsessions\n  2efbf8a1  S1 — Positioning text         $1.43\n  5d11f88d  S3 — Website copy + IA        $0.61\n  cc5fc91a  Slice 构建 Task Graph          $0.41\n  dc66a54b  S2 — Setup + CLI reference    $0.53\n  e0f1ca71  F153 Regin项目介绍整理 spec      $0.78\n…',
+    codeCaption: 'The ledger of the feature that rewrote this page, mid-build on 2026-10-09 (date, kind and round columns trimmed): the spec, the slicing and each slice are runs, each run costed.',
+  },
+  {
+    layer: 'Runs',
+    icon: 'activity',
+    title: 'Launch the run, then steer it',
+    body: 'A task is armed with a provider, a model and a launch mode, then started from the dashboard — Claude through the Agent SDK, Kimi over ACP or tmux. /live follows each running session: what it is doing, the question it is blocked on, with steer and Stop. Agents report progress and results back through the inbox.',
+    link: { to: '/runs', label: 'How runs are launched' },
+    artifact: 'code',
+    code: '$ regin task list --status ""\n#473   armed     spec   S5 — integrate + verify\n#472   armed     spec   S4 — Website Pipeline + Runs pages\n#471   running   spec   S3 — Website copy + IA\n#470   running   spec   S2 — Setup + CLI reference\n#469   done      spec   S1 — Positioning text',
+    codeCaption: 'The same feature’s slices on 2026-10-09: S1 done, S2 and S3 running in parallel, S4 and S5 armed and waiting on their dependencies.',
+  },
+  {
+    layer: 'Observability',
+    icon: 'database',
+    title: 'A session viewer, not a scrollback',
+    body: 'Hooks and transcripts already produce everything you need to understand a session — the terminal just flattens it. regin ingests the stream into spans you can filter by tool, agent, and phase, replay turn by turn, and roll up into token, cost and time attribution.',
+    link: { to: '/architecture#tracing', label: 'Trace internals' },
+    artifact: 'stats',
+    stats: ['552 spans', '8 turns', '16 tools', '$5.59 of $55.14 tool-attributed'],
+    statsCaption: 'The first website build session, captured at turn 8. The split is the point: $5.59 was attributable to specific tool calls; the rest is shared context. A live session keeps counting, so captures taken moments apart drift upward.',
+  },
+  {
+    layer: 'Guidance',
+    icon: 'shield',
+    title: 'Rules the agent can’t drift past',
+    body: 'Conventions written in prose get forgotten by the next session. Patterns and skills tell the agent how before it acts; rule engines live inside hooks, so every edit is checked in flight and the agent is pushed back on-spec in the same turn. Lessons from past sessions are recalled when a new one touches the same ground.',
+    link: { to: '/guidance', label: 'Patterns, rules and memory' },
+    artifact: 'code',
+    code: 'PostToolUse ▸ rule-check:\n2 violation(s) in SiteHeader.vue\n- focus_visible_styling_coverage (warn):\n  interactive element at line 15\n  lacks focus-visible styling\n- prefer_button_primitive (warn):\n  use the <Button> primitive,\n  not a raw <button>\nFix these before claiming\nthe edit is complete.',
+    codeCaption: 'A real push-back from the session that built the first version of this site — the hook flagged both problems and the agent had to fix them before moving on.',
   },
 ]
 
 export const SECONDARY = [
-  {
-    title: 'Patterns & skills',
-    body: 'Local procedure guides, promoted to versioned skill bundles when they earn it.',
-    to: '/architecture#feedforward',
-  },
   {
     title: 'Topic wikis',
     body: 'Per-repo knowledge as a reviewable graph, kept honest by drift detection.',

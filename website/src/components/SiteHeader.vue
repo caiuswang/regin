@@ -7,17 +7,21 @@ import Button from './ui/Button.vue'
 const NAV = [
   { to: '/', label: 'Introduction' },
   { to: '/getting-started', label: 'Getting Started' },
+  { to: '/pipeline', label: 'Pipeline' },
+  { to: '/runs', label: 'Runs' },
   { to: '/dashboard', label: 'Dashboard' },
-  { to: '/configuration', label: 'Configuration' },
+  { to: '/guidance', label: 'Guidance', section: ['/topics'] },
   { to: '/architecture', label: 'Architecture' },
-  { to: '/topics', label: 'Topic Wikis' },
+  { to: '/configuration', label: 'Configuration' },
   { to: '/cli', label: 'CLI' },
 ]
 
 const route = useRoute()
 
 function inSection(item) {
-  return item.to !== '/' && route.path !== item.to && route.path.startsWith(`${item.to}/`)
+  if (item.to === '/' || route.path === item.to) return false
+  const roots = [item.to, ...(item.section ?? [])]
+  return roots.some((root) => route.path === root || route.path.startsWith(`${root}/`))
 }
 
 const menuOpen = ref(false)

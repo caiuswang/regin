@@ -1,9 +1,5 @@
 <script setup>
 import SiteIcon from './SiteIcon.vue'
-import memoryShot from '../assets/shots/memory-dark.png'
-import memoryShotMobile from '../assets/shots/memory-dark-mobile.png'
-import memoryShotWebp from '../assets/shots/memory-dark.webp'
-import memoryShotMobileWebp from '../assets/shots/memory-dark-mobile.webp'
 import { PILLARS, SECONDARY } from '../content/features.js'
 </script>
 
@@ -11,12 +7,13 @@ import { PILLARS, SECONDARY } from '../content/features.js'
   <section class="section" aria-labelledby="pillars-heading">
     <div class="section-head">
       <p class="eyebrow">How it works</p>
-      <h2 id="pillars-heading">The three layers that do the work</h2>
-      <p>Guides steer; these three are how the harness senses, corrects, and remembers — rules enforce the spec, the trace shows what happened, memory keeps what it taught.</p>
+      <h2 id="pillars-heading">Each layer, with real output</h2>
+      <p>Nothing below is a mockup — every artifact is regin running on its own repo, with the feature or trace it came from named.</p>
     </div>
 
     <div v-for="pillar in PILLARS" :key="pillar.title" class="pillar">
       <div class="pillar-body">
+        <p class="eyebrow">{{ pillar.layer }}</p>
         <h3 class="pillar-title">
           <span class="pillar-glyph"><SiteIcon :name="pillar.icon" :size="18" /></span>
           {{ pillar.title }}
@@ -32,22 +29,11 @@ import { PILLARS, SECONDARY } from '../content/features.js'
           <pre class="artifact-log"><code>{{ pillar.code }}</code></pre>
           <p class="artifact-caption">{{ pillar.codeCaption }}</p>
         </template>
-        <template v-else-if="pillar.artifact === 'stats'">
+        <template v-else>
           <ul class="artifact-stats">
             <li v-for="s in pillar.stats" :key="s"><code>{{ s }}</code></li>
           </ul>
           <p class="artifact-caption">{{ pillar.statsCaption }}</p>
-        </template>
-        <template v-else>
-          <figure class="shot-frame shot-frame-sm">
-            <picture>
-              <source media="(max-width: 767px)" type="image/webp" :srcset="memoryShotMobileWebp" width="1280" height="1280" />
-              <source media="(max-width: 767px)" :srcset="memoryShotMobile" width="1280" height="1280" />
-              <source type="image/webp" :srcset="memoryShotWebp" width="2016" height="1232" />
-              <img :src="memoryShot" width="2016" height="1232" loading="lazy" :alt="pillar.shotAlt" />
-            </picture>
-            <figcaption>{{ pillar.shotCaption }}</figcaption>
-          </figure>
         </template>
       </div>
     </div>

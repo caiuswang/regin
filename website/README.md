@@ -1,7 +1,7 @@
 # regin website
 
 The official project site, live at **[regin.ccday.top](https://regin.ccday.top)** — a
-standalone Vue 3 + Vite app that introduces regin to prospective users. It is deliberately kept **separate from the operator dashboard** in
+standalone Vue 3 + Vite app that introduces regin — a workbench for building software with AI coding agents — to prospective users. It is deliberately kept **separate from the operator dashboard** in
 [`frontend/`](../frontend): different audience, different cadence, and its own minimal
 dependency set (just `vue` + `vue-router`). It shares no build, no `node_modules`, and no
 code with the rest of the repo — it lives here as a plain subdirectory, not a submodule.
@@ -48,7 +48,20 @@ No backend is required — the site does not talk to the regin Flask API.
 
 ## Content
 
-Page copy lives in [`src/content/`](src/content) (`features.js`, `settings.js`,
-`topics.js`, `cli.js`, …), separated from the components that render it. These files
-restate regin concepts, so **update them alongside the corresponding product change** —
-otherwise the site drifts from what regin actually does.
+Page copy lives in [`src/content/`](src/content), separated from the components that render it:
+
+| File | Feeds |
+|---|---|
+| `features.js` | the home page: `LOOP` (Spec → Run → Watch → Count), `LAYERS` (Workbench, Runs, Observability, Guidance — in that order) and `PILLARS`, one real artifact per layer |
+| `cli.js` | `/cli`: core commands, `COMMAND_GROUPS` (every group `regin --help` lists), troubleshooting |
+| `settings.js` | `/configuration` |
+| `topics.js` | `/topics` and its sub-pages under Guidance |
+| `columns.js` | shared table column definitions |
+
+Pages: `/` (Introduction), `/getting-started`, `/pipeline`, `/runs`, `/dashboard`, `/guidance`
+(with `/topics/*` beneath it), `/architecture`, `/configuration`, `/cli`.
+
+These files restate regin concepts, so **update them alongside the corresponding product
+change** — otherwise the site drifts from what regin actually does. Every artifact on the
+home page is real output with its feature or trace id and date named; don't replace one
+with an invented example.
