@@ -2,47 +2,27 @@
 import DocPage from '../components/DocPage.vue'
 import CodeBlock from '../components/CodeBlock.vue'
 import DataTable from '../components/DataTable.vue'
-import ThemedShot from '../components/ThemedShot.vue'
+import BlockShot from '../components/blocks/BlockShot.vue'
+import defectsShot from '../assets/shots/pixel/defects.webp'
+import featuresShot from '../assets/shots/pixel/features.webp'
+import graphShot from '../assets/shots/pixel/taskgraph.webp'
+import overviewShot from '../assets/shots/pixel/overview.webp'
 import Callout from '../components/Callout.vue'
-import overviewLight from '../assets/shots/pipeline-overview-light.png'
-import overviewLightWebp from '../assets/shots/pipeline-overview-light.webp'
-import overviewDark from '../assets/shots/pipeline-overview-dark.png'
-import overviewDarkWebp from '../assets/shots/pipeline-overview-dark.webp'
-import featuresLight from '../assets/shots/pipeline-features-light.png'
-import featuresLightWebp from '../assets/shots/pipeline-features-light.webp'
-import featuresDark from '../assets/shots/pipeline-features-dark.png'
-import featuresDarkWebp from '../assets/shots/pipeline-features-dark.webp'
-import graphLight from '../assets/shots/pipeline-taskgraph-light.png'
-import graphLightWebp from '../assets/shots/pipeline-taskgraph-light.webp'
-import graphDark from '../assets/shots/pipeline-taskgraph-dark.png'
-import graphDarkWebp from '../assets/shots/pipeline-taskgraph-dark.webp'
-import defectsLight from '../assets/shots/pipeline-defects-light.png'
-import defectsLightWebp from '../assets/shots/pipeline-defects-light.webp'
-import defectsDark from '../assets/shots/pipeline-defects-dark.png'
-import defectsDarkWebp from '../assets/shots/pipeline-defects-dark.webp'
 import {
   LOOP_STEPS, LOOP_COLUMNS, PIXEL_SLICES, SLICE_COLUMNS, PIXEL_FACTS, FACT_COLUMNS,
   LEDGER, SURFACES, SURFACE_COLUMNS,
 } from '../content/pipeline.js'
 
-const OVERVIEW_LIGHT = { png: overviewLight, webp: overviewLightWebp }
-const OVERVIEW_DARK = { png: overviewDark, webp: overviewDarkWebp }
-const FEATURES_LIGHT = { png: featuresLight, webp: featuresLightWebp }
-const FEATURES_DARK = { png: featuresDark, webp: featuresDarkWebp }
-const GRAPH_LIGHT = { png: graphLight, webp: graphLightWebp }
-const GRAPH_DARK = { png: graphDark, webp: graphDarkWebp }
-const DEFECTS_LIGHT = { png: defectsLight, webp: defectsLightWebp }
-const DEFECTS_DARK = { png: defectsDark, webp: defectsDarkWebp }
 
 const TOC = [
   { id: 'loop', label: 'The loop' },
-  { id: 'example', label: 'Worked example: the Pixel theme' },
-  { id: 'spec', label: '1 · Spec' },
-  { id: 'slices', label: '2 · Slices become a task graph' },
-  { id: 'runs', label: '3 · Runs' },
-  { id: 'defects', label: '4 · Defects' },
-  { id: 'ship', label: '5 · Ship and count' },
-  { id: 'features', label: 'The Features tab' },
+  { id: 'example', label: 'Worked example' },
+  { id: 'spec', label: 'Spec' },
+  { id: 'slices', label: 'Slices → task graph' },
+  { id: 'runs', label: 'Runs' },
+  { id: 'defects', label: 'Defects' },
+  { id: 'ship', label: 'Ship and count' },
+  { id: 'features', label: 'Features tab' },
   { id: 'where', label: 'Where to find it' },
 ]
 </script>
@@ -55,9 +35,9 @@ const TOC = [
   >
     <h2 id="loop">The loop</h2>
     <p>The dashboard’s <strong>Pipeline</strong> has three tabs — Overview, Features, Tasks — and a project picker that scopes all of them. The Overview draws the whole loop for one project: features in the workshop, tasks on the board, defects in the bug den, and what is waiting on you.</p>
-    <ThemedShot :light="OVERVIEW_LIGHT" :dark="OVERVIEW_DARK" :width="1440" :height="900" alt="The Pipeline Overview in the Pixel theme, scoped to the regin project: the loop scene with feature, task and defect counts, the project panel with shipped progress and spend, the features in flight and one defect needing a decision.">
+    <BlockShot :src="overviewShot" alt="The Pipeline Overview in the Pixel theme, scoped to the regin project: the loop scene with feature, task and defect counts, the project panel with shipped progress and spend, the features in flight and one defect needing a decision.">
       <code>/overview</code> scoped to the <code>regin</code> project — the dashboard of the project that builds regin. 109 features, 378 tasks and 139 defects so far; the first feature in flight is the one that wrote this page.
-    </ThemedShot>
+    </BlockShot>
     <DataTable :columns="LOOP_COLUMNS" :rows="LOOP_STEPS" />
 
     <h2 id="example">Worked example: the Pixel theme</h2>
@@ -70,18 +50,18 @@ const TOC = [
     <h3 id="slices">2 · Slices become a task graph</h3>
     <p>The spec ends in a slice table. <code>regin task slice-check</code> refuses a table without falsifiable acceptance items, <code>regin task tail</code> appends the integrate → migrate → verify rows, and <code>regin task transcribe</code> turns each row into a task with dependency edges. The Pixel theme came out as fifteen slices in two waves:</p>
     <DataTable :columns="SLICE_COLUMNS" :rows="PIXEL_SLICES" />
-    <ThemedShot :light="GRAPH_LIGHT" :dark="GRAPH_DARK" :width="1440" :height="900" alt="The Tasks tab's graph view in the Pixel theme, scoped to feature #139: Spec and Build steps on the left, S1 Seam and S2 Pixel foundation feeding S3 Overview, S4 Tasks and S5 Features, every node marked done.">
+    <BlockShot :src="graphShot" alt="The Tasks tab's graph view in the Pixel theme, scoped to feature #139: Spec and Build steps on the left, S1 Seam and S2 Pixel foundation feeding S3 Overview, S4 Tasks and S5 Features, every node marked done.">
       <code>/tasks?feature_id=139&amp;view=graph</code> — the same table as a dependency graph. S3, S4 and S5 wait only on S2, so they ran in parallel. Edges can be drawn and removed here by hand.
-    </ThemedShot>
+    </BlockShot>
 
     <h3 id="runs">3 · Runs</h3>
     <p>A task whose dependencies are done becomes <em>ready</em>. Arming it picks the provider (Claude through the Agent SDK, or Kimi), whether it gets its own git worktree, and the skills it should load; launching it starts a session that works on the slice’s branch and merges back into <code>f139/integration</code>. When a run reports finished, the tasks waiting on it are released — that is how S2 finishing started S3, S4 and S5 at once. You watch and steer the sessions from <RouterLink to="/runs">Runs</RouterLink>. Feature #139 took 28 such sessions and no hand-typed prompt.</p>
 
     <h3 id="defects">4 · Defects</h3>
     <p>Whatever the operator found wrong while looking at the result was declared as a <strong>defect</strong> against #139 — digits rendering glued together, a triage rail hiding the stats, group headers that did not follow the design. Defects can be pasted with screenshots, are triaged on the Features tab, and are fixed by a <code>fix</code> task. Closing one requires naming the check that would have caught it, so the missing gates can be ranked later.</p>
-    <ThemedShot :light="DEFECTS_LIGHT" :dark="DEFECTS_DARK" :width="1440" :height="900" alt="The All defects list in the Pixel theme, filtered to feature #139: twelve closed defects, each with its symptom text and a reopen action.">
+    <BlockShot :src="defectsShot" alt="The All defects list in the Pixel theme, filtered to feature #139: twelve closed defects, each with its symptom text and a reopen action.">
       <code>/defects?feature_id=139</code> — the twelve defects of the Pixel theme, all closed before it shipped.
-    </ThemedShot>
+    </BlockShot>
 
     <h3 id="ship">5 · Ship and count</h3>
     <p>A finished run is not a finished feature. Shipping is the operator’s act — <code>regin feature ship 139</code> — and that is the <strong>done-claim</strong>. A defect declared after it is an <em>escape</em>: it walks the feature back and adds a round. The number the pipeline is held to is <strong>rounds-to-done</strong>, computed only from declared events, never inferred from prose, branch names or timing. Cost is the sum of the sessions attributed to the feature, reported as an upper bound.</p>
@@ -90,9 +70,9 @@ const TOC = [
 
     <h2 id="features">The Features tab</h2>
     <p>Every feature of the project sits on a spec → build → ship track, with its task progress, rounds and open defects beside it. The rail on the right is the triage queue: defects that still need a decision.</p>
-    <ThemedShot :light="FEATURES_LIGHT" :dark="FEATURES_DARK" :width="1440" :height="900" alt="The Features tab in the Pixel theme: stage filters with counts, each feature as a row with a spec-build-ship track, task progress, rounds and open defects, and the triage rail on the right.">
+    <BlockShot :src="featuresShot" alt="The Features tab in the Pixel theme: stage filters with counts, each feature as a row with a spec-build-ship track, task progress, rounds and open defects, and the triage rail on the right.">
       <code>/features</code> for the <code>regin</code> project — stage tabs across the top, one track per feature, the triage rail on the right.
-    </ThemedShot>
+    </BlockShot>
     <Callout tone="info">
       The Pipeline ships two themes, <strong>Pixel</strong> (the default) and <strong>Classic</strong>. Switch with the picker at the right of the tab strip; the choice is per browser, like light and dark, and changes nothing but the look.
     </Callout>

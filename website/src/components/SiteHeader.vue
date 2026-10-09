@@ -1,87 +1,22 @@
 <script setup>
-import { ref, onMounted, onBeforeUnmount } from 'vue'
-import { useRoute } from 'vue-router'
-import SiteIcon from './SiteIcon.vue'
-import Button from './ui/Button.vue'
-
-const NAV = [
-  { to: '/', label: 'Introduction' },
-  { to: '/getting-started', label: 'Getting Started' },
-  { to: '/pipeline', label: 'Pipeline' },
-  { to: '/runs', label: 'Runs' },
-  { to: '/dashboard', label: 'Dashboard' },
-  { to: '/guidance', label: 'Guidance', section: ['/topics'] },
-  { to: '/architecture', label: 'Architecture' },
-  { to: '/configuration', label: 'Configuration' },
-  { to: '/cli', label: 'CLI' },
-]
-
-const route = useRoute()
-
-function inSection(item) {
-  if (item.to === '/' || route.path === item.to) return false
-  const roots = [item.to, ...(item.section ?? [])]
-  return roots.some((root) => route.path === root || route.path.startsWith(`${root}/`))
-}
-
-const menuOpen = ref(false)
-const isDark = ref(false)
-const headerEl = ref(null)
-const navToggleEl = ref(null)
-
-function toggleTheme() {
-  isDark.value = !isDark.value
-  document.documentElement.setAttribute('data-theme', isDark.value ? 'dark' : 'light')
-  try { localStorage.setItem('regin-site-theme', isDark.value ? 'dark' : 'light') } catch { /* private mode */ }
-}
-
-function onDocumentKeydown(event) {
-  if (event.key !== 'Escape' || !menuOpen.value) return
-  menuOpen.value = false
-  navToggleEl.value?.$el.focus()
-}
-
-function onDocumentClick(event) {
-  if (menuOpen.value && !headerEl.value?.contains(event.target)) menuOpen.value = false
-}
-
-onMounted(() => {
-  isDark.value = document.documentElement.getAttribute('data-theme') === 'dark'
-  document.addEventListener('keydown', onDocumentKeydown)
-  document.addEventListener('click', onDocumentClick)
-})
-onBeforeUnmount(() => {
-  document.removeEventListener('keydown', onDocumentKeydown)
-  document.removeEventListener('click', onDocumentClick)
+defineProps({
+  variant: { type: String, default: 'docs', validator: (v) => v === 'home' || v === 'docs' },
 })
 </script>
 
 <template>
-  <header ref="headerEl" class="site-header">
+  <header class="site-header">
     <div class="header-inner">
       <RouterLink to="/" class="brand">
-        <SiteIcon name="layers" :size="22" />
-        <span>regin</span>
-        <span class="beta-pill">beta</span>
+        <span class="logo-square" aria-hidden="true" />
+        <span class="brand-name">regin</span>
+        <span class="brand-badge">{{ variant === 'home' ? 'BETA' : 'DOCS' }}</span>
       </RouterLink>
-      <nav id="site-nav" class="main-nav" :class="{ open: menuOpen }" aria-label="Main">
-        <RouterLink
-          v-for="item in NAV" :key="item.to" :to="item.to"
-          :class="{ 'in-section': inSection(item) }"
-          @click="menuOpen = false"
-        >{{ item.label }}</RouterLink>
+      <nav class="header-nav" aria-label="Main">
+        <RouterLink v-if="variant === 'home'" to="/getting-started" class="header-link">Guide</RouterLink>
+        <RouterLink v-else to="/" class="header-link">Home</RouterLink>
+        <a href="https://github.com/caiuswang/regin" class="key-outline focus-visible:ring">GITHUB</a>
       </nav>
-      <Button variant="icon" class="theme-toggle" aria-label="Dark theme" :aria-pressed="isDark" @click="toggleTheme">
-        <SiteIcon name="sun" :size="18" class="icon-sun" />
-        <SiteIcon name="moon" :size="18" class="icon-moon" />
-      </Button>
-      <Button
-        ref="navToggleEl"
-        variant="icon" class="nav-toggle" aria-label="Toggle navigation menu"
-        :aria-expanded="menuOpen" aria-controls="site-nav" @click="menuOpen = !menuOpen"
-      >
-        <SiteIcon :name="menuOpen ? 'x' : 'menu'" :size="18" />
-      </Button>
     </div>
   </header>
 </template>

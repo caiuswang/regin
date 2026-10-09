@@ -1,7 +1,6 @@
 <script setup>
 import DocPage from '../components/DocPage.vue'
 import CodeBlock from '../components/CodeBlock.vue'
-import TopicsSubnav from '../components/TopicsSubnav.vue'
 import SiteIcon from '../components/SiteIcon.vue'
 import { SUBPAGE_SUMMARIES } from '../content/topics.js'
 
@@ -33,7 +32,6 @@ const TOPIC_JSON = `{
     lead="Long-lived knowledge about your repo, structured as a reviewable graph of topics — each with the files that matter, a narrative wiki page, and links to related topics — routed to the agent only when a task touches it."
     :toc="TOC"
   >
-    <template #subnav><TopicsSubnav /></template>
 
     <p>A coding agent starts every session knowing nothing about your repo beyond what fits in its prompt. Dumping documentation at it wastes context on the 95% that doesn't apply; writing nothing forces it to rediscover your architecture — sometimes wrongly — every single time. Topic wikis are the middle path: knowledge is broken into <em>topics</em> sized to a task, and the agent receives only the one or two slices touching what it's doing right now.</p>
 

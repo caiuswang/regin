@@ -14,4 +14,8 @@ if (import.meta.env.DEV) {
   dev.installDevTools(app)
 }
 
-app.use(router).mount('#app')
+app.use(router)
+// The shell picks home vs docs chrome from the matched route, so mount only
+// once the first navigation has resolved.
+await router.isReady()
+app.mount('#app')

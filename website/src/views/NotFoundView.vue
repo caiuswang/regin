@@ -1,12 +1,12 @@
+<script setup>
+import { useRoute } from 'vue-router'
+import DocCard from '../components/docs/DocCard.vue'
+
+const route = useRoute()
+</script>
+
 <template>
-  <div class="container">
-    <section class="hero">
-      <p class="eyebrow">404</p>
-      <h1>Page not found</h1>
-      <p class="lead">The address doesn't match any page on this site.</p>
-      <div class="hero-ctas">
-        <RouterLink to="/" class="btn btn-primary focus-visible:ring">Back to the introduction</RouterLink>
-      </div>
-    </section>
-  </div>
+  <DocCard level="GAME OVER" hud="404" title="Page not found" :lead="`Nothing lives at ${route.path}. The world map lists every page.`">
+    <RouterLink to="/" class="key-primary">▶ CONTINUE</RouterLink>
+  </DocCard>
 </template>

@@ -168,3 +168,27 @@ def test_site_imports_only_pixel_shots():
     assert imports, "the site imports no screenshots at all"
     stray = sorted({str(t.relative_to(WEBSITE)) for _, t in imports if PIXEL_SHOTS not in t.parents})
     assert stray == [], f"images imported from outside assets/shots/pixel/: {stray}"
+
+
+DARK_ONLY_BANNED = ["data-theme", "regin-site-theme", "ThemedShot"]
+LIGHT_SHOT = re.compile(rf"-light\.{IMAGE_EXT}\b")
+
+
+def _site_sources() -> list[Path]:
+    sources = [WEBSITE / "index.html"]
+    for path in sorted((WEBSITE / "src").rglob("*")):
+        if path.is_file() and path.suffix in (".vue", ".js", ".css", ".html"):
+            sources.append(path)
+    return sources
+
+
+def test_dark_only():
+    offenders = []
+    for path in _site_sources():
+        text = path.read_text(encoding="utf-8")
+        offenders += [f"{path.relative_to(WEBSITE)}: {term}" for term in DARK_ONLY_BANNED if term in text]
+        offenders += [f"{path.relative_to(WEBSITE)}: {m.group(0)}" for m in LIGHT_SHOT.finditer(text)]
+    assert offenders == [], offenders
+    light_files = sorted(p.name for p in (WEBSITE / "src/assets").rglob("*-light.*"))
+    assert light_files == [], f"light shots still on disk: {light_files}"
+    assert not (WEBSITE / "src/components/ThemedShot.vue").exists()

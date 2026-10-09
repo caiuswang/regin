@@ -1,26 +1,8 @@
-export const SECTION_PAGES = [
-  { to: '/topics', label: 'Overview' },
-  {
-    to: '/topics/routing',
-    label: 'Routing',
-    summary: 'How 2–6 keywords resolve to one approved topic — and why a vague query honestly resolves to nothing.',
-  },
-  {
-    to: '/topics/proposals',
-    label: 'Proposals & review',
-    summary: 'An agent drafts topics against your real code; you review, iterate, and apply one topic at a time.',
-  },
-  {
-    to: '/topics/evolution',
-    label: 'Drift & evolution',
-    summary: 'Content-drift detection, wiki debt, and the (default-off) machinery that refreshes stale pages.',
-  },
-  {
-    to: '/topics/memory',
-    label: 'Memory links',
-    summary: 'The same tree files cross-session lessons, powers coarse-to-fine recall, and learns from bad routes.',
-  },
-]
+import { DOCS_PAGES } from './docs.js'
+
+export const SECTION_PAGES = DOCS_PAGES
+  .filter((page) => page.path === '/topics' || page.parent === '/topics')
+  .map((page) => ({ to: page.path, label: page.title, summary: page.summary }))
 
 export const SUBPAGE_SUMMARIES = SECTION_PAGES.filter((page) => page.summary)
 

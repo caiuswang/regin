@@ -2,7 +2,6 @@
 import DocPage from '../components/DocPage.vue'
 import CodeBlock from '../components/CodeBlock.vue'
 import DataTable from '../components/DataTable.vue'
-import TopicsSubnav from '../components/TopicsSubnav.vue'
 import { MEMORY_SIGNALS } from '../content/topics.js'
 
 const TOC = [
@@ -33,7 +32,6 @@ index_fetch("webui-styling")
     lead="The topic graph and cross-session memory are one system: lessons file themselves under topics, agents recall by walking the tree instead of guessing keywords, and bad routes feed back into better ones."
     :toc="TOC"
   >
-    <template #subnav><TopicsSubnav /></template>
 
     <p>regin's <RouterLink to="/architecture#memory">agent memory</RouterLink> stores what sessions learned; the topic graph stores how the repo is organized. Linking them gives each half what it lacks — memories get a browsable structure, topics get living experience attached to the code they describe.</p>
 

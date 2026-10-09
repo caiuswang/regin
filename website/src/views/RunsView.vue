@@ -2,20 +2,10 @@
 import DocPage from '../components/DocPage.vue'
 import Callout from '../components/Callout.vue'
 import DataTable from '../components/DataTable.vue'
-import ThemedShot from '../components/ThemedShot.vue'
-import liveLight from '../assets/shots/live-light.png'
-import liveLightWebp from '../assets/shots/live-light.webp'
-import liveDark from '../assets/shots/live-dark.png'
-import liveDarkWebp from '../assets/shots/live-dark.webp'
-import armLight from '../assets/shots/runs-arm-light.png'
-import armLightWebp from '../assets/shots/runs-arm-light.webp'
-import armDark from '../assets/shots/runs-arm-dark.png'
-import armDarkWebp from '../assets/shots/runs-arm-dark.webp'
+import BlockShot from '../components/blocks/BlockShot.vue'
+import armShot from '../assets/shots/pixel/arm.webp'
+import liveShot from '../assets/shots/pixel/live.webp'
 
-const LIVE_LIGHT = { png: liveLight, webp: liveLightWebp }
-const LIVE_DARK = { png: liveDark, webp: liveDarkWebp }
-const ARM_LIGHT = { png: armLight, webp: armLightWebp }
-const ARM_DARK = { png: armDark, webp: armDarkWebp }
 
 const TOC = [
   { id: 'arm', label: 'Arm, then launch' },
@@ -45,9 +35,9 @@ const PROVIDER_COLUMNS = [
   >
     <h2 id="arm">Arm, then launch</h2>
     <p>A task is <strong>armed</strong> with a provider, a model and a launch mode, then started. The launch mode decides where the process lives: the <em>channel</em> arm runs it under <code>regin serve</code> with a typed connection (Claude through the Python Claude Agent SDK, Kimi over ACP); the <em>pane</em> arm runs it in a tmux pane on regin’s own tmux server, which survives a server restart.</p>
-    <ThemedShot :light="ARM_LIGHT" :dark="ARM_DARK" :width="1440" :height="900" alt="The Arm task dialog in the Pipeline's Pixel theme: working directory with a run-in-a-new-git-worktree option, agent, model, effort and permission mode, a skill picker, a verify command gate, and the launch choice between Agent SDK and tmux.">
+    <BlockShot :src="armShot" alt="The Arm task dialog in the Pipeline's Pixel theme: working directory with a run-in-a-new-git-worktree option, agent, model, effort and permission mode, a skill picker, a verify command gate, and the launch choice between Agent SDK and tmux.">
       Arming a task from the Tasks tab: where it runs (optionally in its own git worktree), which agent and model, the skills it opens with, the verify command that decides when it is done, and the launch arm.
-    </ThemedShot>
+    </BlockShot>
     <p>A run settles on the agent’s <code>regin task finish</code> report or its verify command — a turn ending is not the work being done. When it settles, the tasks that depend on it are released.</p>
 
     <h2 id="providers">Providers</h2>
@@ -55,9 +45,9 @@ const PROVIDER_COLUMNS = [
 
     <h2 id="live">Follow and steer</h2>
     <p><code>/live</code> follows a running session: its current state, its recent steps, any question it is blocked on, with steer and Stop. Because regin owns a channel run’s process, an <code>AskUserQuestion</code> or a gated tool call is parked and answered from the browser rather than typed into a terminal. Sessions you started yourself can be steered through the <strong>agent bridge</strong> — guarded keystroke delivery into the session’s tmux pane, off by default (<RouterLink to="/configuration#agent-bridge">configuration</RouterLink>).</p>
-    <ThemedShot :light="LIVE_LIGHT" :dark="LIVE_DARK" :width="1440" :height="900" alt="The regin dashboard's Live view following a running agent session: recent tool calls, a Bash permission prompt waiting for an answer, the current turn, and the steer composer.">
+    <BlockShot :src="liveShot" alt="The regin dashboard's Live view following a running agent session: recent tool calls, a Bash permission prompt waiting for an answer, the current turn, and the steer composer.">
       <code>/live</code> following the run that captured this screenshot. Its own capture command is parked as a <strong>permission</strong> card waiting for an answer, with cancel turn, stop agent and the steer box below it.
-    </ThemedShot>
+    </BlockShot>
 
     <h2 id="inbox">Hearing back</h2>
     <p>Agents report progress, results, blockers and lessons through the <code>send_to_user</code> tool. Messages land in <code>/inbox</code> with a live unread badge, and high-severity ones can fan out to a webhook, Telegram or Lark. CLI: <code>regin messages</code>, <code>regin bridge</code>, <code>regin events</code>.</p>

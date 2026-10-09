@@ -13,10 +13,13 @@ WEBSITE = ROOT / "website"
 
 RETIRED_FRAMES = ["Agent = Model + Harness", "harness infrastructure"]
 LAYERS = ["Workbench", "Runs", "Observability", "Guidance"]
-NAV = ["Introduction", "Getting Started", "Pipeline", "Runs", "Dashboard",
-       "Guidance", "Architecture", "Configuration", "CLI"]
+WORLD_MAP = ["Getting Started", "Pipeline", "Runs", "The dashboard", "Guidance", "Architecture",
+             "Configuration", "CLI Reference", "Topic Wikis", "Routing", "Proposals",
+             "Drift & Evolution", "Topics × Memory"]
 ROUTES = ["/", "/getting-started", "/pipeline", "/runs", "/dashboard", "/guidance",
-          "/architecture", "/configuration", "/cli", "/topics", "/topics/routing"]
+          "/architecture", "/configuration", "/cli", "/topics", "/topics/routing",
+          "/topics/proposals", "/topics/evolution", "/topics/memory"]
+DOCS_REGISTRY = WEBSITE / "src/content/docs.js"
 
 
 def _frame_surfaces() -> list[Path]:
@@ -52,9 +55,8 @@ def test_layers_keep_their_order_on_the_website():
     pillars_block = features.split("export const PILLARS", 1)[1].split("export const", 1)[0]
     assert re.findall(r"layer: '([^']*)'", pillars_block) == LAYERS
 
-    header = (WEBSITE / "src/components/SiteHeader.vue").read_text(encoding="utf-8")
-    nav_block = header.split("const NAV = [", 1)[1].split("]\n", 1)[0]
-    assert re.findall(r"label: '([^']*)'", nav_block) == NAV
+    registry = DOCS_REGISTRY.read_text(encoding="utf-8")
+    assert re.findall(r"title: '([^']*)'", registry) == WORLD_MAP
 
 
 def _top_level_groups() -> list[str]:
@@ -77,46 +79,11 @@ def test_cli_reference_is_complete():
     assert not missing, f"COMMAND_GROUPS misses {missing}"
 
 
-def _png_size(path: Path) -> tuple[int, int]:
-    head = path.read_bytes()[:24]
-    assert head[:8] == b"\x89PNG\r\n\x1a\n", f"{path.name} is not a PNG"
-    return int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big")
-
-
-@pytest.mark.parametrize("view", ["PipelineView", "RunsView"])
-def test_new_pages_show_the_real_product(view):
-    source = (WEBSITE / "src/views" / f"{view}.vue").read_text(encoding="utf-8")
-    imported = set(re.findall(r"from '\.\./assets/shots/([\w-]+)\.(?:png|webp)'", source))
-    bases = {name.rsplit("-", 1)[0] for name in imported if name.endswith(("-light", "-dark"))}
-    assert bases, f"{view} shows no dashboard screenshot"
-    for name in (f"{base}-{theme}" for base in bases for theme in ("light", "dark")):
-        assert name in imported, f"{view} does not import {name}"
-        _assert_dashboard_capture(name)
-    _assert_shots_wired_by_theme(view, source)
-
-
-def _assert_shots_wired_by_theme(view: str, source: str) -> None:
-    files = dict(re.findall(r"import (\w+) from '\.\./assets/shots/([\w-]+)\.(?:png|webp)'", source))
-    shot_objects = {name: (files.get(png), files.get(webp)) for name, png, webp
-                    in re.findall(r"const (\w+) = \{ png: (\w+), webp: (\w+) \}", source)}
-    props = re.findall(r"<ThemedShot :light=\"(\w+)\" :dark=\"(\w+)\"", source)
-    assert props, f"{view} renders no <ThemedShot>"
-    for light, dark in props:
-        for theme, obj in (("light", light), ("dark", dark)):
-            png, webp = shot_objects[obj]
-            assert png and png.endswith(f"-{theme}") and png == webp, f"{view} :{theme} shows {png}/{webp}"
-
-
-def _assert_dashboard_capture(name: str) -> None:
-    shots = WEBSITE / "src/assets/shots"
-    assert (shots / f"{name}.webp").is_file(), f"missing {name}.webp"
-    width, height = _png_size(shots / f"{name}.png")
-    assert width >= 1280 and height >= 720, f"{name}.png is {width}x{height}, not a full dashboard capture"
-
-
 def test_website_builds_and_routes_resolve():
     router = (WEBSITE / "src/router.js").read_text(encoding="utf-8")
     declared = dict(re.findall(r"path: '([^']*)', name: '[^']*', component: \(\) => import\('\./views/(\w+)\.vue'\)", router))
+    assert "DOCS_PAGES.map(" in router, "docs routes must come from the DocsPage registry"
+    declared |= dict(re.findall(r"path: '([^']*)', view: '(\w+)'", DOCS_REGISTRY.read_text(encoding="utf-8")))
     for route in ROUTES:
         view = declared.get(route)
         assert view and view != "NotFoundView", f"{route} has no page"

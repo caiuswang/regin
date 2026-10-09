@@ -1,28 +1,20 @@
 <script setup>
-defineProps({
-  title: { type: String, required: true },
+import { useDocSections } from './docs/sections.js'
+
+// Adapter for the pre-pixel views until they become DocBlock lists: the page
+// card already shows the title and lead, so only the body and the section
+// list are taken from here.
+const props = defineProps({
+  title: { type: String, default: '' },
   lead: { type: String, default: '' },
   toc: { type: Array, default: () => [] },
 })
+
+useDocSections(() => props.toc)
 </script>
 
 <template>
-  <div class="docs-layout">
-    <article>
-      <slot name="subnav" />
-      <h1 class="page-title">{{ title }}</h1>
-      <p v-if="lead" class="page-lead">{{ lead }}</p>
-      <slot />
-    </article>
-    <aside v-if="toc.length" class="toc">
-      <div class="toc-inner">
-        <h2>On this page</h2>
-        <ul>
-          <li v-for="item in toc" :key="item.id">
-            <a :href="`#${item.id}`" class="focus-visible:ring">{{ item.label }}</a>
-          </li>
-        </ul>
-      </div>
-    </aside>
+  <div class="doc-legacy">
+    <slot />
   </div>
 </template>

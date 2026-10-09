@@ -2,17 +2,11 @@
 import DocPage from '../components/DocPage.vue'
 import Callout from '../components/Callout.vue'
 import TourShot from '../components/TourShot.vue'
-import ThemedShot from '../components/ThemedShot.vue'
-import overviewLight from '../assets/shots/pipeline-overview-light.png'
-import overviewLightWebp from '../assets/shots/pipeline-overview-light.webp'
-import overviewDark from '../assets/shots/pipeline-overview-dark.png'
-import overviewDarkWebp from '../assets/shots/pipeline-overview-dark.webp'
+import BlockShot from '../components/blocks/BlockShot.vue'
+import liveShot from '../assets/shots/pixel/live.webp'
+import overviewShot from '../assets/shots/pixel/overview.webp'
 import sessionsShot from '../assets/shots/tour/sessions-dark.png'
 import sessionsWebp from '../assets/shots/tour/sessions-dark.webp'
-import liveLight from '../assets/shots/live-light.png'
-import liveLightWebp from '../assets/shots/live-light.webp'
-import liveDark from '../assets/shots/live-dark.png'
-import liveDarkWebp from '../assets/shots/live-dark.webp'
 import inboxShot from '../assets/shots/tour/inbox-dark.png'
 import inboxWebp from '../assets/shots/tour/inbox-dark.webp'
 import memoryShot from '../assets/shots/memory-dark.png'
@@ -24,10 +18,6 @@ import patternsWebp from '../assets/shots/tour/patterns-dark.webp'
 import topicsShot from '../assets/shots/tour/topics-dark.png'
 import topicsWebp from '../assets/shots/tour/topics-dark.webp'
 
-const OVERVIEW_LIGHT = { png: overviewLight, webp: overviewLightWebp }
-const OVERVIEW_DARK = { png: overviewDark, webp: overviewDarkWebp }
-const LIVE_LIGHT = { png: liveLight, webp: liveLightWebp }
-const LIVE_DARK = { png: liveDark, webp: liveDarkWebp }
 
 const TOC = [
   { id: 'pipeline', label: 'Pipeline' },
@@ -55,9 +45,9 @@ const TOC = [
 
     <h2 id="pipeline">Pipeline</h2>
     <p>The first entry in the sidebar, and where the day starts. <strong>Pipeline</strong> puts Overview, Features and Tasks behind one tab strip, scoped to a project: features on their spec → build → ship track, tasks as a list, a board or a dependency graph, and the defects declared against them. It wears the <em>Pixel</em> theme by default; Classic is one click away in the tab strip. The <RouterLink to="/pipeline">Pipeline page</RouterLink> follows one feature through it end to end.</p>
-    <ThemedShot :light="OVERVIEW_LIGHT" :dark="OVERVIEW_DARK" :width="1440" :height="900" alt="The Pipeline Overview in the Pixel theme, scoped to the regin project: loop scene with feature, task and defect counts, project panel, features in flight and a defect needing a decision.">
+    <BlockShot :src="overviewShot" alt="The Pipeline Overview in the Pixel theme, scoped to the regin project: loop scene with feature, task and defect counts, project panel, features in flight and a defect needing a decision.">
       The Overview scoped to the <code>regin</code> project.
-    </ThemedShot>
+    </BlockShot>
 
     <h2 id="traces">Session traces</h2>
     <p>Every Claude Code session the hooks capture lands in <strong>Trace</strong> — searchable, and filterable by repo, tag, date, and status. Each row rolls up its spans, file edits, context-window use, and elapsed-vs-active time; open one for a turn-by-turn replay with per-tool cost attribution. The sibling tabs pivot the same span stream by rule trigger, skill read, and MCP call. A session can also be graded after the fact, on correctness and process kept as separate axes: <code>regin grade run</code>, with the judge and aspects set under <strong>Settings → Grading</strong>.</p>
@@ -68,9 +58,9 @@ const TOC = [
 
     <h2 id="live">Live steering</h2>
     <p>Watch a session <em>as it runs</em> — the current turn, tool calls landing in real time, a live context meter. With the <RouterLink to="/configuration#agent-bridge">agent bridge</RouterLink> enabled, the composer at the bottom sends a prompt or steering message straight into the running session, queued into the current turn.</p>
-    <ThemedShot :light="LIVE_LIGHT" :dark="LIVE_DARK" :width="1440" :height="900" alt="The Live view following a running session: the conversation tail with tool calls and timestamps, the operator's latest prompt, the turn in progress with cancel turn and stop agent, and the steer composer at the bottom.">
+    <BlockShot :src="liveShot" alt="The Live view following a running session: the conversation tail with tool calls and timestamps, the operator's latest prompt, the turn in progress with cancel turn and stop agent, and the steer composer at the bottom.">
       <code>/live</code> following the session that captured this tour, mid-turn: its tail, the prompt that asked for these screenshots, and the steer box.
-    </ThemedShot>
+    </BlockShot>
 
     <h2 id="inbox">Inbox &amp; messages</h2>
     <p>Everything your agents push with <code>send_to_user</code> — progress, results, warnings, blockers, and lessons — collected across every session, filterable by type, with an unread badge. It's the durable record of what each session decided and why, and it doubles as a trail you can retrace when a similar problem resurfaces.</p>

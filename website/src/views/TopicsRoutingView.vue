@@ -3,7 +3,6 @@ import DocPage from '../components/DocPage.vue'
 import CodeBlock from '../components/CodeBlock.vue'
 import Callout from '../components/Callout.vue'
 import DataTable from '../components/DataTable.vue'
-import TopicsSubnav from '../components/TopicsSubnav.vue'
 import { MATCH_STRATEGIES, SIGNAL_LAYERS, ROUTING_CLI } from '../content/topics.js'
 import { COMMAND_COLUMNS } from '../content/columns.js'
 
@@ -40,7 +39,6 @@ const ENVELOPE = `$ regin topics route "span ingest"
     lead="How a handful of task keywords resolves to one approved topic — deterministically, with no model call — and hands the agent exactly the refs, wiki, and neighbors it needs."
     :toc="TOC"
   >
-    <template #subnav><TopicsSubnav /></template>
 
     <p>Routing is the read path of the <RouterLink to="/topics">topic graph</RouterLink>. It is a keyword router, not a semantic search: given a query it either finds a topic it can <em>explain</em> matching — down to the exact keywords that fired — or it honestly returns nothing. No embeddings, no inference cost, no coincidental matches dressed up as relevance.</p>
 

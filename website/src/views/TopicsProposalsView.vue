@@ -3,7 +3,6 @@ import DocPage from '../components/DocPage.vue'
 import CodeBlock from '../components/CodeBlock.vue'
 import Callout from '../components/Callout.vue'
 import DataTable from '../components/DataTable.vue'
-import TopicsSubnav from '../components/TopicsSubnav.vue'
 import { STATUS_AXES, REVIEW_ACTIONS } from '../content/topics.js'
 
 const TOC = [
@@ -43,7 +42,6 @@ review: comment · regenerate · restore
     lead="Topics are drafted by an agent that reads your real code, and applied only after a human review — the pipeline in between is built so nothing self-promotes into the approved graph."
     :toc="TOC"
   >
-    <template #subnav><TopicsSubnav /></template>
 
     <h2 id="funnel">The funnel</h2>
     <CodeBlock :code="FUNNEL" />

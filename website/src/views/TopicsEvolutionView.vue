@@ -2,7 +2,6 @@
 import DocPage from '../components/DocPage.vue'
 import Callout from '../components/Callout.vue'
 import DataTable from '../components/DataTable.vue'
-import TopicsSubnav from '../components/TopicsSubnav.vue'
 import { EVOLUTION_MECHANISMS } from '../content/topics.js'
 import { NESTED_BLOCKS } from '../content/settings.js'
 import { COMMAND_COLUMNS, SETTING_COLUMNS } from '../content/columns.js'
@@ -24,7 +23,6 @@ const TOC = [
     lead="Documentation that was true in March and is wrong in July is worse than no documentation — an agent will trust it. regin detects when code moves out from under a wiki, and routes the fix through the same review pipeline that created the page."
     :toc="TOC"
   >
-    <template #subnav><TopicsSubnav /></template>
 
     <h2 id="why">Why wikis rot</h2>
     <p>Every topic names the files it explains. Those files keep changing after the wiki is approved: functions move, modules get renamed, a refactor hollows out the mechanism the page describes. The wiki doesn't know. Drift detection makes the staleness <em>visible</em> — by fingerprinting each topic's refs when a page is approved and comparing on demand — so freshness stops depending on someone remembering.</p>

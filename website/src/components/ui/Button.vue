@@ -7,7 +7,7 @@ defineProps({
 <template>
   <button
     type="button" class="focus-visible:ring"
-    :class="variant === 'icon' ? 'icon-btn' : ['btn', `btn-${variant}`]"
+    :class="variant === 'bare' ? null : variant === 'icon' ? 'icon-btn' : ['btn', `btn-${variant}`]"
   >
     <slot />
   </button>
