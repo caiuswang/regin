@@ -1,7 +1,6 @@
 /* regin official site — shared stylesheet.
-   Tokens follow the data-theme pattern: light values on :root,
-   dark overrides under [data-theme="dark"]. A FOUC guard in each
-   page's <head> stamps data-theme before first paint. */
+   Dark only. Every colour is a Palette token from the Claude Design
+   pixel prototype (F154); rgba() overlays are the only other colours. */
 
 /* Self-hosted variable fonts (OFL), subsets mirrored from Google Fonts —
    same-origin so first paint needs no third-party connection. */
@@ -38,6 +37,23 @@
   unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
 }
 
+/* Silkscreen (OFL, public/fonts/OFL-silkscreen.txt) — a file copy of the
+   dashboard's pixel-theme font, not an import: the site shares no code. */
+@font-face {
+  font-family: "Silkscreen";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(/fonts/silkscreen-latin-400-normal.woff2) format("woff2");
+}
+@font-face {
+  font-family: "Silkscreen";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url(/fonts/silkscreen-latin-700-normal.woff2) format("woff2");
+}
+
 /* Metric-matched local fallback so the swap to the web font doesn't reflow
    the page (size-adjust tuned against Arial; verified in-browser). */
 @font-face {
@@ -50,8 +66,11 @@
 }
 
 :root {
-  --font-sans: "Atkinson Hyperlegible Next", "AHN Fallback", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* Fonts */
+  --font-display: "Silkscreen", ui-monospace, monospace;
+  --font-body: "Atkinson Hyperlegible Next", "AHN Fallback", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-sans: var(--font-body);
   /* Type scale — every font-size on the site draws from these ten steps. */
   --text-xs: 0.75rem;
   --text-sm: 0.875rem;
@@ -83,74 +102,65 @@
   --z-sticky: 50;
   --z-skip-link: 100;
 
-  --bg: #f8fafc;
-  --surface: #ffffff;
-  --surface-2: #f1f5f9;
-  --text: #0f172a;
-  --body-ink: #1e293b;
-  --muted: #475569;
-  --faint: #64748b;
-  --border: #e2e8f0;
-  --border-strong: #cbd5e1;
-  /* green-700, not -600: link text and white-on-accent buttons need >=4.5:1
-     on the light surfaces (green-600 measures 3.1-3.3:1). */
-  --accent: #15803d;
-  --accent-contrast: #ffffff;
-  --accent-soft: #dcfce7;
-  --accent-soft-text: #14532d;
-  --warn-soft: #fef3c7;
-  --warn-text: #78350f;
-  --code-bg: #0f172a;
-  --code-text: #e2e8f0;
-  --code-inline-bg: #eef2f7;
-  --code-inline-text: #0f172a;
-  /* Chrome living on the always-dark code panels; per-theme because the
-     panel's undertone is navy in light mode, moss in dark mode. */
-  --code-comment: #7d8db0;
-  --code-faint: #8494ad;
-  --code-chrome-edge: #354462;
-  --code-chrome-hover-ink: #dbe4f0;
-  --code-chrome-hover-edge: #495a7d;
-  --code-chrome-hover-bg: rgba(148, 163, 184, 0.12);
-  --shadow: 0 1px 3px rgba(15, 23, 42, 0.08), 0 8px 24px rgba(15, 23, 42, 0.06);
-  --header-bg: rgba(248, 250, 252, 0.85);
-}
-
-/* Night palette, re-derived in OKLCH around the brand hue (~152-155):
-   moss-black surfaces instead of generic slate-navy, a real three-step
-   elevation ladder (bg 0.17 / surface 0.213 / surface-2 0.253 L), code
-   panels sunk *below* the page (0.135 L) so the terminal wells stay the
-   signature surface, and the accent pulled off green-400 neon to a
-   calmer 0.135-chroma green. All pairs measured >=4.5:1 text, >=3:1
-   non-text (scratchpad palette.mjs; worst text pair 6.28:1). */
-[data-theme="dark"] {
+  /* Palette — the prototype's inline-style colours, nothing else. */
   --bg: #000000;
-  --surface: #0c0d0c;
-  --surface-2: #161816;
-  --text: #f6f8f6;
-  --body-ink: #c3c8c4;
+  --panel: #050605;
+  --panel-raised: #0c0d0c;
+  --rule: #20221f;
+  --edge: #333733;
+  --ink: #f6f8f6;
+  --body: #c3c8c4;
+  --soft: #d5ddd7;
   --muted: #9aa39d;
-  --faint: #6d766f;
-  --border: #20221f;
-  --border-strong: #333733;
-  --accent: #2bde5e;
-  --accent-contrast: #052912;
-  --accent-soft: #10311d;
-  --accent-soft-text: #57e77f;
-  --warn-soft: #31240e;
-  --warn-text: #e8cb7b;
-  --code-bg: #000000;
-  --code-text: #d5ddd7;
-  --code-inline-bg: #17201a;
-  --code-inline-text: #dae0dc;
-  --code-comment: #86998c;
-  --code-faint: #7f8a82;
-  --code-chrome-edge: #2b352e;
-  --code-chrome-hover-ink: #d8e0da;
-  --code-chrome-hover-edge: #54695b;
+  --dim: #6d766f;
+  --green: #2bde5e;
+  --green-hover: #57e77f;
+  --green-deep: #15803d;
+  --green-wash: #10311d;
+  --green-ink: #052912;
+  --gold: #e8cb7b;
+
+  /* Chrome — 2px square borders, offset pixel shadows. */
+  --border-w: 2px;
+  --radius: 0;
+  --shot-shadow: 8px 8px 0 var(--green-wash);
+  --key-shadow: 4px 4px 0 var(--green-deep);
+  --key-press: translate(4px, 4px);
+  --logo-size: 22px;
+  --logo-shadow: inset -4px -4px 0 var(--green-deep);
+  --max-width: 1320px;
+  --docs-article-max: 860px;
+  --header-h: 56px;
+  --header-bg: rgba(0, 0, 0, 0.9);
+  --focus-ring: 2px solid var(--green);
+
+  /* Aliases the pre-pixel components still read; they resolve onto the
+     Palette so nothing renders an off-palette colour while those
+     components are being replaced. */
+  --surface: var(--panel-raised);
+  --surface-2: var(--panel);
+  --text: var(--ink);
+  --body-ink: var(--body);
+  --faint: var(--dim);
+  --border: var(--rule);
+  --border-strong: var(--edge);
+  --accent: var(--green);
+  --accent-contrast: var(--green-ink);
+  --accent-soft: var(--green-wash);
+  --accent-soft-text: var(--green-hover);
+  --warn-soft: var(--panel-raised);
+  --warn-text: var(--gold);
+  --code-bg: var(--bg);
+  --code-text: var(--soft);
+  --code-inline-bg: var(--panel-raised);
+  --code-inline-text: var(--soft);
+  --code-comment: var(--muted);
+  --code-faint: var(--muted);
+  --code-chrome-edge: var(--edge);
+  --code-chrome-hover-ink: var(--soft);
+  --code-chrome-hover-edge: var(--dim);
   --code-chrome-hover-bg: rgba(213, 221, 215, 0.1);
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.5), 0 12px 40px rgba(0, 0, 0, 0.5);
-  --header-bg: rgba(0, 0, 0, 0.72);
 }
 
 * { box-sizing: border-box; }
@@ -521,7 +531,7 @@ td code, th code { white-space: nowrap; }
 }
 .callout svg { flex-shrink: 0; margin-top: 0.15rem; }
 .callout p { margin: 0; }
-.callout-warn { background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn-text) 25%, transparent); }
+.callout-warn { background: var(--warn-soft); border-color: rgba(232, 203, 123, 0.25); }
 .callout-warn, .callout-warn p, .callout-warn strong, .callout-warn a { color: var(--warn-text); }
 .callout-info { background: var(--accent-soft); }
 .callout-info, .callout-info p, .callout-info strong { color: var(--accent-soft-text); }
@@ -555,7 +565,7 @@ td code, th code { white-space: nowrap; }
 }
 .btn:hover { text-decoration: none; }
 .btn-primary { background: var(--accent); color: var(--accent-contrast); }
-.btn-primary:hover { background: color-mix(in srgb, var(--accent) 85%, var(--text)); }
+.btn-primary:hover { background: var(--green-hover); }
 .btn-ghost { border-color: var(--border-strong); color: var(--text); }
 .btn-ghost:hover { background: var(--surface-2); }
 
@@ -604,7 +614,7 @@ td code, th code { white-space: nowrap; }
   font-size: var(--text-sm);
   font-weight: 500;
   color: var(--muted);
-  background: color-mix(in srgb, var(--surface) 70%, transparent);
+  background: rgba(12, 13, 12, 0.7);
   border: 1px solid var(--border);
   border-radius: 999px;
   backdrop-filter: blur(6px);
@@ -698,7 +708,7 @@ td code, th code { white-space: nowrap; }
 /* Caption sits on the always-dark frame bg, so `article strong`'s dark
    `--text` would vanish in the light theme — keep bold text on the caption's
    own light color. */
-.shot-frame figcaption strong { color: #e9eef5; }
+.shot-frame figcaption strong { color: var(--ink); }
 
 /* Scroll-driven timelines ignore blanket animation-duration overrides,
    so the reduced-motion opt-out must gate the declaration itself. */
