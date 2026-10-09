@@ -259,7 +259,7 @@ register_surface(
     applies_to=("external-agent",),
     variables=(
         PromptVariable("order", "What must happen before finishing — the linked or the native variant."),
-        PromptVariable("finish_cmd", "The literal `regin task finish <run id>` command."),
+        PromptVariable("finish_cmd", "The literal `regin task finish <task id> --run <run id>` command."),
     ),
 )
 

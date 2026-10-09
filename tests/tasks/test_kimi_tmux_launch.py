@@ -207,7 +207,7 @@ def test_claude_tmux_argv_unchanged(flask_client, pane, no_other_launch):
     assert command[:-1] == ["/abs/claude", "--session-id", run["trace_id"],
                             "--model", "opus", "--permission-mode", "plan",
                             "--"]
-    assert f"task finish {run['id']}" in command[-1]
+    assert f"task finish {task_id} --run {run['id']}" in command[-1]
     # The prompt rode on argv: nothing typed, no ACP anchor, no other launch.
     assert (pane.keys, pane.pasted, no_other_launch) == ([], [], [])
     assert [c[0] for c in pane.calls if c[0].startswith("acp")] == []
@@ -306,7 +306,7 @@ def test_kimi_tmux_prompt_submitted_with_c_m(flask_client, pane, acp,
 
     (paste,) = pane.pasted
     assert paste.startswith("\x1b[200~") and paste.endswith("\x1b[201~")
-    assert f"task finish {run['id']}" in paste
+    assert f"task finish {task_id} --run {run['id']}" in paste
     submits = [k for k in pane.keys if "-l" not in k]
     assert submits[-1] == ("send-keys", "-t", "%9", "C-m")
     assert not any("Enter" in k for k in pane.keys)

@@ -290,7 +290,10 @@ def _render_comment(payload: dict) -> None:
     "finish",
     help="Report a task run's work finished (run BY the task's own agent).")
 def cmd_finish(
-    run_id: int = typer.Argument(..., help="Attempt id, baked into the prompt."),
+    task_id: int = typer.Argument(..., help="Task id, baked into the prompt."),
+    run_id: Optional[int] = typer.Option(
+        None, "--run", help="Attempt id of that task, baked into the prompt. "
+                            "Absent, the argument is the attempt id."),
     status: str = typer.Option(
         "done", "--status", help="done | failed."),
     reason: Optional[str] = typer.Option(
@@ -308,9 +311,16 @@ def cmd_finish(
     """
     from lib.settings import settings
 
+    # Prompts issued before the task id led the command still read
+    # `task finish <run id>`, and those sessions are alive to run it.
+    if run_id is None:
+        run_id, task_id = task_id, None
     base = settings.agent_memory.inject_server_url.rstrip("/")
     url = f"{base}/api/tasks/runs/{run_id}/finish"
-    body = _json.dumps({"status": status, "reason": reason or ""}).encode()
+    payload = {"status": status, "reason": reason or ""}
+    if task_id is not None:
+        payload["task_id"] = task_id
+    body = _json.dumps(payload).encode()
     request = urllib.request.Request(
         url, data=body, method="POST",
         headers={"Content-Type": "application/json"})
@@ -331,7 +341,7 @@ def cmd_finish(
             typer.echo(f"task finish: cannot reach regin at {url}: {exc}",
                        err=True)
             raise typer.Exit(code=1)
-        result = _finish_here(run_id, status, reason or "")
+        result = _finish_here(task_id, run_id, status, reason or "")
     _emit(result, json, _render_finish)
 
 
@@ -350,7 +360,8 @@ def _refused_connection(exc: OSError) -> bool:
     return isinstance(getattr(exc, "reason", exc), ConnectionRefusedError)
 
 
-def _finish_here(run_id: int, status: str, reason: str) -> dict:
+def _finish_here(task_id: Optional[int], run_id: int, status: str,
+                 reason: str) -> dict:
     """Settle in this process when no server is up (a tmux run can outlive
     one). Verify runs inline; an `sdk` dependent is left for the server's next
     boot, since an SDK child of this CLI would die with it."""
@@ -359,7 +370,7 @@ def _finish_here(run_id: int, status: str, reason: str) -> dict:
     typer.echo("task finish: regin is not running — settling here", err=True)
     try:
         return runs.finish_run(run_id, status=status, reason=reason,
-                               in_server=False)
+                               in_server=False, task_id=task_id)
     except (runs.RunRefused, ValueError) as exc:
         typer.echo(f"task finish: refused: {exc}", err=True)
         raise typer.Exit(code=1) from None

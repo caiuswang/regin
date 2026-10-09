@@ -629,7 +629,7 @@ def api_finish_task_run(run_id: int):
     already do by writing the DB it shares, and returns no task content.
     """
     payload = request.get_json(silent=True) or {}
-    unknown = sorted(set(payload) - {"status", "reason"})
+    unknown = sorted(set(payload) - {"status", "reason", "task_id"})
     if unknown:
         return jsonify({"error": f"unknown field: {unknown[0]}",
                         "field": unknown[0]}), 400
@@ -638,9 +638,14 @@ def api_finish_task_run(run_id: int):
         return jsonify({"error": f"status must be one of "
                                  f"{sorted(_FINISH_STATUSES)}",
                         "field": "status"}), 400
+    claimed = payload.get("task_id")
+    if claimed is not None and (type(claimed) is not int):
+        return jsonify({"error": "task_id must be an integer",
+                        "field": "task_id"}), 400
     try:
         result = runs.finish_run(run_id, status=_FINISH_STATUSES[wanted],
-                                 reason=str(payload.get("reason") or ""))
+                                 reason=str(payload.get("reason") or ""),
+                                 task_id=claimed)
     except runs.RunRefused as exc:
         return jsonify({"error": str(exc), "open_defects": exc.blocking}), 409
     if result["task_id"] is None:

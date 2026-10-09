@@ -43,11 +43,11 @@ def test_the_finish_block_names_the_close_command_for_each_open_defect(
         native_task, feature_row):
     defect_id, task_id, run_id = _running_fix(native_task, feature_row)
 
-    block = runs._finish_block(run_id, task_id=task_id)
+    block = runs._finish_block(run_id, task_id)
 
     assert runs._close_defect_command(defect_id) in block
     assert f"defect #{defect_id}" in block
-    assert block.index("defects close") < block.index(runs._finish_command(run_id))
+    assert block.index("defects close") < block.index(runs._finish_command(task_id, run_id))
 
 
 def test_a_task_no_defect_points_at_is_told_nothing_about_defects(
@@ -55,7 +55,7 @@ def test_a_task_no_defect_points_at_is_told_nothing_about_defects(
     task_id = native_task(title="plain work")
     run = runs.open_attempt(task_id)
 
-    assert "defects close" not in runs._finish_block(run["id"], task_id=task_id)
+    assert "defects close" not in runs._finish_block(run["id"], task_id)
 
 
 def test_a_closed_defect_drops_out_of_the_finish_block(native_task,
@@ -63,7 +63,7 @@ def test_a_closed_defect_drops_out_of_the_finish_block(native_task,
     defect_id, task_id, run_id = _running_fix(native_task, feature_row)
     store.close(defect_id, missing_check="test_newest_first")
 
-    assert "defects close" not in runs._finish_block(run_id, task_id=task_id)
+    assert "defects close" not in runs._finish_block(run_id, task_id)
 
 
 def test_done_is_refused_while_the_defect_is_open(flask_client, native_task,

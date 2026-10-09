@@ -39,8 +39,12 @@ _LAUNCH_DEFAULTS: dict = {"cwd": None, "model": "", "effort": "",
                           "permission_mode": "", "env": {}}
 
 
-def _finish_command(run_id: int) -> str:
+def _finish_command(task_id: int, run_id: int) -> str:
     """The exact shell command the agent runs to report its work finished.
+
+    The task id leads because it is the one the agent and operator see on the
+    session; the attempt id rides as `--run` so a resumed or retried session
+    still settles exactly its own attempt, and the pair is checked server-side.
 
     Built from the server's own interpreter and CLI path rather than a bare
     `regin`, so it works in a worktree, under any cwd, and whether or not the
@@ -48,7 +52,8 @@ def _finish_command(run_id: int) -> str:
     `topics.proposal_external._finish_command` builds its own.
     """
     cli = settings.project_root / "cli" / "regin.py"
-    parts = [sys.executable, str(cli), "task", "finish", str(run_id)]
+    parts = [sys.executable, str(cli), "task", "finish", str(task_id),
+             "--run", str(run_id)]
     return " ".join(shlex.quote(part) for part in parts)
 
 
@@ -105,8 +110,8 @@ def _defects_order(task_id: Optional[int]) -> str:
                                 for i in ids)})
 
 
-def _finish_block(run_id: int, linked: bool = False,
-                  base: str = "", task_id: Optional[int] = None) -> str:
+def _finish_block(run_id: int, task_id: int, linked: bool = False,
+                  base: str = "") -> str:
     """The `<finish>` instruction appended to a run's launch prompt.
 
     The command is written out literally, not left to an env var, so a session
@@ -139,7 +144,7 @@ def _finish_block(run_id: int, linked: bool = False,
     order += _defects_order(task_id)
     return "\n\n" + render_surface(
         FINISH_SURFACE_ID,
-        {"order": order, "finish_cmd": _finish_command(run_id)})
+        {"order": order, "finish_cmd": _finish_command(task_id, run_id)})
 
 
 def _tracker_block(feature) -> str:
@@ -509,8 +514,8 @@ def _prompt(task: dict, run_id: int, params: Optional[dict] = None) -> str:
     from lib.prompts import render_surface  # noqa: PLC0415
     from lib.prompts.surfaces.tasks import LAUNCH_SURFACE_ID  # noqa: PLC0415
 
-    finish = _finish_block(run_id, linked=remote, base=_armed_base(params),
-                           task_id=task["id"])
+    finish = _finish_block(run_id, task["id"], linked=remote,
+                           base=_armed_base(params))
     prompt = render_surface(LAUNCH_SURFACE_ID, {
         "invocation": _invocation(params or {}),
         "body": text[:PROMPT_MAX],

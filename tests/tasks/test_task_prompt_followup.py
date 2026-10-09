@@ -125,7 +125,7 @@ def test_a_task_with_no_comments_has_the_prompt_it_had_before(
         "finished, not an optional step, because whatever depends on this "
         "task is released onto that branch and sees only what has landed "
         "there.\n"
-        f"   {runs._finish_command(1)} --reason "
+        f"   {runs._finish_command(task_id, 1)} --reason "
         "'<what you did, and why>'\n"
         "The reason is not bookkeeping: regin posts it on the task as your "
         "report, and it is the only account of this run anybody gets without "

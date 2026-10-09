@@ -222,7 +222,7 @@ def test_an_envelope_edited_to_drop_the_finish_block_still_carries_it(
     prompt = runs._prompt(task, 7, None)
 
     assert prompt.startswith("the idea")
-    assert "task finish 7" in prompt
+    assert "task finish 1 --run 7" in prompt
     assert prompt.count("<finish>") == 1
 
 
@@ -260,7 +260,7 @@ def test_the_unnamed_base_branch_phrase_is_an_editable_surface(tmp_db):
     seed_builtin_skeletons()
     update_template(FINISH_BASE_UNNAMED_SURFACE_ID, {"body": "wherever"})
 
-    assert "merge this run's work back into wherever" in runs._finish_block(7)
+    assert "merge this run's work back into wherever" in runs._finish_block(7, 1)
 
 
 # 5 ── the run reports what it did, on the task

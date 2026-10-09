@@ -844,7 +844,7 @@ def test_the_launch_prompt_names_the_exact_finish_command(flask_client,
     run_id = _launched_run_id(flask_client, task_id)
 
     prompt = launcher.calls[0]["prompt"]
-    assert runs._finish_command(run_id) in prompt
+    assert runs._finish_command(task_id, run_id) in prompt
     assert prompt.startswith("wire the thing")
     assert "--status failed" in prompt
 
@@ -867,7 +867,7 @@ def test_a_maximal_body_cannot_truncate_the_finish_block(flask_client,
     run_id = _launched_run_id(flask_client, task_id)
 
     prompt = launcher.calls[0]["prompt"]
-    assert runs._finish_command(run_id) in prompt
+    assert runs._finish_command(task_id, run_id) in prompt
     assert len(prompt) > runs.PROMPT_MAX
 
 
@@ -1051,7 +1051,7 @@ def test_the_cli_the_prompt_names_settles_the_run_and_fires(flask_client,
     run_id = _launched_run_id(flask_client, dep)
     _cli_against(flask_client, monkeypatch)
 
-    result = CliRunner().invoke(tasks_app, ["finish", str(run_id)])
+    result = CliRunner().invoke(tasks_app, ["finish", str(dep), "--run", str(run_id)])
 
     assert result.exit_code == 0, result.output
     assert _task(dep).status == "done"
@@ -1066,7 +1066,7 @@ def test_the_cli_exits_nonzero_so_the_agent_can_retry(flask_client, launcher,
 
     _cli_against(flask_client, monkeypatch)
 
-    result = CliRunner().invoke(tasks_app, ["finish", "9999"])
+    result = CliRunner().invoke(tasks_app, ["finish", "9999", "--run", "9999"])
 
     assert result.exit_code == 1
 
@@ -1082,7 +1082,8 @@ def test_the_cli_reports_a_failure_reason_onto_the_attempt(flask_client,
     _cli_against(flask_client, monkeypatch)
 
     result = CliRunner().invoke(
-        tasks_app, ["finish", str(run_id), "--status", "failed",
+        tasks_app, ["finish", str(dep), "--run", str(run_id),
+                    "--status", "failed",
                     "--reason", "the build never went green"])
 
     assert result.exit_code == 0, result.output
@@ -1177,7 +1178,7 @@ def test_the_launch_prompt_opens_with_the_skill_invocation(flask_client,
 
     prompt = launcher.calls[0]["prompt"]
     assert prompt.startswith("/goal-verified fast\n\nwire the thing")
-    assert runs._finish_command(run_id) in prompt
+    assert runs._finish_command(task_id, run_id) in prompt
 
 
 def test_a_skill_without_args_takes_the_body_as_its_subject(flask_client,
@@ -1319,3 +1320,54 @@ def test_further_skills_are_validated_like_the_first(flask_client):
         assert resp.status_code == 400, also
         assert resp.get_json()["field"] == "skill"
     assert _task(task_id).status == "idea"
+
+
+def test_the_finish_command_names_the_task_the_session_belongs_to(
+        flask_client, launcher):
+    task_id = _armed(flask_client, "wire the thing")
+    run_id = _launched_run_id(flask_client, task_id)
+
+    prompt = launcher.calls[0]["prompt"]
+    assert f"task finish {task_id} --run {run_id} " in prompt
+
+
+def test_a_finish_naming_another_task_is_refused(flask_client, launcher):
+    task_id = _armed(flask_client, "wire the thing")
+    run_id = _launched_run_id(flask_client, task_id)
+
+    resp = _finish(flask_client, run_id, task_id=task_id + 1)
+
+    assert resp.status_code == 409
+    assert f"task #{task_id}" in resp.get_json()["error"]
+    assert _task(task_id).status == "running"
+
+
+def test_a_prompt_issued_before_the_task_id_led_still_settles(
+        flask_client, launcher, monkeypatch):
+    from typer.testing import CliRunner
+    from cli.commands.tasks import tasks_app
+
+    dep, _ = _chain(flask_client, autorun=True)
+    run_id = _launched_run_id(flask_client, dep)
+    _cli_against(flask_client, monkeypatch)
+
+    result = CliRunner().invoke(tasks_app, ["finish", str(run_id)])
+
+    assert result.exit_code == 0, result.output
+    assert _task(dep).status == "done"
+
+
+def test_the_cli_refuses_a_run_of_another_task(flask_client, launcher,
+                                               monkeypatch):
+    from typer.testing import CliRunner
+    from cli.commands.tasks import tasks_app
+
+    dep, other = _chain(flask_client, autorun=True)
+    run_id = _launched_run_id(flask_client, dep)
+    _cli_against(flask_client, monkeypatch)
+
+    result = CliRunner().invoke(
+        tasks_app, ["finish", str(other), "--run", str(run_id)])
+
+    assert result.exit_code == 1
+    assert _task(dep).status == "running"

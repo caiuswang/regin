@@ -17,7 +17,7 @@ import pytest
 from lib.tasks import run_prompt, runs
 
 
-def _reference_finish(run_id: int, linked: bool = False,
+def _reference_finish(task_id: int, run_id: int, linked: bool = False,
                       base: str = "") -> str:
     if linked:
         order = (
@@ -40,7 +40,7 @@ def _reference_finish(run_id: int, linked: bool = False,
         "depends on it; your session stays open either way, so run it as soon "
         "as the work is done rather than waiting to be stopped.\n"
         + order
-        + f"   {runs._finish_command(run_id)} --reason "
+        + f"   {runs._finish_command(task_id, run_id)} --reason "
         "'<what you did, and why>'\n"
         "The reason is not bookkeeping: regin posts it on the task as your "
         "report, and it is the only account of this run anybody gets without "
@@ -128,8 +128,8 @@ def _reference_feature(feature_id: int, named: str) -> str:
 @pytest.mark.parametrize("linked,base", [(True, ""), (False, ""),
                                          (False, "master")])
 def test_finish_block_parity(linked, base):
-    assert (runs._finish_block(7, linked=linked, base=base)
-            == _reference_finish(7, linked=linked, base=base))
+    assert (runs._finish_block(7, 3, linked=linked, base=base)
+            == _reference_finish(3, 7, linked=linked, base=base))
 
 
 def test_tracker_block_parity():
@@ -196,7 +196,7 @@ def test_launch_envelope_parity(monkeypatch):
     monkeypatch.setattr(run_prompt, "_references_block",
                         lambda task, feature: "<R>")
     monkeypatch.setattr(run_prompt, "_finish_block",
-                        lambda run_id, linked=False, base="", task_id=None: "<D>")
+                        lambda run_id, task_id, linked=False, base="": "<D>")
     task = {"id": 1, "title": "t", "body": "the idea", "feature_id": None}
     params = {"skill": {"name": "goal-verified", "args": "go"}}
     assert (runs._prompt(task, 7, params)
@@ -209,7 +209,7 @@ def test_launch_envelope_parity_empty_blocks(monkeypatch):
     monkeypatch.setattr(run_prompt, "_followup_block", lambda task_id: "")
     monkeypatch.setattr(run_prompt, "_feature_block", lambda task: "")
     monkeypatch.setattr(run_prompt, "_finish_block",
-                        lambda run_id, linked=False, base="", task_id=None: "<D>")
+                        lambda run_id, task_id, linked=False, base="": "<D>")
     task = {"id": 1, "title": "shelf label", "body": "", "feature_id": None}
     assert runs._prompt(task, 7, None) == "shelf label<D>"
 
@@ -221,7 +221,7 @@ def test_task_body_braces_are_not_re_rendered(monkeypatch):
     monkeypatch.setattr(run_prompt, "_followup_block", lambda task_id: "")
     monkeypatch.setattr(run_prompt, "_feature_block", lambda task: "")
     monkeypatch.setattr(run_prompt, "_finish_block",
-                        lambda run_id, linked=False, base="", task_id=None: "")
+                        lambda run_id, task_id, linked=False, base="": "")
     task = {"id": 1, "title": "t", "body": "use {{finish}} and {literal}",
             "feature_id": None}
     assert runs._prompt(task, 7, None) == "use {{finish}} and {literal}"
@@ -238,8 +238,8 @@ def test_a_stored_edit_replaces_the_built_in_default(tmp_db):
     seed_builtin_skeletons()
     update_template(FINISH_SURFACE_ID,
                     {"body": "<finish>run {{finish_cmd}}</finish>"})
-    block = runs._finish_block(7)
-    assert block == f"\n\n<finish>run {runs._finish_command(7)}</finish>"
+    block = runs._finish_block(7, 3)
+    assert block == f"\n\n<finish>run {runs._finish_command(3, 7)}</finish>"
 
 
 def test_a_broken_edit_degrades_to_the_default_instead_of_killing_a_run(
@@ -250,7 +250,7 @@ def test_a_broken_edit_degrades_to_the_default_instead_of_killing_a_run(
 
     seed_builtin_skeletons()
     update_template(FINISH_SURFACE_ID, {"body": "{{no_such_variable}}"})
-    assert runs._finish_block(7) == _reference_finish(7)
+    assert runs._finish_block(7, 3) == _reference_finish(3, 7)
 
 
 def test_every_task_run_surface_is_seeded_as_a_builtin_row(tmp_db):

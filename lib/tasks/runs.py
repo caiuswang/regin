@@ -1150,7 +1150,8 @@ def _refuse_with_open_defects(task_id: int, run_id: int) -> None:
 
 
 def finish_run(run_id: int, *, status: str = RUN_STATUS_DONE,
-               reason: str = "", in_server: bool = True) -> dict:
+               reason: str = "", in_server: bool = True,
+               task_id: Optional[int] = None) -> dict:
     """The agent's own report, from inside its run, that the work is done.
 
     This is the completion a dependency chain actually waits on. A task run is
@@ -1171,12 +1172,19 @@ def finish_run(run_id: int, *, status: str = RUN_STATUS_DONE,
     is decided a step earlier, by `_claim_verify` — `ended_at` is not written
     until the verify returns, so it cannot arbitrate the window the verify runs
     in.
+
+    `task_id`, when given, is the task the caller believes it is finishing; a
+    run belonging to another task is refused rather than settled.
     """
     if status not in _TASK_STATUS_FOR:
         raise ValueError(f"unknown finish status {status!r}")
+    claimed = task_id
     with SessionLocal() as session:
         row = session.get(AgentTaskRun, run_id)
         task_id = row.task_id if row is not None else None
+    if claimed is not None and task_id is not None and claimed != task_id:
+        raise RunRefused(f"run #{run_id} belongs to task #{task_id}, "
+                         f"not task #{claimed}")
     if task_id is None:
         return {"run_id": run_id, "task_id": None, "settled": False,
                 "verifying": False, "fired": []}

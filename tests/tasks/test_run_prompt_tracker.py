@@ -88,8 +88,8 @@ def test_a_remote_features_run_is_told_to_move_the_issue_first(
     """The `<finish>` block gains the ordering only for a run that has an
     issue to move; an unlinked run is told nothing about a tracker, because
     there is none and the instruction would be noise it has to resolve."""
-    linked = runs._finish_block(1, linked=True)
-    unlinked = runs._finish_block(1, linked=False)
+    linked = runs._finish_block(1, 1, linked=True)
+    unlinked = runs._finish_block(1, 1, linked=False)
 
     assert "record the work on the linked issue" in linked
     assert "linked issue" not in unlinked
@@ -99,7 +99,7 @@ def test_native_finish_block_requires_merging_back_first():
     """R6, native leg. A slice's work reaches the feature only through the
     merge back, so a run that reports finished on an unmerged branch releases
     its dependents onto a base that does not carry it."""
-    block = runs._finish_block(1, linked=False, base="f76/integration")
+    block = runs._finish_block(1, 1, linked=False, base="f76/integration")
 
     assert "merge this run's work back into `f76/integration`" in block
     assert "precondition" in block
@@ -108,7 +108,7 @@ def test_native_finish_block_requires_merging_back_first():
 
 
 def test_native_finish_block_without_a_base_still_requires_the_merge():
-    unnamed = runs._finish_block(1, linked=False)
+    unnamed = runs._finish_block(1, 1, linked=False)
 
     assert "merge this run's work back into the branch this run was based on" \
         in unnamed
@@ -117,7 +117,7 @@ def test_native_finish_block_without_a_base_still_requires_the_merge():
 def test_remote_finish_block_is_unchanged():
     """R6 changes the native leg only. A linked run still reads the issue
     update as its precondition, and gains no merge instruction."""
-    linked = runs._finish_block(1, linked=True)
+    linked = runs._finish_block(1, 1, linked=True)
 
     assert "record the work on the linked issue and move its state" in linked
     assert "merge" not in linked.lower()

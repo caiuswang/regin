@@ -153,7 +153,7 @@ def test_tmux_run_starts_detached_session(flask_client, tmux, no_sdk):
     assert uuid.UUID(trace_id)
     assert argv[argv.index("--model") + 1] == "opus"
     # The finish instruction reaches the agent: it is how the run settles.
-    assert f"task finish {run['id']}" in argv[-1]
+    assert f"task finish {task_id} --run {run['id']}" in argv[-1]
     assert run["trace_id"] == trace_id
     assert run["status"] == "running"
     assert _task(task_id).status == "running"
@@ -306,7 +306,7 @@ def test_cli_finish_falls_back_when_nothing_listens(
     monkeypatch.setattr(settings.agent_memory, "inject_server_url",
                         "http://127.0.0.1:9")
 
-    out = CliRunner().invoke(tasks_app, ["finish", str(run["id"]),
+    out = CliRunner().invoke(tasks_app, ["finish", str(task_id), "--run", str(run["id"]),
                                          "--reason", "done"])
 
     assert out.exit_code == 0, out.output
