@@ -232,7 +232,7 @@ defineExpose({ open: () => { open.value = true } })
         >
           <span class="pp-check" />
           <Icon name="settings" :size="13" />
-          <span class="pp-name">Manage project…</span>
+          <span class="pp-name">Project settings…</span>
         </router-link>
       </PopoverContent>
     </PopoverPortal>

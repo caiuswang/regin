@@ -31,9 +31,8 @@ const emit = defineEmits(['all'])
           <router-link
             v-if="manageTo" :to="manageTo"
             class="ps-manage focus-visible:outline-2 focus-visible:outline-blue-500"
-            aria-label="Manage project" title="Manage project"
             data-testid="project-head-manage"
-          ><Icon name="settings" :size="14" /></router-link>
+          ><Icon name="settings" :size="13" />Project settings</router-link>
         </div>
       </div>
       <div class="ps-progress">
@@ -67,7 +66,11 @@ const emit = defineEmits(['all'])
 .ps-trail { display: flex; align-items: center; gap: 0.3rem; font-size: 12px; color: var(--color-fg-faint); }
 .ps-trail .ps-trail__all { font-size: 12px; color: var(--color-fg-muted); }
 .ps-title-row { display: flex; align-items: center; gap: 0.4rem; }
-.ps-manage { display: inline-flex; padding: 0.2rem; border-radius: var(--radius-sm); color: var(--color-fg-muted); }
+.ps-manage {
+    display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.2rem 0.5rem;
+    border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+    font-size: 12px; font-weight: 600; color: var(--color-fg-muted); text-decoration: none;
+}
 .ps-manage:hover { color: var(--color-fg); background: var(--color-surface-2); }
 .ps-name { font-size: 17px; font-weight: 700; color: var(--color-fg); }
 .ps-progress { flex: 1 1 12rem; min-width: 10rem; display: flex; flex-direction: column; gap: 0.25rem; align-items: flex-end; }

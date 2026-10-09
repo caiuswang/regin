@@ -54,9 +54,8 @@ const pct = computed(() => (props.head.shipped_pct == null ? null : `${props.hea
           v-if="manageTo" :to="manageTo"
           class="px-ps__manage focus-visible:outline-2 focus-visible:outline-blue-500"
           data-pl-part="panel-link"
-          aria-label="Manage project" title="Manage project"
           data-testid="project-head-manage"
-        ><Icon name="settings" :size="14" /></router-link>
+        ><Icon name="settings" :size="13" />Project settings</router-link>
       </header>
 
       <div class="px-ps__band">
@@ -123,7 +122,7 @@ const pct = computed(() => (props.head.shipped_pct == null ? null : `${props.hea
 .px-ps__trail { display: flex; align-items: center; gap: 0.5rem; color: var(--pl-muted); }
 .px-ps .px-ps__all { height: auto; padding: 0; }
 .px-ps__count { margin-left: auto; }
-.px-ps__manage { display: inline-flex; padding: 0.2rem; color: var(--pl-muted); }
+.px-ps__manage { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.2rem 0.5rem; border: 1px solid var(--pl-rule); color: var(--pl-muted); text-decoration: none; }
 .px-ps__manage:hover { color: var(--pl-text); }
 
 .px-ps__band {
