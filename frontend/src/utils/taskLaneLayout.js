@@ -101,14 +101,18 @@ function edgePath(from, to) {
   const y1 = from.y + NODE_H / 2
   const x2 = to.x
   const y2 = to.y + NODE_H / 2
+  let points
   if (x2 - x1 <= COL_GAP) {
     const mid = x1 + COL_GAP / 2
-    return rounded([[x1, y1], [mid, y1], [mid, y2], [x2, y2]])
+    points = [[x1, y1], [mid, y1], [mid, y2], [x2, y2]]
+  } else {
+    const out = x1 + COL_GAP / 2
+    const inn = x2 - COL_GAP / 2
+    const channel = to.y - (to.row > 0 ? ROW_GAP : LANE_PAD) / 2
+    points = [[x1, y1], [out, y1], [out, channel], [inn, channel], [inn, y2], [x2, y2]]
   }
-  const out = x1 + COL_GAP / 2
-  const inn = x2 - COL_GAP / 2
-  const channel = to.y - (to.row > 0 ? ROW_GAP : LANE_PAD) / 2
-  return rounded([[x1, y1], [out, y1], [out, channel], [inn, channel], [inn, y2], [x2, y2]])
+  const mid = points[Math.floor(points.length / 2)]
+  return { path: rounded(points), midX: mid[0], midY: mid[1] }
 }
 
 /**
@@ -132,6 +136,7 @@ export function layoutLanes(lanes = [], nodes = [], edges = []) {
     .filter(e => placed.has(e.task_id) && placed.has(e.depends_on_id))
     .map(e => {
       const from = placed.get(e.depends_on_id)
+      const path = edgePath(from, placed.get(e.task_id))
       return {
         key: `${e.task_id}-${e.depends_on_id}`,
         from: e.depends_on_id,
@@ -139,7 +144,9 @@ export function layoutLanes(lanes = [], nodes = [], edges = []) {
         kind: e.kind || 'requires',
         blocking: !!e.blocking,
         settled: from.status === 'done',
-        path: edgePath(from, placed.get(e.task_id)),
+        path: path.path,
+        midX: path.midX,
+        midY: path.midY,
       }
     })
   const columns = nodes.length ? Math.max(...[...depth.values()]) + 1 : 0

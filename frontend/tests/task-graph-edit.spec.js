@@ -39,69 +39,66 @@ async function depsOf(page, headers, id) {
   return graph.edges.filter(e => e.task_id === id).map(e => e.depends_on_id)
 }
 
-async function openEditMode(page, feature, nodeId) {
+async function openGraph(page, feature, nodeId) {
   await page.goto(`/tasks?view=graph&feature_id=${feature}`)
   await expect(page.getByTestId(`graph-node-${nodeId}`)).toBeVisible()
-  await page.getByTestId('graph-edit-toggle').click()
-  await expect(page.getByTestId('graph-edit-hint'))
-    .toContainText('Pick a source task, then pick the task it should wait for.')
 }
 
 test('test_graph_edit_adds_dependency', async ({ page }) => {
   const headers = await authed(page)
   const { feature, a, b } = await seed(page, headers)
-  await openEditMode(page, feature, a)
+  await openGraph(page, feature, a)
 
-  await page.getByTestId(`graph-pick-${a}`).click()
-  await expect(page.getByTestId(`graph-node-${a}`)).toHaveClass(/is-source/)
-  await expect(page.getByTestId('graph-edit-kind').getByRole('radio', { name: 'needs it' }))
-    .toHaveAttribute('aria-checked', 'true')
-  await page.getByTestId(`graph-pick-${b}`).click()
+  const node = page.getByTestId(`graph-node-${a}`)
+  await node.hover()
+  const right = page.getByTestId(`graph-connect-right-${a}`)
+  await expect(right).toBeVisible()
+  await right.click()
 
-  const pending = page.getByTestId(`graph-pending-edge-${a}-${b}`)
-  await expect(pending).toHaveAttribute('data-kind', 'requires')
-  await expect(pending).toHaveClass(/is-pending/)
-  await expect(page.getByTestId('graph-edit-count')).toHaveText('1 task changed')
+  const picker = page.locator('.task-edge-picker')
+  await expect(picker).toBeVisible()
+  await expect(picker).toContainText(`Task #${a} depends on`)
+  await page.getByTestId('task-edge-picker-filter').fill('B')
+  await page.getByTestId(`task-edge-picker-check-${b}`).click()
 
   const sent = page.waitForRequest(r => r.method() === 'PUT' && r.url().endsWith(`/api/tasks/${a}/deps`))
-  await page.getByTestId('graph-edit-save').click()
+  await page.getByTestId('task-edge-picker-save').click()
   expect((await sent).postDataJSON().depends_on).toContainEqual({ id: b, kind: 'requires' })
-  // A same-row edge is a flat path with a zero-height box, which Playwright
-  // calls hidden — presence is the check.
+
+  await expect(picker).toHaveCount(0)
   await expect(page.getByTestId(`graph-edge-${a}-${b}`)).toHaveCount(1)
-  await expect(page.getByTestId('graph-edit-savebar')).toHaveCount(0)
   expect(await depsOf(page, headers, a)).toEqual([b])
+})
+
+test('test_graph_edit_adds_dependent', async ({ page }) => {
+  const headers = await authed(page)
+  const { feature, a, b } = await seed(page, headers)
+  await openGraph(page, feature, a)
+
+  const node = page.getByTestId(`graph-node-${a}`)
+  await node.hover()
+  await page.getByTestId(`graph-connect-left-${a}`).click()
+
+  const picker = page.locator('.task-edge-picker')
+  await expect(picker).toBeVisible()
+  await expect(picker).toContainText(`depends on task #${a}`)
+  await page.getByTestId('task-edge-picker-filter').fill('B')
+  await page.getByTestId(`task-edge-picker-check-${b}`).click()
+
+  const sent = page.waitForRequest(r => r.method() === 'PUT' && r.url().endsWith(`/api/tasks/${b}/deps`))
+  await page.getByTestId('task-edge-picker-save').click()
+  expect((await sent).postDataJSON().depends_on).toContainEqual({ id: a, kind: 'requires' })
+  expect(await depsOf(page, headers, b)).toEqual([a])
 })
 
 test('test_graph_edit_removes_edge', async ({ page }) => {
   const headers = await authed(page)
   const { feature, a, b } = await seed(page, headers, { linked: true })
-  await openEditMode(page, feature, a)
+  await openGraph(page, feature, a)
 
-  await page.getByTestId(`graph-edge-hit-${a}-${b}`).dispatchEvent('click')
-  await expect(page.getByTestId(`graph-edge-${a}-${b}`)).toHaveAttribute('data-removed', '')
-  await page.getByTestId('graph-edit-save').click()
+  await page.getByTestId(`graph-edge-hit-${a}-${b}`).dispatchEvent('mouseenter')
+  await page.getByTestId(`graph-edge-remove-${a}-${b}`).click()
   await expect(page.getByTestId(`graph-edge-${a}-${b}`)).toHaveCount(0)
-  expect(await depsOf(page, headers, a)).toEqual([])
-})
-
-test('test_graph_edit_escape_and_discard', async ({ page }) => {
-  const headers = await authed(page)
-  const { feature, a, b } = await seed(page, headers)
-  await openEditMode(page, feature, a)
-
-  await page.getByTestId(`graph-pick-${a}`).click()
-  await page.keyboard.press('Escape')
-  await expect(page.getByTestId(`graph-node-${a}`)).not.toHaveClass(/is-source/)
-
-  await page.getByTestId(`graph-pick-${a}`).click()
-  await page.getByTestId(`graph-pick-${b}`).click()
-  // Leaving edit mode with pending edits would drop them silently.
-  await expect(page.getByTestId('graph-edit-toggle')).toBeDisabled()
-  await page.getByTestId('graph-edit-discard').click()
-  await expect(page.getByTestId(`graph-pending-edge-${a}-${b}`)).toHaveCount(0)
-  await expect(page.getByTestId('graph-edit-hint')).toHaveCount(0)
-  await expect(page.getByTestId(`graph-pick-${a}`)).toHaveCount(0)
   expect(await depsOf(page, headers, a)).toEqual([])
 })
 
@@ -117,5 +114,7 @@ test('test_graph_edit_viewer_hidden', async ({ page }) => {
   })
   await page.goto(`/tasks?view=graph&feature_id=${feature}`)
   await expect(page.getByTestId(`graph-node-${a}`)).toBeVisible()
-  await expect(page.getByTestId('graph-edit-toggle')).toHaveCount(0)
+  await page.getByTestId(`graph-node-${a}`).hover()
+  await expect(page.getByTestId(`graph-connect-left-${a}`)).toHaveCount(0)
+  await expect(page.getByTestId(`graph-connect-right-${a}`)).toHaveCount(0)
 })

@@ -60,6 +60,8 @@ const subset = computed(() => previewSubset({
   featureId: featureId.value,
 }))
 
+const pickedCount = computed(() => picked.value.length)
+
 function kindOf(id) {
   return picked.value.find(e => e.id === id)?.kind || 'requires'
 }
@@ -85,7 +87,7 @@ async function submit() {
     :open="true"
     title="Dependencies"
     class="task-deps-dialog"
-    :description="`${taskTitle(task)} waits for whatever is ticked below — for its result, or just for it to stop.`"
+    :description="`${taskTitle(task)} waits for the tasks selected below.`"
     @update:open="v => !v && emit('close')"
   >
     <div v-if="loading" class="task-deps-note">reading the task graph…</div>
@@ -97,13 +99,18 @@ async function submit() {
     </div>
     <div v-else class="task-deps-split">
       <div class="task-deps-picker">
-        <Input
-          v-model="filter"
-          type="search"
-          placeholder="Filter by id or title"
-          aria-label="Filter tasks"
-          data-testid="task-deps-filter"
-        />
+        <div class="task-deps-picker-head">
+          <Input
+            v-model="filter"
+            type="search"
+            placeholder="Filter by id or title"
+            aria-label="Filter tasks"
+            data-testid="task-deps-filter"
+          />
+          <span class="task-deps-picker-count" data-pl-part="meta-label">
+            {{ pickedCount }} selected
+          </span>
+        </div>
         <div v-if="groups.length === 0" class="task-deps-note" data-testid="task-deps-no-match">
           No task matches “{{ filter.trim() }}”.
         </div>
@@ -114,7 +121,10 @@ async function submit() {
             class="task-deps-group"
             :data-testid="`task-deps-group-${group.key}`"
           >
-            <h3 class="task-deps-group-head">{{ group.label }}</h3>
+            <h3 class="task-deps-group-head">
+              <span>{{ group.label }}</span>
+              <span class="task-deps-group-count">{{ group.rows.length }}</span>
+            </h3>
             <!-- The kind control sits OUTSIDE the label: a click anywhere
                  inside a label activates its control, so a toggle nested in
                  one would untick the very edge the reader was classifying. -->
@@ -147,17 +157,18 @@ async function submit() {
             </div>
           </section>
         </div>
-        <p class="task-deps-note">
-          <strong>needs it</strong> waits for that task to succeed, and parks
-          this one if it fails. <strong>just after</strong> only waits for it to
-          stop — use it to run unrelated work one at a time.
+        <p class="task-deps-hint">
+          <strong>needs it</strong> waits for success; <strong>just after</strong> only waits for it to stop.
         </p>
       </div>
-      <TaskDepsPreview
-        :subset="subset"
-        @add="id => toggle(id, true)"
-        @remove="id => toggle(id, false)"
-      />
+      <div class="task-deps-preview-wrap">
+        <p class="task-deps-preview-title">Preview</p>
+        <TaskDepsPreview
+          :subset="subset"
+          @add="id => toggle(id, true)"
+          @remove="id => toggle(id, false)"
+        />
+      </div>
     </div>
 
     <p v-if="depError" class="live-launch-warn" role="alert" data-testid="task-deps-refusal">
@@ -196,8 +207,8 @@ async function submit() {
 }
 .task-deps-split {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 1rem;
+    grid-template-columns: minmax(0, 0.45fr) minmax(0, 0.55fr);
+    gap: 1.25rem;
     align-items: start;
 }
 @media (max-width: 720px) {
@@ -206,38 +217,73 @@ async function submit() {
 .task-deps-picker {
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
+    gap: 0.625rem;
     min-width: 0;
+}
+.task-deps-picker-head {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+.task-deps-picker-head > :first-child { flex: 1; }
+.task-deps-picker-count {
+    flex-shrink: 0;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--color-fg-muted);
+    font-variant-numeric: tabular-nums;
 }
 .task-deps-list {
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
-    max-height: 22rem;
+    gap: 1rem;
+    max-height: 26rem;
+    padding-right: 0.25rem;
     overflow-y: auto;
 }
 .task-deps-group {
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
+    gap: 0.375rem;
 }
 .task-deps-group-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin: 0;
+    padding: 0 0.25rem;
     font-size: 0.6875rem;
     font-weight: 600;
     color: var(--color-fg-subtle);
     text-transform: uppercase;
     letter-spacing: 0.04em;
 }
+.task-deps-group-count {
+    padding: 0.0625rem 0.375rem;
+    font-size: 0.625rem;
+    color: var(--color-fg-muted);
+    background: var(--color-surface-2);
+    border-radius: var(--radius-md);
+    font-variant-numeric: tabular-nums;
+}
 .task-deps-row {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    padding: 0.375rem 0.5rem;
+    padding: 0.5rem 0.625rem;
+    border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
-    background: var(--color-surface-2);
+    background: var(--color-surface);
     min-width: 0;
+    transition: border-color 120ms ease, background-color 120ms ease;
 }
-.task-deps-row.is-picked { box-shadow: inset 2px 0 0 var(--color-primary); }
+.task-deps-row:hover { border-color: var(--color-border-strong); }
+.task-deps-row.is-picked {
+    background: var(--color-surface-2);
+    border-color: color-mix(in srgb, var(--color-primary) 18%, var(--color-border));
+    box-shadow: inset 2px 0 0 var(--color-primary);
+}
 .task-deps-pick {
     display: flex;
     align-items: center;
@@ -259,7 +305,31 @@ async function submit() {
     overflow-wrap: anywhere;
 }
 .task-deps-status {
+    flex-shrink: 0;
     font-size: 0.6875rem;
     color: var(--color-fg-muted);
+}
+.task-deps-hint {
+    margin: 0;
+    font-size: 0.75rem;
+    color: var(--color-fg-muted);
+}
+.task-deps-preview-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    min-width: 0;
+    padding: 0.75rem;
+    background: var(--color-surface-2);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+}
+.task-deps-preview-title {
+    margin: 0;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    color: var(--color-fg-subtle);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
 }
 </style>
