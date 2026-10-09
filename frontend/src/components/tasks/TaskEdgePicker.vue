@@ -173,6 +173,7 @@ async function submit() {
           type="search"
           placeholder="Filter by id or title"
           aria-label="Filter tasks"
+          data-pl-part="input"
           data-testid="task-edge-picker-filter"
         />
         <span class="tep-count" data-pl-part="meta-label">{{ pickedCount }} selected</span>
@@ -201,6 +202,7 @@ async function submit() {
             <label class="tep-pick">
               <Checkbox
                 :model-value="pickedIds.has(node.id)"
+                data-pl-part="check"
                 :data-testid="`task-edge-picker-check-${node.id}`"
                 :aria-label="`Connect task ${node.id}`"
                 @update:model-value="on => toggle(node.id, on)"
@@ -233,9 +235,10 @@ async function submit() {
     </p>
 
     <template #footer>
-      <Button variant="ghost" :disabled="saving" @click="emit('close')">Cancel</Button>
+      <Button variant="ghost" data-pl-part="key" :disabled="saving" @click="emit('close')">Cancel</Button>
       <Button
         variant="primary"
+        data-pl-part="key--primary"
         :disabled="saving || loading"
         data-testid="task-edge-picker-save"
         @click="submit"

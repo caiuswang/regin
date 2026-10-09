@@ -25,6 +25,7 @@ const emit = defineEmits(['update:modelValue'])
       size="sm"
       role="radio"
       class="dkt-opt"
+      data-pl-part="key"
       :class="{ 'is-on': modelValue === k.value }"
       :aria-checked="modelValue === k.value"
       :data-kind="k.value"

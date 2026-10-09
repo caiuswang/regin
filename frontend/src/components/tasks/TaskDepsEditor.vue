@@ -105,6 +105,7 @@ async function submit() {
             type="search"
             placeholder="Filter by id or title"
             aria-label="Filter tasks"
+            data-pl-part="input"
             data-testid="task-deps-filter"
           />
           <span class="task-deps-picker-count" data-pl-part="meta-label">
@@ -138,6 +139,7 @@ async function submit() {
               <label class="task-deps-pick">
                 <Checkbox
                   :model-value="pickedIds.has(node.id)"
+                  data-pl-part="check"
                   :data-testid="`task-dep-${node.id}`"
                   :aria-label="`Depend on task ${node.id}`"
                   @update:model-value="on => toggle(node.id, on)"
@@ -181,9 +183,10 @@ async function submit() {
     </p>
 
     <template #footer>
-      <Button variant="ghost" @click="emit('close')">Cancel</Button>
+      <Button variant="ghost" data-pl-part="key" @click="emit('close')">Cancel</Button>
       <Button
         variant="primary"
+        data-pl-part="key--primary"
         :disabled="saving || loading"
         data-testid="task-deps-save"
         @click="submit"
