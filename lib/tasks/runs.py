@@ -34,6 +34,7 @@ through `complete_run`, which settles once, so neither can double-fire.
 from __future__ import annotations
 
 import json
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -94,9 +95,11 @@ class RunRefused(RuntimeError):
     instead of making the operator go find them.
     """
 
-    def __init__(self, message: str, blocking=None) -> None:
+    def __init__(self, message: str, blocking=None,
+                 field: Optional[str] = None) -> None:
         super().__init__(message)
         self.blocking = list(blocking or [])
+        self.field = field
 
 
 def _now() -> str:
@@ -438,14 +441,18 @@ def start_run(task_id: int) -> Optional[dict]:
     """Launch one attempt at a task. None when the task is unknown.
 
     Raises `RunRefused` for a task that is blocked, unarmed or already running,
-    and `worktree.WorktreeRefused` for a tree that cannot be made.
+    or whose launch was refused — the last after settling the attempt failed.
     """
     task = store.get_task(task_id)
     if task is None:
         return None
     _refuse_unrunnable(task)
     row = open_attempt(task_id)
-    kwargs = _launch_kwargs(row["params"])
+    try:
+        kwargs = _launch_kwargs(row["params"])
+    except (worktree.WorktreeRefused, OSError,
+            subprocess.SubprocessError) as exc:
+        raise _refuse_launch(row, exc) from exc
     if tmux_runs.is_tmux(row["params"]):
         return _start_tmux(task, row, kwargs)
     try:
@@ -531,7 +538,8 @@ def _refuse_launch(row: dict, exc: Exception) -> RunRefused:
     and the task stays armed rather than stranded as `running`.
     """
     complete_run(row["id"], status=RUN_STATUS_FAILED, exit_reason=str(exc))
-    return RunRefused(f"launch refused: {exc}")
+    return RunRefused(f"launch refused: {exc}",
+                      field=getattr(exc, "field", None))
 
 
 def _mark_started(task: dict, row: dict, trace_id: str) -> dict:

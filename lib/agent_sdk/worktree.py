@@ -34,7 +34,15 @@ _WORKTREES_DIR = Path(".claude") / "worktrees"
 
 
 class WorktreeRefused(RuntimeError):
-    """A worktree that cannot be created — a reason to show, not a traceback."""
+    """A worktree that cannot be created — a reason to show, not a traceback.
+
+    `field` names the arm parameter at fault (`cwd`, `worktree`,
+    `worktree.base`), so a form can mark the input rather than the page.
+    """
+
+    def __init__(self, message: str, field: str = "worktree") -> None:
+        super().__init__(message)
+        self.field = field
 
 
 def _run(args: list[str], cwd: str | Path) -> subprocess.CompletedProcess:
@@ -158,8 +166,38 @@ def _add_arguments(root: Path, branch: str, base: str) -> list[str]:
         return [branch]
     base = base or default_base(root)
     if not _ref_exists(root, base):
-        raise WorktreeRefused(f"unknown base ref {base!r}")
+        raise _unknown_base(base)
     return ["-b", branch, base]
+
+
+def _unknown_base(base: str) -> WorktreeRefused:
+    return WorktreeRefused(
+        f"unknown base ref '{base}' — create it first: "
+        f"git branch {base} <ref>", field="worktree.base")
+
+
+def check_target(cwd: str | Path | None, branch: str = "",
+                 base: str = "") -> None:
+    """Refuse a launch target that cannot be served, without creating anything.
+
+    Arm and launch both call this, so a task is refused at arm for exactly the
+    reasons its launch would fail — an unknown base found only when a
+    dependency releases the task strands a whole chain. A run with no worktree
+    touches no git: its `cwd` only has to exist.
+    """
+    cwd = str(cwd or "").strip()
+    if cwd and not Path(cwd).is_dir():
+        raise WorktreeRefused(f"no such directory: {cwd}", field="cwd")
+    branch = (branch or "").strip()
+    if not branch:
+        return
+    anchor = cwd or str(settings.project_root)
+    try:
+        root = repo_root(anchor)
+    except WorktreeRefused:
+        raise WorktreeRefused(f"not a git checkout: {anchor}") from None
+    _validate_branch(root, branch)
+    _add_arguments(root, branch, (base or "").strip())
 
 
 def _provider_config_dirs() -> list[str]:
@@ -212,9 +250,9 @@ def ensure_worktree(cwd: str | Path, branch: str, base: str = "") -> dict:
     refused for the same reason — silently running somewhere else is worse
     than saying no.
     """
+    check_target(cwd, branch, base)
     root = repo_root(cwd)
     branch = branch.strip()
-    _validate_branch(root, branch)
     slug = slugify(branch)
     if not slug:
         raise WorktreeRefused(f"branch name {branch!r} has no usable slug")

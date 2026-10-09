@@ -573,6 +573,8 @@ def _launch_kwargs(params: dict) -> dict:
               for name, default in _LAUNCH_DEFAULTS.items()}
     kwargs["env"] = dict(kwargs["env"])
     spec = params.get("worktree") or {}
+    worktree.check_target(kwargs["cwd"], spec.get("branch") or "",
+                          spec.get("base") or "")
     if spec.get("branch"):
         anchor = kwargs["cwd"] or str(settings.project_root)
         created = worktree.ensure_worktree(anchor, spec["branch"],
