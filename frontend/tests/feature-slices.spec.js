@@ -32,9 +32,9 @@ function ledger(overrides = {}) {
 }
 
 const ROWS = [
-  { n: 'S1', title: 'contracts', depends_on: [], base: 'f242/integration', skill: 'goal-verified', verify: 'pytest a' },
-  { n: 'S2', title: 'runner', depends_on: ['S1'], base: 'f242/integration', skill: 'goal-verified', verify: 'pytest b' },
-  { n: 'S3', title: 'notice', depends_on: ['S1'], base: 'f242/integration', skill: 'goal-verified', verify: null },
+  { n: 'S1', title: 'contracts', depends_on: [], base: 'f242/integration', skill: 'goal-verified' },
+  { n: 'S2', title: 'runner', depends_on: ['S1'], base: 'f242/integration', skill: 'goal-verified' },
+  { n: 'S3', title: 'notice', depends_on: ['S1'], base: 'f242/integration', skill: 'goal-verified' },
 ]
 const IDS = { S1: 71, S2: 72, S3: 73 }
 
@@ -64,7 +64,7 @@ async function stubSlices(page, { refuse = {} } = {}) {
     const row = ROWS.find(r => IDS[r.n] === id)
     return route.fulfill({ json: {
       branch: `f242/${row.n.toLowerCase()}`, base: row.base,
-      skill: row.skill, verify_cmd: row.verify,
+      skill: row.skill,
     } })
   })
   await page.route(new RegExp(`/api/features/${FID}/arm-slices$`), (route) => {
@@ -109,9 +109,7 @@ test('test_feature_slice_panel_transcribe_and_arm_all', async ({ page }) => {
   // Each row opens with its own slice-table proposal.
   await expect(page.getByTestId('slice-arm-branch-S2')).toHaveValue('f242/s2')
   await expect(page.getByTestId('slice-arm-base-S2')).toHaveValue('f242/integration')
-  await expect(page.getByTestId('slice-arm-verify-S1')).toHaveValue('pytest a')
-  await expect(page.getByTestId('slice-arm-verify-S3')).toHaveValue('')
-  await page.getByTestId('slice-arm-verify-S3').fill('pytest c')
+  await expect(page.getByTestId('slice-arm-skill-S2')).toHaveValue('goal-verified')
 
   await page.getByTestId('slice-arm-submit').click()
   await expect.poll(() => state.armBodies.length).toBe(1)
@@ -119,9 +117,8 @@ test('test_feature_slice_panel_transcribe_and_arm_all', async ({ page }) => {
   expect(items.map(i => i.task_id)).toEqual([71, 72, 73])
   expect(items[1]).toMatchObject({
     worktree: { branch: 'f242/s2', base: 'f242/integration' },
-    skill: { name: 'goal-verified' }, verify_cmd: 'pytest b',
+    skill: { name: 'goal-verified' },
   })
-  expect(items[2].verify_cmd).toBe('pytest c')
 
   // One request, no run: the sheet closes and the panel shows three armed.
   await expect(page.getByTestId('slice-arm-form')).toHaveCount(0)
@@ -183,11 +180,11 @@ test('the expanded features row counts idea slices and links to the panel', asyn
 })
 
 test('the arm sheet prefills a slice from its proposal before the remembered prefs (R4b)', async ({ page }) => {
-  // The last arm in this browser carried another task's verify and cwd; once
+  // The last arm in this browser carried another task's cwd; once
   // the slice row has spoken, only its skill and model may carry over.
   await page.addInitScript(() => localStorage.setItem(
     'regin.tasks.arm.last',
-    JSON.stringify({ cwd: '/r/regin', verify_cmd: 'from another task', model: 'opus' })))
+    JSON.stringify({ cwd: '/r/regin', model: 'opus' })))
   const task = {
     id: 72, title: 'S2 — runner', status: 'idea', priority: 'none', body: '',
     kind: 'build', created_at: '2026-09-01T00:00:00Z',
@@ -199,7 +196,7 @@ test('the arm sheet prefills a slice from its proposal before the remembered pre
     route.fulfill({ json: { task, feature: null, armed: null } }))
   await page.route(/\/api\/tasks\/72\/runs$/, route => route.fulfill({ json: { runs: [] } }))
   await page.route(/\/api\/tasks\/72\/arm-proposal$/, route => route.fulfill({ json: {
-    branch: 'f242/s2', base: 'f242/integration', skill: 'goal-verified', verify_cmd: 'pytest b',
+    branch: 'f242/s2', base: 'f242/integration', skill: 'goal-verified',
   } }))
   await page.route('**/api/agent-runs/launch-options', route => route.fulfill({ json: {
     enabled: true, cwds: ['/r/regin'], models: ['opus'],
@@ -213,7 +210,6 @@ test('the arm sheet prefills a slice from its proposal before the remembered pre
 
   await expect(page.getByTestId('task-arm-form')).toBeVisible()
   await expect(page.getByTestId('live-launch-worktree-branch')).toHaveValue('f242/s2')
-  await expect(page.getByTestId('task-arm-verify')).toHaveValue('pytest b')
   await expect(page.getByTestId('task-arm-cwd')).not.toContainText('/r/regin')
   await expect(page.getByTestId('task-arm-model')).toContainText('opus')
   await expect(page.getByTestId('task-arm-recalled')).toBeVisible()

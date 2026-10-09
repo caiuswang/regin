@@ -164,10 +164,6 @@ html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="field"][data-
     order: -1;
 }
 
-html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="input"]:is(textarea, input)[data-pl-field="verify"] {
-    font-family: var(--font-mono, ui-monospace, monospace);
-}
-
 html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="drop"] {
     padding: 12px;
     border: 1px dashed var(--pl-rule);

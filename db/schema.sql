@@ -1042,6 +1042,22 @@ CREATE TABLE IF NOT EXISTS feature_images (
 CREATE INDEX IF NOT EXISTS idx_feature_images_feature
     ON feature_images(feature_id);
 
+-- Peer relations between features, never a tree. `kind` is a category column
+-- rather than a boolean so a third relation needs no new column.
+-- `follows`: feature_id is the later phase, other_id the earlier one.
+-- `related`: stored once, feature_id < other_id, whatever order it was asked in.
+CREATE TABLE IF NOT EXISTS feature_links (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    feature_id INTEGER NOT NULL REFERENCES features(id) ON DELETE CASCADE,
+    other_id   INTEGER NOT NULL REFERENCES features(id) ON DELETE CASCADE,
+    kind       TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    CONSTRAINT uq_feature_links UNIQUE (feature_id, other_id, kind)
+);
+
+CREATE INDEX IF NOT EXISTS idx_feature_links_other
+    ON feature_links(other_id);
+
 
 -- Captured task ideas — the intent layer in front of the SDK launcher. No
 -- execution parameter lives here by construction (no cwd, no model, no
@@ -1123,14 +1139,12 @@ CREATE TABLE IF NOT EXISTS agent_task_runs (
     started_at       TEXT NOT NULL DEFAULT (datetime('now')),
     ended_at         TEXT,
     exit_reason      TEXT,
-    verify_exit_code INTEGER,
     -- The parameters THIS attempt spends, written by the arm route alone
     -- (user-authenticated). They sat on the task, so trying the same work with
     -- different ones meant creating a second task — which is how "a sub-task
     -- is a rerun" became a shape the model had to carry. An `armed` run row is
     -- the pending attempt: parameterised, not yet launched.
     params_json      TEXT,
-    verify_cmd       TEXT,
     autorun          INTEGER NOT NULL DEFAULT 0,
     -- Who settled this attempt: 'agent' (its own `regin task finish`) or
     -- 'session' (the SDK callback, or a launch that never started). The

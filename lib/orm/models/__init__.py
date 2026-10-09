@@ -30,7 +30,7 @@ from lib.orm.models.proposals import (
 )
 from lib.orm.models.rules import Experiment, RuleTrigger, RuleTriggerSuppression
 from lib.orm.models.stages import ProjectStage
-from lib.orm.models.features import Feature, FeatureEvent
+from lib.orm.models.features import Feature, FeatureEvent, FeatureLink
 from lib.orm.models.sync import Branch, Repo
 from lib.orm.models.tasks import AgentTask
 from lib.orm.models.trace import (
@@ -51,6 +51,7 @@ __all__ = [
     "DefectImage",
     "Feature",
     "FeatureEvent",
+    "FeatureLink",
     "SessionFeature",
     "SessionGrade",
     "User", "AuditLog",

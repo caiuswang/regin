@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+from sqlalchemy import Index
 from sqlmodel import (
     Column, Field, ForeignKey, Integer, LargeBinary, String, Text,
     UniqueConstraint, text,
@@ -216,4 +217,37 @@ class FeatureImage(Base, table=True):
     sha256: str = Field(sa_column=Column("sha256", String, nullable=False))
     created_at: str = Field(
         sa_column=Column("created_at", String, nullable=False,
+                         server_default=text("(datetime('now'))")))
+
+
+LINK_FOLLOWS = "follows"
+LINK_RELATED = "related"
+LINK_KINDS: tuple[str, ...] = (LINK_FOLLOWS, LINK_RELATED)
+
+
+class FeatureLink(Base, table=True):
+    """A peer relation between two features — never a parent/child tree.
+
+    `follows`: `feature_id` is the later phase, `other_id` the earlier one.
+    `related` is symmetric, so it is stored once with `feature_id < other_id`.
+    """
+
+    __tablename__ = "feature_links"
+    __table_args__ = (UniqueConstraint("feature_id", "other_id", "kind",
+                                       name="uq_feature_links"),
+                      Index("idx_feature_links_other", "other_id"))
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    feature_id: int = Field(
+        sa_column=Column("feature_id", Integer,
+                         ForeignKey("features.id", ondelete="CASCADE"),
+                         nullable=False))
+    other_id: int = Field(
+        sa_column=Column("other_id", Integer,
+                         ForeignKey("features.id", ondelete="CASCADE"),
+                         nullable=False))
+    kind: str = Field(sa_column=Column("kind", Text, nullable=False))
+    created_at: Optional[str] = Field(
+        default=None,
+        sa_column=Column("created_at", Text, nullable=False,
                          server_default=text("(datetime('now'))")))

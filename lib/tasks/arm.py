@@ -23,7 +23,7 @@ from lib.tasks.capture import CaptureRejected
 
 ARM_FIELDS = frozenset({
     "cwd", "model", "permission_mode", "effort", "one_shot", "worktree",
-    "env", "verify_cmd", "autorun", "skill", "launch", "provider",
+    "env", "autorun", "skill", "launch", "provider",
 })
 
 LAUNCH_SDK, LAUNCH_TMUX = "sdk", "tmux"
@@ -35,7 +35,6 @@ LAUNCH_FIELDS = ("cwd", "model", "permission_mode", "effort", "one_shot",
 
 _ID_MAX = 200
 _PATH_MAX = 2000
-_CMD_MAX = 2000
 _SKILL_ARGS_MAX = 2000
 # A run opens with one slash command; the rest are named for it to invoke, and
 # a list long enough to need more than this is a prompt, not a selection.
@@ -240,7 +239,7 @@ def _launch_capabilities(provider: str) -> dict:
 
 
 def parse_arm(payload) -> dict:
-    """`{params, verify_cmd, autorun}` for `store.arm_task`, or
+    """`{params, autorun}` for `store.arm_task`, or
     `CaptureRejected` naming the offending field.
 
     An empty body is valid: it arms the task with the install's own defaults.
@@ -256,6 +255,5 @@ def parse_arm(payload) -> dict:
                        registry.list_provider_ids()) or "claude"
     return {
         "params": _params(payload, provider, _launch_capabilities(provider)),
-        "verify_cmd": _string(payload, "verify_cmd", _CMD_MAX) or None,
         "autorun": int(_flag(payload, "autorun")),
     }

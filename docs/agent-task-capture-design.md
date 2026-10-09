@@ -235,12 +235,12 @@ join between a task row and a run.
 
 ### Schema (Alembic `0018`, `db/schema.sql`, SQLModel — three edits again)
 
-`agent_tasks` gains `params_json`, `verify_cmd`, and `autorun`. The status set
+`agent_tasks` gains `params_json` and `autorun`. The status set
 extends to `idea | armed | queued | running | done | failed | archived`.
 
 `agent_task_runs` — append-only, one row per attempt: `task_id`, `trace_id`
 (joins `agent_runs.trace_id`, which brings cost, spans, and grade for free),
-`attempt`, `status`, `started_at`, `ended_at`, `exit_reason`, `verify_exit_code`.
+`attempt`, `status`, `started_at`, `ended_at`, `exit_reason`.
 
 `agent_task_deps(task_id, depends_on_id)` — an edge table, not an `after: []`
 column, because both directions are queried (what blocks X, what X blocks) and

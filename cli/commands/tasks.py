@@ -363,7 +363,7 @@ def _refused_connection(exc: OSError) -> bool:
 def _finish_here(task_id: Optional[int], run_id: int, status: str,
                  reason: str) -> dict:
     """Settle in this process when no server is up (a tmux run can outlive
-    one). Verify runs inline; an `sdk` dependent is left for the server's next
+    one). An `sdk` dependent is left for the server's next
     boot, since an SDK child of this CLI would die with it."""
     from lib.tasks import runs
 
@@ -377,10 +377,6 @@ def _finish_here(task_id: Optional[int], run_id: int, status: str,
 
 
 def _render_finish(result: dict) -> None:
-    if result.get("verifying"):
-        print(f"run #{result['run_id']} reported; its verify command decides "
-              f"how it settles and is still running")
-        return
     if not result.get("settled"):
         print(f"run #{result['run_id']} was already settled — nothing to do")
         return

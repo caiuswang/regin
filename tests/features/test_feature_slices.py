@@ -105,7 +105,7 @@ def _assert_rows_carry_their_tasks(client) -> None:
     assert body["rows"][1] == {
         "n": "S2", "title": "runner", "depends_on": ["S1"],
         "base": "f9/integration", "skill": "goal-verified-treenav",
-        "verify": "pytest tests/b", "task_id": None, "task_status": None}
+        "task_id": None, "task_status": None}
 
     client.post(f"/api/features/{fid}/transcribe", headers=EDITOR)
     ids = [t.id for t in _tasks(fid)]
@@ -180,8 +180,8 @@ def test_feature_slices_tail_refuses_a_tracked_spec(tmp_db, flask_client,
 def _shape(slices: list[dict], feature_id: int) -> list[tuple]:
     return [(s["n"], s["action"], s["status"], len(s["deps"]),
              s["arm"]["worktree"]["branch"].replace(f"f{feature_id}/", ""),
-             s["arm"]["worktree"]["base"], s["arm"]["skill"]["name"],
-             s["arm"]["verify_cmd"]) for s in slices]
+             s["arm"]["worktree"]["base"], s["arm"]["skill"]["name"])
+            for s in slices]
 
 
 def _task_shape(feature_id: int) -> list[tuple]:
@@ -233,18 +233,17 @@ def test_task_arm_proposal_from_slice_row(tmp_db, flask_client):
     body = flask_client.get(f"/api/tasks/{s1}/arm-proposal",
                             headers=EDITOR).get_json()
     assert body == {"branch": f"f{fid}/s1", "base": "f9/integration",
-                    "skill": "goal-verified", "verify_cmd": "pytest tests/a"}
-    # An empty Skill / Verify cell proposes the column defaults.
+                    "skill": "goal-verified"}
+    # An empty Skill cell proposes the column default.
     s3_body = flask_client.get(f"/api/tasks/{s3}/arm-proposal",
                                headers=EDITOR).get_json()
-    assert s3_body["verify_cmd"] is None and s3_body["skill"]
+    assert s3_body["skill"]
 
     # Derived at read time: an edit to the table moves the proposal.
-    feature_store.set_body(fid, SPEC.replace("pytest tests/a",
-                                             "pytest tests/a2"))
+    feature_store.set_body(fid, SPEC.replace("goal-verified | pytest tests/a",
+                                             "tdd | pytest tests/a"))
     assert flask_client.get(f"/api/tasks/{s1}/arm-proposal",
-                            headers=EDITOR).get_json()["verify_cmd"] == (
-        "pytest tests/a2")
+                            headers=EDITOR).get_json()["skill"] == "tdd"
 
     # A row the table dropped, and a task that is no slice, have none.
     feature_store.set_body(fid, SPEC.replace(ROWS.splitlines()[0] + "\n", ""))
@@ -264,7 +263,7 @@ def _arm(client, feature_id: int, items: list) -> dict:
 
 def _assert_first_arm(client, fid, s1, s2, s3, foreign) -> None:
     resp = _arm(client, fid, [
-        {"task_id": s1, "verify_cmd": "pytest a",
+        {"task_id": s1,
          "worktree": {"branch": f"f{fid}/s1", "base": "f9/integration"},
          "skill": {"name": "goal-verified"}},
         {"task_id": s2, "bogus": 1},
@@ -296,7 +295,6 @@ def test_arm_slices_bulk_names_refusals_and_never_runs(tmp_db, flask_client,
     assert {t.id: t.status for t in _tasks(fid)} == {
         s1: TASK_STATUS_ARMED, s2: TASK_STATUS_IDEA, s3: TASK_STATUS_ARMED}
     pending = runs.armed_attempt(s1)
-    assert pending["verify_cmd"] == "pytest a"
     assert pending["params"]["worktree"] == {"branch": f"f{fid}/s1",
                                              "base": "f9/integration"}
 

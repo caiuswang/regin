@@ -142,7 +142,7 @@ A task carries two orthogonal axes, so it gets two diagrams.
 ```mermaid
 stateDiagram-v2
   [*] --> idea: capture
-  idea --> armed: arm with params + verify_cmd
+  idea --> armed: arm with params
   armed --> running: start_run
   running --> done: run settles as exited
   running --> failed: run settles otherwise

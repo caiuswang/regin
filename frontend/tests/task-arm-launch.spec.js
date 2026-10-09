@@ -37,7 +37,7 @@ async function openArmSheet(page, { armed, detached_detail = '', runs = [] }) {
 }
 
 test('test_arm_sheet_offers_launch_mode', async ({ page }) => {
-  const armed = { status: 'armed', attempt: 1, verify_cmd: null, autorun: false,
+  const armed = { status: 'armed', attempt: 1, autorun: false,
                   params: { launch: 'tmux' } }
   const posted = await openArmSheet(page, { armed })
 
@@ -49,7 +49,7 @@ test('test_arm_sheet_offers_launch_mode', async ({ page }) => {
 })
 
 test('test_arm_sheet_launch_defaults_to_sdk', async ({ page }) => {
-  const armed = { status: 'armed', attempt: 1, verify_cmd: null, autorun: false,
+  const armed = { status: 'armed', attempt: 1, autorun: false,
                   params: {} }
   const posted = await openArmSheet(page, { armed, detached_detail: 'bridge disabled' })
 
@@ -72,7 +72,7 @@ test('test_arm_sheet_launch_never_comes_from_prefs', async ({ page }) => {
 
 test('test_arm_sheet_launch_prefills_from_last_attempt', async ({ page }) => {
   const runs = [{ id: 9, attempt: 1, status: 'failed', trace_id: 'x', live: false,
-                  params: { launch: 'tmux' }, verify_cmd: null }]
+                  params: { launch: 'tmux' } }]
   await openArmSheet(page, { armed: null, runs })
   await expect(page.getByTestId('task-arm-launch')).toContainText('tmux')
 })

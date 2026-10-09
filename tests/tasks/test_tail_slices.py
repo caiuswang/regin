@@ -65,10 +65,9 @@ def test_tail_slices_read_every_command_from_the_project_table():
 
     # Every command the tail runs is one of the table's values — no literal
     # from this project leaked into the template.
-    verify = {row.n: row.verify_cmd for row in tail}
-    assert verify["S4"] == ODD.migrate
-    assert verify["S5"] == f"{ODD.test} && {ODD.e2e}"
-    assert verify["S3"] is None          # integrate verifies with the default
+    delivers = {row.n: row.delivers for row in tail}
+    assert ODD.migrate in delivers["S4"]
+    assert ODD.test in delivers["S5"] and ODD.e2e in delivers["S5"]
 
 
 def test_the_tail_chains_off_every_leaf_of_the_graph():
@@ -87,9 +86,8 @@ def test_a_null_command_renders_its_reason_instead_of_a_guess():
     tail = tail_slice_rows(_rows(), commands, "f76/integration")
 
     migrate, verify = tail[1], tail[2]
-    assert migrate.verify_cmd is None
     assert "本项目没有数据库" in migrate.delivers
-    assert verify.verify_cmd == "just spec"
+    assert "just spec" in verify.delivers
     assert "探测不出" in verify.delivers
 
 
@@ -139,9 +137,9 @@ def _assert_transcription_knows_no_tail() -> None:
     assert "commands.json" not in source
     words = set(re.findall(r"[a-z_]+", source))
     assert "tail" not in words
-    # `verify` and `migrate` are words transcription legitimately uses (the
-    # Verify column, the command table's key), so the literal checked here is
-    # the one only a hardcoded tail would produce: a row's title.
+    # `migrate` is a word transcription legitimately uses (the command table's
+    # key), so the literal checked here is the one only a hardcoded tail would
+    # produce: a row's title.
     assert "migrate + doctor" not in source
 
 

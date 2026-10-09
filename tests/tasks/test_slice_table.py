@@ -34,12 +34,20 @@ def test_an_empty_depends_on_cell_is_no_edges():
     assert rows[2].depends_on == ["S0", "S1"]
 
 
-def test_skill_defaults_and_verify_cmd_is_optional():
+def test_skill_defaults():
     rows = parse_slice_table(TABLE)
     assert rows[0].skill == DEFAULT_SKILL
-    assert rows[0].verify_cmd is None
     assert rows[1].skill == "goal-verified"
-    assert rows[1].verify_cmd == "pytest -q"
+
+
+def test_slice_table_ignores_verify_column():
+    """A spec written before the column was retired still parses; the cell's
+    text reaches no field of the row."""
+    rows = parse_slice_table(TABLE)
+    assert [row.n for row in rows] == ["S0", "S1", "S2"]
+    for row in rows:
+        assert not any("verify" in name for name in vars(row))
+        assert "pytest -q" not in repr(row)
 
 
 def _table_without(column: str) -> str:
@@ -93,7 +101,7 @@ def test_a_table_without_the_required_headers_is_not_a_slice_table():
 def test_headers_are_matched_case_and_separator_insensitively():
     body = TABLE.replace(
         "| # | Slice | Delivers | Spec refs | Tests | Depends on | Base | Skill | Verify |",
-        "| ID | TITLE | delivers | spec_refs | TESTS | depends_on | base | skill | verify_cmd |")
+        "| ID | TITLE | delivers | spec_refs | TESTS | depends_on | base | skill | VERIFY |")
     assert [row.n for row in parse_slice_table(body)] == ["S0", "S1", "S2"]
 
 

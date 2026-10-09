@@ -432,8 +432,7 @@ def _apply_feature(task_id: int, feature_id) -> Optional[dict]:
     return get_task(task_id)
 
 
-def arm_task(task_id: int, *, params: dict, verify_cmd: Optional[str],
-             autorun: int) -> Optional[dict]:
+def arm_task(task_id: int, *, params: dict, autorun: int) -> Optional[dict]:
     """Parameterise the task's next attempt and mark it `armed`.
 
     The parameters land on a **run row**, not on the task: an attempt is what
@@ -455,13 +454,12 @@ def arm_task(task_id: int, *, params: dict, verify_cmd: Optional[str],
             raise TransitionRejected(
                 row.status, TASK_STATUS_ARMED,
                 "a task is armed from 'idea', 'armed', 'done' or 'failed'")
-    runs.arm(task_id, params=params, verify_cmd=verify_cmd, autorun=autorun)
+    runs.arm(task_id, params=params, autorun=autorun)
     with SessionLocal() as session:
         row = session.get(AgentTask, task_id)
         row.status = TASK_STATUS_ARMED
         view = _touch(session, row)
-    log.write("task_armed", task_id=task_id, autorun=autorun,
-              has_verify=bool(verify_cmd))
+    log.write("task_armed", task_id=task_id, autorun=autorun)
     return view
 
 

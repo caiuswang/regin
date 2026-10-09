@@ -30,7 +30,6 @@ _LEGACY_SHAPE = (
     "ALTER TABLE agent_tasks ADD COLUMN completions_walked_back"
     " INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE agent_tasks ADD COLUMN params_json TEXT",
-    "ALTER TABLE agent_tasks ADD COLUMN verify_cmd TEXT",
     "ALTER TABLE agent_tasks ADD COLUMN autorun INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE defects ADD COLUMN feature_key TEXT",
     "ALTER TABLE defects ADD COLUMN blamed_against_state TEXT",

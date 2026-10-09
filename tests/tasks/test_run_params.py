@@ -1,6 +1,6 @@
 """A rerun with different parameters is a run, not a child task (regin:82).
 
-`params_json` / `verify_cmd` / `autorun` lived on the task, so the only way to
+`params_json` / `autorun` lived on the task, so the only way to
 attempt the same work with different parameters was to create another row —
 which is how "a sub-task is a run" became a shape the model had to carry.
 """

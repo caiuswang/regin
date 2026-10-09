@@ -44,7 +44,6 @@ COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     "depends_on": ("depends on", "depends", "deps", "depends upon"),
     "base": ("base", "base branch", "branch base"),
     "skill": ("skill", "arm skill"),
-    "verify_cmd": ("verify", "verify cmd", "verify command"),
     # Which slice owns the install-wide schema move. Declared rather than
     # inferred: a transcriber that sniffed the word "migrate" out of a
     # `delivers` cell would refuse the very slice that delivers the command
@@ -102,7 +101,6 @@ class SliceRow:
     base: str
     depends_on: list[SliceDep] = field(default_factory=list)
     skill: str = DEFAULT_SKILL
-    verify_cmd: Optional[str] = None
     owns_schema_change: bool = False
 
 
@@ -268,7 +266,6 @@ def _parse_row(cells: list[str], columns: dict[str, int], ordinal: int) -> Slice
         base=_required_text(cells, columns, "base", row_id),
         depends_on=_as_deps(_cell(cells, columns, "depends_on"), row_id),
         skill=_optional_text(cells, columns, "skill") or DEFAULT_SKILL,
-        verify_cmd=_optional_text(cells, columns, "verify_cmd"),
         owns_schema_change=_is_claimed(_cell(cells, columns, "schema")),
     )
 

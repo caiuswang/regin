@@ -39,7 +39,6 @@ function draftFor(row, proposal) {
     branch: proposal?.branch || '',
     base: proposal?.base || row.base || '',
     skill: proposal?.skill || '',
-    verify_cmd: proposal?.verify_cmd || '',
   })
 }
 
@@ -54,7 +53,6 @@ onMounted(async () => {
 function item(d) {
   const body = {
     task_id: d.task_id, provider: shared.provider, cwd: shared.cwd,
-    verify_cmd: d.verify_cmd.trim(),
   }
   if (d.branch.trim()) body.worktree = { branch: d.branch.trim(), base: d.base.trim() }
   if (d.skill.trim()) body.skill = { name: d.skill.trim() }
@@ -114,7 +112,6 @@ function close() {
           <Input v-model="d.branch" :aria-label="`${d.n} branch`" placeholder="branch" :data-testid="`slice-arm-branch-${d.n}`" />
           <Input v-model="d.base" :aria-label="`${d.n} base`" placeholder="base" :data-testid="`slice-arm-base-${d.n}`" />
           <Input v-model="d.skill" :aria-label="`${d.n} skill`" placeholder="skill" :data-testid="`slice-arm-skill-${d.n}`" />
-          <Input v-model="d.verify_cmd" :aria-label="`${d.n} verify command`" placeholder="verify — exit 0 marks it done" :data-testid="`slice-arm-verify-${d.n}`" />
         </div>
         <p
           v-if="reasons[d.task_id]" class="sa-warn" role="alert"

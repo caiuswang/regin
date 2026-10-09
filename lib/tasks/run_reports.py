@@ -63,14 +63,12 @@ def reopen_for_agent_report(run_id: int) -> bool:
     finished work. So an agent report reaching a session-settled attempt
     reopens it and then travels the ordinary settle path.
 
-    The attempt is cleared back to open — `ended_at`, `exit_reason` and
-    `verify_exit_code` all — so a `verify_cmd` is re-claimed and re-run rather
-    than inherited from the aborted attempt: the report is a claim about the
-    work, and the gate is what grades it.
+    The attempt is cleared back to open — `ended_at` and `exit_reason` both —
+    so the report settles it afresh rather than inheriting the aborted end.
 
     The `UPDATE` carries its own guard so two concurrent reports cannot both
-    reopen; the loser falls through to `_claim_verify` and `ended_at`, which
-    already arbitrate a live attempt.
+    reopen; the loser falls through to `ended_at`, which already arbitrates a
+    live attempt.
     """
     with SessionLocal() as session:
         refusal = _reopen_refusal(session, run_id)
@@ -83,7 +81,7 @@ def reopen_for_agent_report(run_id: int) -> bool:
                    AgentTaskRun.ended_at.is_not(None),
                    AgentTaskRun.settled_by.is_distinct_from(SETTLED_BY_AGENT))
             .values(status=RUN_STATUS_RUNNING, ended_at=None, exit_reason=None,
-                    verify_exit_code=None, settled_by=None)).rowcount
+                    settled_by=None)).rowcount
         if reopened:
             live.mark(session, "task", task_id)
         session.commit()

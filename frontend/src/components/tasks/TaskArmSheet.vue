@@ -328,19 +328,6 @@ async function submit() {
       </div>
 
       <div class="task-arm-sec" data-pl-part="dialog-section" data-pl-section="Finish">
-        <label class="live-launch-lbl" for="task-arm-verify" data-pl-part="field-label">
-          verify command <span class="task-arm-note" data-pl-part="field-hint">Gate — exit 0 marks the task done</span>
-        </label>
-        <Input
-          id="task-arm-verify"
-          v-model="draft.verify_cmd"
-          data-pl-part="input"
-          data-pl-field="verify"
-          data-testid="task-arm-verify"
-          placeholder="e.g. .venv/bin/python -m pytest -q"
-          aria-label="Verify command (gate — exit 0 marks the task done)"
-        />
-
         <label class="live-launch-lbl" for="task-arm-launch" data-pl-part="field-label">launch</label>
         <PlSlot
           id="task-arm-launch"

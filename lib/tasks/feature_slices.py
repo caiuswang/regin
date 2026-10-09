@@ -96,7 +96,7 @@ def _row_view(row: SliceRow, task: Optional[AgentTask]) -> dict:
     return {
         "n": row.n, "title": row.title,
         "depends_on": [str(dep) for dep in row.depends_on],
-        "base": row.base, "skill": row.skill, "verify": row.verify_cmd,
+        "base": row.base, "skill": row.skill,
         "task_id": task.id if task is not None else None,
         "task_status": task.status if task is not None else None,
     }
@@ -208,8 +208,7 @@ def proposal_for_task(task_id: int) -> dict:
         row, branch=branch_for(row, default_branch_prefix(feature_id)))
     return {"branch": proposed["worktree"]["branch"],
             "base": proposed["worktree"]["base"],
-            "skill": proposed["skill"]["name"],
-            "verify_cmd": proposed["verify_cmd"]}
+            "skill": proposed["skill"]["name"]}
 
 
 def arm_slices(feature_id: int, items) -> dict:
