@@ -145,6 +145,12 @@ test.describe('feature filter picker', () => {
       if (p === `/api/features/${FEATURE.id}`) {
         return json(route, { id: FEATURE.id, title: FEATURE.title, stage: FEATURE.stage, spec: '', synced_at: null })
       }
+      if (p === `/api/features/${FEATURE.id}/next-step`) {
+        return json(route, {
+          id: FEATURE.id, title: FEATURE.title, stage: FEATURE.stage, project_id: null,
+          task_count: 0, next_step: { kind: 'none', label: '', target: null },
+        })
+      }
       return route.fallback()
     })
   })
