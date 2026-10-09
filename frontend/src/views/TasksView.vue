@@ -35,23 +35,40 @@ const route = useRoute()
 const query = useTaskQuery()
 const isCurrentTab = usePipelineTabActive()
 
-const featureRow = ref(null)
+const canWrite = computed(() => api.getStoredUser()?.role !== 'viewer')
+const scopeHead = ref(null)
 let featureAsked = 0
-watch(() => query.state.value.feature_id, async (id) => {
-  if (!id) {
-    featureRow.value = null
-    return
-  }
+async function loadScopeHead() {
+  const id = query.state.value.feature_id
   const mine = ++featureAsked
+  // Another feature's head must not stand in while this one is asked for: its
+  // primary button would act on that feature and its project leak into a create.
+  if (scopeHead.value?.id !== Number(id)) scopeHead.value = null
+  if (!id) return
   try {
-    const row = await api.get(`/features/${id}`)
-    if (mine !== featureAsked) return
-    featureRow.value = { id: row.id, title: row.title }
+    const head = await api.get(`/features/${id}/next-step`)
+    if (mine === featureAsked) scopeHead.value = head
   } catch {
-    if (mine !== featureAsked) return
-    featureRow.value = null
+    if (mine === featureAsked) scopeHead.value = null
   }
-}, { immediate: true })
+}
+watch(() => query.state.value.feature_id, loadScopeHead, { immediate: true })
+const featureRow = computed(() => (scopeHead.value
+  ? { id: scopeHead.value.id, title: scopeHead.value.title } : null))
+// Under a feature scope every create files the task there — still a chip the
+// operator can clear in the dialog. The id alone is enough before the head
+// answers; the project rides along only once it is known.
+const createPrefill = computed(() => {
+  const id = query.state.value.feature_id
+  if (!id) return null
+  const head = scopeHead.value
+  const feature = { id: Number(id), title: head?.title ?? `#${id}` }
+  if (head && 'project_id' in head) feature.project_id = head.project_id
+  return { feature }
+})
+function createTask() {
+  openCreate('task', createPrefill.value)
+}
 const { isMdUp } = useBreakpoint()
 const { items: users, ensure: ensureUsers } = useUsers()
 
@@ -113,13 +130,13 @@ function search(term) {
 
 async function afterWrite() {
   invalidatePipelineCounts()
-  await body.value?.reload?.()
+  await Promise.all([body.value?.reload?.(), loadScopeHead()])
 }
 
-usePipelineLive(() => body.value?.reload?.())
+usePipelineLive(() => Promise.all([body.value?.reload?.(), loadScopeHead()]))
 
 useTaskShortcuts({
-  c: () => openCreate('task'),
+  c: createTask,
   '/': () => toolbar.value?.focusSearch(),
 })
 
@@ -136,7 +153,7 @@ onBeforeUnmount(() => window.removeEventListener(TASK_CAPTURED_EVENT, afterWrite
 <template>
   <div class="tv space-y-3" data-pl-part="panel">
     <Teleport v-if="isCurrentTab" defer to="#pipeline-actions">
-      <PipelineCreateButton kind="task" testid="task-new" />
+      <PipelineCreateButton kind="task" testid="task-new" :prefill="createPrefill" />
     </Teleport>
 
     <TaskToolbar
@@ -220,14 +237,20 @@ onBeforeUnmount(() => window.removeEventListener(TASK_CAPTURED_EVENT, afterWrite
       </template>
     </TaskToolbar>
 
-    <TasksScopeBanner :feature-id="query.state.value.feature_id" />
+    <TasksScopeBanner
+      :feature-id="query.state.value.feature_id"
+      :head="scopeHead"
+      :can-write="canWrite"
+      @new-task="createTask"
+      @changed="afterWrite"
+    />
 
     <TaskBoard
       v-if="view === 'board' && params"
       ref="body"
       :params="params"
       @count="v => (count = v)"
-      @compose="openCreate('task')"
+      @compose="createTask"
       @view="setView"
     />
     <TaskLaneGraph

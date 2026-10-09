@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Optional
 
-from sqlmodel import select
+from sqlmodel import func, select
 
 from lib.defects import escapes as escapes_module
 from lib.features import events as events_module
@@ -202,6 +202,30 @@ def for_feature(feature_id: int) -> NextStep:
                    open_defects=len(_open_defects(feature_id)),
                    blamed_now=_blamed_now(feature_id),
                    facts=task_facts([feature_id])[feature_id])
+
+
+def _task_count(feature_id: int) -> int:
+    with SessionLocal() as session:
+        return session.exec(
+            select(func.count()).select_from(AgentTask)
+            .where(AgentTask.feature_id == feature_id,
+                   AgentTask.status != TASK_STATUS_ARCHIVED)).one()
+
+
+def scope_head(feature_id: int) -> dict:
+    """The scoped Tasks page's head — a feature's name, stage and next step,
+    without the ledger build (cost, sessions, tokens) the head never shows.
+    `task_count` (unarchived) is what lets an empty scope say what comes next
+    instead of rendering a blank list."""
+    feature = feature_store.require(feature_id)
+    return {
+        "id": feature.id,
+        "title": feature.title,
+        "stage": events_module.stage(feature_id),
+        "project_id": feature.project_id,
+        "task_count": _task_count(feature_id),
+        "next_step": for_feature(feature_id).to_dict(),
+    }
 
 
 def _open_tasks(feature_id: int) -> list[AgentTask]:

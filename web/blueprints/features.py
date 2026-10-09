@@ -149,6 +149,15 @@ def api_feature_ledger(feature_id):
         return jsonify({"error": f"no feature {feature_id}"}), 404
 
 
+@features_bp.route("/api/features/<int:feature_id>/next-step")
+def api_feature_next_step(feature_id):
+    """The scoped Tasks head (`next_step.scope_head`)."""
+    try:
+        return jsonify(next_step_module.scope_head(feature_id))
+    except feature_store.FeatureError:
+        return jsonify({"error": f"no feature {feature_id}"}), 404
+
+
 @features_bp.route("/api/features/<int:feature_id>", methods=["PATCH"])
 @require_editor
 def api_feature_edit(feature_id):

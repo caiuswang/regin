@@ -5,12 +5,14 @@
 // same `lib/tasks` functions, so the ledger and a terminal cannot slice one
 // spec two ways.
 import { computed, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import api from '../../api'
 import Button from '../ui/Button.vue'
 import Card from '../Card.vue'
 import TaskStatusIcon from '../tasks/TaskStatusIcon.vue'
 import SliceArmSheet from './SliceArmSheet.vue'
 import { SLICES_ANCHOR } from '../../utils/featureLinks'
+import { ARM_SHEET_QUERY } from '../../utils/scopeHeadAction.js'
 
 const props = defineProps({
   featureId: { type: Number, required: true },
@@ -73,6 +75,20 @@ async function transcribe() {
   await load()
   emit('changed')
 }
+
+// An arrival asking for the arm sheet (the scoped Tasks head's "Arm N
+// slices") opens it once the idea rows are known, then drops the flag so a
+// reload or Back does not reopen it.
+const route = useRoute()
+const router = useRouter()
+watch(() => [route.query[ARM_SHEET_QUERY], report.value, loadError.value, ideas.value.length, props.canWrite],
+  ([asked, rep, err, n, can]) => {
+    if (!asked || !(rep || err)) return
+    if (can && n) arming.value = true
+    const query = { ...route.query }
+    delete query[ARM_SHEET_QUERY]
+    router.replace({ query, hash: route.hash })
+  }, { immediate: true })
 
 async function onArmed() {
   arming.value = false
