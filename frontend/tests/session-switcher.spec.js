@@ -154,15 +154,16 @@ test.describe('session switcher', () => {
     await expect(page).toHaveURL(new RegExp(`/trace/sessions/${selected}`))
   })
 
-  test('1–9 attach by number', async ({ page }) => {
+  test('typing a number in the roster enters the query, it does not attach', async ({ page }) => {
     await seedSessions(page)
     await page.goto('/trace/sessions')
     await openSwitcher(page)
 
-    const first = await page.locator(ROW).first().getAttribute('data-trace-id')
+    const before = page.url()
     await page.keyboard.press('1')
-    await expect(page.locator(PANEL)).toHaveCount(0)
-    await expect(page).toHaveURL(new RegExp(`/trace/sessions/${first}`))
+    await expect(page.locator(PANEL)).toHaveCount(1)
+    await expect(page.locator(INPUT)).toHaveValue('1')
+    expect(page.url()).toBe(before)
   })
 
   test('typing a query hands the facet back to search', async ({ page }) => {
@@ -331,21 +332,19 @@ test.describe('roster rows (F146 S8)', () => {
     await expect(row.locator('.pr-title')).toHaveText('Draft the NOW zone data loader')
   })
 
-  test('test_roster_number_attach_kept', async ({ page }) => {
+  test('test_roster_number_does_not_attach', async ({ page }) => {
     await openFakeRoster(page)
     // Server rank, not recency: awaiting, retrying, working, ended.
-    await expect(page.locator(`${ROW} .switcher-hotkey`)).toHaveText(['1', '2', '3', '4'])
-
-    // `#` addresses by id and gives the digits back to the query.
-    await page.locator(INPUT).fill('#bbbb')
-    await expect(page.locator(ROW)).toHaveCount(1)
-    await expect(page.locator(`${ROW} .switcher-hotkey`)).toHaveText([''])
-    await page.locator(INPUT).fill('')
-    await expect(page.locator(ROW)).toHaveCount(4)
+    await expect(page.locator(`${ROW} .switcher-hotkey`)).toHaveCount(0)
 
     await page.keyboard.press('2')
-    await expect(page.locator(PANEL)).toHaveCount(0)
-    await expect(page).toHaveURL(new RegExp(`/trace/sessions/${RETRYING.trace_id}`))
+    await expect(page.locator(PANEL)).toHaveCount(1)
+    await expect(page.locator(INPUT)).toHaveValue('2')
+
+    // `#` addresses by id and still works because digits are no longer captured.
+    await page.locator(INPUT).fill('#bbbb')
+    await expect(page.locator(ROW)).toHaveCount(1)
+    await expect(page.locator(INPUT)).toHaveValue('#bbbb')
   })
 
   test('picking Sessions in ⌘K keeps the rail', async ({ page }) => {

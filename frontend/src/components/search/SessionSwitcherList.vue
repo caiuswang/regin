@@ -3,7 +3,7 @@
 // — the ⌘J roster, and the rows a `#<session-id>` address resolved to.
 // It replaces `SearchResultList` and nothing else: the focus trap and the key
 // handling are the palette's, unchanged. Each row is the same `PaletteRow`
-// search renders, with the 1–9 hotkey in front of it.
+// search renders.
 //
 // Selection is reverse-video rather than a ring, because a row here is two
 // lines tall and a 1.5px outline around that reads as a box, not as a cursor.
@@ -12,7 +12,7 @@
 import { computed } from 'vue'
 import SearchPaletteRow from './SearchPaletteRow.vue'
 import {
-  GROUP_LABEL, groupOf, hotkeyFor, paletteRowOf, rosterMeta,
+  GROUP_LABEL, groupOf, paletteRowOf, rosterMeta,
 } from '../../utils/sessionSwitcher.js'
 
 const props = defineProps({
@@ -28,9 +28,6 @@ const props = defineProps({
   emptyText: { type: String, default: 'No sessions yet. Start one and it appears here.' },
   emptyTitle: { type: String, default: '' },
   loadingText: { type: String, default: 'reading the roster…' },
-  // The 1–9 chord is disarmed wherever the query can contain digits, and a
-  // chip for a key that does nothing is worse than no chip.
-  showHotkeys: { type: Boolean, default: true },
   // The preview has walked away from the cursor row: it keeps its place but
   // drops the reverse video, whose light text would sit on no fill.
   walked: { type: Boolean, default: false },
@@ -59,7 +56,6 @@ const decorated = computed(() => {
       group,
       groupLabel: GROUP_LABEL[group],
       groupCount: groupCounts.value[group],
-      hotkey: props.showHotkeys ? (hotkeyFor(index) || '·') : '',
       palette: { ...paletteRowOf(row), here: row.trace_id === props.attachedId },
       meta: rosterMeta(row, props.clock),
     }
@@ -99,7 +95,6 @@ const decorated = computed(() => {
         @click="$emit('select', item.row)"
         @dblclick="$emit('attach', item.row)"
       >
-        <span class="switcher-hotkey">{{ item.hotkey }}</span>
         <SearchPaletteRow :row="item.palette">
           <template #meta>
             <span class="switcher-meta">{{ item.meta }}</span>
@@ -193,17 +188,6 @@ const decorated = computed(() => {
   outline-offset: -1.5px;
 }
 
-.switcher-hotkey {
-  flex-shrink: 0;
-  width: 12px;
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  font-size: var(--sp-t-micro);
-  line-height: 1.38rem;
-  text-align: right;
-  color: var(--color-fg-subtle);
-  font-variant-numeric: tabular-nums;
-}
-
 .switcher-meta {
   margin-left: auto;
   flex-shrink: 0;
@@ -215,7 +199,6 @@ const decorated = computed(() => {
 /* On the inverted row every accent is mixed from the row's OWN text colour,
    never from literal white: under dark the row is light and a white chip would
    vanish into it. */
-.is-active .switcher-hotkey,
 .is-active :deep(.pr-title),
 .is-active :deep(.pr-ref),
 .is-active :deep(.pr-status) { color: var(--color-surface); }

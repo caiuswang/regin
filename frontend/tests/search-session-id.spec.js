@@ -158,7 +158,7 @@ test.describe('#session-id lookup', () => {
         .toBe('Files')
     })
 
-  test('a resolved row does not advertise the disarmed 1–9 chord',
+  test('a resolved row does not advertise a 1–9 chord',
     async ({ page }) => {
       const traceId = await seedSession(page, 'hotkey chip fixture')
       await page.goto('/trace/sessions')
@@ -166,6 +166,6 @@ test.describe('#session-id lookup', () => {
       await page.locator(INPUT).fill(`#${traceId}`)
       const row = page.locator(`${ROW}[data-trace-id="${traceId}"]`)
       await expect(row).toBeVisible({ timeout: 15_000 })
-      await expect(row.locator('.switcher-hotkey')).toHaveText('')
+      await expect(row.locator('.switcher-hotkey')).toHaveCount(0)
     })
 })

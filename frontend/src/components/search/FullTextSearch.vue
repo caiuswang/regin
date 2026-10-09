@@ -91,13 +91,6 @@ function attach(row) {
   switcher.attach(row)
 }
 
-function attachByNumber(n) {
-  const row = switcherRows.value[n - 1]
-  if (!row) return false
-  attach(row)
-  return true
-}
-
 function selectSwitcher(row) {
   switcherId.value = row.trace_id
   // Same rule the search list follows: below the split the preview is a sheet,
@@ -176,7 +169,6 @@ function togglePreviewMode() {
 
 const ROSTER_LEGEND = [
   { key: '↑↓', label: 'move' },
-  { key: '1–9', label: 'attach' },
   { key: '#', label: 'address' },
   { key: '↵', label: 'attach' },
   { key: '⌘K', label: 'search' },
@@ -439,19 +431,6 @@ function chordFor(e) {
   return undefined
 }
 
-// 1–9 attach by number, but ONLY in the roster — where the query is empty by
-// definition and the digit would otherwise begin a filter that starts with a
-// numeral. Under `#` the query is a trace id, which is mostly digits, so the
-// hotkey has to give them back or the address can never be typed. That trade
-// is deliberate: a hotkey you can reach beats a filter term almost nobody
-// types, and one keystroke on the query row (any non-digit) leaves the
-// switcher and gives the digits back.
-function isRosterDigit(e) {
-  if (!switcherMode.value || lookupMode.value) return false
-  if (e.metaKey || e.ctrlKey || e.altKey) return false
-  return /^[1-9]$/.test(e.key)
-}
-
 function onKeydown(e) {
   if (e.key === 'Escape') {
     e.preventDefault()
@@ -477,10 +456,6 @@ function onKeydown(e) {
   if (e.key === 'Backspace' && !search.query.value && search.inDrill.value) {
     e.preventDefault()
     search.leaveDrill()
-    return
-  }
-  if (isRosterDigit(e) && attachByNumber(Number(e.key))) {
-    e.preventDefault()
     return
   }
   if (e.key === 'ArrowRight' && !hasModifier(e) && arrowRight(e)) {
@@ -607,7 +582,6 @@ function widen() {
               :error="lookupMode ? switcher.lookupError.value : switcher.error.value"
               :empty-text="switcherEmpty.body"
               :empty-title="switcherEmpty.title"
-              :show-hotkeys="!lookupMode"
               :walked="walk.pivoted.value"
               :loading-text="lookupMode ? 'resolving that id…' : undefined"
               @select="selectSwitcher"
