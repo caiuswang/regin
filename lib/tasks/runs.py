@@ -419,32 +419,6 @@ def _next_attempt(session, task_id: int) -> int:
     return last + 1
 
 
-def _auto_tag_feature(run_trace_id: str, feature_id: Optional[int]) -> None:
-    """Stamp a task-launched session with its `feature-<id>` tag.
-
-    Called on completion, not at launch: `launch_run` hands back a synthetic
-    `sdk-*` placeholder (`run_trace_id`) minted before the child `claude`
-    process exists, and that row is exactly what `aliased_run_ids`
-    (lib/trace/alias.py) hides from the session list once the child reports
-    its real id — so tagging it at launch time writes a tag nobody ever sees.
-    `latest_cli_session` resolves the child the run is actually traced as by
-    completion time (set on the child's first message, `sdk_store.py`'s
-    `set_cli_session`); a run whose child never reported one (hooks
-    unavailable in that cwd) falls back to tagging the placeholder itself so
-    the tag is not silently dropped.
-    """
-    if feature_id is None:
-        return
-    from lib.orm.models.trace import SessionTag  # noqa: PLC0415
-
-    trace_id = sdk_store.latest_cli_session(run_trace_id) or run_trace_id
-    tag = f"feature-{feature_id}"
-    with SessionLocal() as session:
-        if session.get(SessionTag, (trace_id, tag)) is None:
-            session.add(SessionTag(trace_id=trace_id, tag=tag, source="auto"))
-            session.commit()
-
-
 def _attach_trace(run_id: int, trace_id: str) -> dict:
     with SessionLocal() as session:
         row = session.get(AgentTaskRun, run_id)
@@ -605,8 +579,6 @@ def _start_tmux(task: dict, row: dict, kwargs: dict) -> dict:
             _launch_images(task))
     except tmux_runs.TmuxRunRefused as exc:
         raise _refuse_launch(row, exc) from exc
-    if task.get("feature_id") is not None and task.get("kind") != TASK_KIND_SPEC:
-        _auto_tag_feature(trace_id, task["feature_id"])
     view = _mark_started(task, row, trace_id)
     log.write("task_run_started", task_id=task["id"], run_id=row["id"],
               trace_id=trace_id, attempt=view["attempt"], launch="tmux")
@@ -1032,14 +1004,6 @@ def handle_completion(task_id: int, run_id: int, outcome) -> Optional[Thread]:
     `task finish` settles the work, and the session it settled from ends here
     afterwards. A verify already claimed elsewhere is therefore left alone.
     """
-    task = store.get_task(task_id)
-    if (task and task.get("feature_id") is not None
-            and task.get("kind") != TASK_KIND_SPEC):
-        with SessionLocal() as session:
-            run_row = session.get(AgentTaskRun, run_id)
-            trace_id = run_row.trace_id if run_row is not None else None
-        if trace_id:
-            _auto_tag_feature(trace_id, task["feature_id"])
     status, reason = RUN_STATUS_FAILED, "run ended"
     try:
         status, reason = _settled(outcome)

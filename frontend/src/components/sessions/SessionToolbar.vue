@@ -21,6 +21,7 @@ defineProps({
   tagOptions: { type: Array, default: () => [] },
   repoOptions: { type: Array, default: () => [] },
   repoCounts: { type: Object, default: () => ({}) },
+  featureCurrent: { type: Object, default: null },
   filterCount: { type: Number, default: 0 },
   selectionCount: { type: Number, default: 0 },
   batchDeleting: { type: Boolean, default: false },
@@ -32,7 +33,7 @@ defineProps({
 
 const emit = defineEmits([
   'search', 'reset', 'batch-delete', 'batch-close', 'clear-selection',
-  'range-preset', 'range-pick', 'range-clear',
+  'range-preset', 'range-pick', 'range-clear', 'feature-picked',
 ])
 
 const search = defineModel('search', { type: String, default: '' })
@@ -43,6 +44,7 @@ const kind = defineModel('kind', { type: String, default: 'real' })
 const status = defineModel('status', { type: Array, default: () => [] })
 const tag = defineModel('tag', { type: String, default: '' })
 const repo = defineModel('repo', { type: String, default: 'all' })
+const feature = defineModel('feature', { type: String, default: '' })
 const traceId = defineModel('traceId', { type: String, default: '' })
 </script>
 
@@ -96,15 +98,18 @@ const traceId = defineModel('traceId', { type: String, default: '' })
       v-model:status="status"
       v-model:tag="tag"
       v-model:repo="repo"
+      v-model:feature="feature"
       v-model:trace-id="traceId"
       :kind-options="kindOptions"
       :status-options="statusOptions"
       :tag-options="tagOptions"
       :repo-options="repoOptions"
       :repo-counts="repoCounts"
+      :feature-current="featureCurrent"
       :active-count="filterCount"
       @reset="emit('reset')"
       @commit-trace-id="emit('search')"
+      @feature-picked="(row) => emit('feature-picked', row)"
     />
 
     <!-- Trailing actions that act on the LIST rather than on a filter — the

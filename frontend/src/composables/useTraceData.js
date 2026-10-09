@@ -222,6 +222,7 @@ const SESSION_SUMMARY_KEYS = [
   // mid-view stops having one.
   'runner_phase',
   'title', 'title_source',
+  'display_title', 'display_title_source', 'task',
   'span_count_total',
   // How many of `span_count_total` a child trace serves instead of this view
   // — the vitals strip names the difference rather than leaving it a gap.

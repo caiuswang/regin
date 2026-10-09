@@ -27,7 +27,7 @@ import { sessionLivenessWithClock } from '../utils/sessionActivity.js'
 import {
   ACTIVE_STATUSES, STATUS_ORDER, isActiveRowStatus, statusMeta,
 } from '../utils/sessionStatus.js'
-import { titlePreview } from '../utils/sessionRowFormat.js'
+import { rowTitleFull, titlePreview } from '../utils/sessionRowFormat.js'
 import { shortTraceId } from '../utils/traceFormatters.js'
 
 const { confirm } = useConfirm()
@@ -42,7 +42,7 @@ const {
   filterCount, searchInput, activeSearch, traceIdInput, searchScope,
   kind, statusFilter, range, tagFilter, repoFilter, statusCounts, activeStatusesOn,
   customStart, customEnd, rangeLabel, activeFilters, hiddenRunCount, runsShown,
-  hiddenEmptyCount, emptyShown,
+  hiddenEmptyCount, emptyShown, featureFilter, featureRow,
 } = query
 
 const { customTags, loadCustomTags, patchRowTags, addTag, removeTag } = useSessionTags()
@@ -185,7 +185,7 @@ function onEscape(e) {
 }
 
 function rowLabel(s) {
-  return titlePreview(s.title) || `${shortTraceId(s.trace_id, 12)}...`
+  return titlePreview(rowTitleFull(s)) || `${shortTraceId(s.trace_id, 12)}...`
 }
 
 async function mutate(traceId, spinner, request, done) {
@@ -396,6 +396,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape))
         v-model:status="statusFilter"
         v-model:tag="tagFilter"
         v-model:repo="repoFilter"
+        v-model:feature="featureFilter"
         v-model:trace-id="traceIdInput"
         :scope-options="SCOPE_OPTIONS"
         :range-options="RANGE_OPTIONS"
@@ -408,6 +409,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape))
         :tag-options="tagOptions"
         :repo-options="repoOptions"
         :repo-counts="repoCounts"
+        :feature-current="featureRow"
         :filter-count="filterCount"
         :selection-count="selectionCount"
         :batch-deleting="batchDeleting"
@@ -415,6 +417,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape))
         :closable-count="closableSelected.length"
         @search="runSearch"
         @reset="query.resetFilters(reload)"
+        @feature-picked="query.pickedFeature"
         @batch-delete="batchDelete"
         @batch-close="batchClose"
         @clear-selection="clearSelection"

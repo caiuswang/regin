@@ -2,6 +2,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { dayFromIso, dayToIso, daySerial, formatSpan } from '../utils/dateRange.js'
 import { useCursor } from './useCursor'
 import { useServerClock } from './useServerClock'
+import { useSessionFeatureFilter } from './useSessionFeatureFilter.js'
 import { ACTIVE_STATUSES, STATUS_ORDER, statusLabel } from '../utils/sessionStatus.js'
 
 // Every narrowing axis of the sessions list — its persisted values, its
@@ -79,6 +80,11 @@ function statusChip(list) {
   return { key: 'status', label: `Status: ${words.length} states`, title: words.join(', ') }
 }
 
+function featureChipLabel(id, row) {
+  const title = row && String(row.id) === id ? row.title : ''
+  return `#${id}${title ? ` ${title}` : ''}`
+}
+
 function pad(n) { return String(n).padStart(2, '0') }
 
 function toLocalIso(d) {
@@ -152,6 +158,7 @@ export function useSessionListQuery() {
   // '' means "all".
   const tagFilter = ref(localStorage.getItem(TAG_KEY) || '')
   const repoFilter = ref(localStorage.getItem(REPO_KEY) || 'all')
+  const { featureFilter, featureRow, pickedFeature } = useSessionFeatureFilter()
 
   // Non-interactive runs (`origin` in workflow / llm-stage — the `system`
   // builtin category) are folded away rather than listed one row per agent: a
@@ -199,6 +206,7 @@ export function useSessionListQuery() {
         // and lets the backend apply its 'title' default unchanged.
         scope: activeSearch.value ? searchScope.value : undefined,
         repo: repoFilter.value !== 'all' ? repoFilter.value : undefined,
+        feature_id: featureFilter.value || undefined,
         since,
         until,
       }
@@ -227,6 +235,7 @@ export function useSessionListQuery() {
       tagFilter.value !== DEFAULTS.tag,
       statusFilter.value.length > 0,
       repoFilter.value !== DEFAULTS.repo,
+      Boolean(featureFilter.value),
       Boolean(activeTraceId.value),
     ]
     return on.filter(Boolean).length
@@ -260,6 +269,7 @@ export function useSessionListQuery() {
       out.push({ key: 'tag', label: `Tag: ${tagLabels.value[tagFilter.value] || tagFilter.value}` })
     }
     if (repoFilter.value !== DEFAULTS.repo) out.push({ key: 'repo', label: `Repo: ${repoFilter.value}` })
+    if (featureFilter.value) out.push({ key: 'feature', label: featureChipLabel(featureFilter.value, featureRow.value) })
     if (activeTraceId.value) out.push({ key: 'trace', label: `Trace: ${activeTraceId.value}` })
     return out
   })
@@ -290,6 +300,8 @@ export function useSessionListQuery() {
       [kind, KIND_KEY], [range, RANGE_KEY],
       [tagFilter, TAG_KEY], [repoFilter, REPO_KEY],
     ]
+    // URL-backed, not persisted: useSessionFeatureFilter owns the address.
+    watch(featureFilter, () => { if (!batching) reload() })
     watch(statusFilter, (v) => {
       localStorage.setItem(STATUS_KEY, JSON.stringify(v))
       if (!batching) reload()
@@ -376,6 +388,7 @@ export function useSessionListQuery() {
     status: () => { statusFilter.value = [] },
     tag: () => { tagFilter.value = DEFAULTS.tag },
     repo: () => { repoFilter.value = DEFAULTS.repo },
+    feature: () => { featureFilter.value = '' },
     trace: () => { traceIdInput.value = ''; activeTraceId.value = '' },
   }
 
@@ -397,6 +410,7 @@ export function useSessionListQuery() {
       clearSpan()
       tagFilter.value = DEFAULTS.tag
       repoFilter.value = DEFAULTS.repo
+      featureFilter.value = ''
       runsShown.value = false
       emptyShown.value = false
     }, reload ?? reloadFn)
@@ -406,6 +420,7 @@ export function useSessionListQuery() {
     ...cursor,
     searchInput, activeSearch, traceIdInput, activeTraceId, searchScope,
     kind, statusFilter, range, tagFilter, repoFilter, statusCounts, activeStatusesOn,
+    featureFilter, featureRow, pickedFeature,
     customStart, customEnd, rangeLabel, tagLabels, activeFilters,
     serverClock, tagCounts, repoCounts, totalCount, activeCount, builtinTags,
     hiddenRunCount, runsShown, hiddenEmptyCount, emptyShown,

@@ -3,11 +3,46 @@
 // complexity thresholds and so the desktop and mobile renderings can never
 // disagree about what a row *says*.
 import { parseLocalIso } from './sessionActivity.js'
+import { taskTitle } from './taskTitle.js'
 
 export function titlePreview(title, cap = 70) {
   if (!title) return ''
   const firstLine = title.split('\n')[0].trim()
   return firstLine.length > cap ? firstLine.slice(0, cap) + '…' : firstLine
+}
+
+// The title a row shows: the server-resolved `display_title` (stored title,
+// else the launching task's, else the first prompt), newlines collapsed so
+// a skill-name first line is followed by the prompt it introduced. Length is
+// left to the CSS 2-line clamp.
+// Task titles (and the prompts a task run opens with) cite their feature as
+// `[F<id> …](feature:<id>)`; read as words, the way TaskRow shows them.
+export function rowTitleFull(s) {
+  const raw = s?.display_title ?? s?.title
+  return raw ? taskTitle({ title: raw }) : undefined
+}
+
+export function rowTitle(s) {
+  return (rowTitleFull(s) ?? '').replace(/\s+/g, ' ').trim()
+}
+
+function primaryFeature(s) {
+  const features = s?.features || []
+  return features.find(f => f.is_primary) || features[0] || null
+}
+
+export function featureLine(s) {
+  const f = primaryFeature(s)
+  return f ? `#${f.id} ${f.title ?? ''}`.trim() : ''
+}
+
+export function featureMoreLabel(s) {
+  const n = (s?.features || []).length
+  return n > 1 ? `+${n - 1}` : ''
+}
+
+export function featureListTitle(s) {
+  return (s?.features || []).map(f => `#${f.id} ${f.title ?? ''}`.trim()).join('\n')
 }
 
 export function shortTestName(nodeid) {

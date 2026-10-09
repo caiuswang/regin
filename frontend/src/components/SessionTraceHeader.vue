@@ -23,6 +23,7 @@
 // internally. It owns only presentational toggle state and emits intent
 // (`reload`, `jump-to-task`, `update:viewMode`) back to the parent, which
 // still owns the data model.
+import { rowTitleFull } from '../utils/sessionRowFormat.js'
 import { ref, computed } from 'vue'
 import SessionAttribution from './trace/SessionAttribution.vue'
 import RefBacklinks from './refs/RefBacklinks.vue'
@@ -83,13 +84,15 @@ const sessionTitleExpanded = ref(false)
 // page header stays compact. Tooltip on the h1 shows the full text.
 const SESSION_TITLE_MAX = 90
 const SESSION_TITLE_PROMPT_MAX = 72
-const sessionTitleRaw = computed(() => (
-  (props.session?.title || '').replace(/\s+/g, ' ').trim()
+const shownTitle = computed(() => rowTitleFull(props.session) ?? '')
+const shownTitleSource = computed(() => (
+  props.session?.display_title_source ?? props.session?.title_source ?? null
 ))
+const sessionTitleRaw = computed(() => shownTitle.value.replace(/\s+/g, ' ').trim())
 const sessionTitleNeedsExpand = computed(() => {
   const t = sessionTitleRaw.value
   if (!t) return false
-  const max = props.session?.title_source === 'first_prompt'
+  const max = shownTitleSource.value === 'first_prompt'
     ? SESSION_TITLE_PROMPT_MAX
     : SESSION_TITLE_MAX
   return t.length > max
@@ -98,7 +101,7 @@ const sessionTitle = computed(() => {
   const t = sessionTitleRaw.value
   if (!t) return 'Session timeline'
   if (sessionTitleExpanded.value || !sessionTitleNeedsExpand.value) return t
-  const max = props.session?.title_source === 'first_prompt'
+  const max = shownTitleSource.value === 'first_prompt'
     ? SESSION_TITLE_PROMPT_MAX
     : SESSION_TITLE_MAX
   return t.slice(0, max) + '…'
@@ -175,6 +178,7 @@ function titleSourceLabel(src) {
   if (src === 'first_prompt') return 'prompt'
   if (src === 'workflow_name') return 'workflow'
   if (src === 'user') return 'user'
+  if (src === 'task') return 'task'
   return src
 }
 function titleSourceTooltip(src) {
@@ -183,6 +187,7 @@ function titleSourceTooltip(src) {
   if (src === 'first_prompt') return 'Derived from the first user prompt — Claude has not posted an ai-title yet.'
   if (src === 'workflow_name') return 'The workflow’s name (`meta.name` from its script) — the canonical identifier for a dynamic-workflow run. Its objective is shown as the opening bubble.'
   if (src === 'user') return 'Manually set via the regin API; not overwritten by Claude.'
+  if (src === 'task') return `The title of the regin task whose run produced this session (task #${props.session?.task?.id ?? '?'}). Claude has not posted an ai-title yet.`
   return src
 }
 </script>
@@ -247,7 +252,7 @@ function titleSourceTooltip(src) {
              page heading for most of the session. -->
         <h1
           class="min-w-0 truncate text-sm font-semibold text-slate-800"
-          :title="session.title || ''"
+          :title="shownTitle"
         >{{ sessionTitle }}</h1>
         <TraceProjectChip compact :session="session" />
         <span
@@ -299,12 +304,12 @@ function titleSourceTooltip(src) {
              this. -->
         <h1
           class="text-2xl font-semibold text-slate-900 leading-tight m-0 break-words min-w-0"
-          :title="session.title || ''"
+          :title="shownTitle"
         >{{ sessionTitle }}<span
-          v-if="session.title && session.title_source"
+          v-if="shownTitle && shownTitleSource"
           class="ml-2 align-middle inline-block text-slate-400 text-[10px] font-medium px-1 uppercase tracking-wide"
-          :title="titleSourceTooltip(session.title_source)"
-        >{{ titleSourceLabel(session.title_source) }}</span></h1>
+          :title="titleSourceTooltip(shownTitleSource)"
+        >{{ titleSourceLabel(shownTitleSource) }}</span></h1>
         <span
           data-testid="session-status-pill"
           class="mt-1 shrink-0 inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-0.5 text-[11px] font-semibold"

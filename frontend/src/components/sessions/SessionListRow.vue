@@ -10,7 +10,8 @@ import { fmtRelativeAge, sessionLivenessWithClock, serverAgeMs } from '../../uti
 import { phaseLabel, statusOfRow, statusLabel as labelOf } from '../../utils/sessionStatus.js'
 import {
   activityMoreLabel, activityMoreTitle, fmtDuration, otherRepoTitle,
-  primaryRepo, shortTestName, timeTitle, titlePreview, totalMs,
+  featureLine, featureListTitle, featureMoreLabel, primaryRepo, rowTitle,
+  rowTitleFull, shortTestName, timeTitle, totalMs,
 } from '../../utils/sessionRowFormat.js'
 import { useCopy } from '../../composables/useCopy.js'
 import Button from '../ui/Button.vue'
@@ -95,8 +96,12 @@ const statusTitle = computed(() => {
     </div>
 
     <div class="srow__cell srow__ident">
-      <router-link :to="`/trace/sessions/${s.trace_id}`" class="srow__title" :title="s.title || undefined">
-        <span v-if="s.title">{{ titlePreview(s.title) }}</span>
+      <div v-if="featureLine(s)" class="srow__feature" data-testid="session-feature-line" :title="featureListTitle(s)">
+        <span class="srow__feature-text">{{ featureLine(s) }}</span>
+        <span v-if="featureMoreLabel(s)" class="srow__feature-more">{{ featureMoreLabel(s) }}</span>
+      </div>
+      <router-link :to="`/trace/sessions/${s.trace_id}`" class="srow__title" :title="rowTitleFull(s)">
+        <span v-if="rowTitle(s)" class="srow__title-text">{{ rowTitle(s) }}</span>
         <span v-else class="srow__title-empty">no prompt</span>
       </router-link>
       <div class="srow__meta">
@@ -266,11 +271,34 @@ const statusTitle = computed(() => {
   display: block;
   font-size: 0.8125rem;
   font-weight: 600;
-  overflow: hidden;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
   text-decoration: none;
+}
+.srow__title-text {
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  display: -webkit-box;
+  line-clamp: 2;
+  overflow: hidden;
+}
+.srow__feature {
+  align-items: baseline;
+  color: var(--color-fg-muted);
+  display: flex;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  gap: 0.25rem;
+  line-height: 1.25;
+  min-width: 0;
+}
+.srow__feature-text {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.srow__feature-more { color: var(--color-fg-faint); flex-shrink: 0; }
 .srow__title:hover { color: var(--color-blue-800); text-decoration: underline; }
 .srow__title:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 2px; border-radius: 0.25rem; }
 .srow__title-empty { color: var(--color-fg-faint); font-style: italic; font-weight: 400; }

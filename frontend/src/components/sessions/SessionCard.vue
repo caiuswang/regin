@@ -6,7 +6,10 @@ import { computed } from 'vue'
 import { shortTraceId } from '../../utils/traceFormatters.js'
 import { fmtRelativeAge, sessionLivenessWithClock, serverAgeMs } from '../../utils/sessionActivity.js'
 import { statusOfRow, statusLabel as labelOf } from '../../utils/sessionStatus.js'
-import { fmtDuration, primaryRepo, timeTitle, titlePreview, totalMs } from '../../utils/sessionRowFormat.js'
+import {
+  featureLine, featureListTitle, featureMoreLabel, fmtDuration, primaryRepo,
+  rowTitle, rowTitleFull, timeTitle, totalMs,
+} from '../../utils/sessionRowFormat.js'
 import Button from '../ui/Button.vue'
 import Checkbox from '../ui/Checkbox.vue'
 import SessionTags from '../SessionTags.vue'
@@ -52,10 +55,16 @@ const repo = computed(() => primaryRepo(props.s))
         :aria-label="`Select session ${shortTraceId(s.trace_id)}`"
       />
       <SessionAgentIcon :s="s" size="sm" />
-      <router-link :to="`/trace/sessions/${s.trace_id}`" class="scard__title focus-visible:outline-2 focus-visible:outline-blue-500">
-        <span v-if="s.title">{{ titlePreview(s.title, 90) }}</span>
-        <span v-else class="scard__title-empty">no prompt</span>
-      </router-link>
+      <div class="scard__ident">
+        <div v-if="featureLine(s)" class="scard__feature" data-testid="session-feature-line" :title="featureListTitle(s)">
+          <span class="scard__feature-text">{{ featureLine(s) }}</span>
+          <span v-if="featureMoreLabel(s)" class="scard__feature-more">{{ featureMoreLabel(s) }}</span>
+        </div>
+        <router-link :to="`/trace/sessions/${s.trace_id}`" class="scard__title focus-visible:outline-2 focus-visible:outline-blue-500" :title="rowTitleFull(s)">
+          <span v-if="rowTitle(s)" class="scard__title-text">{{ rowTitle(s) }}</span>
+          <span v-else class="scard__title-empty">no prompt</span>
+        </router-link>
+      </div>
     </div>
 
     <div class="scard__meta">
@@ -162,15 +171,34 @@ const repo = computed(() => primaryRepo(props.s))
   gap: 0.5rem;
 }
 .scard__check { flex: 0 0 auto; margin-top: 0.125rem; }
+.scard__ident { flex: 1 1 auto; min-width: 0; }
 .scard__title {
   color: var(--color-fg);
-  flex: 1 1 auto;
+  display: block;
   font-size: 0.8125rem;
   font-weight: 600;
-  min-width: 0;
+  line-height: 1.3;
   overflow-wrap: anywhere;
   text-decoration: none;
 }
+.scard__title-text {
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  display: -webkit-box;
+  line-clamp: 2;
+  overflow: hidden;
+}
+.scard__feature {
+  color: var(--color-fg-muted);
+  display: flex;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  gap: 0.25rem;
+  line-height: 1.25;
+  min-width: 0;
+}
+.scard__feature-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scard__feature-more { color: var(--color-fg-faint); flex-shrink: 0; }
 .scard__title-empty { color: var(--color-fg-faint); font-style: italic; font-weight: 400; }
 
 .scard__meta {

@@ -8,6 +8,7 @@ import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
 import Input from '../ui/Input.vue'
 import Popover from '../ui/Popover.vue'
+import FeaturePicker from '../pipeline/FeaturePicker.vue'
 import SessionFilterChips from './SessionFilterChips.vue'
 import { canonicalStatuses } from '../../composables/useSessionListQuery.js'
 
@@ -18,14 +19,16 @@ const props = defineProps({
   repoOptions: { type: Array, default: () => [] },
   repoCounts: { type: Object, default: () => ({}) },
   activeCount: { type: Number, default: 0 },
+  featureCurrent: { type: Object, default: null },
 })
 
-const emit = defineEmits(['reset', 'commit-trace-id'])
+const emit = defineEmits(['reset', 'commit-trace-id', 'feature-picked'])
 
 const kind = defineModel('kind', { type: String, default: 'real' })
 const status = defineModel('status', { type: Array, default: () => [] })
 const tag = defineModel('tag', { type: String, default: '' })
 const repo = defineModel('repo', { type: String, default: 'all' })
+const feature = defineModel('feature', { type: String, default: '' })
 const traceId = defineModel('traceId', { type: String, default: '' })
 
 const open = ref(false)
@@ -94,6 +97,19 @@ const tagChips = computed(() => props.tagOptions
         :options="tagChips"
         search-placeholder="Search tags…"
       />
+
+      <!-- Not a <label>: a label re-clicks its first labelable descendant, which after a pick is the chip's clear button. -->
+      <div class="facet">
+        <span class="facet__label">Feature</span>
+        <FeaturePicker
+          v-model="feature"
+          :current="featureCurrent"
+          label="Filter by feature"
+          placeholder="Search features…"
+          testid="session-filter-feature"
+          @picked="(row) => emit('feature-picked', row)"
+        />
+      </div>
 
       <div class="facet">
         <label class="facet__label" for="filters-trace-id">Trace ID</label>

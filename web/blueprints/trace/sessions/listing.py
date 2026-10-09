@@ -560,6 +560,7 @@ class _SessionListQuery:
         if self.trace_id_q and self.empty == 'hide':
             self.empty = 'show'
         self.tag_slugs = _parse_tag_filter()
+        self.feature_id = _parse_feature_id()
         self.hidden_alias_ids = ()
 
     @property
@@ -618,6 +619,7 @@ class _SessionListQuery:
             s = s.where(search_clause(self.search, self.scope))
         if not skip_date:
             s = self._apply_dates(s)
+        s = _apply_feature_filter(s, self.feature_id)
         if skip_repo:
             return s
         return _filter_sessions_by_repo(s, self.repo)
@@ -645,6 +647,39 @@ class _SessionListQuery:
                 s, skip_repo=skip_repo, skip_status=skip_status)),
                          self.empty),
             self.tag_slugs)
+
+
+def _parse_feature_id():
+    raw = (request.args.get('feature_id') or '').strip().lstrip('#')
+    return int(raw) if raw.isdigit() else None
+
+
+def _apply_feature_filter(stmt, feature_id):
+    """Sessions attributed to `feature_id` — the same set the row's feature
+    line reads (declared ∪ run lane)."""
+    if feature_id is None:
+        return stmt
+    from sqlalchemy import column as _column, text as _text
+    from lib.features.session_display import feature_member_traces_sql
+    members = _text(feature_member_traces_sql()).bindparams(
+        feature_id=feature_id).columns(_column('trace_id'))
+    return stmt.where(SessionModel.trace_id.in_(members))
+
+
+def _attach_display_fields(items) -> None:
+    """`task`, `features`, `display_title`/`display_title_source` per row,
+    two bulk reads for the page."""
+    from lib.features import session_display
+    ids = [it.get('trace_id') for it in items if it.get('trace_id')]
+    tasks = session_display.tasks_for_sessions(ids)
+    features = session_display.features_for_sessions(ids)
+    for it in items:
+        tid = it.get('trace_id')
+        it['task'] = tasks.get(tid)
+        it['features'] = features.get(tid, [])
+        it['display_title'], it['display_title_source'] = (
+            session_display.display_title(
+                it.get('title'), it.get('title_source'), it['task']))
 
 
 def _count_stmt():
@@ -776,6 +811,9 @@ def api_sessions():
                            `workflow_hidden_count` — the number of run-origin
                            rows the same other filters would have matched —
                            for a pivot hint.
+      feature_id=<id>    — only sessions attributed to that feature (declared
+                           or through a task run), ANDed with every filter
+                           and applied to every facet count.
       cursor, size       — keyset pagination (see lib.utils.pagination)
     """
     from sqlmodel import select as _select
@@ -796,6 +834,7 @@ def api_sessions():
         )
         _attach_session_repos(session, page.items)
         _attach_session_tags(session, page.items)
+    _attach_display_fields(page.items)
     envelope = page.to_envelope()
     envelope['sessions'] = envelope['items']  # legacy field
     envelope['search'] = q.search

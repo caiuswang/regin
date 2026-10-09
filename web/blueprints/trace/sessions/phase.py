@@ -224,6 +224,14 @@ def _workflow_total_tokens(trace_id: str) -> int | None:
     return int(row[0]) if row and row[0] is not None else None
 
 
+def _display_title_fields(trace_id, title, title_source) -> dict:
+    """The same resolved title the session list serves for this row."""
+    from lib.features import session_display
+    task = session_display.tasks_for_sessions([trace_id]).get(trace_id)
+    shown, source = session_display.display_title(title, title_source, task)
+    return {'task': task, 'display_title': shown, 'display_title_source': source}
+
+
 def _session_repo_name(trace_id: str, cwd) -> str | None:
     """Short repo label for the session header: the primary registered repo
     name, falling back to the basename of the session cwd."""
@@ -507,6 +515,7 @@ def _session_summary(trace_id: str, roster=None, activity=None) -> dict:
             '%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z',
         'title': title,
         'title_source': title_source,
+        **_display_title_fields(group[0], title, title_source),
         # Same axis the sessions list exposes (origin == 'workflow'): a
         # workflow run's turn_usage rows are per-agent API responses, so the
         # trace view must not read them as user-prompt turns.
