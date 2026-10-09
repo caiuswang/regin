@@ -61,6 +61,7 @@ const statusTitle = computed(() => {
       ? 'regin is holding this run and it is waiting for your prompt'
       : `reported by the runner regin launched: ${phaseLabel(props.s.runner_phase)}`
   }
+  if (status.value === 'idle') return 'Its last turn ended — waiting at the prompt'
   if (liveness.value === 'closed') return 'Manually closed'
   if (liveness.value === 'ended') {
     return props.s.ended_reason ? `reason: ${props.s.ended_reason}` : 'SessionEnd fired'

@@ -82,12 +82,28 @@ def _payload_effort_level(payload: HookPayload) -> str | None:
     return None
 
 
-def _post_turn_model_span(trace_id: str, model: str) -> None:
+def _turn_span_attrs(payload: HookPayload, model: str) -> dict:
+    """The `turn` span doubles as the turn boundary the session status reads
+    (web/blueprints/trace/sessions/turn_state.py): `hook_event` says whether it
+    opened or closed one, and a Stop counts the delegated work it leaves in
+    flight. Backgrounded shells are excluded — a dev server left running is
+    not the agent waiting on anything."""
+    attrs = {'model': model, 'hook_event': payload.event}
+    snapshot = (payload.raw or {}).get('background_tasks')
+    if payload.event == 'Stop' and isinstance(snapshot, list):
+        attrs['delegated_in_flight'] = sum(
+            1 for t in snapshot if isinstance(t, dict) and t.get('type') != 'shell')
+    return attrs
+
+
+def _post_turn_model_span(payload: HookPayload, model: str,
+                          marks_boundary: bool = True) -> None:
     from lib.hook_plugin import post_span  # type: ignore
     post_span(
-        trace_id=trace_id,
+        trace_id=payload.session_id,
         name='turn',
-        attributes={'model': model},
+        attributes=(_turn_span_attrs(payload, model) if marks_boundary
+                    else {'model': model}),
     )
 
 
@@ -264,7 +280,7 @@ def _emit_span(payload: HookPayload) -> None:
         # `turn` span lands before the full parse) plus the session-title span.
         model = _latest_turn_model(transcript_path)
         if model:
-            _post_turn_model_span(payload.session_id, model)
+            _post_turn_model_span(payload, model)
         _emit_session_title_if_changed(payload.session_id, transcript_path)
         _ingest_transcript_usage(payload.session_id, transcript_path, model, provider,
                                  effort_level=effort)
@@ -275,8 +291,10 @@ def _emit_span(payload: HookPayload) -> None:
         model, last_turn = _ingest_transcript_usage(
             payload.session_id, transcript_path, None, provider,
             effort_level=effort)
+        # Not a turn boundary: Kimi fires a parent Stop ahead of every
+        # SubagentStop, mid-turn, so its Stop cannot say the agent parked.
         if model and _turn_span_wanted(payload, model, last_turn):
-            _post_turn_model_span(payload.session_id, model)
+            _post_turn_model_span(payload, model, marks_boundary=False)
 
 
 def _emit_assistant_response_only(payload: HookPayload) -> None:

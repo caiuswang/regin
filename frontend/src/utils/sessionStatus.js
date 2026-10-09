@@ -151,9 +151,10 @@ const PHASE_STATUS = {
 // The client-side recency verdict (`sessionLiveness` in sessionActivity.js),
 // which is what the surfaces without a runner phase have. Its `idle` is the
 // OPPOSITE of the server's: it means "nothing ingested for over 10 minutes",
-// i.e. this vocabulary's `inactive`. And its `active` can only ever be
-// `working`: recency proves spans arrived recently, never that the agent is
-// sitting at the prompt — only a runner knows that.
+// i.e. this vocabulary's `inactive`. Its `active` maps to `working` only as
+// the fallback: recency proves spans arrived recently, never that the agent is
+// mid-turn — the runner or the session's own turn boundaries decide that
+// (`statusOfRow`).
 const LIVENESS_STATUS = {
   active: 'working',
   idle: 'inactive',
@@ -234,9 +235,12 @@ export function statusOfRow(row, liveness) {
   if (liveness === 'ended' || liveness === 'closed') {
     return statusFromLiveness(liveness)
   }
-  return row?.runner_phase
-    ? statusFromPhase(row.runner_phase)
-    : statusFromLiveness(liveness)
+  if (row?.runner_phase) return statusFromPhase(row.runner_phase)
+  // Recency proves the session is alive, not that a turn is in flight; the
+  // server's `turn_state` (the session's own prompt/Stop boundaries) is what
+  // tells the two apart. Absent when no Stop was ever recorded.
+  if (liveness === 'active' && row?.turn_state === 'idle') return 'idle'
+  return statusFromLiveness(liveness)
 }
 
 // The list's status facet offers every key of STATES in attention order — the

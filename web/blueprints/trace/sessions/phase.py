@@ -15,6 +15,7 @@ from web.blueprints.trace.sessions.common import (
     _alias_group_ids, _group_ended_reason,
 )
 from web.blueprints.trace.sessions.roster import _roster_with_activity
+from web.blueprints.trace.sessions.turn_state import turn_state
 
 
 # ── Per-agent phase (server verdict) ─────────────────────────────────
@@ -457,6 +458,9 @@ def _session_summary(trace_id: str, roster=None, activity=None) -> dict:
         # traces; `phase` above is always present and is the richer,
         # heuristic-backed rollup the /live card renders.
         'runner_phase': _owned_run_phase(trace_id),
+        # Mid-turn or parked, from the session's own turn boundaries — what
+        # the list's recency fallback reads, so the header agrees with it.
+        'turn_state': turn_state(group[0]),
         'repo': _session_repo_name(trace_id, cwd),
         # The working directory the session ran in. `repo` is only the short
         # label; the header shows the path itself, which is what tells two

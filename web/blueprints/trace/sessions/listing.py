@@ -18,6 +18,7 @@ from lib.trace.alias import aliased_run_ids
 from lib.trace.session_search import search_clause
 from web.blueprints.trace import trace_bp
 from web.blueprints.trace.sessions.phase import _owned_run_phase
+from web.blueprints.trace.sessions.turn_state import turn_state_expr
 
 
 def _filter_sessions_by_repo(stmt, repo_name):
@@ -84,7 +85,9 @@ def _row_status_expr(phases=None, now=None):
       retired, so the runner still answers for an ended row;
       a run regin owns is its runner's verdict, never recency — an agent
       parked at the prompt emits no spans;
-      everything else is recency: seen in the last 10 minutes is `working`.
+      everything else is recency: seen in the last 10 minutes is alive, and
+      its turn boundaries (`turn_state_expr`) say `idle` or `working` —
+      recency alone cannot tell a turn in flight from an agent at the prompt.
       A session whose SessionEnd never fired keeps status='active' forever,
       which is why the marker alone is not trusted.
     """
@@ -99,7 +102,9 @@ def _row_status_expr(phases=None, now=None):
              (ended, 'ended')]
     whens += [(SessionModel.trace_id.in_(ids), status)
               for status, ids in sorted(by_status.items())]
-    whens.append((SessionModel.last_seen >= cutoff_iso, 'working'))
+    recent = SessionModel.last_seen >= cutoff_iso
+    whens.append((_and(recent, turn_state_expr() == 'idle'), 'idle'))
+    whens.append((recent, 'working'))
     return _case(*whens, else_='inactive')
 
 
@@ -515,6 +520,7 @@ def _session_list_columns():
         SessionModel.context_window_tokens,
         SessionModel.active_work_ms,
         SessionModel.cost_usd,
+        turn_state_expr().label('turn_state'),
     )
 
 
