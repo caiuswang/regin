@@ -1,97 +1,94 @@
 # regin
 
-**Harness infrastructure for AI coding agents.**
+**A workbench for building software with AI coding agents.**
+Plan the feature, run the agents, see what they did, count what they got wrong.
 
 🌐 **[regin.ccday.top](https://regin.ccday.top)** — the official project site.
 
 > ⚠️ **Early beta.** regin is under active development and breaking changes are expected at any time. Database schemas, settings keys, hook contracts, skill bundles, and CLI flags may all change without backward-compatible shims. Pin a commit if you need stability.
 
-regin is not an agent platform. It's the layer *around* an agent — the **harness**. The framing that crystallized this for the community is *Agent = Model + Harness* ([LangChain: The Anatomy of an Agent Harness](https://www.langchain.com/blog/the-anatomy-of-an-agent-harness)), and Birgitta Böckeler's [Harness Engineering for coding agent users](https://martinfowler.com/articles/harness-engineering.html) is the clearest write-up of what that means in practice. regin is the harness half.
+regin runs one loop around the coding agent you already use:
 
-A harness turns a non-deterministic model into a teammate you can trust on real work. It does this through two complementary mechanisms:
+```
+Spec  →  Run  →  Watch  →  Count
+ │        │        │         └─ defects declared against the done-claim; rounds-to-done per feature
+ │        │        └─ every session traced: tools, edits, tokens, time, grades
+ │        └─ task runs launched on Claude or Kimi, steered and stopped from /live
+ └─ a feature row carries the spec, its acceptance tests, and the slices cut from it
+```
 
-- **Guides (feedforward)** — skills and docs that steer the agent *before* it acts.
-- **Sensors (feedback)** — hooks that observe the agent *as* it acts, and force corrections when it drifts.
+It is organized in four layers. The first two are where you spend the day; the last two make the runs inspectable and keep the agent on-spec.
 
-regin gives you both, plus the observability to know whether either is actually working.
+| Layer | What it covers | Dashboard |
+|---|---|---|
+| [Workbench](#workbench--features-tasks-defects) | feature → spec → acceptance tests → tasks → done-claim; the defect ledger | `/overview` (Pipeline), `/inbox` |
+| [Runs](#runs--launch-steer-hear-back) | launching task runs, steering live sessions, the agent's messages back to you | `/live`, `/inbox` |
+| [Observability](#observability--what-the-agents-actually-did) | session traces, time and cost analytics, post-hoc grades, audit | `/trace`, `/audit` |
+| [Guidance](#guidance--what-steers-the-agent) | patterns & skills, rule engines in hooks, cross-session memory, topic wikis | `/patterns`, `/rules`, `/memory`, `/repos/:name/topics` |
 
-## What regin provides
+## Workbench — features, tasks, defects
 
-### Pattern & skill management — the feedforward layer
+A **feature** is a row. Its spec lives on that row (or on its tracker issue when the feature is tracked remotely), and its acceptance items are named tests in the repo — red before the build, green at ship. The spec is cut into **slices**; each slice becomes a **task** with its dependencies, and tasks run in dependency order. When the work is called done, that is a **done-claim**, and anything found wrong afterwards is a **defect** declared against the feature.
 
-regin's feedforward layer has two stages, raw → refined:
+The number the pipeline is held to is **rounds-to-done**: one build plus each time a done-claim was walked back. Only declarations feed it — nothing is inferred from prose, branch names or timing.
 
-- **Patterns** are local procedure guides written or imported by you. Add a guide for a recurring implementation shape — a controller, a repository, a migration test, whatever convention you want the agent to follow — and regin tracks it, tags it, and deploys it into the active provider's skills directory. Patterns are the raw material: opinionated, local to your machine, edited as your codebase evolves.
-- **Skills** are the promoted, versioned, shareable form. When a pattern earns its keep, `pattern promote` packages it as a versioned skill bundle that can be published, deployed across machines, and surfaced to the agent only when its trigger conditions match — not as static prose the agent has to re-read every session.
+- Dashboard: `/overview` is the Pipeline — Overview, Features and Tasks behind one tab strip; defects are reached from the Overview and the Features triage rail. `/features/:id` is a feature's ledger.
+- CLI: `regin feature` (where a feature stands and what it cost), `regin task` (capture, inspect, check a slice table); runs are armed and launched from the dashboard, `regin defects` (what a feature got wrong, and what escaped).
+- Internals: [Feature pipeline](ARCHITECTURE.md#feature-pipeline-features-defects-slices), and [docs/defect-task-feature.md](docs/defect-task-feature.md) for how the three join.
 
-The split matters because the lifecycle differs. Patterns live next to the code they document; skills get cut, reviewed, and shipped on their own cadence. You don't promote everything — only the patterns that have proven worth carrying forward.
+## Runs — launch, steer, hear back
 
-Both are advisory by nature: they shape what the agent *tends* to do.
+A task is **armed** with a provider, a model and a launch mode, then started from the dashboard. Claude runs go through the Python Claude Agent SDK, so regin owns the process and keeps a typed channel to it — an `AskUserQuestion` is answered from the browser rather than by typing into a terminal. Kimi Code runs over ACP or in a tmux pane on regin's own tmux server.
 
-### Rule management — the feedback layer
+- **`/live`** follows a running session: its current state, recent steps, any question it is blocked on, with steer and Stop.
+- **Agent bridge** — a guarded channel that relays a prompt or steering message into a live session's terminal. Off by default; see [docs/setup.md](docs/setup.md#agent-bridge-steer-live-sessions-from-live).
+- **Inbox** — agents report progress, results and lessons through the `send_to_user` tool; messages land in `/inbox` and can fan out to a webhook, Telegram or Lark. CLI: `regin messages`, `regin bridge`.
+- **Mobile card — *experimental*.** `/live` renders a phone-sized card that can answer permission prompts while you are away from the desk. Rough edges and breaking changes are expected; see [docs/agent-bridge-design.md](docs/agent-bridge-design.md).
 
-Rules are the *enforced* half of the harness. They are not documentation the agent is asked to remember. They are real Claude hooks that intercept tool calls, edits, and prompts in flight, evaluate them against your project's invariants, and either push the agent back on-spec or block the action outright.
+Internals: [Agent SDK tier](ARCHITECTURE.md#agent-sdk-tier-regin-launched-sessions), [Provider launch capabilities](ARCHITECTURE.md#provider-launch-capabilities-task-runs-on-a-non-claude-agent), [Agent Messages](ARCHITECTURE.md#agent-messages-send_to_user-inbox).
 
-The point is force, not suggestion. A rule that says "never edit generated files" doesn't live in a doc you hope the agent re-reads — it lives in a `PreToolUse` hook that refuses the Edit and tells the agent why, in the same turn. The agent can't drift past it because the harness, not the agent, makes the call.
+## Observability — what the agents actually did
 
-This closes a gap most setups have: feedforward-only agents encode conventions in prose and then have no way to find out whether the agent honored them. regin's rules turn conventions into enforced control points.
+Hooks and transcripts produce a stream of events: tool calls, model thoughts, file edits, hook decisions, token usage. regin ingests that stream into a session trace you can filter by tool, agent and phase, replay, and roll up (tokens by tool, skill reads, MCP calls).
 
-### Session tracing — the observability layer
+- `/trace/sessions` lists sessions; each opens into a timeline and a conversation view.
+- `regin stats time` shows where build time goes (attended vs. agent vs. human); `regin stats session <trace-id>` ranks why one session was slow; `regin stats sessions` exports per-session rows.
+- `regin grade` scores finished sessions against a rubric. `/audit` is the ops history of regin itself.
 
-Hooks and transcripts produce a stream of events: tool calls, model thoughts, file edits, hook decisions, token usage. The terminal flattens all of that into a scrollback you can't search, slice, or replay. regin's web UI ingests the same stream and gives you a real session viewer — filterable by tool, by agent, by phase; replayable; with rollups (tokens by tool, advisor calls, skill reads) so you can diagnose *why* a session went sideways instead of just noticing that it did.
+Internals: [Turn & Token Tracing](ARCHITECTURE.md#turn--token-tracing), [Session Grader](ARCHITECTURE.md#session-grader-post-hoc-rubric-grades).
 
-Patterns, skills, and rules are guesses about what the agent needs; trace is how you find out which guesses were right.
+## Guidance — what steers the agent
 
-### Mobile remote control — *experimental*
+The supporting layer: what the agent is told before it acts, and what pushes back when it drifts.
 
-> ⚠️ **Experimental, not yet mature.** Rough edges, thin coverage, and breaking changes are expected — treat it as a preview, not something to depend on.
+- **Patterns & skills** — local procedure guides for recurring implementation shapes, deployed into the active provider's skills directory; `regin pattern promote` packages a proven pattern as a versioned skill. Dashboard: `/patterns`, `/skills`.
+- **Rule engines** — GritQL, Radon and bundle checkers wired into `PostToolUse` hooks, so a violation is reported to the agent in the same turn as the edit. Dashboard: `/rules`; CLI: `regin rules`, `regin hooks`.
+- **Agent memory** — lessons captured from past sessions, ranked, consolidated and superseded as they go stale, then recalled into later sessions when they match the task. Dashboard: `/memory`; CLI: `regin memory`.
+- **Topic wikis** — per-repo knowledge as a reviewed graph of topics; an agent proposes drafts, you approve them, and drift detection flags pages whose files have moved on. Dashboard: `/repos/:name/topics`; CLI: `regin topics`, `regin wiki`.
 
-The web UI ships a mobile-first `/live` view: a phone-sized card that tails a running session — the agent's current state, its recent steps, and any question it's blocked on. When the session's terminal is reachable over the **agent bridge** (an HTTP request relayed as guarded keystrokes into the live agent's tmux pane), that card doubles as a remote control: from your phone you can answer the agent's permission prompts and steer it while it runs. See [docs/agent-bridge-design.md](docs/agent-bridge-design.md) for the design.
+Internals: [Patterns](ARCHITECTURE.md#patterns-procedure-guides), [Rule engines](ARCHITECTURE.md#rule-engines), [Agent Memory](ARCHITECTURE.md#agent-memory-cross-session-experience), [docs/topics/proposals.md](docs/topics/proposals.md).
 
-### Agent memory — cross-session learning
+## Quick start
 
-Trace tells you what happened inside one session; **agent memory** is how the lessons from past sessions reach the next one. When a session discovers something worth keeping — a non-obvious root cause, a gotcha, a decision and the reasoning behind it — it's distilled into a lesson (explicitly, when the agent flags one, or automatically by a post-session distiller) and written to a cross-session store that lives *outside* any single prompt. On later tasks the relevant lessons are recalled and injected into context on demand, matched to what the agent is actually doing rather than pasted in wholesale.
+```bash
+git clone https://github.com/caiuswang/regin && cd regin
+./scripts/setup.sh
+.venv/bin/python cli/regin.py serve      # dashboard on http://localhost:8321
+```
 
-The store is curated, not an append-only log: lessons are ranked by usefulness, reinforced when they actually get recalled, de-duplicated and consolidated in an offline pass, and superseded or retired as they go stale — all browsable, searchable, and human-approvable from the web UI. The payoff is a harness that sharpens with use: the mistake one session made becomes the guidance the next session starts with. See [ARCHITECTURE.md](ARCHITECTURE.md#agent-memory-cross-session-experience) for internals.
-
-### Topic wikis — per-repo knowledge
-
-Each registered repo gets its own topic wiki: a store of repo-specific knowledge (architecture notes, gotchas, conventions, runbooks) organized as a graph of topics that lives alongside the code rather than in the agent's prompt. Topics aren't prose you hand-maintain: a tool-using agent explores the repo and *proposes* draft topics, you review them — with an optional agentic review note that checks each draft against the live code — and approve them into the graph, and every approved topic carries a wiki page kept honest by content-drift detection that flags pages whose underlying files have moved on.
-
-At task time, topics are routed to the agent by keyword match over the approved graph and pulled into context on demand — only the slices that touch what it's doing right now, instead of being statically pasted in. The goal is simple: keep the knowledge each repo has accumulated *with* that repo, as a reviewable, self-refreshing artifact rather than prose that quietly rots.
-
-## Run a task with Kimi
-
-A task can be armed on Kimi Code instead of Claude.
-
-1. **Install and sign in.** `kimi` on `PATH` (`regin doctor` lists it under *Task launch providers*), then `kimi login` once.
-2. **Arm.** In the task's arm panel pick **Kimi Code** in the provider picker; it is greyed out, naming the missing binary, when `kimi` isn't installed. Only the fields Kimi declares are shown (a model id, free text) — no permission mode or effort.
-3. **Pick a launch.**
-   - **ACP** — regin drives `kimi acp` as a child of `regin serve`. Stopping or restarting the server ends the run.
-   - **tmux** — `kimi` runs in a tmux session on regin's own tmux server, so a `regin serve` restart does not interrupt it.
-4. **Watch it.** The run shows on `/live` like any session, with steer and Stop. To look at the pane itself, attach to regin's tmux server (socket `regin-bridge` by default, `settings.agent_bridge.attach_socket`): `tmux -L regin-bridge attach -t task-<task id>-a<attempt>`. Detach with `Ctrl-b d`; closing your client never ends the session.
-
-Known limits:
-
-- Runs are unattended: panes start with `--yolo`, and an ACP run answers approval and question requests with `cancelled`.
-- A steer into a running turn is cancel-then-re-prompt; the ACP protocol exposes no mid-turn injection.
-- `codex` and `generic` cannot be armed — arming them is refused rather than run as Claude.
-- `/live` can launch and Resume Kimi sessions over ACP, but its *terminal* session type still opens only Claude.
-- A new worktree needs Kimi's workspace trust; regin writes the record before launch, so no Trust dialog should appear.
-
-Design and the per-provider declaration: *Provider launch capabilities* in [ARCHITECTURE.md](ARCHITECTURE.md).
-
-## What regin is not
-
-Not a chat UI, not an agent runtime, not a model. It assumes you already have an agent and a codebase, and it makes that pairing more productive. The question regin answers is *"how do I keep this agent on-spec across a real team and a real repo,"* not *"how do I run an agent."*
+Manual setup, settings, server mode and the CLI reference: [docs/setup.md](docs/setup.md).
 
 ## Supported agents
 
-**Claude only, today.** regin's rule layer depends on hooks deep enough to intercept tool calls, edits, and prompts in flight — and Claude is currently the only widely-available agent with a hook system mature enough to support that. Codex and others are scaffolded as provider stubs (see [docs/setup.md](docs/setup.md#agent-provider-architecture)) but are not yet wired through the rule layer; we'd rather support one agent well than four agents badly.
+| Agent | Status |
+|---|---|
+| Claude Code | Full: hooks, rule engines, trace, memory, and task runs through the Agent SDK. |
+| Kimi Code | Task runs only (ACP or tmux), with known limits — runs are unattended and a steer is cancel-then-re-prompt. See [Run a task with Kimi](docs/setup.md#run-a-task-with-kimi). |
+| Codex, generic | Provider adapters exist; cannot be armed for task runs. See [Agent provider architecture](docs/setup.md#agent-provider-architecture). |
 
-## Getting started
+## What regin is not
 
-Install, configure, and run regin: [docs/setup.md](docs/setup.md).
+Not a chat UI, not a model, not a hosted service. It assumes you already have a coding agent and a codebase, and runs locally beside them.
 
 ## Acknowledgements
 
@@ -101,11 +98,12 @@ Install, configure, and run regin: [docs/setup.md](docs/setup.md).
 
 ## Further reading
 
-- [docs/setup.md](docs/setup.md) — install, configuration, modes, CLI reference, troubleshooting.
-- [ARCHITECTURE.md](ARCHITECTURE.md) — system internals, module layout, procedure types, rule engines.
-- [docs/spec-notation.md](docs/spec-notation.md) — the notation regin specs are written in: types, state machines, decision tables and invariants instead of prose, worked through on Task, Feature Ledger and Session.
-- [docs/defect-task-feature.md](docs/defect-task-feature.md) — how a defect, a task and a feature join: the feature key is the only edge, which key a task holds, and the scopes a reported defect is readable in.
+- [docs/setup.md](docs/setup.md) — install, configuration, modes, Kimi task runs, CLI reference, troubleshooting.
+- [ARCHITECTURE.md](ARCHITECTURE.md) — system internals, module layout, each subsystem's contracts.
+- [CONTEXT.md](CONTEXT.md) — the glossary: what a feature, a plan and "done" mean here.
+- [docs/spec-notation.md](docs/spec-notation.md) — the notation regin specs are written in: types, state machines, decision tables and invariants instead of prose.
+- [docs/defect-task-feature.md](docs/defect-task-feature.md) — how a defect, a task and a feature join.
 - [docs/topics/proposals.md](docs/topics/proposals.md) — topic graph proposals via external tool-using agents.
 - [docs/topics/multi-user.md](docs/topics/multi-user.md) — sharing approved topics across users via git without a shared database.
-- [website/README.md](website/README.md) — the standalone Vue 3 marketing/docs site (own build and deploy target).
+- [website/README.md](website/README.md) — the standalone Vue 3 marketing/docs site.
 - [CLAUDE.md](CLAUDE.md) — instructions for AI agents working in this codebase.

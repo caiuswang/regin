@@ -7,32 +7,42 @@ This doc is the **stable map + boundaries**: module layout, database, config, au
 ## How It Works
 
 ```
-Pattern guides (SKILL.md)  +  Rule engines (.grit, …)
-            |                          |
-            v                          v
-   SQLite tracking +  Flask API  +  hook_manager
-                       |
-                       v
-              Vue 3 SPA (frontend/)
-                       |
-                       v
-   Active provider skills dir (Claude default: ~/.claude/skills/)
+              Workbench                      Runs                    Observability
+   feature row ─▶ spec ─▶ slices ─▶ tasks ─▶ armed run ─────────▶  session trace
+        ▲          (features.body)   (DAG)    Claude: Agent SDK      (spans, turns,
+        │                                     Kimi:   ACP / tmux      tokens, grades)
+        │                                        │  ▲                      │
+   defects ◀── done-claim ◀──────────────────────┘  │ steer / stop         │
+   (rounds-to-done)                    /live, agent bridge, inbox ◀────────┘
+                                                    │
+                  Guidance (underneath every run)   ▼
+   patterns & skills ─▶ provider skills dir     hook_manager ◀─ rule engines (Grit, Radon, bundles)
+   agent memory, topic wikis ─▶ recalled into prompts on demand
+
+   All four layers share one Flask API + SQLite store, rendered by the Vue 3 SPA (frontend/).
 ```
 
-regin is a harness for AI coding agents. It manages three asset classes —
-**patterns** (markdown procedure guides), **rule engines** (Grit and friends),
-and **trace** (session + span data) — and deploys them into the active
-provider's skills directory so the agent reads them at the right moment.
+regin is a workbench for building software with AI coding agents. Its four
+layers follow the loop Spec → Run → Watch → Count:
 
-- **Patterns** are user-authored. Create one via the web UI's *New pattern*
-  flow, or import a versioned skill bundle from regin-skillhub. They live as
-  `SKILL.md` files under `$PATTERNS_DIR`, get indexed in SQLite, and get
-  deployed via `lib/skills/skill_deployer.py`.
-- **Rule engines** (`lib/rule_engines/`) plug structural lints / rewriters
-  into `PostToolUse` hooks. The Grit adapter is built in; new engines slot
-  next to it.
-- **Trace** ingests hook events and renders sessions, turns, token rollups,
-  and skill-read correlation.
+- **Workbench** — a feature row holds the spec; slices become tasks in a
+  dependency DAG; a done-claim that is walked back counts a round, and defects
+  are declared against the feature. See
+  [Feature pipeline](#feature-pipeline-features-defects-slices).
+- **Runs** — a task is armed with a provider and launched: Claude through the
+  [Agent SDK tier](#agent-sdk-tier-regin-launched-sessions), Kimi over ACP or
+  tmux ([Provider launch capabilities](#provider-launch-capabilities-task-runs-on-a-non-claude-agent)).
+  Live sessions are steered through the [Agent Bridge](#agent-bridge-humansystem--live-agent)
+  and report back through [Agent Messages](#agent-messages-send_to_user-inbox).
+- **Observability** — hook events and SDK messages project onto one span shape
+  and become the session trace, turn/token rollups and post-hoc grades. See
+  [Turn & Token Tracing](#turn--token-tracing),
+  [Skill Invocation Tracing](#skill-invocation-tracing) and
+  [Session Grader](#session-grader-post-hoc-rubric-grades).
+- **Guidance** — [patterns](#patterns-procedure-guides) deploy into the active
+  provider's skills directory, [rule engines](#rule-engines) run in
+  `PostToolUse` hooks, and [agent memory](#agent-memory-cross-session-experience)
+  and topic wikis are recalled into context when they match the task.
 
 ## Module Layout
 

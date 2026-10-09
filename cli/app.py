@@ -24,7 +24,7 @@ from cli.commands import bridge, db, defects, events, feature, gate, goal, grade
 
 app = typer.Typer(
     name="regin",
-    help="Pattern reference system for AI Agents",
+    help="A workbench for building software with AI coding agents: features, task runs, traces and guidance",
     no_args_is_help=True,
     add_completion=False,
     pretty_exceptions_enable=False,

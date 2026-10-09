@@ -1,7 +1,7 @@
 # regin
 
-A harness for AI coding agents. This glossary fixes the words the harness's own
-pipeline uses — what a feature is, what a plan is, what counts as done — so two
+A workbench for building software with AI coding agents. This glossary fixes the
+words regin's own pipeline uses — what a feature is, what a plan is, what counts as done — so two
 sessions arguing about the same thing use the same noun for it.
 
 Definitions only. How any of it is stored or enforced belongs in

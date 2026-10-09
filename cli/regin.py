@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""regin: Pattern reference system for AI Agents.
+"""regin: A workbench for building software with AI coding agents.
 
 Thin entrypoint. The real command definitions live under
 `cli/commands/` and the Typer app is assembled in `cli/app.py`.

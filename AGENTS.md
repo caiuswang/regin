@@ -1,6 +1,6 @@
-# AGENTS.md
+# Agent instructions
 
-regin is a harness for AI coding agents: local pattern guides, lint/rewrite engines wired into hooks, and a session-trace UI. See `README.md` for setup, `ARCHITECTURE.md` for internals. This file is a verbatim mirror of `CLAUDE.md`.
+regin is a workbench for building software with AI coding agents: a feature pipeline (spec → tasks → done-claim → defects), task runs launched and steered on Claude or Kimi, session traces, and the guidance layer (patterns, hook-enforced rule engines, cross-session memory) underneath. See `README.md` for setup, `ARCHITECTURE.md` for internals. `CLAUDE.md` and `AGENTS.md` are byte-identical copies, one per agent convention; edit both.
 
 ## Discipline
 When you have enough information to act, act. Do not re-derive facts already established
