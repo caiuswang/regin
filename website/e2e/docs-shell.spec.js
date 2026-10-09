@@ -60,7 +60,7 @@ test('STAGE SELECT counts and jumps', async ({ page }) => {
   const chip = chips.filter({ hasText: '06Defects' })
   await expect(chip).toHaveText('06Defects')
   await chip.click()
-  const defects = page.locator('#defects')
+  const defects = page.locator('#s-defects')
   await expect.poll(() => defects.evaluate((el) => Math.round(el.getBoundingClientRect().top))).toBe(76)
 })
 
@@ -123,7 +123,7 @@ test('dark only: no theme toggle, no data-theme', async ({ page }) => {
 })
 
 test('a hash deep link lands its section 76px below the viewport top', async ({ page }) => {
-  await page.goto('/pipeline#defects')
-  const defects = page.locator('#defects')
+  await page.goto('/pipeline#s-defects')
+  const defects = page.locator('#s-defects')
   await expect.poll(() => defects.evaluate((el) => Math.round(el.getBoundingClientRect().top))).toBe(76)
 })

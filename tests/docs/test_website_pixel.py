@@ -162,7 +162,6 @@ def test_imported_pixel_shots_exist():
             assert target.is_file(), f"{src.relative_to(ROOT)} imports a missing shot {target.name}"
 
 
-@pytest.mark.xfail(strict=True, reason="pre-pixel views still import the old shots until F154 S5 replaces them")
 def test_site_imports_only_pixel_shots():
     imports = _imported_images()
     assert imports, "the site imports no screenshots at all"
@@ -192,3 +191,23 @@ def test_dark_only():
     light_files = sorted(p.name for p in (WEBSITE / "src/assets").rglob("*-light.*"))
     assert light_files == [], f"light shots still on disk: {light_files}"
     assert not (WEBSITE / "src/components/ThemedShot.vue").exists()
+
+
+RETIRED_COMPONENTS = ["TopicsSubnav", "DocPage", "ThemedShot", "TourShot", "HomeProof", "HomePillars",
+                      "Callout", "CodeBlock", "DataTable"]
+
+
+def test_docs_pages_are_block_lists():
+    components = WEBSITE / "src/components"
+    left = [name for name in RETIRED_COMPONENTS if list(components.rglob(f"{name}.vue"))]
+    assert left == [], f"retired components still on disk: {left}"
+    for path in _site_sources():
+        text = path.read_text(encoding="utf-8")
+        used = [name for name in RETIRED_COMPONENTS if re.search(rf"\b{name}\.vue\b|<{name}\b", text)]
+        assert used == [], f"{path.relative_to(WEBSITE)} still uses {used}"
+    for view in sorted((WEBSITE / "src/views").glob("*View.vue")):
+        if view.stem in ("HomeView", "NotFoundView", "PipelineView"):
+            continue
+        assert "<DocSections" in view.read_text(encoding="utf-8"), f"{view.name} is not a DocBlock list"
+    stray = sorted(p.name for p in (WEBSITE / "src/assets/shots").rglob("*") if p.is_file() and PIXEL_SHOTS not in p.parents)
+    assert stray == [], f"shots outside assets/shots/pixel/: {stray}"

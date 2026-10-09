@@ -2,8 +2,6 @@
 import { ref } from 'vue'
 import SiteIcon from '../components/SiteIcon.vue'
 import Button from '../components/ui/Button.vue'
-import HomeProof from '../components/HomeProof.vue'
-import HomePillars from '../components/HomePillars.vue'
 import BlockShot from '../components/blocks/BlockShot.vue'
 import overviewShot from '../assets/shots/pixel/overview.webp'
 import { LAYERS, LOOP } from '../content/features.js'
@@ -84,9 +82,6 @@ async function copyQuickstart() {
       </div>
       <BlockShot :src="overviewShot" alt="The regin dashboard's Pipeline Overview in the Pixel theme, scoped to the regin project: 109 features, 378 tasks and 139 defects in the loop scene, the project panel at 30% shipped, the features in flight and one defect needing a decision." />
     </section>
-
-    <HomePillars />
-    <HomeProof />
 
     <section class="section closing-cols" aria-labelledby="scope-heading">
       <div>
