@@ -119,15 +119,15 @@ const emit = defineEmits(['verb', 'hover', 'connect'])
     opacity: 0;
     transform: translateY(-50%) scale(0.85);
     transition: opacity 120ms ease, transform 120ms ease, background-color 120ms ease;
-    pointer-events: auto;
+    pointer-events: none;
 }
 .tln-handle-left { left: -0.625rem; }
 .tln-handle-right { right: -0.625rem; }
 .tln:hover .tln-handle,
-.tln:focus-within .tln-handle,
 .tln-handle:focus-visible {
     opacity: 1;
     transform: translateY(-50%) scale(1);
+    pointer-events: auto;
 }
 .tln-handle:hover {
     color: var(--color-primary-fg);
