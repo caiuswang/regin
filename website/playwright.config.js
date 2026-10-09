@@ -4,6 +4,9 @@ import { defineConfig } from '@playwright/test'
 // `vite preview`. Parallel verifies each pick their own port via
 // WEBSITE_E2E_PORT so two runs never share — or reuse — one server.
 const PORT = Number(process.env.WEBSITE_E2E_PORT || 4317)
+// A run that built into its own directory serves that one, so a concurrent
+// `npm run build` rewriting dist/ cannot pull files out from under it.
+const OUT_DIR = process.env.WEBSITE_E2E_DIST ? ` --outDir ${JSON.stringify(process.env.WEBSITE_E2E_DIST)}` : ''
 
 export default defineConfig({
   testDir: './e2e',
@@ -16,7 +19,7 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
   webServer: {
-    command: `npx vite preview --port ${PORT} --strictPort`,
+    command: `npx vite preview --port ${PORT} --strictPort${OUT_DIR}`,
     port: PORT,
     reuseExistingServer: false,
     timeout: 30000,
