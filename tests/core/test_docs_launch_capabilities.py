@@ -16,7 +16,8 @@ def test_docs_name_every_launch_capability_field():
             f"ARCHITECTURE.md does not name launch capability `{field}`")
 
 
-def test_readme_documents_kimi_task_runs():
-    readme = (ROOT / "README.md").read_text()
+def test_setup_documents_kimi_task_runs():
+    setup = (ROOT / "docs/setup.md").read_text()
     for needle in ("kimi login", "ACP", "tmux", "attach"):
-        assert needle in readme
+        assert needle in setup
+    assert "docs/setup.md#run-a-task-with-kimi" in (ROOT / "README.md").read_text()
