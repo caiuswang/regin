@@ -30,7 +30,7 @@ def _running_fix(native_task, feature_row):
     defect = store.record("the list sorts oldest first", feature_id=feature.id)
     task_id = native_task(title="fix it", feature_id=feature.id)
     store.set_fix_item(defect.id, task_id)
-    runs.arm(task_id, params={}, verify_cmd=None, autorun=0)
+    runs.arm(task_id, params={}, autorun=0)
     run = runs.open_attempt(task_id)
     task_store.set_status(task_id, TASK_STATUS_RUNNING)
     return feature, defect.id, task_id, run["id"]
@@ -38,7 +38,7 @@ def _running_fix(native_task, feature_row):
 
 def _armed_dependent(native_task, task_id):
     dependent = native_task(title="after the fix")
-    runs.arm(dependent, params={}, verify_cmd=None, autorun=0)
+    runs.arm(dependent, params={}, autorun=0)
     task_store.set_status(dependent, TASK_STATUS_ARMED)
     deps.set_deps(dependent, [task_id])
     return dependent
@@ -122,12 +122,12 @@ def test_a_failed_settle_is_left_as_it_was(native_task, feature_row):
     assert _run(run_id).exit_reason == "crashed"
 
 
-def test_a_passing_verify_does_not_settle_done_over_an_open_defect(
+def test_a_done_settle_does_not_land_over_an_open_defect(
         native_task, feature_row):
     _feature, defect_id, task_id, run_id = _running_fix(native_task,
                                                         feature_row)
 
-    runs._settle_and_fire(task_id, run_id, "done", "verify passed", "", {})
+    runs._settle_and_fire(task_id, run_id, "done", "session exited")
 
     assert _run(run_id).status == "failed"
     assert _task(task_id).status == "failed"

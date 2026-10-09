@@ -97,7 +97,6 @@ async function fillAndArm(page, dialog) {
   await dialog.getByTestId('task-arm-skill').click()
   await page.getByRole('option', { name: 'tdd' }).click()
   await dialog.getByTestId('task-arm-skill-args').fill('--fast')
-  await dialog.getByTestId('task-arm-verify').fill('.venv/bin/python -m pytest -q')
   await pickChoice(page, 'task-arm-launch', 'tmux')
   await dialog.getByTestId('task-arm-oneshot').check()
   await dialog.getByTestId('task-arm-submit').click()

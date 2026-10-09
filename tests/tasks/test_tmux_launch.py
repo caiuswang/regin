@@ -272,8 +272,7 @@ def test_task_finish_settles_tmux_run_and_fires_dependents(
 
 def test_cli_settle_with_no_server_defers_sdk_dependents_to_boot(
         flask_client, tmux, no_sdk, tmp_path):
-    task_id = _armed(flask_client, launch="tmux", verify_cmd="true",
-                     cwd=str(tmp_path))
+    task_id = _armed(flask_client, launch="tmux", cwd=str(tmp_path))
     run = _run(flask_client, task_id)
     tmux_dep = _armed(flask_client, "tmux dep", launch="tmux")
     sdk_dep = _armed(flask_client, "sdk dep")
@@ -282,9 +281,7 @@ def test_cli_settle_with_no_server_defers_sdk_dependents_to_boot(
 
     result = runs.finish_run(run["id"], reason="done", in_server=False)
 
-    # Verify ran inline — no worker thread outlives a CLI.
-    assert result["settled"] is True and result["verifying"] is False
-    assert _attempt(run["id"]).verify_exit_code == 0
+    assert result["settled"] is True
     assert result["fired"] == [tmux_dep]
     assert no_sdk == []
     assert _task(sdk_dep).status == "armed"
@@ -460,28 +457,6 @@ def test_boot_leaves_a_refused_undeferred_task_armed(flask_client, tmux,
     assert _task(dep).status == "armed"
 
 
-def test_boot_reruns_a_verify_the_previous_server_died_in(
-        flask_client, tmux, tmp_path):
-    from sqlalchemy import update
-
-    from lib.tasks import verify
-
-    task_id = _armed(flask_client, launch="tmux", verify_cmd="true",
-                     cwd=str(tmp_path))
-    run = _run(flask_client, task_id)
-    with SessionLocal() as session:
-        session.execute(update(AgentTaskRun)
-                        .where(AgentTaskRun.id == run["id"])
-                        .values(verify_exit_code=verify.NOT_RUN))
-        session.commit()
-
-    _boot()
-    runs.wait_for_verify(run["id"])
-
-    row = _attempt(run["id"])
-    assert row.status == "done" and row.verify_exit_code == 0
-
-
 def test_a_stopped_run_tmux_cannot_answer_for_is_runnable_again(
         flask_client, tmux, no_sdk):
     task_id = _armed(flask_client, launch="tmux")
@@ -492,29 +467,6 @@ def test_a_stopped_run_tmux_cannot_answer_for_is_runnable_again(
     again = flask_client.post(f"/api/tasks/{task_id}/run")
 
     assert again.status_code != 409, again.get_json()
-
-
-def test_boot_leaves_a_verify_the_cli_is_running_alone(flask_client, tmux,
-                                                       tmp_path, monkeypatch):
-    """A CLI settling while no server is up claims the verify as its own; a
-    server booting mid-verify must not start a second copy in the same tree."""
-    task_id = _armed(flask_client, launch="tmux", verify_cmd="true",
-                     cwd=str(tmp_path))
-    run = _run(flask_client, task_id)
-    started = []
-    real = runs._settle_and_fire
-
-    def _boot_mid_verify(*args, **kwargs):
-        _boot()
-        started.append(runs._verifying.get(run["id"]))
-        return real(*args, **kwargs)
-
-    monkeypatch.setattr(runs, "_settle_and_fire", _boot_mid_verify)
-
-    runs.finish_run(run["id"], reason="done", in_server=False)
-
-    assert started == [None]
-    assert _attempt(run["id"]).status == "done"
 
 
 def test_internal_marks_never_reach_a_launched_attempt(flask_client, tmux,
@@ -533,26 +485,3 @@ def test_internal_marks_never_reach_a_launched_attempt(flask_client, tmux,
     with SessionLocal() as session:
         assert "fire_deferred" not in session.get(
             AgentTaskRun, started["id"]).params_json
-
-
-def test_a_gone_run_with_a_claimed_verify_settles_with_the_not_run_code(
-        flask_client, tmux, tmp_path):
-    from sqlalchemy import update
-
-    from lib.tasks import verify
-
-    task_id = _armed(flask_client, launch="tmux", verify_cmd="true",
-                     cwd=str(tmp_path))
-    run = _run(flask_client, task_id)
-    with SessionLocal() as session:
-        session.execute(update(AgentTaskRun)
-                        .where(AgentTaskRun.id == run["id"])
-                        .values(verify_exit_code=verify.NOT_RUN))
-        session.commit()
-    tmux.live.clear()
-
-    _boot()
-
-    row = _attempt(run["id"])
-    assert row.status == "failed"
-    assert row.verify_exit_code == verify.NOT_RUN

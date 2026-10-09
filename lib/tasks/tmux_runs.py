@@ -190,8 +190,7 @@ def open_attempts() -> list[dict]:
                    AgentTaskRun.ended_at.is_(None),
                    AgentTaskRun.trace_id.is_not(None))).all()
         views = [{"id": r.id, "task_id": r.task_id, "attempt": r.attempt,
-                  "trace_id": r.trace_id, "verify_cmd": r.verify_cmd,
-                  "verify_exit_code": r.verify_exit_code,
+                  "trace_id": r.trace_id,
                   "params": store._decode_params(r.params_json)}
                  for r in rows]
     return [v for v in views if is_tmux(v["params"])]

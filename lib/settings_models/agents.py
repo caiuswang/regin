@@ -277,16 +277,10 @@ class TasksConfig(BaseModel):
     lands with `status='idea'` and can carry no execution parameter, so the
     worst a leaked one can do is add backlog rows. `capture_rate_limit_per_minute`
     bounds even that, per key.
-
-    `verify_timeout_seconds` bounds the `verify_cmd` an attempt settles on. It
-    is a ceiling, not an estimate of how long a test suite takes: a verify that
-    never returns would leave the attempt claiming `running` forever, and
-    expiry is reported as its own exit code rather than as a failing test.
     """
 
     capture_enabled: bool = False
     capture_rate_limit_per_minute: int = 30
-    verify_timeout_seconds: int = 1800
 
 
 class TaskIntegrationsConfig(BaseModel):

@@ -117,7 +117,7 @@ def test_arm_writes_the_parameters_and_moves_idea_to_armed(flask_client):
 
     resp = _arm(flask_client, task_id, cwd="/tmp/repo", model="opus",
                 permission_mode="acceptEdits", one_shot=True,
-                env={"FOO": "1"}, verify_cmd="pytest -q", autorun=True)
+                env={"FOO": "1"}, autorun=True)
 
     assert resp.status_code == 200, resp.get_json()
     body = resp.get_json()
@@ -128,7 +128,7 @@ def test_arm_writes_the_parameters_and_moves_idea_to_armed(flask_client):
     assert armed["params"]["cwd"] == "/tmp/repo"
     assert armed["params"]["env"] == {"FOO": "1"}
     assert armed["params"]["one_shot"] is True
-    assert (armed["verify_cmd"], armed["autorun"]) == ("pytest -q", True)
+    assert armed["autorun"] is True
     assert armed["status"] == "armed"
     assert _task(task_id).status == "armed"
 
@@ -178,7 +178,7 @@ def test_the_execution_routes_are_not_on_the_public_allowlist():
 def test_capture_still_cannot_carry_an_execution_parameter(flask_client,
                                                            capture_enabled,
                                                            mint_key):
-    for field in ("autorun", "verify_cmd", "status"):
+    for field in ("autorun", "params_json", "status"):
         resp = flask_client.post("/api/tasks", json={"title": "x", field: 1})
         assert resp.status_code == 400, field
         assert resp.get_json()["field"] == field
@@ -977,9 +977,9 @@ def test_finish_rejects_an_unknown_run_status_or_field(flask_client, launcher):
     assert bad_status.status_code == 400
     assert bad_status.get_json()["field"] == "status"
 
-    bad_field = _finish(flask_client, run_id, verify_exit_code=0)
+    bad_field = _finish(flask_client, run_id, exit_code=0)
     assert bad_field.status_code == 400
-    assert bad_field.get_json()["field"] == "verify_exit_code"
+    assert bad_field.get_json()["field"] == "exit_code"
 
     assert _run_rows(task_id)[0].ended_at is None
     assert _finish(flask_client, 9999).status_code == 404

@@ -539,7 +539,7 @@ One number justifies this subsystem: **rounds-to-done** per feature, meaning one
 | `lib/features/` | the `features` row (the population), the append-only `feature_events` log, attribution, cost, the ledger, remote sync |
 | `lib/defects/` | `defects` rows, escape blame, the missing-check answer on close |
 | `lib/pipeline/` | the `/pipeline` shell's reads: tab counts under one scope, and per-project rollups (status and progress derived from feature stages, nothing stored) |
-| `lib/tasks/slicing.py`, `slice_table.py`, `tail.py`, `commands.py`, `transcribe.py`, `deps.py`, `runs.py`, `verify.py` | spec → slice table → tasks + DAG → runs → settle |
+| `lib/tasks/slicing.py`, `slice_table.py`, `tail.py`, `commands.py`, `transcribe.py`, `deps.py`, `runs.py` | spec → slice table → tasks + DAG → runs → settle |
 | `lib/trace/span_gates.py` `PIPELINE` | `regin gate pipeline-ran`: counts `feature.stage` / `defect.declared` spans |
 
 **Where each artifact lives.** One writer per field; nothing is mirrored from one home into another.
@@ -586,7 +586,7 @@ Cost is the sum of attributed sessions' `cost_usd`. It is permanently an **upper
 | tail | `regin task tail` | appends integrate → migrate → verify rows rendered from `.regin/commands.json`. A null command renders its stated reason |
 | transcribe | `regin task transcribe` | table → `agent_tasks` + `agent_task_deps`, keyed `(feature_id, "S<n>")`. Refuses ambiguous rows rather than guessing. Returns proposed arm params but never arms |
 | run | arm (a human act) → `runs.py` | a dependency firing is event-driven: the completion that could unblock a task recomputes its dependents. `requires` waits for success, `after` for any settle. Cycles are refused on insert |
-| settle | `verify.py` | the attempt's `verify_cmd` exit code decides. The agent's own `task finish` status is consulted only when there's no command |
+| settle | `runs.finish_run` | the agent's own `task finish` report decides. A session that ends without one settles `failed`. Feature-level correctness is the done-claim → defects chain's job |
 
 ## Agent Memory (cross-session experience)
 

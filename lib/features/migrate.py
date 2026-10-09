@@ -211,17 +211,14 @@ def _move_run_params(conn) -> None:
         UPDATE agent_task_runs SET
             params_json = (SELECT t.params_json FROM agent_tasks t
                            WHERE t.id = agent_task_runs.task_id),
-            verify_cmd  = (SELECT t.verify_cmd FROM agent_tasks t
-                           WHERE t.id = agent_task_runs.task_id),
             autorun     = COALESCE((SELECT t.autorun FROM agent_tasks t
                                     WHERE t.id = agent_task_runs.task_id), 0)
         WHERE id IN (SELECT MAX(id) FROM agent_task_runs GROUP BY task_id)
     """))
     conn.execute(text("""
         INSERT INTO agent_task_runs
-            (task_id, attempt, status, params_json, verify_cmd, autorun)
-        SELECT t.id, 1, 'armed', t.params_json, t.verify_cmd,
-               COALESCE(t.autorun, 0)
+            (task_id, attempt, status, params_json, autorun)
+        SELECT t.id, 1, 'armed', t.params_json, COALESCE(t.autorun, 0)
         FROM agent_tasks t
         WHERE t.params_json IS NOT NULL
           AND NOT EXISTS (SELECT 1 FROM agent_task_runs r

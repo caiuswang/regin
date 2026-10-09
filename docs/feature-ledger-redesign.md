@@ -65,7 +65,7 @@ type Task = {                  // 今天的 agent_tasks,语义收窄
   feature_id: FK<Feature> | null   // 单列 ⇒ 「两个 key」不可表示
   title, body, status, priority, priority_rank, project_id, assignee, tags_json
   // 移除:parent_id, claimed_at, completions_walked_back,
-  //       params_json, verify_cmd, autorun
+  //       params_json, autorun
 }
 
 type Run = {                   // 今天的 agent_task_runs,扩列
@@ -73,8 +73,8 @@ type Run = {                   // 今天的 agent_task_runs,扩列
   task_id: FK<Task>            // NOT NULL。一次尝试永远针对一个 task
   trace_id: TraceId | null
   attempt: int
-  params_json, verify_cmd, autorun   // 从 Task 搬来
-  status, started_at, ended_at, exit_reason, verify_exit_code
+  params_json, autorun   // 从 Task 搬来
+  status, started_at, ended_at, exit_reason
 }
 
 type Defect = {
@@ -480,7 +480,7 @@ schema 改动按 CLAUDE.md 的规矩是两处编辑:`alembic/versions/0027_*.py`
 `0026`)与 `db/schema.sql` 的同步改动,外加 `lib/orm/models/` 下的字段。
 
 1. **建新表,不动旧表。**`features`、`feature_events`,并给 `agent_task_runs` 加
-   `params_json` / `verify_cmd` / `autorun`,给 `agent_tasks` 加 `feature_id`,
+   `params_json` / `autorun`,给 `agent_tasks` 加 `feature_id`,
    给 `defects` 加 `blamed_event_id` / `fix_task_id`,并把 `defects.session_id`
    改名为 `reported_by_trace` —— 让不变式 7 写在列名里,而不是只写在注释里。
    旧列一律保留。
@@ -498,7 +498,7 @@ schema 改动按 CLAUDE.md 的规矩是两处编辑:`alembic/versions/0027_*.py`
 6. **删。**`lib/features/lane.py`、`links.py` 的三道 refuse、`KEY_SQL` / `key_sql` /
    `task_id_for` 与两个正则、`agent_task_links` 表、`issue_cache` 表、`agent_tasks` 的
    `parent_id` / `claimed_at` / `completions_walked_back` / `params_json` /
-   `verify_cmd` / `autorun`、以及迁移期的 ref 解析端点。不留兼容层。
+   `autorun`、以及迁移期的 ref 解析端点。不留兼容层。
 
 **迁移期唯一的临时件**是一个把旧 key 字符串解析成 `feature_id` 的解析端点,
 存在于第 1 步、消失于第 6 步。它不是兼容层:它有明确的删除步骤,并且

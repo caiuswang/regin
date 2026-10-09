@@ -36,7 +36,6 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import Thread
 from typing import Optional
 
 from sqlalchemy import update
@@ -47,7 +46,6 @@ from lib.activity_log import get_activity_logger
 from lib.agent_sdk import store as sdk_store, supervisor, worktree
 from lib.orm import SessionLocal
 from lib.orm.models.agent_runs import AgentRun
-from lib.pipeline import live
 from lib.orm.models.tasks import (
     AgentTask, AgentTaskRun, RUN_STATUS_ARMED, RUN_STATUS_DONE,
     RUN_STATUS_FAILED, RUN_STATUS_RUNNING, RUN_STATUS_STARTING,
@@ -56,7 +54,7 @@ from lib.orm.models.tasks import (
     TASK_STATUS_RUNNING,
 )
 from lib.settings import settings
-from lib.tasks import deps, run_ending, store, tmux_runs, verify
+from lib.tasks import deps, run_ending, store, tmux_runs
 from lib.tasks.run_announce import (
     TASK_READY_TRACE, _announce_broken_chains, _announce_stuck)
 from lib.tasks.run_prompt import (
@@ -80,12 +78,9 @@ _TASK_STATUS_FOR = {RUN_STATUS_DONE: TASK_STATUS_DONE,
 _SETTLED = (TASK_STATUS_DONE, TASK_STATUS_FAILED)
 
 # Bookkeeping regin keeps on an attempt's params, never shown or re-spent:
-# a pending attempt released by a process that may not launch it, and a verify
-# claimed by a CLI that runs it to the end itself.
+# a pending attempt released by a process that may not launch it.
 _DEFERRED = "fire_deferred"
-_VERIFY_OWNER = "verify_owner"
-_INTERNAL_PARAMS = (_DEFERRED, _VERIFY_OWNER, run_ending.END_REQUESTED)
-_OWNER_CLI = "cli"
+_INTERNAL_PARAMS = (_DEFERRED, run_ending.END_REQUESTED)
 
 
 def _public_params(params: dict) -> dict:
@@ -138,18 +133,15 @@ def _serialize(row: AgentTaskRun) -> dict:
         "started_at": row.started_at,
         "ended_at": row.ended_at,
         "exit_reason": row.exit_reason,
-        "verify_exit_code": row.verify_exit_code,
         # The parameters THIS attempt spends. On the attempt rather than on
         # the task, so a rerun under different ones is a second row here and
         # not a second task — which is what retired "a sub-task is a rerun".
         "params": _public_params(store._decode_params(row.params_json)),
-        "verify_cmd": row.verify_cmd,
         "autorun": bool(row.autorun),
     }
 
 
-def arm(task_id: int, *, params: dict, verify_cmd: Optional[str],
-        autorun: int) -> dict:
+def arm(task_id: int, *, params: dict, autorun: int) -> dict:
     """Write the parameters the task's next attempt will spend.
 
     An `armed` run row IS the pending attempt: arming a task used to set three
@@ -171,7 +163,6 @@ def arm(task_id: int, *, params: dict, verify_cmd: Optional[str],
                                attempt=_next_attempt(session, task_id),
                                status=RUN_STATUS_ARMED)
         row.params_json = json.dumps(params)
-        row.verify_cmd = verify_cmd
         row.autorun = autorun
         row.started_at = _now()
         session.add(row)
@@ -210,7 +201,6 @@ def drop_armed(task_id: int) -> Optional[int]:
 
 
 def open_attempt(task_id: int, *, params: Optional[dict] = None,
-                 verify_cmd: Optional[str] = None,
                  autorun: int = 0) -> dict:
     """An attempt row, written *before* the launch: a crash between the two
     leaves this visible `starting` row rather than an untracked child.
@@ -237,13 +227,10 @@ def open_attempt(task_id: int, *, params: Optional[dict] = None,
                 task_id=task_id, attempt=_next_attempt(session, task_id),
                 params_json=(json.dumps(params) if params is not None
                              else getattr(previous, "params_json", None)),
-                verify_cmd=(verify_cmd if params is not None
-                            else getattr(previous, "verify_cmd", None)),
                 autorun=(autorun if params is not None
                          else int(getattr(previous, "autorun", 0) or 0)))
         elif params is not None:
             row.params_json = json.dumps(params)
-            row.verify_cmd = verify_cmd
             row.autorun = autorun
         if row.params_json:
             row.params_json = json.dumps(
@@ -541,14 +528,9 @@ def _refuse_launch(row: dict, exc: Exception) -> RunRefused:
     """Settle an attempt whose launch was refused, and the refusal to raise.
 
     A refusal is not a crash: the attempt never started, so it is settled here
-    and the task stays armed rather than stranded as `running`. The attempt
-    still carries the `verify_cmd` it was armed with, so it settles with the
-    code for a verify that did not run — a NULL there would read as "this
-    attempt had no gate".
+    and the task stays armed rather than stranded as `running`.
     """
-    complete_run(row["id"], status=RUN_STATUS_FAILED, exit_reason=str(exc),
-                 verify_exit_code=verify.NOT_RUN if row["verify_cmd"]
-                 else None)
+    complete_run(row["id"], status=RUN_STATUS_FAILED, exit_reason=str(exc))
     return RunRefused(f"launch refused: {exc}")
 
 
@@ -594,21 +576,10 @@ def stop_tmux(view: dict) -> bool:
     return killed
 
 
-def settle_gone_tmux(view: dict, reason: str, *, at_boot: bool = False
-                     ) -> list[int]:
-    """Fail a tmux attempt whose session is gone, and fire what that released.
-
-    A verify still running for this attempt owns the settle (`_claim_verify`),
-    so it is left to finish rather than overwritten by a failure — except at
-    boot, where a claim can only be the stamp of a verify that died with the
-    previous server, and leaving it would keep the attempt open forever.
-    """
-    claim, _command, params = _claim_verify(view["id"])
-    if claim == VERIFY_THEIRS and not at_boot:
-        return []
+def settle_gone_tmux(view: dict, reason: str) -> list[int]:
+    """Fail a tmux attempt whose session is gone, and fire what that released."""
     _settled_now, fired = _settle_and_fire(
-        view["task_id"], view["id"], RUN_STATUS_FAILED, reason, "", params,
-        code=verify.NOT_RUN if claim != NO_VERIFY else None)
+        view["task_id"], view["id"], RUN_STATUS_FAILED, reason)
     return fired
 
 
@@ -619,42 +590,18 @@ def reap_tmux_runs_at_boot() -> dict:
     Then every armed task a non-server process left ready is fired, which is
     how an `sdk` dependent released by a CLI-side settle gets its launch.
     """
-    reaped, reverified = [], []
+    reaped = []
     for view in tmux_runs.open_attempts():
         try:
             if tmux_runs.liveness(view) == tmux_runs.GONE:
-                settle_gone_tmux(view, tmux_runs.GONE_REASON, at_boot=True)
+                settle_gone_tmux(view, tmux_runs.GONE_REASON)
                 reaped.append(view["id"])
-            elif _resume_orphaned_verify(view):
-                reverified.append(view["id"])
         except Exception:  # noqa: BLE001 — one row cannot sink the boot
             log.error("task_tmux_reap_failed", run_id=view["id"], exc_info=True)
     fired = fire_deferred()
-    if reaped or reverified or fired:
-        log.write("task_tmux_boot_reap", reaped=reaped, reverified=reverified,
-                  fired=fired)
-    return {"reaped": reaped, "reverified": reverified, "fired": fired}
-
-
-def _resume_orphaned_verify(view: dict) -> bool:
-    """Re-run a verify the previous server was running when it went down.
-
-    An open attempt carrying the verify claim was reported finished and its
-    verify never returned — the thread died with the server. Left alone, every
-    later report stands down behind that claim and the attempt never settles.
-    """
-    command = (view.get("verify_cmd") or "").strip()
-    if not command or view.get("verify_exit_code") != verify.NOT_RUN:
-        return False
-    # A CLI's verify runs in the agent's pane, which is alive — it is still
-    # going, and a second copy in the same tree would race it for the verdict.
-    if view["params"].get(_VERIFY_OWNER) == _OWNER_CLI:
-        return False
-    _spawn_verify((view["task_id"], view["id"], RUN_STATUS_DONE,
-                   "verify re-run after a server restart", command,
-                   view["params"]),
-                  resync=True, settled_by=SETTLED_BY_AGENT)
-    return True
+    if reaped or fired:
+        log.write("task_tmux_boot_reap", reaped=reaped, fired=fired)
+    return {"reaped": reaped, "fired": fired}
 
 
 def _mark_deferred(task_id: int) -> None:
@@ -718,7 +665,6 @@ def fire_deferred() -> list[int]:
 
 def complete_run(run_id: int, *, status: str, exit_reason: str = "",
                  task_status: Optional[str] = None,
-                 verify_exit_code: Optional[int] = None,
                  settled_by: str = SETTLED_BY_SESSION) -> bool:
     """Settle one attempt, and the task with it. Returns whether this call was
     the one that did it.
@@ -742,7 +688,6 @@ def complete_run(run_id: int, *, status: str, exit_reason: str = "",
         row.status = status
         row.ended_at = _now()
         row.exit_reason = (exit_reason or "")[:_REASON_MAX] or None
-        row.verify_exit_code = verify_exit_code
         row.settled_by = settled_by
         session.add(row)
         task = session.get(AgentTask, row.task_id) if task_status else None
@@ -772,152 +717,19 @@ def _settled(outcome) -> tuple[str, str]:
             detail)
 
 
-#: The three ways a settle path can stand with respect to the verify command:
-#: there is none, this caller holds the right to run it, or another caller
-#: already does and this one must not settle at all.
-NO_VERIFY, VERIFY_MINE, VERIFY_THEIRS = "none", "mine", "theirs"
-
-
-def _claim_stamp(params: dict, owner: Optional[str]) -> dict:
-    """The claim's column values; an owner rides along in the same UPDATE, so
-    no reader can see the claim without knowing whose it is."""
-    stamp = {"verify_exit_code": verify.NOT_RUN}
-    if owner:
-        stamp["params_json"] = json.dumps({**params, _VERIFY_OWNER: owner})
-    return stamp
-
-
-def _claim_verify(run_id: int, owner: Optional[str] = None
-                  ) -> tuple[str, str, dict]:
-    """`(claim, command, params)` — stake the right to run this attempt's
-    `verify_cmd` before spending it.
-
-    Both settle paths can reach one attempt while it is still open: the agent
-    reports `task finish`, its verify starts, and the session then ends — so
-    `handle_completion` arrives minutes before `ended_at` is written. Keying
-    off `ended_at` would let it start the operator's suite a *second* time, in
-    the same tree, and throw one of the two verdicts away.
-
-    So the claim is the row's own `verify_exit_code`, stamped `NOT_RUN` by one
-    conditional `UPDATE` before the subprocess starts. The loser reads a
-    non-NULL code and stands down rather than settling, because a settle
-    without the verdict would strip the attempt of the gate it was armed with.
-    A process killed mid-verify leaves that stamp behind, which is exactly what
-    is true of it: the verify produced no verdict.
-    """
-    try:
-        with SessionLocal() as session:
-            row = session.get(AgentTaskRun, run_id)
-            command = (row.verify_cmd or "").strip() if row is not None else ""
-            params = store._decode_params(row.params_json) if row else {}
-            task_id = row.task_id if row is not None else None
-    except Exception:  # noqa: BLE001 — a gate we cannot read is one we must not skip
-        # Standing down, not settling. Invariant 4 is written over the row, not
-        # over what this reader managed to load: an attempt whose `verify_cmd`
-        # column we failed to read still has one, and settling on the agent's
-        # own word would report a pass for a verify nobody ran.
-        log.error("task_verify_unreadable", run_id=run_id, exc_info=True)
-        return VERIFY_THEIRS, "", {}
-    if not command:
-        return NO_VERIFY, "", {}
-    stamp = _claim_stamp(params, owner)
-    try:
-        with SessionLocal() as session:
-            claimed = session.execute(
-                update(AgentTaskRun)
-                .where(AgentTaskRun.id == run_id,
-                       AgentTaskRun.verify_exit_code.is_(None))
-                .values(**stamp)).rowcount
-            if claimed:
-                live.mark(session, "task", task_id)
-            session.commit()
-    except Exception:  # noqa: BLE001 — a gate we cannot stake is one we must not skip
-        # Standing down is the only safe answer once a command has been read:
-        # settling here would report a pass for a verify nobody ran, and
-        # running it unclaimed could spend it twice.
-        log.error("task_verify_claim_failed", run_id=run_id, exc_info=True)
-        return VERIFY_THEIRS, "", {}
-    if not claimed:
-        log.write("task_verify_already_claimed", run_id=run_id)
-        return VERIFY_THEIRS, "", {}
-    return VERIFY_MINE, command, params
-
-
-def _is_open(run_id: int) -> bool:
-    """Whether this attempt is still unsettled — the difference between a
-    verify someone else is running and a run that settled minutes ago."""
-    try:
-        with SessionLocal() as session:
-            row = session.get(AgentTaskRun, run_id)
-            return row is not None and row.ended_at is None
-    except Exception:  # noqa: BLE001 — a report line, never a decision
-        log.error("task_run_openness_unreadable", run_id=run_id, exc_info=True)
-        return True
-
-
-def _verify_cwd(params: dict) -> Optional[str]:
-    """The tree the attempt ran in — looked up, never created.
-
-    Raises when the branch it was armed with no longer has a tree: verifying a
-    checkout materialised at settle time would grade the branch's committed
-    state, which is exactly the work the attempt may have failed to produce.
-
-    An attempt armed with no tree at all verifies in the project root, never in
-    whatever directory the server happens to have been started in.
-    """
-    spec = (params or {}).get("worktree") or {}
-    anchor = params.get("cwd") or str(settings.project_root)
-    if not spec.get("branch"):
-        return anchor
-    found = worktree.existing_worktree(anchor, spec["branch"])
-    if found is None:
-        raise RunRefused(f"no worktree for {spec['branch']!r}")
-    return found["path"]
-
-
-def _apply_verdict(command: str, params: dict, status: str,
-                   reason: str) -> tuple[str, str, Optional[int]]:
-    """`(status, reason, verify_exit_code)` once the verify has had its say.
-
-    With no command the run's own result stands and the code is NULL — that
-    NULL is what keeps "no gate" distinguishable from "the gate passed". With
-    one, the command is the arbiter and always leaves a code behind: the run
-    answering for itself is the thing a `verify_cmd` was armed to override.
-    """
-    if not command:
-        return status, reason, None
-    try:
-        cwd = _verify_cwd(params)
-    except Exception as exc:  # noqa: BLE001 — a tree we cannot reach is a failed verify
-        verdict = verify.Verdict(verify.NOT_RUN, f"verify did not run: {exc}")
-    else:
-        verdict = verify.run_verify(command, cwd=cwd)
-    return (RUN_STATUS_DONE if verdict.passed else RUN_STATUS_FAILED,
-            verdict.reason, verdict.exit_code)
-
-
 def _settle_and_fire(task_id: int, run_id: int, status: str, reason: str,
-                     command: str, params: dict,
                      *, resync: bool = False,
                      settled_by: str = SETTLED_BY_SESSION,
-                     in_server: bool = True,
-                     code: Optional[int] = None,
-                     ) -> tuple[bool, list[int]]:
-    """Verify, settle, fire. The terminal write is in a `finally` because a
-    settle that does not happen outlives this process, and one that happens
-    wrong does not — and `code` starts at the did-not-run value so even a
-    settle written out of that `finally` leaves the gate accounted for."""
-    if command:
-        code = verify.NOT_RUN
+                     in_server: bool = True) -> tuple[bool, list[int]]:
+    """Settle, fire. The terminal write is in a `finally` because a settle
+    that does not happen outlives this process, and one that happens wrong
+    does not."""
     try:
-        status, reason, verdict = _apply_verdict(command, params, status,
-                                                 reason)
-        code = verdict if command else code
         status, reason = _held_by_open_defects(task_id, run_id, status, reason)
     finally:
         ended = complete_run(run_id, status=status, exit_reason=reason,
                              task_status=_TASK_STATUS_FOR[status],
-                             verify_exit_code=code, settled_by=settled_by)
+                             settled_by=settled_by)
     if not ended:
         return False, []
     if resync:
@@ -931,7 +743,7 @@ def _held_by_open_defects(task_id: int, run_id: int, status: str,
     `failed` instead.
 
     `finish_run` refuses the agent's own report, but a clean exit, a Stop of
-    an idle run or a passing verify reaches the task without one — and every
+    an idle run or a session ending reaches the task without one — and every
     one of them settles here, so this is the one place the check cannot be
     walked around. Regin still never closes the defect: that needs the check
     only the closer can name.
@@ -951,71 +763,19 @@ def _held_by_open_defects(task_id: int, run_id: int, status: str,
     return RUN_STATUS_FAILED, f"ended with {_defects_named(ids)} still open"
 
 
-#: Verifies still in flight, by run id. A settle that happens on a worker
-#: thread is still a settle a caller may need to see, and a registry makes that
-#: wait a join on the exact run rather than a poll for its effect.
-_verifying: dict[int, Thread] = {}
-
-
-def _spawn_verify(args: tuple, *, resync: bool,
-                  settled_by: str = SETTLED_BY_SESSION) -> Thread:
-    """Hand one claimed verify to a worker thread and register it.
-
-    Registered before it starts, so a caller that asks the instant after this
-    returns cannot be told there is nothing to wait for.
-    """
-    run_id = args[1]
-
-    def _work() -> None:
-        try:
-            _settle_and_fire(*args, resync=resync, settled_by=settled_by)
-        finally:
-            _verifying.pop(run_id, None)
-
-    worker = Thread(target=_work, daemon=True, name=f"verify-run-{run_id}")
-    _verifying[run_id] = worker
-    worker.start()
-    return worker
-
-
-def wait_for_verify(run_id: int, timeout: Optional[float] = None) -> None:
-    """Block until the verify settling `run_id` has finished, if one is running.
-
-    Absent from the registry means the settle already landed, so this is a join
-    on a named thread and never a poll for a condition.
-    """
-    worker = _verifying.get(run_id)
-    if worker is not None:
-        worker.join(timeout)
-
-
-def handle_completion(task_id: int, run_id: int, outcome) -> Optional[Thread]:
+def handle_completion(task_id: int, run_id: int, outcome) -> None:
     """The run's own completion path: settle the attempt, then fire whatever it
     unblocked.
 
-    Runs on the SDK loop's thread (`RunHandle.add_done_callback`), which every
-    other live run shares, so it must not block — and a `verify_cmd` is a test
-    suite, measured in minutes. So an attempt with one hands the verify and the
-    settle to a worker thread and returns at once; an attempt without one still
-    settles inline, where the caller can see it happen. The thread comes back
-    so a caller that needs the verdict can wait for it.
-
     Arriving second is the common case, not the exception: the agent's own
     `task finish` settles the work, and the session it settled from ends here
-    afterwards. A verify already claimed elsewhere is therefore left alone.
+    afterwards — `complete_run`'s `ended_at` guard makes this a no-op then.
     """
     status, reason = RUN_STATUS_FAILED, "run ended"
     try:
         status, reason = _settled(outcome)
     finally:
-        claim, command, params = _claim_verify(run_id)
-        args = (task_id, run_id, status, reason, command, params)
-        worker = None
-        if claim == VERIFY_MINE:
-            worker = _spawn_verify(args, resync=False)
-        elif claim == NO_VERIFY:
-            _settle_and_fire(*args)
-    return worker
+        _settle_and_fire(task_id, run_id, status, reason)
 
 
 # ── firing ───────────────────────────────────────────────────
@@ -1168,10 +928,7 @@ def finish_run(run_id: int, *, status: str = RUN_STATUS_DONE,
 
     Idempotent, and safe against the callback that may still arrive: both paths
     settle through `complete_run`, whose `ended_at` guard picks one winner and
-    whose return value is what gates the firing. An attempt with a `verify_cmd`
-    is decided a step earlier, by `_claim_verify` — `ended_at` is not written
-    until the verify returns, so it cannot arbitrate the window the verify runs
-    in.
+    whose return value is what gates the firing.
 
     `task_id`, when given, is the task the caller believes it is finishing; a
     run belonging to another task is refused rather than settled.
@@ -1187,7 +944,7 @@ def finish_run(run_id: int, *, status: str = RUN_STATUS_DONE,
                          f"not task #{claimed}")
     if task_id is None:
         return {"run_id": run_id, "task_id": None, "settled": False,
-                "verifying": False, "fired": []}
+                "fired": []}
     if status == RUN_STATUS_DONE:
         _refuse_with_open_defects(task_id, run_id)
     # Before the default is substituted: only what the AGENT actually wrote is
@@ -1205,40 +962,17 @@ def finish_run(run_id: int, *, status: str = RUN_STATUS_DONE,
 
 def _settle_report(task_id: int, run_id: int, status: str, reason: str,
                    in_server: bool) -> dict:
-    claim, command, params = _claim_verify(
-        run_id, owner=None if in_server else _OWNER_CLI)
-    args = (task_id, run_id, status, reason, command, params)
-    if claim == VERIFY_THEIRS or (claim == VERIFY_MINE and in_server):
-        return _finish_verifying(claim, args)
-    # Off the server there is no process left to host a worker thread once
-    # this CLI exits, so a verify this call claimed runs here, to the end.
     # Only this path refreshes the remote: it is the one that runs on a request
     # thread. `handle_completion` runs on the SDK loop's thread and cannot
     # spend a round trip against a tracker.
-    settled, fired = _settle_and_fire(*args, resync=True,
+    settled, fired = _settle_and_fire(task_id, run_id, status, reason,
+                                      resync=True,
                                       settled_by=SETTLED_BY_AGENT,
                                       in_server=in_server)
     log.write("task_run_finish_signalled", run_id=run_id, task_id=task_id,
               status=status, settled=settled, fired=fired)
     return {"run_id": run_id, "task_id": task_id, "settled": settled,
-            "verifying": False, "fired": fired}
-
-
-def _finish_verifying(claim: str, args: tuple) -> dict:
-    """The verify is what the settle must carry, and it is a test suite: the
-    caller is the agent's own `regin task finish`, on a short HTTP timeout, so
-    waiting for it here would report a failure to an agent whose work is fine.
-    `VERIFY_THEIRS` stands down for the same reason in reverse — someone else's
-    verify owns this settle, unless that verify already finished, in which case
-    this is simply a second report."""
-    task_id, run_id = args[0], args[1]
-    if claim == VERIFY_MINE:
-        _spawn_verify(args, resync=True, settled_by=SETTLED_BY_AGENT)
-    verifying = claim == VERIFY_MINE or _is_open(run_id)
-    log.write("task_run_finish_verifying", run_id=run_id, task_id=task_id,
-              claim=claim, verifying=verifying)
-    return {"run_id": run_id, "task_id": task_id, "settled": False,
-            "verifying": verifying, "fired": []}
+            "fired": fired}
 
 
 def _resync_feature(task_id: int) -> None:

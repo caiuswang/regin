@@ -199,7 +199,7 @@ test('test_arm_prefill_empty_integration_leaves_base_alone', async ({ page }) =>
 
 test('test_arm_prefill_never_overrides_a_slice_proposal', async ({ page }) => {
   const { posted } = await openArm(page, { integration: 'release/x', proposal: {
-    branch: 'f243/s3', base: 'f243/integration', skill: null, verify_cmd: null } })
+    branch: 'f243/s3', base: 'f243/integration', skill: null } })
   await expect(page.getByTestId('live-launch-worktree-branch')).toHaveValue('f243/s3')
   await page.getByTestId('task-arm-submit').click()
   await expect.poll(() => posted.length).toBe(1)

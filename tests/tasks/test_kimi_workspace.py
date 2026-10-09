@@ -107,7 +107,7 @@ def test_channel_launch_prepares_workspace_before_session_new(
         session.commit()
         task_id = task.id
     runs.arm(task_id, params={"provider": "kimi", "cwd": str(repo)},
-             verify_cmd=None, autorun=0)
+             autorun=0)
 
     try:
         runs.start_run(task_id)

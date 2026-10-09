@@ -351,8 +351,7 @@ onMounted(() => { ensureProjects(); load() })
       <Card v-if="armed">
         <h2 class="card-header">Next attempt</h2>
         <pre class="td-params">{{ JSON.stringify(
-          { ...armed.params, verify_cmd: armed.verify_cmd,
-            autorun: armed.autorun },
+          { ...armed.params, autorun: armed.autorun },
           null, 2) }}</pre>
       </Card>
 

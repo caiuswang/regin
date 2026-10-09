@@ -11,7 +11,7 @@ The **slice table inside `features.body` is the plan.** There is no draft entity
 | transcribe | `regin task transcribe` · `transcribe.py` | table → `agent_tasks` + `agent_task_deps`, keyed `(feature_id, "S<n>")` via `(source, external_id)`; ambiguous rows refused by name; returns proposed arm params, never arms |
 | arm | `arm.py` | the **only** place execution params enter a task; a human act; allowlist mirrors `supervisor.launch_run` |
 | run | `runs.py` + `deps.py` | dependents are recomputed by the completion that could unblock them. There is no scheduler and no interval |
-| settle | `verify.py` | the attempt's `verify_cmd` exit code decides; the agent's own `task finish` is consulted only when there is no command |
+| settle | `runs.py` · `finish_run` | the agent's own `task finish` report decides; a session that ends without one settles `failed`. Feature-level correctness is the done-claim → defects chain's job, not a shell gate's |
 
 ### Invariants
 
@@ -19,7 +19,6 @@ The **slice table inside `features.body` is the plan.** There is no draft entity
 - **Dependency edges:** `requires` waits for the dependency to succeed; `after` waits for it to settle either way. Cycles are rejected at insert, so readers carry no visited-guards.
 - **Settling once:** two completions can settle a run. `finish_run` is the agent's `task finish` signal and `handle_completion` fires when the session ends. Both go through `complete_run`, which is idempotent, so neither double-fires dependents. The terminal write happens in a `finally`.
 - **Liveness:** a reader merges the row's claim with `agent_runs` liveness. A row is never condemned on pid inequality alone.
-- **A verify that could not start is a failure**, not a missing verdict. Its wait is resource-bounded, and expiry reports its own exit code.
 - **Command table** (`commands.py`): `test`, `migrate` and `e2e` must all be present. A `null` value needs a matching `reasons` entry, and an absent key is refused, so a deliberately missing command stays distinguishable from a forgotten one.
 
 A run *settling* never ships a feature. Run starts feed the event log described in [[feature-lifecycle-ledger]]. Task capture, integrations and the tasks UI are outside this page.

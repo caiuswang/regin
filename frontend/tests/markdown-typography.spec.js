@@ -33,7 +33,7 @@ const BODY = [
 function task(overrides = {}) {
   return {
     id: 80, title: 'a specced feature', body: BODY, status: 'idea',
-    source: 'web', tags: [], links: [], params: {}, verify_cmd: null,
+    source: 'web', tags: [], links: [], params: {},
     autorun: false, project_id: null, priority: 'none', priority_rank: 4,
     parent_id: null, assignee: null, assignee_name: null, rounds: 1,
     created_at: '2026-09-14', updated_at: '2026-09-14',

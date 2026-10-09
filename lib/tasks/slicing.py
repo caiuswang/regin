@@ -303,7 +303,7 @@ def preview(spec_body: str) -> tuple[list[SliceRow], Optional[SlicingRefusal]]:
 
 
 _HEADERS = ("#", "Slice", "Delivers", "Spec refs", "Tests", "Schema",
-            "Depends on", "Base", "Skill", "Verify")
+            "Depends on", "Base", "Skill")
 
 
 def _cell(value: str, row_id: str, column: str) -> str:
@@ -335,12 +335,11 @@ def _row_values(row: SliceRow) -> dict[str, str]:
         "depends_on": ", ".join(row.depends_on),
         "base": row.base,
         "skill": row.skill,
-        "verify_cmd": row.verify_cmd or "",
     }
 
 
 _COLUMN_ORDER = ("n", "title", "delivers", "spec_refs", "tests", "schema",
-                 "depends_on", "base", "skill", "verify_cmd")
+                 "depends_on", "base", "skill")
 
 
 def render_slice_table(rows: Sequence[SliceRow], base: str) -> str:

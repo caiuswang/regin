@@ -197,7 +197,7 @@ function fakeTask(id, over = {}) {
   return {
     id, title: `mock task ${id}`, body: '', status: 'idea', source: 'web',
     external_id: null, tags: [], links: [], created_by: 1,
-    created_at: NOW, updated_at: NOW, params: {}, verify_cmd: null,
+    created_at: NOW, updated_at: NOW, params: {},
     autorun: false, project_id: null, priority: 'none',
     ...verbsFor(over.status || 'idea'),
     // The server gives a running row its open attempt; one without a trace id
@@ -317,7 +317,6 @@ test.describe('/tasks — arming', () => {
     }
     await page.getByRole('option', { name: served.models[0], exact: true }).click()
 
-    await page.getByTestId('task-arm-verify').fill('echo verified')
     await page.getByTestId('task-arm-submit').click()
 
     const armed = page.locator('.task-row', { hasText: 'browser routes only' }).first()
@@ -327,7 +326,6 @@ test.describe('/tasks — arming', () => {
     // task was armed WITH is read on the task's own page.
     await armed.getByTestId('task-id').click()
     await expect(page.locator('.td-params')).toContainText(served.models[0])
-    await expect(page.locator('.td-params')).toContainText('echo verified')
   })
 
   test('an arm 400 names the rejected field', async ({ page }) => {
@@ -510,14 +508,11 @@ test.describe('/tasks — arming', () => {
     await pickSkill(page, 'goal-verified')
     await pickSkill(page, 'feature-pipeline')
     await page.getByTestId('task-arm-skill-args').fill('--strict')
-    await page.getByTestId('task-arm-verify').fill('echo remembered')
     await page.getByTestId('task-arm-submit').click()
     await expect(first).toHaveAttribute('data-status', 'armed')
 
     // What is remembered is exactly the how-to-run fields. A worktree branch is
-    // named for ONE task, so carrying it would aim two tasks at one checkout;
-    // a verify command proves ONE task done, so carrying it would settle the
-    // next one by another's test.
+    // named for ONE task, so carrying it would aim two tasks at one checkout.
     const stored = await page.evaluate(
       () => JSON.parse(localStorage.getItem('regin.tasks.arm.last')))
     expect(Object.keys(stored).sort()).toEqual([
@@ -534,7 +529,6 @@ test.describe('/tasks — arming', () => {
     const second = page.locator('.task-row', { hasText: 'second quick arm' }).first()
     await rowAction(second, 'arm')
     await expect(page.getByTestId('task-arm-recalled')).toBeVisible()
-    await expect(page.getByTestId('task-arm-verify')).toHaveValue('')
     await expect(page.getByTestId('task-arm-model')).toContainText(served.models[0])
     await expect(page.getByTestId('task-arm-skill-picked-goal-verified')).toContainText('opens')
     await expect(page.getByTestId('task-arm-skill-picked-feature-pipeline')).toContainText('+1')
@@ -542,7 +536,6 @@ test.describe('/tasks — arming', () => {
 
     await page.getByTestId('task-arm-reset').click()
     await expect(page.getByTestId('task-arm-recalled')).toHaveCount(0)
-    await expect(page.getByTestId('task-arm-verify')).toHaveValue('')
     await expect(page.getByTestId('task-arm-skill-args')).toHaveCount(0)
     expect(await page.evaluate(
       () => localStorage.getItem('regin.tasks.arm.last'))).toBeNull()
@@ -569,22 +562,20 @@ test.describe('/tasks — arming', () => {
 
   // Args are hidden the moment no skill is ticked, and a sentinel left in an
   // older store names a slot rather than a model. Neither may become the sole
-  // reason the next sheet claims a carry-over. A verify command an older sheet
-  // stored is another task's, like the rest.
+  // reason the next sheet claims a carry-over.
   test('an invisible field never carries, and a stored sentinel is refused', async ({ page }) => {
     await serveSkills(page)
     await gotoTasks(page)
     await capture(page, 'sentinel preset target')
     await page.evaluate(() => localStorage.setItem('regin.tasks.arm.last', JSON.stringify({
       cwd: '', model: '__custom__', permission_mode: '', effort: '',
-      skills: [], skillArgs: '--strict', verify_cmd: 'echo from an older sheet', one_shot: false,
+      skills: [], skillArgs: '--strict', one_shot: false,
     })))
     const row = page.locator('.task-row', { hasText: 'sentinel preset target' }).first()
     await rowAction(row, 'arm')
     await expect(page.getByTestId('task-arm-form')).toBeVisible()
     await expect(page.getByTestId('task-arm-model-custom')).toHaveCount(0)
     await expect(page.getByTestId('task-arm-skill-args')).toHaveCount(0)
-    await expect(page.getByTestId('task-arm-verify')).toHaveValue('')
     await expect(page.getByTestId('task-arm-recalled')).toHaveCount(0)
     await page.getByRole('button', { name: 'Cancel' }).click()
 
@@ -611,7 +602,7 @@ test.describe('/tasks — arming', () => {
     await page.evaluate(() => localStorage.setItem('regin.tasks.arm.last', JSON.stringify({
       cwd: '/gone/from/this/install',
       model: '', permission_mode: '', effort: '',
-      skills: [], skillArgs: '', verify_cmd: '', one_shot: false,
+      skills: [], skillArgs: '', one_shot: false,
     })))
     const row = page.locator('.task-row', { hasText: 'stale preset target' }).first()
     await rowAction(row, 'arm')
@@ -674,7 +665,7 @@ test.describe('/tasks — a run and its liveness', () => {
     await mockList(page, [fakeTask(901, { title: 'a live run', status: 'running' })])
     await mockRuns(page, [{
       id: 5, task_id: 901, trace_id: 'sdk-live-1', attempt: 1, status: 'running',
-      started_at: NOW, ended_at: null, exit_reason: null, verify_exit_code: null,
+      started_at: NOW, ended_at: null, exit_reason: null,
       agent_run: { status: 'running', pid: 4242 }, live: true,
     }])
     await page.route(/\/api\/tasks\/\d+\/(stop|interrupt)$/, route => {
@@ -717,7 +708,7 @@ test.describe('/tasks — a run and its liveness', () => {
     }))
     await mockRuns(page, [{
       id: 9, task_id: 905, trace_id: 'sdk-fresh-1', attempt: 1, status: 'running',
-      started_at: NOW, ended_at: null, exit_reason: null, verify_exit_code: null,
+      started_at: NOW, ended_at: null, exit_reason: null,
       agent_run: { status: 'running', pid: 4243 }, live: true,
     }])
     const posted = []
@@ -749,7 +740,7 @@ test.describe('/tasks — a run and its liveness', () => {
     await mockList(page, [fakeTask(902, { title: 'a dead run', status: 'running' })])
     await mockRuns(page, [{
       id: 6, task_id: 902, trace_id: 'sdk-dead-1', attempt: 2, status: 'running',
-      started_at: NOW, ended_at: null, exit_reason: null, verify_exit_code: null,
+      started_at: NOW, ended_at: null, exit_reason: null,
       agent_run: { status: 'running', pid: 1 }, live: false,
     }])
 
@@ -775,7 +766,7 @@ test.describe('/tasks — a run and its liveness', () => {
     ], { idea })
     await mockRuns(page, [{
       id: 10, task_id: 906, trace_id: 'sdk-grouped-1', attempt: 1, status: 'running',
-      started_at: NOW, ended_at: null, exit_reason: null, verify_exit_code: null,
+      started_at: NOW, ended_at: null, exit_reason: null,
       agent_run: { status: 'running', pid: 4244 }, live: true,
     }])
 
@@ -803,7 +794,7 @@ test.describe('/tasks — a run and its liveness', () => {
         contentType: 'application/json',
         body: JSON.stringify({ runs: [{
           id: 11, task_id: 908, trace_id: 'sdk-slow-1', attempt: 1, status: 'running',
-          started_at: NOW, ended_at: null, exit_reason: null, verify_exit_code: null,
+          started_at: NOW, ended_at: null, exit_reason: null,
           agent_run: { status: 'running', pid: 4245 }, live: true,
         }] }),
       })
@@ -827,12 +818,12 @@ test.describe('/tasks — a run and its liveness', () => {
     await mockRuns(page, [
       {
         id: 8, task_id: 903, trace_id: 'sdk-attempt-2', attempt: 2, status: 'failed',
-        started_at: NOW, ended_at: NOW, exit_reason: 'the verify command failed',
-        verify_exit_code: 1, agent_run: { status: 'exited', pid: 0 }, live: false,
+        started_at: NOW, ended_at: NOW, exit_reason: 'session ended without a report',
+        agent_run: { status: 'exited', pid: 0 }, live: false,
       },
       {
         id: 7, task_id: 903, trace_id: 'sdk-attempt-1', attempt: 1, status: 'done',
-        started_at: NOW, ended_at: NOW, exit_reason: null, verify_exit_code: 0,
+        started_at: NOW, ended_at: NOW, exit_reason: null,
         agent_run: { status: 'exited', pid: 0 }, live: false,
       },
     ])
@@ -845,7 +836,7 @@ test.describe('/tasks — a run and its liveness', () => {
       .toHaveAttribute('href', '/trace/sessions/sdk-attempt-2')
     await expect(page.getByTestId('task-run-trace-1'))
       .toHaveAttribute('href', '/trace/sessions/sdk-attempt-1')
-    await expect(page.getByTestId('task-runs')).toContainText('verify exit 1')
+    await expect(page.getByTestId('task-runs')).toContainText('session ended without a report')
   })
 
   test('a task never run offers no attempts chip', async ({ page }) => {

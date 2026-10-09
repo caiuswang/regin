@@ -4,9 +4,7 @@ import { CUSTOM_MODEL, DEFAULT_PROVIDER, armDraft } from './useTaskArm.js'
 // only the fields that describe HOW an operator runs things, never which branch
 // a particular task gets. A branch is named for one task — reusing it would put
 // two tasks on the same checkout — and `LaunchWorktreeFields` already seeds its
-// own base from whichever repo is picked. A verify command is one task's too:
-// it is what proves THAT task done, and carried into the next sheet it is
-// armed unseen and settles an unrelated run.
+// own base from whichever repo is picked.
 const KEY = 'regin.tasks.arm.last'
 // `provider` leads: a remembered model is only recalled under the provider it
 // was picked for.
@@ -92,7 +90,6 @@ export function proposalAttempt(proposal) {
       worktree: proposal.branch ? { branch: proposal.branch, base: proposal.base || '' } : null,
       skill: proposal.skill ? { name: proposal.skill } : null,
     },
-    verify_cmd: proposal.verify_cmd || null,
   }
 }
 

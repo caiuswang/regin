@@ -139,7 +139,7 @@ test('test_arm_prefs_keep_provider_of_a_run_that_named_none', async ({ page }) =
   await page.addInitScript(() => localStorage.setItem(
     'regin.tasks.arm.last', JSON.stringify({ provider: 'kimi' })))
   const runs = [{ id: 9, attempt: 1, status: 'failed', trace_id: 'x', live: false,
-                  params: { model: 'opus' }, verify_cmd: null }]
+                  params: { model: 'opus' } }]
   const { posted } = await openArmSheet(page, { runs })
   await expect(page.getByTestId('task-arm-provider')).toContainText('Claude Code')
   await expect(page.getByTestId('task-arm-model')).toContainText('opus')
@@ -161,7 +161,7 @@ test('test_claude_arm_sheet_unchanged', async ({ page }) => {
   await expect.poll(() => posted.length).toBe(1)
   expect(Object.keys(posted[0]).sort()).toEqual([
     'autorun', 'cwd', 'effort', 'launch', 'model', 'one_shot',
-    'permission_mode', 'provider', 'verify_cmd',
+    'permission_mode', 'provider',
   ])
   expect(posted[0]).toMatchObject({ provider: 'claude', model: 'sonnet', launch: 'tmux' })
   expect(skillQueries[0]).toBe('claude')
@@ -187,10 +187,10 @@ test('test_slice_arm_sheet_offers_provider', async ({ page }) => {
   await page.route(new RegExp(`/api/features/${FID}/slices$`), route => route.fulfill({ json: {
     sliceable: true, refusal: null, tail_missing: false,
     rows: [{ n: 'S1', title: 'only', depends_on: [], base: 'main', skill: null,
-             verify: null, task_id: 81, task_status: 'idea' }],
+             task_id: 81, task_status: 'idea' }],
   } }))
   await page.route(/\/api\/tasks\/81\/arm-proposal$/, route => route.fulfill({ json: {
-    branch: 'f243/s1', base: 'main', skill: '', verify_cmd: '' } }))
+    branch: 'f243/s1', base: 'main', skill: '' } }))
   await page.route(new RegExp(`/api/features/${FID}/arm-slices$`), (route) => {
     bodies.push(route.request().postDataJSON())
     return route.fulfill({ json: { armed: [81], refused: [] } })

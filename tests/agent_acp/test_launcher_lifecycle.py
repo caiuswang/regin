@@ -100,7 +100,7 @@ def kimi_task(tmp_db, tmp_path):
             task_id = task.id
         row = runs.arm(task_id, params={
             "provider": "kimi", "cwd": str(tmp_path), **params},
-            verify_cmd=None, autorun=0)
+            autorun=0)
         return task_id, row["id"]
     return _make
 

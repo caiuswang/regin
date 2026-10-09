@@ -63,9 +63,6 @@ onMounted(() => load(props.task.id))
         <div class="task-run-facts">
           <span :title="utcTitle(run.started_at)">{{ localStamp(run.started_at) }}</span>
           <span v-if="run.ended_at" :title="utcTitle(run.ended_at)">→ {{ localStamp(run.ended_at) }}</span>
-          <span v-if="run.verify_exit_code !== null && run.verify_exit_code !== undefined">
-            verify exit {{ run.verify_exit_code }}
-          </span>
         </div>
         <p v-if="run.exit_reason" class="task-run-reason">{{ run.exit_reason }}</p>
         <RouterLink

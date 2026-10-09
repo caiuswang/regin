@@ -23,7 +23,7 @@ def _running_fix(native_task, feature_row):
     defect = store.record("the list sorts oldest first", feature_id=feature.id)
     task_id = native_task(title="fix it", feature_id=feature.id)
     store.set_fix_item(defect.id, task_id)
-    runs.arm(task_id, params={}, verify_cmd=None, autorun=0)
+    runs.arm(task_id, params={}, autorun=0)
     run = runs.open_attempt(task_id)
     task_store.set_status(task_id, TASK_STATUS_RUNNING)
     return defect.id, task_id, run["id"]

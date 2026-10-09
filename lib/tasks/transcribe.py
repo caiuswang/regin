@@ -141,8 +141,7 @@ def slice_body(row: SliceRow) -> str:
     ])
 
 
-def arm_proposal(row: SliceRow, *, branch: str,
-                 default_verify: Optional[str] = None) -> dict:
+def arm_proposal(row: SliceRow, *, branch: str) -> dict:
     """The parameters a human would arm this slice with — proposed, not set.
 
     `worktree.base` comes from the table and from nowhere else: Invariant 3
@@ -151,7 +150,6 @@ def arm_proposal(row: SliceRow, *, branch: str,
     """
     return {
         "worktree": {"branch": branch, "base": row.base},
-        "verify_cmd": row.verify_cmd or default_verify,
         "skill": {"name": row.skill},
     }
 
@@ -222,11 +220,9 @@ def branch_for(row: SliceRow, branch_prefix: str) -> str:
 
 
 def _write_one(row: SliceRow, existing: Optional[AgentTask], *,
-               feature_id: int, branch_prefix: str,
-               default_verify: Optional[str]) -> SliceOutcome:
+               feature_id: int, branch_prefix: str) -> SliceOutcome:
     title, body = slice_title(row), slice_body(row)
-    arm = arm_proposal(row, branch=branch_for(row, branch_prefix),
-                       default_verify=default_verify)
+    arm = arm_proposal(row, branch=branch_for(row, branch_prefix))
     if existing is None:
         view, _ = store.capture_task(
             title=title, source=TRANSCRIBE_SOURCE, body=body,
@@ -298,8 +294,8 @@ def _report_stale(outcome: SliceOutcome, wanted: list[int]) -> None:
             + " which the table no longer declares")
 
 
-def transcribe(feature_id: int, body: str, *, branch_prefix: str,
-               default_verify: Optional[str] = None) -> Transcription:
+def transcribe(feature_id: int, body: str, *, branch_prefix: str
+               ) -> Transcription:
     """Land the spec's slice table as tasks and edges, or refuse wholesale.
 
     Wholesale refusals — an unknown or cyclic edge, a missing column, two
@@ -317,7 +313,7 @@ def transcribe(feature_id: int, body: str, *, branch_prefix: str,
     for row in rows:
         outcomes[row.n] = _write_one(
             row, existing.get(row.n), feature_id=feature_id,
-            branch_prefix=branch_prefix, default_verify=default_verify)
+            branch_prefix=branch_prefix)
     _write_edges(rows, outcomes)
 
     result = Transcription(feature_id, [outcomes[row.n] for row in rows])

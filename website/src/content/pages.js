@@ -67,8 +67,8 @@ export const GETTING_STARTED = [
 export const RUNS = [
   ['Arm, then launch', [
     P('A task is **armed** with a provider, a model and a launch mode, then started. The *channel* arm runs it under `regin serve` with a typed connection (Claude through the Agent SDK, Kimi over ACP); the *pane* arm runs it in a tmux pane on regin\'s own tmux server, which survives a server restart.'),
-    S(arm, 'The Arm task dialog: working directory, git worktree option, agent, model, effort, permission mode, skills, verify command and launch choice.', 'Arming a task: where it runs, which agent and model, the skills it opens with, the verify command that decides when it is done, and the launch arm.'),
-    P('A run settles on the agent\'s `regin task finish` report or its verify command — a turn ending is not the work being done. When it settles, the tasks that depend on it are released.'),
+    S(arm, 'The Arm task dialog: working directory, git worktree option, agent, model, effort, permission mode, skills and launch choice.', 'Arming a task: where it runs, which agent and model, the skills it opens with, and the launch arm.'),
+    P('A run settles on the agent\'s `regin task finish` report — a turn ending is not the work being done. When it settles, the tasks that depend on it are released.'),
   ]],
   ['Providers', [
     T(['AGENT', 'LAUNCH MODES', 'LIMITS'], '120px 160px minmax(240px,1fr)', [

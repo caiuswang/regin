@@ -109,7 +109,7 @@ test('test_task_detail_rearm_prefills_pending_params', async ({ page }) => {
   // prefer it over the attempt this task already has pending.
   await page.addInitScript(() => localStorage.setItem(
     'regin.tasks.arm.last',
-    JSON.stringify({ cwd: '/r/regin', verify_cmd: 'from another task' })))
+    JSON.stringify({ cwd: '/r/other' })))
   const task = {
     id: 51, title: 'slice one', status: 'armed', priority: 'none', body: '',
     kind: 'task', created_at: '2026-09-01T00:00:00Z',
@@ -119,7 +119,7 @@ test('test_task_detail_rearm_prefills_pending_params', async ({ page }) => {
     menu: ['disarm', 'arm', 'edit', 'deps', 'mark_done', 'archive', 'delete'],
   }
   const armed = {
-    status: 'armed', attempt: 1, verify_cmd: 'pytest tests/pipeline', autorun: false,
+    status: 'armed', attempt: 1, autorun: false,
     params: { cwd: '/r/regin', worktree: { branch: 'x', base: 'main' } },
   }
   await page.route(/\/api\/tasks\/51(\?|$)/, (route) =>
@@ -138,7 +138,6 @@ test('test_task_detail_rearm_prefills_pending_params', async ({ page }) => {
 
   await expect(page.getByTestId('task-arm-form')).toBeVisible()
   await expect(page.getByTestId('live-launch-worktree-branch')).toHaveValue('x')
-  await expect(page.getByTestId('task-arm-verify')).toHaveValue('pytest tests/pipeline')
   await expect(page.getByTestId('task-arm-recalled')).toHaveCount(0)
 })
 

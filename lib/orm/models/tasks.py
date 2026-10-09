@@ -224,16 +224,12 @@ class AgentTaskRun(Base, table=True):
         default=None, sa_column=Column("ended_at", String))
     exit_reason: Optional[str] = Field(
         default=None, sa_column=Column("exit_reason", Text))
-    verify_exit_code: Optional[int] = Field(
-        default=None, sa_column=Column("verify_exit_code", Integer))
     # The parameters this attempt actually spent. They sat on the task, so
     # trying the same work with different ones meant creating a second task —
     # which is how "a sub-task is a run" became a shape the model carried.
     # Here a rerun is a row, and the two attempts' parameters stay separate.
     params_json: Optional[str] = Field(
         default=None, sa_column=Column("params_json", Text))
-    verify_cmd: Optional[str] = Field(
-        default=None, sa_column=Column("verify_cmd", Text))
     # A per-task grant, not a global mode: 1 means a task whose dependencies
     # just resolved launches itself instead of waiting for a human.
     autorun: int = Field(

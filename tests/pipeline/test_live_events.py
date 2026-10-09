@@ -116,7 +116,7 @@ def test_rolled_back_write_raises_nothing(frames):
 
 def test_bulk_run_updates_raise_the_tasks_frame(frames, monkeypatch):
     """A statement-level `update(AgentTaskRun)` bypasses the flush, so the
-    verify claim and the reopen have to announce their task themselves."""
+    reopen has to announce its task itself."""
     from datetime import datetime, timezone
 
     from lib.orm import SessionLocal
@@ -125,13 +125,6 @@ def test_bulk_run_updates_raise_the_tasks_frame(frames, monkeypatch):
 
     task, _ = tasks.capture_task(title="bulk", source="test")
     run = runs.open_attempt(task["id"])
-    with SessionLocal() as s:
-        s.get(AgentTaskRun, run["id"]).verify_cmd = "true"
-        s.commit()
-    frames()
-
-    assert runs._claim_verify(run["id"])[0] == runs.VERIFY_MINE
-    assert _keys(frames()) == [("task", task["id"])]
 
     with SessionLocal() as s:
         s.get(AgentTaskRun, run["id"]).ended_at = datetime.now(timezone.utc)

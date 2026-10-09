@@ -22,18 +22,13 @@ time would be a plan the spec never carried (Invariant 1).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Sequence
+from typing import Sequence
 
 from lib.activity_log import get_activity_logger
 from lib.tasks.commands import DEFAULT_SKILL, ProjectCommands
 from lib.tasks.slice_table import SliceRow
 
 log = get_activity_logger("tasks")
-
-#: Joins two commands into one verify line. `&&` and not `;` because the
-#: tail's verify is a claim that *both* passed.
-COMMAND_JOINER = " && "
-
 
 @dataclass(frozen=True)
 class TailSpec:
@@ -45,7 +40,7 @@ class TailSpec:
     spec_refs: tuple[str, ...]
     tests: tuple[str, ...]
     #: Command-table keys this row runs, in order. Empty means the row runs
-    #: no project command of its own and verifies with the default.
+    #: no project command of its own.
     commands: tuple[str, ...] = ()
 
 
@@ -105,18 +100,6 @@ def _delivers(spec: TailSpec, commands: ProjectCommands, base: str) -> str:
     return text
 
 
-def _verify_cmd(spec: TailSpec, commands: ProjectCommands) -> Optional[str]:
-    """The row's Verify cell — its own commands, else the table's default.
-
-    A row with no commands of its own leaves the cell empty rather than
-    copying `test` into it: an empty Verify already *means* the project's
-    test command (the column's documented default), and writing the value
-    out would freeze today's spelling into the spec.
-    """
-    runnable, _ = _rendered_commands(spec, commands)
-    return COMMAND_JOINER.join(runnable) or None
-
-
 def _next_ordinal(rows: Sequence[SliceRow]) -> int:
     return max((int(row.n[1:]) for row in rows), default=-1) + 1
 
@@ -152,7 +135,6 @@ def tail_slice_rows(rows: Sequence[SliceRow], commands: ProjectCommands,
             base=base,
             depends_on=list(previous),
             skill=skill,
-            verify_cmd=_verify_cmd(spec, commands),
         )
         tail.append(row)
         previous = [row.n]
