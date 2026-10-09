@@ -130,21 +130,12 @@ async function create(request, path, data) {
 test.describe('theme seam', () => {
   test.skip(RECORD, 'recording')
 
-  test('test_default_is_classic', async ({ page }) => {
-    const requests = []
-    page.on('request', r => requests.push(r.url()))
-    await page.goto('/overview')
-    await expect(page.getByTestId('overview')).toBeVisible()
-    await expect.poll(() => plTheme(page)).toBe('classic')
-    expect(requests.filter(u => PIXEL_BYTES.test(u))).toEqual([])
-  })
-
   test('test_unknown_stored_value', async ({ page }) => {
     await storeTheme(page, 'neon')
     await page.goto('/overview')
     await expect(page.getByTestId('overview')).toBeVisible()
-    await expect.poll(() => plTheme(page)).toBe('classic')
-    await expect(page.getByTestId('pipeline-theme-switch')).toHaveText(/Classic/)
+    await expect.poll(() => plTheme(page)).toBe('pixel')
+    await expect(page.getByTestId('pipeline-theme-switch')).toHaveText(/Pixel/)
   })
 
   test('test_switching_keeps_place', async ({ page, request }) => {
@@ -211,6 +202,19 @@ test.describe('theme seam', () => {
     expect(await page.evaluate(() => localStorage.getItem('regin_pipeline_theme'))).toBe('pixel')
     // The switch names what is on screen, not the preference that failed.
     await expect(page.getByTestId('pipeline-theme-switch')).toHaveText(/Classic/)
+  })
+})
+
+test.describe('no stored theme', () => {
+  test.skip(RECORD, 'recording')
+  test.use({ pipelineTheme: null })
+
+  test('test_default_is_pixel', async ({ page }) => {
+    await page.goto('/overview')
+    await expect(page.getByTestId('overview')).toBeVisible()
+    await expect.poll(() => plTheme(page)).toBe('pixel')
+    await expect(page.getByTestId('pipeline-theme-switch')).toHaveText(/Pixel/)
+    expect(await page.evaluate(() => localStorage.getItem('regin_pipeline_theme'))).toBeNull()
   })
 })
 

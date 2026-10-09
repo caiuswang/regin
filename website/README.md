@@ -53,6 +53,7 @@ Page copy lives in [`src/content/`](src/content), separated from the components 
 | File | Feeds |
 |---|---|
 | `features.js` | the home page: `LOOP` (Spec → Run → Watch → Count), `LAYERS` (Workbench, Runs, Observability, Guidance — in that order) and `PILLARS`, one real artifact per layer |
+| `pipeline.js` | `/pipeline`: the loop table and the worked example — feature #139 (the Pixel theme), its slices, ledger and numbers |
 | `cli.js` | `/cli`: core commands, `COMMAND_GROUPS` (every group `regin --help` lists), troubleshooting |
 | `settings.js` | `/configuration` |
 | `topics.js` | `/topics` and its sub-pages under Guidance |

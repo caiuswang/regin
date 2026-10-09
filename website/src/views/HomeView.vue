@@ -4,7 +4,15 @@ import SiteIcon from '../components/SiteIcon.vue'
 import Button from '../components/ui/Button.vue'
 import HomeProof from '../components/HomeProof.vue'
 import HomePillars from '../components/HomePillars.vue'
+import ThemedShot from '../components/ThemedShot.vue'
+import overviewLight from '../assets/shots/pipeline-overview-light.png'
+import overviewLightWebp from '../assets/shots/pipeline-overview-light.webp'
+import overviewDark from '../assets/shots/pipeline-overview-dark.png'
+import overviewDarkWebp from '../assets/shots/pipeline-overview-dark.webp'
 import { LAYERS, LOOP } from '../content/features.js'
+
+const OVERVIEW_LIGHT = { png: overviewLight, webp: overviewLightWebp }
+const OVERVIEW_DARK = { png: overviewDark, webp: overviewDarkWebp }
 
 const CLONE_CMD = 'git clone https://github.com/caiuswang/regin\ncd regin && ./scripts/setup.sh'
 const copied = ref(false)
@@ -71,6 +79,15 @@ async function copyQuickstart() {
           <p>{{ layer.summary }}</p>
         </RouterLink>
       </div>
+    </section>
+
+    <section class="section" aria-labelledby="overview-heading">
+      <div class="section-head">
+        <p class="eyebrow">The workbench, in use</p>
+        <h2 id="overview-heading">This is regin building regin</h2>
+        <p>The Pipeline Overview of the project that builds regin, scoped to that one repo: features in the workshop, tasks on the board, defects in the bug den, and the one decision waiting on a human. The first feature in flight is the one that rewrote this page.</p>
+      </div>
+      <ThemedShot :light="OVERVIEW_LIGHT" :dark="OVERVIEW_DARK" :width="1440" :height="900" alt="The regin dashboard's Pipeline Overview in the Pixel theme, scoped to the regin project: 109 features, 378 tasks and 139 defects in the loop scene, the project panel at 30% shipped, the features in flight and one defect needing a decision." />
     </section>
 
     <HomePillars />

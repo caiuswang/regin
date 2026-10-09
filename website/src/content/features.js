@@ -1,6 +1,7 @@
 // Every artifact below is real output from regin running on its own repo —
-// nothing invented. The Workbench and Runs artifacts are this website's own
-// feature (F153, 2026-10-09); the trace numbers and the hook refusal are from
+// nothing invented. The Workbench artifact is the Pixel theme's feature (F139,
+// shipped 2026-10-07); the Runs artifact is this website's own feature (F153,
+// 2026-10-09); the trace numbers and the hook refusal are from
 // the session that built the first version of the site (trace 3b3adbbc,
 // 2026-07-16).
 
@@ -41,8 +42,8 @@ export const PILLARS = [
     body: 'The spec lives on the feature row, its acceptance items are named tests, and the spec is cut into slices that become tasks with dependencies. Calling it done is a done-claim; anything found wrong afterwards is a defect declared against the feature. The number it is held to is rounds-to-done — counted from declarations, never inferred.',
     link: { to: '/pipeline', label: 'How the pipeline works' },
     artifact: 'code',
-    code: '$ regin feature ledger 153\n#153  Regin项目介绍整理\nbuilding  rounds=1  open_defects=0  escapes=0\n  being built\n\ncost (upper bound)  $3.76 across 5 sessions\nwork time  12m 30s\n\nsessions\n  2efbf8a1  S1 — Positioning text         $1.43\n  5d11f88d  S3 — Website copy + IA        $0.61\n  cc5fc91a  Slice 构建 Task Graph          $0.41\n  dc66a54b  S2 — Setup + CLI reference    $0.53\n  e0f1ca71  F153 Regin项目介绍整理 spec      $0.78\n…',
-    codeCaption: 'The ledger of the feature that rewrote this page, mid-build on 2026-10-09 (date, kind and round columns trimmed): the spec, the slicing and each slice are runs, each run costed.',
+    code: '$ regin feature ledger 139\n#139  重新设计Pipeline操作界面-游戏像素风格\nshipped  rounds=1  open_defects=0  escapes=0\n  completed and never walked back\n\ncost (upper bound)  $140.43 across 28 sessions\nwork time  7h 17m\nhuman prompts  0 across 0 human sessions\n\nsessions\n  85fcf73e  S1 — Seam                $6.20\n  cc2e7fcb  S2 — Pixel foundation    $4.38\n  fad49391  S4 — Tasks              $11.44\n  ff040c3d  S3 — Overview            $8.46\n…',
+    codeCaption: 'The ledger of the feature that built the dashboard’s Pixel theme (date, kind and round columns trimmed; 4 of its 28 sessions shown, the first four slices): 15 slices and 12 defects later it shipped once and was never walked back. The Pipeline page walks through it step by step.',
   },
   {
     layer: 'Runs',
@@ -59,7 +60,7 @@ export const PILLARS = [
     icon: 'database',
     title: 'A session viewer, not a scrollback',
     body: 'Hooks and transcripts already produce everything you need to understand a session — the terminal just flattens it. regin ingests the stream into spans you can filter by tool, agent, and phase, replay turn by turn, and roll up into token, cost and time attribution.',
-    link: { to: '/architecture#tracing', label: 'Trace internals' },
+    link: { to: '/architecture#tracing', label: 'How capture works' },
     artifact: 'stats',
     stats: ['552 spans', '8 turns', '16 tools', '$5.59 of $55.14 tool-attributed'],
     statsCaption: 'The first website build session, captured at turn 8. The split is the point: $5.59 was attributable to specific tool calls; the rest is shared context. A live session keeps counting, so captures taken moments apart drift upward.',

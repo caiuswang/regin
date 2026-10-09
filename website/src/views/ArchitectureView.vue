@@ -6,65 +6,91 @@ import Callout from '../components/Callout.vue'
 
 const TOC = [
   { id: 'overview', label: 'How it works' },
-  { id: 'feedforward', label: 'Patterns & skills' },
-  { id: 'rule-engines', label: 'Rule engines' },
-  { id: 'tracing', label: 'Session tracing' },
-  { id: 'memory', label: 'Agent memory' },
-  { id: 'topics', label: 'Topic wikis' },
+  { id: 'modules', label: 'Modules by layer' },
+  { id: 'tracing', label: 'One capture vocabulary' },
+  { id: 'ledger', label: 'Counts come from events' },
+  { id: 'guidance', label: 'The Guidance layer' },
   { id: 'databases', label: 'Databases' },
 ]
 
+const DIAGRAM = `              Workbench                      Runs                    Observability
+   feature row ─▶ spec ─▶ slices ─▶ tasks ─▶ armed run ─────────▶  session trace
+        ▲          (features.body)   (DAG)    Claude: Agent SDK      (spans, turns,
+        │                                     Kimi:   ACP / tmux      tokens, grades)
+        │                                        │  ▲                      │
+   defects ◀── done-claim ◀──────────────────────┘  │ steer / stop         │
+   (rounds-to-done)                    /live, agent bridge, inbox ◀────────┘
+                                                    │
+                  Guidance (underneath every run)   ▼
+   patterns & skills ─▶ provider skills dir     hook_manager ◀─ rule engines (Grit, Radon, bundles)
+   agent memory, topic wikis ─▶ recalled into prompts on demand
+
+   All four layers share one Flask API + SQLite store, rendered by the Vue 3 SPA (frontend/).`
+
 const MODULE_COLUMNS = [
+  { key: 'layer', label: 'Layer' },
   { key: 'mod', label: 'Module', code: true },
   { key: 'desc', label: 'Purpose' },
 ]
 const MODULES = [
-  { mod: 'lib/settings.py', desc: 'Typed settings (pydantic-settings): env > settings.local.json > settings.json > defaults.' },
-  { mod: 'hook_manager/', desc: 'Hook dispatcher: one entry point per Claude hook event, running every registered handler and merging their responses.' },
-  { mod: 'lib/rule_engines/', desc: 'RuleEngine protocol + built-in adapters: GritQL, Radon (complexity), and the generic bundle engine.' },
-  { mod: 'lib/trace/', desc: 'Span ingest, aggregates, and the queries behind the session viewer.' },
-  { mod: 'lib/memory/', desc: 'Cross-session agent memory: capture, distill, recall, reflect, feedback.' },
-  { mod: 'lib/topics/', desc: 'Topic graph: routing, proposals, drift detection, wikis.' },
-  { mod: 'lib/grader/', desc: 'Post-hoc session rubric grader (screen + deep tiers).' },
-  { mod: 'lib/providers/', desc: 'Provider adapters (claude, codex, generic, kimi) for skills/hooks/session path conventions.' },
-  { mod: 'web/ + frontend/', desc: 'Flask JSON API + the Vue 3 SPA dashboard it serves.' },
+  { layer: 'Workbench', mod: 'lib/features/', desc: 'Feature rows, the spec on the row, the append-only event log (specced, build_started, shipped, restarted, abandoned), Spec/Build steps, the ledger.' },
+  { layer: 'Workbench', mod: 'lib/defects/', desc: 'Defects against a feature, triage, escapes blamed on a ship, close-with-a-check.' },
+  { layer: 'Workbench', mod: 'lib/tasks/', desc: 'Tasks, dependency edges, slice-check / tail / transcribe, arming, and releasing dependents when a run finishes.' },
+  { layer: 'Workbench', mod: 'lib/pipeline/', desc: 'The Pipeline shell’s reads: tab counts under one project scope, per-project rollups.' },
+  { layer: 'Runs', mod: 'lib/agent_sdk/', desc: 'Claude task runs driven through the Agent SDK: launch, turns, steer, stop.' },
+  { layer: 'Runs', mod: 'lib/agent_acp/', desc: 'Kimi task runs over ACP (a tmux arm also exists).' },
+  { layer: 'Runs', mod: 'lib/agent_bridge/', desc: 'Delivers a human or system message into a live session.' },
+  { layer: 'Runs', mod: 'lib/agent_messages/', desc: 'send_to_user: the Inbox, lessons into memory, and the optional push channels.' },
+  { layer: 'Observability', mod: 'lib/agent_events/', desc: 'Producer-neutral events: hooks and the SDK project onto one span shape.' },
+  { layer: 'Observability', mod: 'lib/trace/', desc: 'Span ingest, serve-time merge, turn and token rollups, the session viewer’s queries, span gates.' },
+  { layer: 'Observability', mod: 'lib/grader/', desc: 'Post-hoc session rubric grades (screen + deep tiers).' },
+  { layer: 'Guidance', mod: 'lib/patterns/ + lib/skills/', desc: 'Procedure guides, promoted to skills and deployed into the provider’s skills directory.' },
+  { layer: 'Guidance', mod: 'lib/rule_engines/', desc: 'GritQL, Radon and bundle engines, enforced from PostToolUse hooks.' },
+  { layer: 'Guidance', mod: 'lib/memory/', desc: 'Cross-session lessons: capture, recall, reflect, supersede.' },
+  { layer: 'Guidance', mod: 'lib/topics/', desc: 'Per-repo topic graph: routing, proposals, drift, wikis.' },
+  { layer: 'Shared', mod: 'hook_manager/', desc: 'One entry point per agent hook event; runs every handler and merges their answers.' },
+  { layer: 'Shared', mod: 'lib/providers/', desc: 'Provider adapters (Claude, Kimi, Codex, generic): paths, hooks, launch capabilities.' },
+  { layer: 'Shared', mod: 'lib/orm/ + lib/settings.py', desc: 'SQLModel layer and typed settings.' },
+  { layer: 'Shared', mod: 'web/ + frontend/', desc: 'Flask JSON API and the Vue 3 SPA it serves.' },
 ]
 </script>
 
 <template>
   <DocPage
     title="Architecture"
-    lead="A map of the system for users who want to know what runs where. For full internals see ARCHITECTURE.md in the repository; the deepest subsystems each carry their own topic wiki."
+    lead="A map of what runs where, organised by the same four layers as the rest of this site. The full internals are in ARCHITECTURE.md in the repository."
     :toc="TOC"
   >
     <h2 id="overview">How it works</h2>
-    <p>regin manages three asset classes — patterns (markdown procedure guides), rule engines, and trace (session + span data) — and deploys them into the active provider's skills directory so the agent reads them at the right moment.</p>
-    <CodeBlock :code="'Pattern guides (SKILL.md)  +  Rule engines (.grit, …)\n            |                          |\n            v                          v\n   SQLite tracking  +  Flask API  +  hook_manager\n                        |\n                        v\n               Vue 3 SPA (frontend/)\n                        |\n                        v\n   Active provider skills dir (~/.claude/skills/)'" />
-    <DataTable :columns="MODULE_COLUMNS" :rows="MODULES" />
+    <p>regin follows one loop — Spec → Run → Watch → Count. The <strong>Workbench</strong> holds features and their tasks, <strong>Runs</strong> launches and steers the agents that work them, <strong>Observability</strong> records what those agents did, and <strong>Guidance</strong> sits under every run to keep the agent on-spec. The defects the operator declares feed back into the Workbench, and the loop closes there.</p>
+    <CodeBlock :code="DIAGRAM" />
     <Callout tone="warn">
-      The feedback and observability layers below (rule gates, session tracing,
-      memory injection) run <em>inside</em> <code>hook_manager</code>, so they stay
-      dormant until you install that dispatcher into the agent's settings file. New
-      instances do this on
+      Observability and the Guidance layer’s rule gates and memory injection run
+      <em>inside</em> <code>hook_manager</code>, so they stay dormant until the
+      dispatcher is installed into the agent’s settings file —
       <RouterLink to="/getting-started#activate-hooks">Getting Started → Activate the hooks</RouterLink>.
+      Task runs launched from the dashboard are captured either way: the SDK path writes the same spans itself.
     </Callout>
 
-    <h2 id="feedforward">Patterns &amp; skills — the feedforward layer</h2>
-    <p>Raw → refined, in two stages. <strong>Patterns</strong> are local procedure guides you write or import — opinionated, local to your machine, edited as your codebase evolves. When one earns its keep, <code>pattern promote</code> packages it as a <strong>skill</strong>: versioned, publishable, deployed across machines, and surfaced to the agent only when its trigger conditions match. Both are advisory: they shape what the agent <em>tends</em> to do.</p>
+    <h2 id="modules">Modules by layer</h2>
+    <DataTable :columns="MODULE_COLUMNS" :rows="MODULES" />
 
-    <h2 id="rule-engines">Rule engines — the feedback layer</h2>
-    <p>Rules are the enforced half. They live in real hooks that intercept tool calls, edits, and prompts in flight and either push the agent back on-spec or block the action outright — the agent can't drift past them because the harness, not the agent, makes the call. Three engines ship built-in: <strong>GritQL</strong> (structural queries over Python/Java), <strong>Radon</strong> (cyclomatic-complexity gates), and the generic <strong>bundle engine</strong> (YAML rule packs, like the Vue/CSS style conventions used on regin's own frontend — and on this website).</p>
+    <h2 id="tracing">One capture vocabulary</h2>
+    <p>Two producers feed the trace. The <strong>hook path</strong> observes a session you drive yourself: <code>hook_manager</code> handlers turn each hook event into an agent event. The <strong>SDK path</strong> drives a session regin launched: the Agent SDK runner turns each SDK message into the same agent event. Both project through one writer into spans, so a task run and a hand-driven session render in the same session viewer, with the same rollups and grades.</p>
+    <p>Spans are append-only. De-duplication, re-parenting and ordering happen when a session is read, never by rewriting rows — a late or repeated event cannot corrupt what was already stored.</p>
 
-    <h2 id="tracing">Session tracing — the observability layer</h2>
-    <p>Hooks and transcripts produce a stream of events: tool calls, model thoughts, file edits, hook decisions, token usage. regin ingests that stream into OpenTelemetry-style spans and renders a real session viewer — filterable by tool, agent, and phase; replayable; with rollups (tokens by tool, skill reads, rule triggers) so you can diagnose <em>why</em> a session went sideways.</p>
+    <h2 id="ledger">Counts come from events</h2>
+    <p>A feature’s stage and its rounds-to-done are not stored as counters. They are queries over the feature’s event log, written only by declarations: the operator’s ship, reopen and abandon, a build run starting, a defect blamed on a ship. Nothing is inferred from commit messages, branch names or timing, so the number cannot drift from what actually happened. Cost is the sum of the sessions attributed to the feature, shown as an upper bound. See <RouterLink to="/pipeline">Pipeline</RouterLink> for a feature walked through end to end.</p>
 
-    <h2 id="memory">Agent memory — cross-session learning</h2>
-    <p>When a session discovers something worth keeping, it's distilled into a lesson — explicitly when the agent flags one, or automatically by a post-session distiller — and written to a store that lives outside any single prompt (its own SQLite database, so it survives <code>regin init</code>). On later tasks the relevant lessons are recalled and injected on demand. The store is curated, not append-only: lessons are ranked by usefulness, reinforced when recalled, de-duplicated offline, and superseded as they go stale — all browsable from the <code>/memory</code> page.</p>
-
-    <h2 id="topics">Topic wikis — per-repo knowledge</h2>
-    <p>Each registered repo gets a graph of topics, each carrying a wiki page. A tool-using agent explores the repo and <em>proposes</em> draft topics; you review and approve them; content-drift detection flags pages whose underlying files have moved on. At task time topics are routed to the agent by keyword match — only the slices touching what it's doing right now. The full design has its own section: <RouterLink to="/topics">Topic Wikis</RouterLink>.</p>
+    <h2 id="guidance">The Guidance layer</h2>
+    <h3 id="feedforward">Patterns &amp; skills — before the agent acts</h3>
+    <p>Patterns are local procedure guides you write or import. When one earns its keep, <code>regin pattern promote</code> packages it as a versioned <strong>skill</strong>, deployed into the active provider’s skills directory and surfaced to the agent only when its triggers match. Both are advisory: they shape what the agent <em>tends</em> to do.</p>
+    <h3 id="rule-engines">Rule engines — while it acts</h3>
+    <p>Rules are the enforced half. They run in the <code>PostToolUse</code> hook, so a violation is reported back to the agent in the same turn as the edit that caused it. Three engines ship built in: <strong>GritQL</strong> (structural queries over Python/Java), <strong>Radon</strong> (complexity grades) and the generic <strong>bundle engine</strong> (YAML rule packs, such as the Vue/CSS conventions used on regin’s own frontend and on this website).</p>
+    <h3 id="memory">Agent memory — across sessions</h3>
+    <p>A session that learns something worth keeping sends it as a lesson. Lessons live in their own SQLite database, outside any prompt, and are recalled into later sessions when they match the task. The store is curated rather than append-only: lessons are ranked by use, consolidated offline and superseded when they go stale, all browsable at <code>/memory</code>. Per-repo knowledge lives beside it as <RouterLink to="/topics">topic wikis</RouterLink>.</p>
 
     <h2 id="databases">Databases</h2>
-    <p>Three stores with different lifecycles: the local SQLite cache (<code>db/regin.db</code> — pattern index, repos, trace; rebuildable from disk with <code>regin rebuild</code>), the auth/audit database (same SQLite file in standalone mode, MySQL in shared mode), and the agent-memory database (its own SQLite file, deliberately outside the init/rebuild cycle). Schema changes ship as Alembic migrations; bring an existing DB to head with <code>regin migrate</code>.</p>
+    <p>Three stores with different lifecycles: the local SQLite database (<code>db/regin.db</code> — features, tasks, defects, repos, patterns, trace), the auth/audit database (the same SQLite file standalone, MySQL in shared mode), and the agent-memory database (its own SQLite file, deliberately outside the init/rebuild cycle). Schema changes ship as Alembic migrations; bring an existing database to head with <code>regin migrate</code>.</p>
   </DocPage>
 </template>

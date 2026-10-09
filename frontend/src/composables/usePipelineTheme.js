@@ -1,5 +1,5 @@
 import { computed, inject, onBeforeUnmount, provide, ref, watch } from 'vue'
-import { DEFAULT_THEME, THEMES, THEME_LIST, classicTheme, isThemeId } from '../pipeline/themes/registry'
+import { DEFAULT_THEME, FALLBACK_THEME, THEMES, THEME_LIST, classicTheme, isThemeId } from '../pipeline/themes/registry'
 import { useFlash } from './useFlash'
 
 // The pipeline shell's theme: 'classic' | 'pixel' (registry.js). A viewer
@@ -14,7 +14,7 @@ function storedTheme() {
 }
 
 const preference = ref(storedTheme())
-const loaded = new Map([[DEFAULT_THEME, classicTheme]])
+const loaded = new Map([[FALLBACK_THEME, classicTheme]])
 // The theme actually rendering: the preference once its module is in, or
 // classic when that module failed. A fallback never rewrites the preference.
 const activeId = ref(null)
@@ -45,8 +45,8 @@ async function resolve(id) {
     activeId.value = id
   } catch {
     if (token !== request) return
-    activeId.value = DEFAULT_THEME
-    useFlash().flash(`${THEMES[id].label} theme failed to load — showing ${THEMES[DEFAULT_THEME].label}`, 'error')
+    activeId.value = FALLBACK_THEME
+    useFlash().flash(`${THEMES[id].label} theme failed to load — showing ${THEMES[FALLBACK_THEME].label}`, 'error')
   }
   status.value = 'ready'
 }

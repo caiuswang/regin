@@ -10,9 +10,10 @@ import { TEST_USER } from '../e2e-env.js'
 import { API_BASE } from './helpers/api-base.js'
 
 export const test = base.extend({
-  // A stored pipeline theme for every page of the test; the `pixel` project
-  // sets it to re-run the pipeline suites under the pixel theme.
-  pipelineTheme: [null, { option: true }],
+  // A stored pipeline theme for every page of the test. The default theme is
+  // pixel, so the `chromium` project pins classic and the `pixel` project
+  // re-runs the pipeline suites under pixel; null stores nothing.
+  pipelineTheme: ['classic', { option: true }],
   page: async ({ page, pipelineTheme }, use) => {
     // Login with the pre-created admin account
     const loginRes = await page.request.post(`${API_BASE}/api/auth/login`, {
@@ -26,7 +27,12 @@ export const test = base.extend({
       localStorage.setItem('regin_auth_user', JSON.stringify(user))
     }, { token, user })
     if (pipelineTheme) {
-      await page.addInitScript((id) => localStorage.setItem('regin_pipeline_theme', id), pipelineTheme)
+      // Once per test, so a reload keeps a theme the test picked on the page.
+      await page.addInitScript((id) => {
+        if (sessionStorage.getItem('pl-theme-fixture')) return
+        localStorage.setItem('regin_pipeline_theme', id)
+        sessionStorage.setItem('pl-theme-fixture', '1')
+      }, pipelineTheme)
     }
 
     await use(page)

@@ -2,7 +2,9 @@
 // nothing about what they do, so a third one is a new folder plus a line here.
 import classic from './classic/index.js'
 
-export const DEFAULT_THEME = 'classic'
+export const DEFAULT_THEME = 'pixel'
+// Bundled eagerly, so it is what renders when another theme's chunk fails.
+export const FALLBACK_THEME = 'classic'
 
 export const THEMES = {
   classic: { id: 'classic', label: 'Classic', load: () => Promise.resolve(classic) },

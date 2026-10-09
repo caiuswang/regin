@@ -3,77 +3,102 @@ import DocPage from '../components/DocPage.vue'
 import CodeBlock from '../components/CodeBlock.vue'
 import DataTable from '../components/DataTable.vue'
 import ThemedShot from '../components/ThemedShot.vue'
-import overviewLight from '../assets/shots/pipeline-light.png'
-import overviewLightWebp from '../assets/shots/pipeline-light.webp'
-import overviewDark from '../assets/shots/pipeline-dark.png'
-import overviewDarkWebp from '../assets/shots/pipeline-dark.webp'
+import Callout from '../components/Callout.vue'
+import overviewLight from '../assets/shots/pipeline-overview-light.png'
+import overviewLightWebp from '../assets/shots/pipeline-overview-light.webp'
+import overviewDark from '../assets/shots/pipeline-overview-dark.png'
+import overviewDarkWebp from '../assets/shots/pipeline-overview-dark.webp'
+import featuresLight from '../assets/shots/pipeline-features-light.png'
+import featuresLightWebp from '../assets/shots/pipeline-features-light.webp'
+import featuresDark from '../assets/shots/pipeline-features-dark.png'
+import featuresDarkWebp from '../assets/shots/pipeline-features-dark.webp'
+import graphLight from '../assets/shots/pipeline-taskgraph-light.png'
+import graphLightWebp from '../assets/shots/pipeline-taskgraph-light.webp'
+import graphDark from '../assets/shots/pipeline-taskgraph-dark.png'
+import graphDarkWebp from '../assets/shots/pipeline-taskgraph-dark.webp'
+import defectsLight from '../assets/shots/pipeline-defects-light.png'
+import defectsLightWebp from '../assets/shots/pipeline-defects-light.webp'
+import defectsDark from '../assets/shots/pipeline-defects-dark.png'
+import defectsDarkWebp from '../assets/shots/pipeline-defects-dark.webp'
+import {
+  LOOP_STEPS, LOOP_COLUMNS, PIXEL_SLICES, SLICE_COLUMNS, PIXEL_FACTS, FACT_COLUMNS,
+  LEDGER, SURFACES, SURFACE_COLUMNS,
+} from '../content/pipeline.js'
 
 const OVERVIEW_LIGHT = { png: overviewLight, webp: overviewLightWebp }
 const OVERVIEW_DARK = { png: overviewDark, webp: overviewDarkWebp }
+const FEATURES_LIGHT = { png: featuresLight, webp: featuresLightWebp }
+const FEATURES_DARK = { png: featuresDark, webp: featuresDarkWebp }
+const GRAPH_LIGHT = { png: graphLight, webp: graphLightWebp }
+const GRAPH_DARK = { png: graphDark, webp: graphDarkWebp }
+const DEFECTS_LIGHT = { png: defectsLight, webp: defectsLightWebp }
+const DEFECTS_DARK = { png: defectsDark, webp: defectsDarkWebp }
 
 const TOC = [
-  { id: 'feature', label: 'A feature is a row' },
-  { id: 'slices', label: 'From spec to tasks' },
-  { id: 'done-claim', label: 'Done is a claim' },
-  { id: 'rounds', label: 'Rounds-to-done' },
+  { id: 'loop', label: 'The loop' },
+  { id: 'example', label: 'Worked example: the Pixel theme' },
+  { id: 'spec', label: '1 · Spec' },
+  { id: 'slices', label: '2 · Slices become a task graph' },
+  { id: 'runs', label: '3 · Runs' },
+  { id: 'defects', label: '4 · Defects' },
+  { id: 'ship', label: '5 · Ship and count' },
+  { id: 'features', label: 'The Features tab' },
   { id: 'where', label: 'Where to find it' },
 ]
-
-const SLICE_STEPS = [
-  { step: 'slice', cmd: 'regin task slice-check', rule: 'Refuses a spec with no falsifiable acceptance item, and a schema change split across two slices.' },
-  { step: 'tail', cmd: 'regin task tail', rule: 'Appends the integrate → migrate → verify rows from .regin/commands.json.' },
-  { step: 'transcribe', cmd: 'regin task transcribe', rule: 'Turns the slice table into tasks and their dependency graph. Never arms anything.' },
-  { step: 'run', cmd: 'arm, then launch', rule: 'A human act. When a task finishes, the tasks that depend on it are re-checked and released.' },
-  { step: 'settle', cmd: 'verify_cmd', rule: 'The attempt’s verify command decides; the agent’s own report counts only when there is none.' },
-]
-const STEP_COLUMNS = [
-  { key: 'step', label: 'Step' },
-  { key: 'cmd', label: 'How', code: true },
-  { key: 'rule', label: 'Rule' },
-]
-
-const SURFACES = [
-  { where: '/overview', what: 'The Pipeline: Overview, Features and Tasks behind one tab strip; defects are reached from the Overview and the Features triage rail.' },
-  { where: '/features/:id', what: 'One feature’s ledger — stage, rounds, sessions, cost, defects.' },
-  { where: 'regin feature', what: 'Where a feature stands and what it cost: new, spec, stage, ledger, ship, reopen, abandon.' },
-  { where: 'regin task', what: 'Capture and inspect tasks; slice-check, tail and transcribe a spec.' },
-  { where: 'regin defects', what: 'What a feature got wrong, and what escaped: open, list, rounds, close.' },
-]
-const SURFACE_COLUMNS = [
-  { key: 'where', label: 'Where', code: true },
-  { key: 'what', label: 'What it shows' },
-]
-
-const LEDGER = `$ regin feature stage 153
-#153  building  rounds=1  open_defects=0  escapes=0
-  being built`
 </script>
 
 <template>
   <DocPage
     title="Pipeline"
-    lead="The Workbench layer: a feature carries its spec and acceptance tests, is cut into tasks that run in dependency order, and is held to a done-claim. Whatever turns out wrong afterwards is a defect declared against it."
+    lead="The Workbench layer, start to finish: a feature carries its spec and acceptance tests, is cut into tasks that run in dependency order, is held to a done-claim, and is charged for every defect found against it. This page follows one real feature through it — the Pixel theme the screenshots below are wearing."
     :toc="TOC"
   >
-    <h2 id="feature">A feature is a row</h2>
-    <p>Each piece of work you build with an agent starts as a <strong>feature</strong>. Its spec lives on the feature row (or on its tracker issue, when the feature is tracked remotely) — not in a <code>docs/</code> file nothing re-reads. The spec’s acceptance items are named tests in the repo: red before the build, green at ship.</p>
-    <ThemedShot :light="OVERVIEW_LIGHT" :dark="OVERVIEW_DARK" :width="1440" :height="900" alt="The regin dashboard's Pipeline overview: feature, task and defect counts, features being built, a defect waiting for a decision, and the task runs in progress.">
-      <code>/overview</code> in the dashboard that builds regin: features, tasks and defects counted at the top, the features being built, a defect that <strong>needs a decision</strong>, and the task runs going right now — one of them the run that wrote this page.
+    <h2 id="loop">The loop</h2>
+    <p>The dashboard’s <strong>Pipeline</strong> has three tabs — Overview, Features, Tasks — and a project picker that scopes all of them. The Overview draws the whole loop for one project: features in the workshop, tasks on the board, defects in the bug den, and what is waiting on you.</p>
+    <ThemedShot :light="OVERVIEW_LIGHT" :dark="OVERVIEW_DARK" :width="1440" :height="900" alt="The Pipeline Overview in the Pixel theme, scoped to the regin project: the loop scene with feature, task and defect counts, the project panel with shipped progress and spend, the features in flight and one defect needing a decision.">
+      <code>/overview</code> scoped to the <code>regin</code> project — the dashboard of the project that builds regin. 109 features, 378 tasks and 139 defects so far; the first feature in flight is the one that wrote this page.
+    </ThemedShot>
+    <DataTable :columns="LOOP_COLUMNS" :rows="LOOP_STEPS" />
+
+    <h2 id="example">Worked example: the Pixel theme</h2>
+    <p>Feature <strong>#139</strong> asked for the Pipeline to become themeable and to ship a second, game-pixel theme next to the classic one — same routes, same data, same keys, a different look. It is a good example because it is ordinary: a UI feature specced one morning and shipped about 21 hours later, built entirely by task runs, with a dozen defects along the way.</p>
+    <DataTable :columns="FACT_COLUMNS" :rows="PIXEL_FACTS" />
+
+    <h3 id="spec">1 · Spec</h3>
+    <p>The feature started as a row with a <strong>Spec step</strong>. Its spec lives on the row, not in a file: intent and non-goals in prose, the design as ten images rendered from the design file, the two theme axes (light/dark × classic/pixel) as diagrams, and 28 Gherkin scenarios — <code>switching keeps place</code>, <code>unknown stored value</code>, <code>a theme chunk that fails to load</code>, <code>colour budget</code>… Each scenario is a named test in the repo, red before the build and green at ship.</p>
+
+    <h3 id="slices">2 · Slices become a task graph</h3>
+    <p>The spec ends in a slice table. <code>regin task slice-check</code> refuses a table without falsifiable acceptance items, <code>regin task tail</code> appends the integrate → migrate → verify rows, and <code>regin task transcribe</code> turns each row into a task with dependency edges. The Pixel theme came out as fifteen slices in two waves:</p>
+    <DataTable :columns="SLICE_COLUMNS" :rows="PIXEL_SLICES" />
+    <ThemedShot :light="GRAPH_LIGHT" :dark="GRAPH_DARK" :width="1440" :height="900" alt="The Tasks tab's graph view in the Pixel theme, scoped to feature #139: Spec and Build steps on the left, S1 Seam and S2 Pixel foundation feeding S3 Overview, S4 Tasks and S5 Features, every node marked done.">
+      <code>/tasks?feature_id=139&amp;view=graph</code> — the same table as a dependency graph. S3, S4 and S5 wait only on S2, so they ran in parallel. Edges can be drawn and removed here by hand.
     </ThemedShot>
 
-    <h2 id="slices">From spec to tasks</h2>
-    <p>The spec ends in a slice table. Each slice becomes a <strong>task</strong> with its dependencies, and tasks run in dependency order — an independent slice runs in parallel with its siblings.</p>
-    <DataTable :columns="STEP_COLUMNS" :rows="SLICE_STEPS" />
+    <h3 id="runs">3 · Runs</h3>
+    <p>A task whose dependencies are done becomes <em>ready</em>. Arming it picks the provider (Claude through the Agent SDK, or Kimi), whether it gets its own git worktree, and the skills it should load; launching it starts a session that works on the slice’s branch and merges back into <code>f139/integration</code>. When a run reports finished, the tasks waiting on it are released — that is how S2 finishing started S3, S4 and S5 at once. You watch and steer the sessions from <RouterLink to="/runs">Runs</RouterLink>. Feature #139 took 28 such sessions and no hand-typed prompt.</p>
 
-    <h2 id="done-claim">Done is a claim</h2>
-    <p>A finished run is not the feature being done. Shipping is the operator’s act (<code>regin feature ship</code>), and that is the <strong>done-claim</strong>. Anything found wrong after it is a <strong>defect</strong> declared against the feature; closing one requires naming the check that would have caught it, so the missing gates can be ranked.</p>
+    <h3 id="defects">4 · Defects</h3>
+    <p>Whatever the operator found wrong while looking at the result was declared as a <strong>defect</strong> against #139 — digits rendering glued together, a triage rail hiding the stats, group headers that did not follow the design. Defects can be pasted with screenshots, are triaged on the Features tab, and are fixed by a <code>fix</code> task. Closing one requires naming the check that would have caught it, so the missing gates can be ranked later.</p>
+    <ThemedShot :light="DEFECTS_LIGHT" :dark="DEFECTS_DARK" :width="1440" :height="900" alt="The All defects list in the Pixel theme, filtered to feature #139: twelve closed defects, each with its symptom text and a reopen action.">
+      <code>/defects?feature_id=139</code> — the twelve defects of the Pixel theme, all closed before it shipped.
+    </ThemedShot>
 
-    <h2 id="rounds">Rounds-to-done</h2>
-    <p>The number the pipeline is held to is <strong>rounds-to-done</strong>: one build, plus each time a done-claim was walked back. Only declarations feed it — nothing is inferred from prose, branch names or timing. Cost is the sum of the sessions attributed to the feature, reported as an upper bound.</p>
+    <h3 id="ship">5 · Ship and count</h3>
+    <p>A finished run is not a finished feature. Shipping is the operator’s act — <code>regin feature ship 139</code> — and that is the <strong>done-claim</strong>. A defect declared after it is an <em>escape</em>: it walks the feature back and adds a round. The number the pipeline is held to is <strong>rounds-to-done</strong>, computed only from declared events, never inferred from prose, branch names or timing. Cost is the sum of the sessions attributed to the feature, reported as an upper bound.</p>
     <CodeBlock :code="LEDGER" />
+    <p>The same ledger is the feature’s page in the dashboard, <code>/features/139</code>: spec, slices, images, tasks, defects and sessions behind one tab strip.</p>
+
+    <h2 id="features">The Features tab</h2>
+    <p>Every feature of the project sits on a spec → build → ship track, with its task progress, rounds and open defects beside it. The rail on the right is the triage queue: defects that still need a decision.</p>
+    <ThemedShot :light="FEATURES_LIGHT" :dark="FEATURES_DARK" :width="1440" :height="900" alt="The Features tab in the Pixel theme: stage filters with counts, each feature as a row with a spec-build-ship track, task progress, rounds and open defects, and the triage rail on the right.">
+      <code>/features</code> for the <code>regin</code> project — stage tabs across the top, one track per feature, the triage rail on the right.
+    </ThemedShot>
+    <Callout tone="info">
+      The Pipeline ships two themes, <strong>Pixel</strong> (the default) and <strong>Classic</strong>. Switch with the picker at the right of the tab strip; the choice is per browser, like light and dark, and changes nothing but the look.
+    </Callout>
 
     <h2 id="where">Where to find it</h2>
     <DataTable :columns="SURFACE_COLUMNS" :rows="SURFACES" />
-    <p>Internals: <em>Feature pipeline</em> in <a href="https://github.com/caiuswang/regin/blob/master/ARCHITECTURE.md#feature-pipeline-features-defects-slices" class="focus-visible:ring">ARCHITECTURE.md</a>. Runs are launched from the dashboard — see <RouterLink to="/runs">Runs</RouterLink>.</p>
+    <p>Internals: <em>Feature pipeline</em> in <a href="https://github.com/caiuswang/regin/blob/master/ARCHITECTURE.md#feature-pipeline-features-defects-slices" class="focus-visible:ring">ARCHITECTURE.md</a>.</p>
   </DocPage>
 </template>

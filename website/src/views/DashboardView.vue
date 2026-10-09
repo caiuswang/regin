@@ -2,6 +2,11 @@
 import DocPage from '../components/DocPage.vue'
 import Callout from '../components/Callout.vue'
 import TourShot from '../components/TourShot.vue'
+import ThemedShot from '../components/ThemedShot.vue'
+import overviewLight from '../assets/shots/pipeline-overview-light.png'
+import overviewLightWebp from '../assets/shots/pipeline-overview-light.webp'
+import overviewDark from '../assets/shots/pipeline-overview-dark.png'
+import overviewDarkWebp from '../assets/shots/pipeline-overview-dark.webp'
 import sessionsShot from '../assets/shots/tour/sessions-dark.png'
 import sessionsWebp from '../assets/shots/tour/sessions-dark.webp'
 import liveShot from '../assets/shots/tour/live-dark.png'
@@ -19,7 +24,11 @@ import patternsWebp from '../assets/shots/tour/patterns-dark.webp'
 import topicsShot from '../assets/shots/tour/topics-dark.png'
 import topicsWebp from '../assets/shots/tour/topics-dark.webp'
 
+const OVERVIEW_LIGHT = { png: overviewLight, webp: overviewLightWebp }
+const OVERVIEW_DARK = { png: overviewDark, webp: overviewDarkWebp }
+
 const TOC = [
+  { id: 'pipeline', label: 'Pipeline' },
   { id: 'traces', label: 'Session traces' },
   { id: 'live', label: 'Live steering' },
   { id: 'inbox', label: 'Inbox & messages' },
@@ -34,7 +43,7 @@ const TOC = [
 <template>
   <DocPage
     title="The dashboard"
-    lead="regin serve opens a local web dashboard on :8321. Once the hooks are wired in it fills with your real sessions. This is a tour of the surfaces you'll actually use — grouped the way the sidebar groups them: Library (what you feed the agent), Observability (what came back), and Engineering (what's enforced). Every screenshot below is the live product, not a mockup."
+    lead="regin serve opens a local web dashboard on :8321. Once the hooks are wired in it fills with your real sessions. This is a tour of the surfaces you'll actually use, roughly in sidebar order: Workbench (features, tasks and the Inbox), Observability (what the agents did), Library (what you feed them) and Engineering (what's enforced). Every screenshot below is the live product, not a mockup."
     :toc="TOC"
   >
     <Callout tone="info">
@@ -42,6 +51,12 @@ const TOC = [
       <RouterLink to="/getting-started#activate-hooks">install the hooks</RouterLink> —
       the dashboard only shows what the hooks capture.
     </Callout>
+
+    <h2 id="pipeline">Pipeline</h2>
+    <p>The first entry in the sidebar, and where the day starts. <strong>Pipeline</strong> puts Overview, Features and Tasks behind one tab strip, scoped to a project: features on their spec → build → ship track, tasks as a list, a board or a dependency graph, and the defects declared against them. It wears the <em>Pixel</em> theme by default; Classic is one click away in the tab strip. The <RouterLink to="/pipeline">Pipeline page</RouterLink> follows one feature through it end to end.</p>
+    <ThemedShot :light="OVERVIEW_LIGHT" :dark="OVERVIEW_DARK" :width="1440" :height="900" alt="The Pipeline Overview in the Pixel theme, scoped to the regin project: loop scene with feature, task and defect counts, project panel, features in flight and a defect needing a decision.">
+      The Overview scoped to the <code>regin</code> project.
+    </ThemedShot>
 
     <h2 id="traces">Session traces</h2>
     <p>Every Claude Code session the hooks capture lands in <strong>Trace</strong> — searchable, and filterable by repo, tag, date, and status. Each row rolls up its spans, file edits, context-window use, and elapsed-vs-active time; open one for a turn-by-turn replay with per-tool cost attribution. The sibling tabs pivot the same span stream by rule trigger, skill read, and MCP call.</p>
