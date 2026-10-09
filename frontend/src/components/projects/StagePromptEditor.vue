@@ -44,26 +44,26 @@ function insertVar(name) {
 <template>
   <div class="spe" :data-testid="`stage-prompt-${stage.key}`">
     <div v-if="canWrite" class="spe-vars">
-      <span class="spe-label">Variables</span>
+      <span class="spe-label" data-pl-part="field-label">Variables</span>
       <Button
         v-for="v in STAGE_PROMPT_VARIABLES" :key="v.name"
-        variant="ghost" size="sm" class="spe-var" :title="v.description"
+        variant="ghost" size="sm" class="spe-var" data-pl-part="key" :title="v.description"
         @click="insertVar(v.name)"
       >{{ varToken(v.name) }}</Button>
     </div>
     <div class="spe-grid">
       <label v-if="canWrite" class="spe-col">
-        <span class="spe-label">Prompt</span>
+        <span class="spe-label" data-pl-part="field-label">Prompt</span>
         <Textarea
           ref="area" v-model="draft" :rows="10" :disabled="busy"
-          class="spe-input"
+          class="spe-input" data-pl-part="input"
           placeholder="empty — a step from this stage runs with no stage prompt"
           :data-testid="`stage-prompt-input-${stage.key}`"
         />
       </label>
       <div class="spe-col">
-        <span class="spe-label">{{ canWrite ? 'Preview (sample values)' : 'Prompt' }}</span>
-        <div class="spe-preview" :data-testid="`stage-prompt-preview-${stage.key}`">
+        <span class="spe-label" data-pl-part="field-label">{{ canWrite ? 'Preview (sample values)' : 'Prompt' }}</span>
+        <div class="spe-preview" data-pl-part="preview" :data-testid="`stage-prompt-preview-${stage.key}`">
           <PromptBody v-if="preview.trim()" :text="preview" />
           <p v-else class="spe-empty">No stage prompt.</p>
         </div>
@@ -73,9 +73,9 @@ function insertVar(name) {
       Not a stage variable, left unfilled: {{ unknownLabel }}
     </p>
     <div v-if="canWrite" class="spe-actions">
-      <Button variant="ghost" size="sm" :disabled="!dirty || busy" @click="draft = saved">Revert</Button>
+      <Button variant="ghost" size="sm" data-pl-part="key" :disabled="!dirty || busy" @click="draft = saved">Revert</Button>
       <Button
-        variant="primary" size="sm" :disabled="!dirty || busy"
+        variant="primary" size="sm" data-pl-part="key--primary" :disabled="!dirty || busy"
         :data-testid="`stage-prompt-save-${stage.key}`" @click="emit('save', draft)"
       >{{ busy ? 'Saving…' : 'Save prompt' }}</Button>
     </div>

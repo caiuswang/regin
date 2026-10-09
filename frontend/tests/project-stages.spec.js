@@ -134,6 +134,26 @@ test('rename, re-role, nudge and remove a stage from its row', async ({ page, pl
   expect(stored.map(s => s.key)).toEqual(['spec', 'build'])
 })
 
+test('test_project_page_wears_the_pipeline_theme', async ({ page, playwright }) => {
+  const project = await registerFixtureRepo(playwright, 'stages-pixel-', () => {})
+  await page.addInitScript(() => localStorage.setItem('regin_pipeline_theme', 'pixel'))
+  await page.goto(`/projects/${project}`)
+
+  await expect.poll(() => page.evaluate(() => document.documentElement.getAttribute('data-pl-theme'))).toBe('pixel')
+  await expect(page.getByTestId('stage-row-spec')).toBeVisible()
+  await page.evaluate(() => document.fonts.ready)
+  const font = el => getComputedStyle(el).fontFamily
+  expect(await page.getByTestId('project-stages').locator('[data-pl-part="panel-title"]').evaluate(font)).toMatch(/Silkscreen/)
+  expect(await page.getByTestId('stage-expand-spec').evaluate(font)).toMatch(/Silkscreen/)
+  await expect(page.getByTestId('stage-row-spec').locator('.sr-line')).toHaveCSS('display', 'grid')
+
+  // The picker on a settings page still leaves for the list, not this URL.
+  await page.getByTestId('pipeline-project').click()
+  await page.getByTestId('project-picker-all').click()
+  await expect(page).toHaveURL(/\/overview(\?|$)/)
+  await expect.poll(() => page.evaluate(() => document.documentElement.getAttribute('data-pl-theme'))).toBe('pixel')
+})
+
 test('the scope panel and the picker both open the project page', async ({ page, playwright }) => {
   const project = await registerFixtureRepo(playwright, 'stages-entry-', () => {})
   await page.goto(`/overview?project=${project}`)

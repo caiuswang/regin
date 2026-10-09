@@ -218,10 +218,11 @@ test.describe('pixel theme', () => {
 
       const totals = { labels: 0, edges: 0, sprites: 0 }
       const failures = []
-      for (const path of ['/overview', '/tasks', '/features', '/defects']) {
+      for (const path of ['/overview', '/tasks', '/features', '/defects', '/projects/default']) {
         await page.goto(path)
         await expect(page.getByTestId('pipeline-tabs')).toBeVisible()
         await pixelReady(page)
+        if (path.startsWith('/projects/')) await expect(page.getByTestId('stage-row-spec')).toBeVisible()
         expect(await page.evaluate(() => document.documentElement.getAttribute('data-theme'))).toBe(appearance)
         const tab = await page.evaluate(contrastAudit)
         failures.push(...tab.failures.map(f => `${path}: ${f}`))

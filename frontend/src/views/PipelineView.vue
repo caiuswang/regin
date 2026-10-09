@@ -44,9 +44,10 @@ function isActive(tab) {
 }
 
 const onTab = computed(() => TABS.some(t => t.path === route.path))
-// The All-defects list is themed with the tabs (it lights Features); a detail
-// page, `/defects/:id` included, is not.
-const themed = computed(() => onTab.value || route.path === '/defects')
+const onList = computed(() => onTab.value || route.path === '/defects')
+// The All-defects list is themed with the tabs (it lights Features), and so is
+// a project's settings page; a row's detail page, `/defects/:id` included, is not.
+const themed = computed(() => onList.value || route.name === 'project-manage')
 useShellTheme(() => themed.value)
 const { ready: themeReady } = usePipelineTheme()
 // A detail route is a page of its own, not a tab: it keeps the strip above it
@@ -65,7 +66,7 @@ const { isMdUp } = useBreakpoint()
 const isLegalScope = v => v === SCOPE_NONE || /^\d+$/.test(v)
 // `/defects` is not a tab, but its list is filtered by `?project=`, so the chip
 // over it has to name that same scope.
-const readsQuery = themed
+const readsQuery = onList
 // A detail page has no `?project=` of its own, so the strip beside it carries
 // the scope a list was last left under in this visit (a URL-only scope is
 // never persisted), else the stored one.

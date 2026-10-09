@@ -43,22 +43,23 @@ defineExpose({ reset })
 
 <template>
   <form class="nsf" data-testid="stage-new" @submit.prevent="submit">
-    <label class="nsf-field">
-      <span class="nsf-label">Label</span>
-      <Input v-model="label" placeholder="Design review" :disabled="busy" data-testid="stage-new-label" />
+    <span class="nsf-title" data-pl-part="group-label">Add a stage</span>
+    <label class="nsf-field nsf-field--label">
+      <span class="nsf-label" data-pl-part="field-label">Label</span>
+      <Input v-model="label" placeholder="Design review" :disabled="busy" data-pl-part="input" data-testid="stage-new-label" />
     </label>
     <label class="nsf-field">
-      <span class="nsf-label">Key</span>
+      <span class="nsf-label" data-pl-part="field-label">Key</span>
       <Input
         v-model="key" placeholder="design-review" :disabled="busy" :error="!!key && !keyOk"
-        data-testid="stage-new-key" @input="keyTouched = true"
+        data-pl-part="input" data-testid="stage-new-key" @input="keyTouched = true"
       />
     </label>
-    <label class="nsf-field">
-      <span class="nsf-label">Role</span>
-      <Select v-model="role" :options="STAGE_ROLES" :disabled="busy" aria-label="Role of the new stage" data-testid="stage-new-role" />
+    <label class="nsf-field nsf-field--role">
+      <span class="nsf-label" data-pl-part="field-label">Role</span>
+      <Select v-model="role" :options="STAGE_ROLES" :disabled="busy" aria-label="Role of the new stage" data-pl-part="input" data-testid="stage-new-role" />
     </label>
-    <Button type="submit" variant="primary" size="sm" :disabled="!ready" data-testid="stage-new-submit">
+    <Button type="submit" variant="primary" size="sm" class="nsf-submit" :disabled="!ready" data-pl-part="key--primary" data-testid="stage-new-submit">
       Add stage
     </Button>
     <p v-if="key && !keyOk" class="nsf-hint">A key is lowercase letters, digits and dashes, starting with a letter.</p>
@@ -67,8 +68,15 @@ defineExpose({ reset })
 </template>
 
 <style scoped>
-.nsf { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.6rem; }
-.nsf-field { display: flex; flex-direction: column; gap: 0.2rem; min-width: 9rem; }
+.nsf { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.6rem; width: 100%; }
+.nsf-title {
+    flex-basis: 100%; font-size: 11px; font-weight: 600; letter-spacing: 0.04em;
+    text-transform: uppercase; color: var(--color-fg-subtle);
+}
+.nsf-field { display: flex; flex-direction: column; gap: 0.2rem; flex: 1 1 9rem; min-width: 9rem; max-width: 16rem; }
+.nsf-field--role { flex: 0 1 8rem; min-width: 7rem; }
+.nsf-field :deep(.input) { height: 32px; }
+.nsf-submit { height: 32px; }
 .nsf-label { font-size: 11px; font-weight: 600; color: var(--color-fg-subtle); }
 .nsf-hint, .nsf-error { flex-basis: 100%; font-size: 11.5px; }
 .nsf-hint { color: var(--color-fg-muted); }

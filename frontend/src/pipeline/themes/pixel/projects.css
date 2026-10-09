@@ -1,0 +1,99 @@
+/*
+ * Pixel theme — a project's settings page (/projects/:id). The page is built
+ * from Overview's panels, keys and inputs, which tokens.css already draws;
+ * this file adds only what the page has of its own: stage rows, the field
+ * labels outside a dialog, and the prompt preview well. Same rules as
+ * tokens.css: html[data-pl-theme="pixel"] first, hooks only, --pl-* only.
+ */
+
+html[data-pl-theme="pixel"] [data-pl-part="settings"] [data-pl-part="panel"] {
+    box-shadow: 0 0 0 2px var(--pl-frame);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="settings"] [data-pl-part="panel-head"] {
+    border-bottom: 2px solid var(--pl-frame);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="settings"] [data-pl-part="row"] {
+    border-top: 1px solid var(--pl-hair);
+    background: var(--pl-paper);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="settings"] [data-pl-part="row"][data-expanded] {
+    background: var(--pl-paper-2);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="settings"] [data-pl-part="row-id"] {
+    font-size: 12px;
+    color: var(--pl-text-3);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="settings"] [data-pl-part="group-label"] {
+    font-size: 10px;
+    border-top-color: var(--pl-rule);
+    color: var(--pl-muted);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="settings"] [data-pl-part="field-label"] {
+    font-family: var(--pl-font);
+    font-size: 9px;
+    font-weight: 400;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--pl-text);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="settings"] [data-pl-part="meta-label"] {
+    font-family: var(--pl-font);
+    font-size: 10px;
+    font-weight: 400;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--pl-muted);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="settings"] [data-pl-part="tag"] {
+    border-radius: 0;
+    background: var(--pl-paper-2);
+    font-family: var(--pl-font);
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--pl-text-2);
+    box-shadow: inset 0 0 0 1px var(--pl-frame);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="settings"] [data-pl-part="tag"][data-pl-dashed] {
+    border: 1px dashed var(--pl-rule);
+    background: none;
+    color: var(--pl-muted);
+    box-shadow: none;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="settings"] [data-pl-part="key"] {
+    font-size: 10px;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="settings"] [data-pl-part="key"][data-pl-on] {
+    background: var(--pl-action-tint);
+    color: var(--pl-action-text);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="settings"] [data-pl-part="key"][data-pl-tone="danger"] {
+    color: var(--pl-fail);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="settings"] [data-pl-part="preview"] {
+    border-radius: 0;
+    border-color: var(--pl-frame);
+    background: var(--pl-well);
+    color: var(--pl-text);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="settings"] [data-pl-part="panel-foot"] {
+    border-top: 2px solid var(--pl-frame);
+    background: var(--pl-paper-2);
+    font-family: inherit;
+    text-transform: none;
+    letter-spacing: normal;
+}

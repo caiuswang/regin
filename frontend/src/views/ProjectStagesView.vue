@@ -128,34 +128,47 @@ function onDrop(target) {
 </script>
 
 <template>
-  <div class="pj" data-testid="project-page">
-    <Card class="pj-card" data-testid="project-info">
-      <h2 class="card-header">{{ title }}</h2>
-      <p v-if="isDefault" class="pj-note">
+  <div class="pj" data-testid="project-page" data-pl-part="settings">
+    <section class="pl-panel pj-panel" data-pl-part="panel" data-testid="project-info" aria-labelledby="pj-title">
+      <header class="pl-panel__head pj-head" data-pl-part="panel-head">
+        <router-link to="/overview" class="pl-panel__link pj-back" data-pl-part="panel-link" data-pl-back>Overview</router-link>
+        <h2 id="pj-title" class="pl-panel__title pj-name" data-pl-part="panel-title">{{ title }}</h2>
+        <span class="pl-panel__sub" data-pl-part="panel-meta">{{ isDefault ? 'default stages' : 'project settings' }}</span>
+        <router-link
+          v-if="project" :to="`/repos/${encodeURIComponent(project.name)}`"
+          class="pl-panel__link pj-repo" data-pl-part="panel-link" data-testid="project-info-repo"
+        >Open repo →</router-link>
+      </header>
+      <p v-if="isDefault" class="pj-line pj-note" data-pl-part="note">
         The global list. A feature with no project reads these stages, and a project
         starts from them the first time its own list changes.
       </p>
-      <dl v-else-if="project" class="pj-info">
-        <div><dt>Name</dt><dd><router-link :to="`/repos/${encodeURIComponent(project.name)}`" class="pj-link" data-testid="project-info-repo">{{ project.name }}</router-link></dd></div>
-        <div><dt>Path</dt><dd><code>{{ project.path }}</code></dd></div>
+      <dl v-else-if="project" class="pj-line pj-info">
+        <dt data-pl-part="meta-label">Path</dt>
+        <dd><code class="pj-path" data-testid="project-info-path">{{ project.path }}</code></dd>
       </dl>
-      <p v-else-if="projectsError" class="pj-fail" role="alert">{{ projectsError }}</p>
-    </Card>
+      <p v-else-if="projectsError" class="pj-line pj-fail" role="alert">{{ projectsError }}</p>
+    </section>
 
-    <Card class="pj-card" data-testid="project-stages">
-      <div class="pj-head">
-        <h2 class="card-header pj-title">Stages</h2>
-        <span v-if="inherited && !isDefault" class="pj-note" data-testid="project-stages-inherited">
-          using the default stages — the first change gives this project its own copy
+    <section class="pl-panel pj-panel" data-pl-part="panel" data-testid="project-stages" aria-labelledby="pj-stages-title">
+      <header class="pl-panel__head" data-pl-part="panel-head">
+        <h2 id="pj-stages-title" class="pl-panel__title" data-pl-part="panel-title">Stages</h2>
+        <span class="pl-panel__sub" data-pl-part="panel-meta" data-testid="project-stages-count">
+          {{ live.length }} {{ live.length === 1 ? 'step' : 'steps' }} a feature can open
         </span>
-      </div>
-      <p v-if="loading && !stages.length" class="pj-note">Loading…</p>
-      <p v-else-if="error" class="pj-fail" role="alert" data-testid="project-stages-error">{{ error }}</p>
+        <span
+          v-if="inherited && !isDefault" class="pj-inherited" data-pl-part="tag" data-pl-dashed
+          data-testid="project-stages-inherited"
+          title="The first change gives this project its own copy"
+        >inherits the defaults</span>
+      </header>
+      <p v-if="loading && !stages.length" class="pl-panel__empty" data-pl-part="panel-empty">Loading…</p>
+      <p v-else-if="error" class="pj-line pj-fail" role="alert" data-testid="project-stages-error">{{ error }}</p>
       <template v-else>
         <ol class="pj-list" data-testid="project-stages-live">
           <StageRow
             v-for="(stage, i) in live" :key="stage.key"
-            :stage="stage" :can-write="canWrite" :busy="busy"
+            :stage="stage" :position="i + 1" :can-write="canWrite" :busy="busy"
             :first="i === 0" :last="i === live.length - 1"
             :class="{ 'is-dragging': dragging === stage.key }"
             :draggable="canWrite && !busy"
@@ -171,31 +184,42 @@ function onDrop(target) {
           />
         </ol>
         <template v-if="archived.length">
-          <h3 class="pj-sub">Archived</h3>
+          <h3 class="pj-sub" data-pl-part="group-label">Archived · tasks kept, button gone</h3>
           <ul class="pj-list" data-testid="project-stages-archived">
             <StageRow v-for="stage in archived" :key="stage.key" :stage="stage" :can-write="canWrite" />
           </ul>
         </template>
       </template>
-      <NewStageForm v-if="canWrite && !error" ref="form" class="pj-new" :busy="busy" :error="addError" @add="add" />
-    </Card>
+      <footer v-if="canWrite && !error" class="pl-panel__foot pj-foot" data-pl-part="panel-foot">
+        <NewStageForm ref="form" :busy="busy" :error="addError" @add="add" />
+      </footer>
+    </section>
   </div>
 </template>
 
 <style scoped>
 .pj { display: flex; flex-direction: column; gap: 1rem; min-width: 0; }
-.pj-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.75rem; margin-bottom: 0.6rem; }
-.pj-title { margin-bottom: 0; }
-.pj-note { font-size: 12px; color: var(--color-fg-muted); }
-.pj-fail { font-size: 12px; color: var(--color-danger); }
-.pj-info { display: flex; flex-wrap: wrap; gap: 0.4rem 2rem; font-size: 13px; }
-.pj-info div { display: flex; gap: 0.5rem; align-items: baseline; min-width: 0; }
-.pj-info dt { color: var(--color-fg-muted); }
+.pj-head { flex-wrap: wrap; row-gap: 0.25rem; }
+.pj-back { margin-left: 0; }
+.pj-name { min-width: 0; overflow-wrap: anywhere; }
+.pj-repo { margin-left: auto; }
+.pj-line { padding: 0.65rem 1.1rem 0.8rem; border-top: 1px solid var(--color-border-subtle); font-size: 12.5px; }
+.pj-note { color: var(--color-fg-muted); }
+.pj-fail { color: var(--color-danger); }
+.pj-info { display: flex; align-items: baseline; gap: 0.6rem; min-width: 0; }
+.pj-info dt { font-size: 11px; font-weight: 600; color: var(--color-fg-subtle); }
 .pj-info dd { min-width: 0; overflow-wrap: anywhere; }
-.pj-link { color: var(--color-info); text-decoration: none; }
-.pj-link:hover { text-decoration: underline; }
-.pj-list { border: 1px solid var(--color-border); border-radius: var(--radius-lg); overflow: hidden; }
+.pj-path { font-size: 12px; color: var(--color-fg-muted); }
+.pj-inherited {
+    font-size: 11px; padding: 0 0.45rem; border: 1px dashed var(--color-border-strong, var(--color-border));
+    border-radius: var(--radius-sm); color: var(--color-fg-muted);
+}
+.pj-list { margin: 0; padding: 0; list-style: none; }
 .pj-list :deep(.is-dragging) { opacity: 0.4; }
-.pj-sub { margin: 0.9rem 0 0.4rem; font-size: 12px; font-weight: 600; color: var(--color-fg-subtle); }
-.pj-new { margin-top: 0.9rem; }
+.pj-sub {
+    padding: 0.6rem 1.1rem 0.3rem; border-top: 1px solid var(--color-border);
+    font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--color-fg-subtle);
+}
+.pj-foot { padding: 0.75rem 1.1rem; }
+.pj-back::before { content: "←"; margin-right: 0.3rem; }
 </style>

@@ -17,6 +17,7 @@ import './tasks.css'
 import './dialogs.css'
 import './menus.css'
 import './defects.css'
+import './projects.css'
 
 // A glyph is a sprite drawn where <PlGlyph kind="…"> sits; PlGlyph's own
 // `kind` prop is dropped so it does not land on the <svg> as an attribute.
