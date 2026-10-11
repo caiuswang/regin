@@ -1,50 +1,108 @@
 #!/usr/bin/env bash
-# Setup regin on a new machine.
+# Install regin, or upgrade an existing install — the same command does both.
 # Usage: ./scripts/setup.sh [scan_path]
+#        PYTHON=/path/to/python3.12 ./scripts/setup.sh   # pick the interpreter
 #
-# What it does:
-#   1. Creates Python venv, installs dependencies, links the `regin` CLI onto PATH
-#   2. Installs frontend dependencies and builds the SPA
-#   3. Initializes SQLite (local cache) from git-tracked files
-#   4. Configures local settings (mode, database_url) and registers source repos
-#   5. Initializes auth/audit tables and creates first user if needed
+# Re-running it is safe: the database, local settings and users are kept;
+# dependencies, the web UI and the schema are brought up to date.
 #
-# After setup, start with:  .venv/bin/python cli/regin.py serve
+# Without a terminal on stdin every question takes its default answer
+# (standalone mode, no agent bridge, wire the Claude hooks, no user created).
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 
+PYTHON="${PYTHON:-python3}"
+MIN_PY="3.11"
+
+if [ -t 0 ]; then INTERACTIVE=1; else INTERACTIVE=0; fi
+
+# ask <prompt> <default> — echoes the answer, or the default when non-interactive.
+ask() {
+  local reply=""
+  if [ "$INTERACTIVE" -eq 1 ]; then
+    read -rp "$1" reply || true
+  fi
+  echo "${reply:-$2}"
+}
+
+fail() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
 echo "=== regin setup ==="
 echo ""
 
-# --- 0. Install git hooks (only if inside a git repo) ---
-# Install on whatever branch the user already checked out — no branch switching.
+# --- Preflight: interpreter and toolchain, before anything is written ---
+py_version() {
+  "$1" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null
+}
+
+py_at_least_min() {
+  local major minor
+  IFS=. read -r major minor <<<"$1"
+  [ "$major" -gt 3 ] || { [ "$major" -eq 3 ] && [ "$minor" -ge 11 ]; }
+}
+
+if [ -d .venv ]; then
+  # A venv whose interpreter vanished (e.g. after a Homebrew Python upgrade)
+  # can't be repaired in place.
+  [ -x .venv/bin/python ] && .venv/bin/python -c '' 2>/dev/null \
+    || fail "The existing .venv has no working interpreter. Remove .venv and re-run with PYTHON=/path/to/python$MIN_PY (or newer)."
+  PY_CHECKED=.venv/bin/python
+else
+  command -v "$PYTHON" >/dev/null 2>&1 || fail "Python interpreter '$PYTHON' not found. regin needs Python >= $MIN_PY; set PYTHON=/path/to/python3.11 (or newer)."
+  PY_CHECKED="$PYTHON"
+fi
+PY_VER=$(py_version "$PY_CHECKED") || fail "Could not run '$PY_CHECKED' to read its version."
+if ! py_at_least_min "$PY_VER"; then
+  if [ "$PY_CHECKED" = ".venv/bin/python" ]; then
+    fail "The existing .venv runs Python $PY_VER; regin needs Python >= $MIN_PY. Remove .venv and re-run with PYTHON=/path/to/python$MIN_PY (or newer)."
+  fi
+  fail "Python $PY_VER at '$PY_CHECKED' is too old; regin needs Python >= $MIN_PY. Re-run with PYTHON=/path/to/python$MIN_PY (or newer)."
+fi
+echo "[check] Python $PY_VER"
+
+# vite 8 declares engines.node "^20.19.0 || >=22.12.0".
+node_supported() {
+  local major minor
+  IFS=. read -r major minor _ <<<"${1#v}"
+  if [ "$major" -eq 20 ]; then [ "$minor" -ge 19 ]; return; fi
+  if [ "$major" -eq 22 ]; then [ "$minor" -ge 12 ]; return; fi
+  [ "$major" -gt 22 ]
+}
+
+command -v node >/dev/null 2>&1 || fail "Node.js not found. The web UI build (vite 8) needs Node ^20.19 or >= 22.12."
+command -v npm >/dev/null 2>&1 || fail "npm not found. Install npm alongside Node.js (^20.19 or >= 22.12)."
+NODE_VER=$(node --version)
+node_supported "$NODE_VER" || fail "Node $NODE_VER is not supported by vite 8; install Node ^20.19 or >= 22.12."
+echo "[check] Node $NODE_VER, npm $(npm --version)"
+
+# --- 0. Git hooks (only inside a git repo; never switches branch) ---
 if git rev-parse --git-dir > /dev/null 2>&1; then
   echo "[0] Installing git hooks from .githooks/..."
   git config core.hooksPath .githooks
 else
-  echo "[0] Not a git repository — skipping hook install"
+  echo "[0] Not a git repository — skipping git hook install"
 fi
 
 # --- 1. Python environment ---
 if [ ! -d .venv ]; then
-  echo "[1/6] Creating Python virtual environment..."
-  python3 -m venv .venv
+  echo "[1/7] Creating Python virtual environment..."
+  "$PYTHON" -m venv .venv
 else
-  echo "[1/6] Python venv already exists"
+  echo "[1/7] Python venv already exists"
 fi
 echo "  Installing Python dependencies (this may take a few minutes)..."
-# Dependencies are declared in pyproject.toml; `-e .` installs the package + all of them.
-.venv/bin/pip install -e .
+.venv/bin/python -m pip install -e '.[agent-sdk]'
 echo "  Dependencies installed"
 
 # --- 1b. CLI on PATH ---
-# `pip install -e .` above produces `.venv/bin/regin` (pyproject `[project.scripts]`),
-# which is only reachable while this venv is activated. Agents run `regin ...` from
-# *other* repos' sessions, where it never is: the hooks keep working (they carry an
-# absolute interpreter path) while every skill's CLI leg fails, so the harness
-# half-works with no signal that half of it is missing. The link closes that gap.
+# `.venv/bin/regin` is only reachable while the venv is active, but agents run
+# `regin ...` from other repos' sessions: hooks keep working (absolute
+# interpreter path) while every skill's CLI leg fails silently.
 BIN_DIR="${REGIN_BIN_DIR:-$HOME/.local/bin}"
 mkdir -p "$BIN_DIR"
 ln -sf "$ROOT/.venv/bin/regin" "$BIN_DIR/regin"
@@ -56,26 +114,20 @@ case ":$PATH:" in
 esac
 
 # --- 2. Frontend build ---
-echo "[2/6] Building frontend..."
-if [ ! -d frontend/node_modules ]; then
-  echo "  Installing frontend dependencies (this may take a few minutes)..."
-  (cd frontend && npm install)
-fi
-echo "  Building the web UI..."
-(cd frontend && npx vite build)
+echo "[2/7] Building frontend..."
+(cd frontend && npm ci && npx vite build)
 echo "  Frontend built"
 
-# --- 3. SQLite init + rebuild ---
-echo "[3/6] Initializing local database cache..."
-.venv/bin/python cli/regin.py init --force
-.venv/bin/python cli/regin.py rebuild
-echo "  SQLite ready"
+# --- 3. Database ---
+echo "[3/7] Preparing the database..."
+.venv/bin/python cli/regin.py init
+.venv/bin/python cli/regin.py migrate
+echo "  Database at the current schema"
 
 # --- 4. Local settings ---
 REPO_ARG="${1:-}"
-echo "[4/6] Configuring local settings..."
+echo "[4/7] Configuring local settings..."
 
-# Check if settings.local.json already exists
 if [ -f config/settings.local.json ]; then
   echo "  config/settings.local.json already exists — keeping it"
 else
@@ -83,8 +135,7 @@ else
   echo "  Choose server mode:"
   echo "    shared   = team mode with MySQL for user accounts/audit"
   echo "    standalone = single-user mode with local SQLite only"
-  read -rp "  mode [standalone]: " MODE_INPUT
-  MODE="${MODE_INPUT:-standalone}"
+  MODE=$(ask "  mode [standalone]: " standalone)
 
   if [ "$MODE" = "standalone" ]; then
     cat > config/settings.local.json <<EOF
@@ -96,7 +147,7 @@ EOF
   else
     echo "  MySQL connection for shared user accounts."
     echo "  Format: mysql://user:password@host:3306/dbname"
-    read -rp "  database_url (or Enter to skip): " DB_URL
+    DB_URL=$(ask "  database_url (or Enter to skip): " "")
 
     if [ -n "$DB_URL" ]; then
       cat > config/settings.local.json <<EOF
@@ -122,8 +173,8 @@ echo "  Local settings saved"
 # session via tmux. Full checklist: docs/setup.md § Agent bridge.
 if ! grep -q '"agent_bridge"' config/settings.local.json; then
   echo ""
-  read -rp "  Enable the agent bridge (steer live claude sessions from /live)? [y/N]: " BRIDGE_INPUT
-  if [[ "${BRIDGE_INPUT:-n}" =~ ^[Yy]$ ]]; then
+  BRIDGE_INPUT=$(ask "  Enable the agent bridge (steer live claude sessions from /live)? [y/N]: " n)
+  if [[ "$BRIDGE_INPUT" =~ ^[Yy]$ ]]; then
     .venv/bin/python - <<'PY'
 import json, pathlib
 p = pathlib.Path('config/settings.local.json')
@@ -139,9 +190,8 @@ fi
 
 # --- 4c. Register source repos ---
 # `repo_paths` holds explicit git working trees. Register the given path if it
-# is itself a repo, else each immediate child that is one (the documented
-# "folder of your source repos"). Without an arg, register nothing — repos are
-# added later via `regin add-repo` or the /repos page.
+# is itself a repo, else each immediate child that is one. Without an arg,
+# register nothing — repos are added later via `regin add-repo` or /repos.
 if [ -n "$REPO_ARG" ]; then
   register_repo() {
     if ! .venv/bin/python cli/regin.py add-repo "$1"; then
@@ -166,42 +216,54 @@ if [ -n "$REPO_ARG" ]; then
   .venv/bin/python cli/regin.py discover
 else
   echo "  No source path given — register repos later with:"
-  echo "    .venv/bin/python cli/regin.py add-repo /path/to/your/source-repo"
+  echo "    regin add-repo /path/to/your/source-repo"
   echo "    (or the /repos page in the web UI)"
 fi
 
-# --- 5. Auth/audit tables ---
-echo "[5/6] Initializing auth/audit tables..."
-MODE_CHECK=$(.venv/bin/python -c "from lib.settings import settings; print(settings.mode)" 2>/dev/null || echo "shared")
-if [ "$MODE_CHECK" = "standalone" ]; then
-  .venv/bin/python cli/regin.py users init-db
-  echo "  SQLite auth/audit tables ready"
+# --- 5. Claude Code hook wiring ---
+echo "[5/7] Claude Code hook wiring..."
+CLAUDE_WIRED=$(.venv/bin/python cli/regin.py hooks status --provider claude --json 2>/dev/null \
+  | .venv/bin/python -c 'import json, sys; rows = json.load(sys.stdin); print(int(any(r["hook"] == "hook_manager" and r["installed"] for r in rows)))' \
+  2>/dev/null || echo 0)
+if [ "$CLAUDE_WIRED" = "1" ]; then
+  echo "  Already wired — repairing any drifted command"
+  .venv/bin/python cli/regin.py hooks repair --provider claude \
+    || echo "  warning: hook repair reported a problem — see the output above"
 else
-  if .venv/bin/python -c "from lib.mysql_db import is_configured; exit(0 if is_configured() else 1)" 2>/dev/null; then
-    .venv/bin/python cli/regin.py users init-db
-    echo "  MySQL tables ready"
+  HOOKS_INPUT=$(ask "  Wire regin's hooks into Claude Code (~/.claude/settings.json)? [Y/n]: " y)
+  if [[ "$HOOKS_INPUT" =~ ^[Yy] ]]; then
+    .venv/bin/python cli/regin.py hooks install --provider claude \
+      || echo "  warning: hook install failed — retry with: regin hooks install --provider claude"
   else
-    echo "  MySQL not configured — skipping. Add database_url to config/settings.local.json"
+    echo "  Skipped — wire later with: regin hooks install --provider claude"
   fi
 fi
 
-# --- 6. Create first user ---
-echo ""
-echo "[6/6] Create your user account"
-NEED_USER=0
+# --- 6. Auth/audit tables ---
+# Standalone keeps users/audit_log in the main SQLite DB, which `init` built.
+echo "[6/7] Auth/audit tables..."
+MODE_CHECK=$(.venv/bin/python -c "from lib.settings import settings; print(settings.mode)" 2>/dev/null || echo "shared")
+MYSQL_READY=0
 if [ "$MODE_CHECK" = "standalone" ]; then
-  NEED_USER=1
+  echo "  Standalone mode — users live in the local SQLite database"
+elif .venv/bin/python -c "from lib.mysql_db import is_configured; exit(0 if is_configured() else 1)" 2>/dev/null; then
+  .venv/bin/python cli/regin.py users init-db
+  MYSQL_READY=1
+  echo "  MySQL tables ready"
 else
-  if .venv/bin/python -c "from lib.mysql_db import is_configured; exit(0 if is_configured() else 1)" 2>/dev/null; then
-    NEED_USER=1
-  fi
+  echo "  MySQL not configured — skipping. Add database_url to config/settings.local.json"
 fi
 
-if [ "$NEED_USER" -eq 1 ]; then
+# --- 7. First user ---
+echo ""
+echo "[7/7] User account"
+if [ "$MODE_CHECK" = "standalone" ] || [ "$MYSQL_READY" -eq 1 ]; then
   EXISTING=$(.venv/bin/python -c "from lib.auth import user_count; print(user_count())")
   if [ "$EXISTING" -gt 0 ]; then
-    echo "  Users already exist:"
-    .venv/bin/python cli/regin.py users list
+    echo "  $EXISTING user(s) already exist — not creating another"
+  elif [ "$INTERACTIVE" -eq 0 ]; then
+    echo "  No users yet. Create the admin with:"
+    echo "    regin users create <username> <password> --role admin"
   else
     echo "  First user will be admin."
     read -rp "  Username: " USERNAME
@@ -221,6 +283,11 @@ echo ""
 echo "=== Setup complete ==="
 echo ""
 echo "Start the dashboard:"
-echo "  .venv/bin/python cli/regin.py serve"
-echo ""
+echo "  regin serve"
 echo "Then open http://localhost:$WEB_PORT"
+echo ""
+echo "Upgrade later (keeps your database, settings and users):"
+echo "  git pull && ./scripts/setup.sh"
+echo ""
+echo "Uninstall (removes hook wiring, deployed skills and the regin link; add --purge-data to drop data):"
+echo "  regin uninstall"
