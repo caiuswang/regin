@@ -10,7 +10,8 @@ Password storage: PBKDF2-HMAC-SHA256 with a random per-user salt,
 stored as `<salt_hex>:<dk_hex>`.
 
 JWTs: HS256, 1-week expiry, signed with a per-install secret in
-`config/jwt_secret.txt` (gitignored; auto-generated on first boot).
+`<config dir>/jwt_secret.txt` — `REGIN_CONFIG_DIR`, else the checkout's
+`config/` (gitignored; auto-generated on first boot).
 """
 
 from __future__ import annotations
@@ -35,15 +36,12 @@ def _auth_log():
     return _get_activity_logger("auth")
 
 from lib import api_keys
+from lib import settings as _settings_mod
 from lib.orm import AuthSessionLocal
 from lib.orm.models import User
 
 
-# JWT secret — generated once and cached in config/jwt_secret.txt (gitignored).
-_SECRET_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "config", "jwt_secret.txt",
-)
+_SECRET_PATH = os.path.join(_settings_mod.CONFIG_DIR, "jwt_secret.txt")
 _JWT_ALGORITHM = "HS256"
 _JWT_EXPIRY_SECONDS = 7 * 24 * 3600  # 1 week
 

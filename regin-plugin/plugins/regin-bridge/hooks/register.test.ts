@@ -1,6 +1,8 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, mock, test } from 'claude-code/testing'
 
 import { splitLines } from './register'
+
+const ENV = { HOME: '/home/u', REGIN_HOME: '/opt/regin' }
 
 test('a line split across pieces is carried, not lost', async () => {
   expect(splitLines('', '{"text":"a"}\n{"te')).toEqual([['{"text":"a"}'], '{"te'])
@@ -8,6 +10,7 @@ test('a line split across pieces is carried, not lost', async () => {
 })
 
 test('listener line becomes a submitted prompt', async ($, on) => {
+  mock.env(on, ENV)
   const spawned: (readonly string[])[] = []
   let submitted!: (text: string) => void
   const prompt = new Promise<string>(resolve => { submitted = resolve })
@@ -33,6 +36,7 @@ test('listener line becomes a submitted prompt', async ($, on) => {
 
   expect(await prompt).toBe('hello')
   expect(spawned).toHaveLength(1)
+  expect(spawned[0].slice(0, 2)).toEqual(['/opt/regin/.venv/bin/python', '/opt/regin/cli/regin.py'])
   expect(spawned[0].slice(2)).toEqual(['bridge', 'listen', '--session', 'sess-1'])
   exit()
 })
@@ -71,6 +75,7 @@ const PROMPT = { text: 'after', id: 'p1', session_id: 'sess-1' }
 const DONE = { answer: 'done', durationMs: 1, isAborted: false, reason: 'answer' } as const
 
 test('send now aborts the running turn', async ($, on) => {
+  mock.env(on, ENV)
   const child = scriptedListener(on)
   await $.session.start(START)
   await $.turn.start({ text: 'long job', turnId: 'T' })
@@ -87,6 +92,7 @@ test('send now aborts the running turn', async ($, on) => {
 })
 
 test('abort frame without a running turn is ignored', async ($, on) => {
+  mock.env(on, ENV)
   const child = scriptedListener(on)
   await $.session.start(START)
   await $.turn.start({ text: 'short job', turnId: 'T' })
@@ -101,6 +107,7 @@ test('abort frame without a running turn is ignored', async ($, on) => {
 })
 
 test("a subagent's turn ending leaves the running turn abortable", async ($, on) => {
+  mock.env(on, ENV)
   const child = scriptedListener(on)
   await $.session.start(START)
   await $.turn.start({ text: 'long job', turnId: 'T' })

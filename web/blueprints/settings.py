@@ -130,18 +130,22 @@ def _block_get(name: str):
 
 
 def _scope_block_base(attr: str, scope: str) -> dict:
-    """The block dict from the file the save will target, so a partial PUT
-    merges against the full on-disk block and cannot drop the fields it did
-    not send.
+    """The block as it takes effect, so a partial PUT merges against every
+    field already set and cannot drop the ones it did not send.
 
     `_load_settings()` shallow-merges the two files (`{**shared, **local}`), so
-    for a block present in BOTH it returns only the *local* copy — using that as
-    the merge base silently wipes every shared-only field when the block is
-    re-saved to the shared file. The scope's own file is the field-preserving
-    base; local-only overrides stay in local and are read-merged at load."""
+    for a block present in BOTH it returns only the *local* copy — not what
+    pydantic-settings loads, which deep-merges them. When the local file sets
+    the block, `save_settings` writes the whole value there, so the base must
+    carry the shared-only fields too; otherwise the shared file alone is it."""
     from lib import settings as _cfg
-    path = _cfg.SETTINGS_LOCAL_PATH if scope == 'local' else _cfg.SETTINGS_PATH
-    return dict(_cfg._load_json(path).get(attr) or {})
+    local = _cfg._load_json(_cfg.SETTINGS_LOCAL_PATH)
+    if scope == 'local':
+        return dict(local.get(attr) or {})
+    shared = dict(_cfg._load_json(_cfg.SETTINGS_PATH).get(attr) or {})
+    if attr not in local:
+        return shared
+    return _cfg._deep_merge(shared, local.get(attr) or {})
 
 
 def _block_put(name: str):

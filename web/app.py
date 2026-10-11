@@ -553,6 +553,16 @@ def _install_request_logging(app: Flask) -> None:
         return jsonify({"error": "internal server error"}), 500
 
 
+_FRONTEND_NOT_BUILT = (
+    '<!doctype html><title>regin: frontend not built</title>'
+    '<h1>regin\'s web UI has not been built</h1>'
+    '<p>The API is up, but <code>web/static/dist/</code> is empty. From the '
+    'checkout, run <code>./scripts/setup.sh</code> (or '
+    '<code>cd frontend &amp;&amp; npm ci &amp;&amp; npx vite build</code>), '
+    'then reload this page.</p>'
+)
+
+
 def _install_spa_routes(app: Flask) -> None:
     # SPA catch-all: serve Vue frontend for non-API paths
     spa_dir = os.path.join(os.path.dirname(__file__), 'static', 'dist')
@@ -564,4 +574,6 @@ def _install_spa_routes(app: Flask) -> None:
             return jsonify({'error': 'not found'}), 404
         if path and os.path.isfile(os.path.join(spa_dir, path)):
             return send_from_directory(spa_dir, path)
+        if not os.path.isfile(os.path.join(spa_dir, 'index.html')):
+            return _FRONTEND_NOT_BUILT, 404, {'Content-Type': 'text/html; charset=utf-8'}
         return send_from_directory(spa_dir, 'index.html')

@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, mock, test } from 'claude-code/testing'
 
 import { parseInbox } from './register'
 
@@ -28,6 +28,8 @@ function fakeRegin(argvs: string[][]) {
   }
 }
 
+const ENV = { HOME: '/home/u', REGIN_HOME: '/opt/regin' }
+
 test('parses `regin messages list --json` into the inbox', async () => {
   expect(parseInbox(TWO)).toEqual({
     unread: 2,
@@ -41,6 +43,7 @@ test('parses `regin messages list --json` into the inbox', async () => {
 })
 
 test('test_regin_inbox_command_opens_the_inbox_pane', async ($, on) => {
+  mock.env(on, ENV)
   const commands: string[] = []
   const opened: string[] = []
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
@@ -64,6 +67,7 @@ test('test_regin_inbox_command_opens_the_inbox_pane', async ($, on) => {
 })
 
 test('test_mark_all_read_clears_the_pane', async ($, on) => {
+  mock.env(on, ENV)
   const argvs: string[][] = []
   let fake = fakeRegin(argvs)
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
@@ -93,6 +97,7 @@ test('test_mark_all_read_clears_the_pane', async ($, on) => {
 })
 
 test('band button opens the inbox pane', async ($, on) => {
+  mock.env(on, ENV)
   const commands: string[] = []
   const opened: string[] = []
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
@@ -108,6 +113,7 @@ test('band button opens the inbox pane', async ($, on) => {
 })
 
 test('band is empty when inbox is clear', async ($, on) => {
+  mock.env(on, ENV)
   const commands: string[] = []
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('command.register', (_$, e) => { commands.push(e.name); return { value: { command: e.name } } })

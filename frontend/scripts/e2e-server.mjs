@@ -30,12 +30,13 @@ mkdirSync(join(SCRATCH_DIR, 'db'), { recursive: true })
 // `regin init` creates the data dir but not the activity log's, and loguru
 // only reports the miss on every request via a stderr traceback.
 mkdirSync(join(SCRATCH_DIR, 'data', 'logs'), { recursive: true })
-// The committed `settings.json` comes along (specs rely on the configured rule
-// engines); `settings.local.json` deliberately does not — machine-specific
-// overrides are exactly the ambient input the suite should not inherit. Writes
-// from the settings API land on this copy.
+// The suite's own shared settings (specs rely on its configured rule engines),
+// not the committed `config/settings.json`, which ships neutral defaults; and
+// never `settings.local.json` — machine-specific overrides are exactly the
+// ambient input the suite should not inherit. Writes from the settings API land
+// on this copy.
 mkdirSync(join(SCRATCH_DIR, 'config'), { recursive: true })
-copyFileSync(resolve(ROOT, 'config/settings.json'),
+copyFileSync(resolve(ROOT, 'frontend/e2e-settings.json'),
   join(SCRATCH_DIR, 'config', 'settings.json'))
 // `terminal-pane.spec.js` needs the pane terminal on (it is off in every real
 // install). Written to the machine-local file at provisioning time rather than

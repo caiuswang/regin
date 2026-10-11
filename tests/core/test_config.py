@@ -165,6 +165,27 @@ def test_save_settings_auto_with_only_shared_keys(tmp_settings):
     assert not tmp_settings["local"].exists()
 
 
+@pytest.mark.parametrize("scope", ["shared", "auto"])
+def test_save_settings_writes_a_locally_overridden_key_to_local(tmp_settings, scope):
+    tmp_settings["shared"].write_text('{}')
+    tmp_settings["local"].write_text('{"grader": {"aspects": ["a"]}, "repo_paths": []}')
+
+    config.save_settings({"grader": {"aspects": []}, "web_port": 9000}, scope=scope)
+
+    assert json.loads(tmp_settings["shared"].read_text()) == {"web_port": 9000}
+    assert config._load_settings()["grader"] == {"aspects": []}
+
+
+def test_clearing_a_nested_entry_of_a_locally_overridden_key_sticks(tmp_settings):
+    tmp_settings["local"].write_text(
+        '{"grader": {"system_prompt_overrides": {"correctness": "X"}}}')
+
+    config.save_settings({"grader": {"system_prompt_overrides": {}}}, scope="shared")
+
+    assert config._load_settings()["grader"] == {"system_prompt_overrides": {}}
+    assert not tmp_settings["shared"].exists()
+
+
 def test_save_settings_creates_config_dir(tmp_path, monkeypatch):
     cfg_dir = tmp_path / "nested" / "config"
     monkeypatch.setattr(config, "CONFIG_DIR", str(cfg_dir))

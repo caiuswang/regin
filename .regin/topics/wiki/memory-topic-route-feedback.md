@@ -15,7 +15,7 @@ routed `query` so a later `fail` verdict can become a topic negative.
 
 ## Judge it
 
-The grader's `InjectedRelated` aspect (`config/settings.json` +
+The grader's `InjectedRelated` aspect (a custom `grader.aspects` entry in settings +
 `lib/grader/service._maybe_apply_injection_relevance`) judges whether the banner
 fit the user's goal and hands its verdict — `satisfied` / `needs_revision` /
 `fail` — to `store.apply_topic_relevance`, which stamps it onto the session's

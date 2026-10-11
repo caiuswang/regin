@@ -1,7 +1,5 @@
 import type { EngineInterface, Register } from 'claude-code'
 
-const REGIN = '/Users/taowang/regin'
-
 let listening = false
 
 const TURN = { plugin: 'regin-bridge', key: 'turn' } as const
@@ -17,11 +15,17 @@ export function splitLines(carry: string, text: string): [string[], string] {
   return [parts.filter(line => line.trim() !== ''), tail]
 }
 
+// Same resolution as regin-agents/bin/regin-mcp.sh: $REGIN_HOME, else ~/regin.
+async function reginHome($: EngineInterface): Promise<string> {
+  return (await $.env.get('REGIN_HOME')) || `${await $.env.get('HOME')}/regin`
+}
+
 async function listen($: EngineInterface) {
   const session = await $.session.id()
+  const home = await reginHome($)
   const child = $.process.spawn({
-    argv: [`${REGIN}/.venv/bin/python`, `${REGIN}/cli/regin.py`, 'bridge', 'listen', '--session', session],
-    cwd: REGIN,
+    argv: [`${home}/.venv/bin/python`, `${home}/cli/regin.py`, 'bridge', 'listen', '--session', session],
+    cwd: home,
   })
   let carry = ''
   for await (const { stream, text } of child) {

@@ -68,7 +68,7 @@ export class Stack {
     mkdirSync(join(p.scratch, 'db'), { recursive: true })
     mkdirSync(join(p.dataDir, 'logs'), { recursive: true })
     mkdirSync(p.configDir, { recursive: true })
-    copyFileSync(join(ROOT, 'config/settings.json'), join(p.configDir, 'settings.json'))
+    copyFileSync(join(ROOT, 'frontend/e2e-settings.json'), join(p.configDir, 'settings.json'))
     backup(this.live.trace, p.traceDb)
     backup(this.live.memory, p.memoryDb)
     execFileSync(PY, [CLI, 'users', 'create', PROMO_USER, this.password, '--role', 'admin'],

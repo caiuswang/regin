@@ -20,12 +20,7 @@ def _scan_hook_scripts() -> list[dict]:
     {event, script, present}. Commands using `-m <module>` form (the unified
     hook_manager router) are skipped since there is no file path to check.
     """
-    provider = get_active_provider()
-    if provider.provider_id == "claude":
-        # Keep HOME-sensitive behavior for existing tests and setups.
-        settings_path = os.path.expanduser('~/.claude/settings.json')
-    else:
-        settings_path = str(provider.hook_settings_path())
+    settings_path = str(get_active_provider().hook_settings_path())
     try:
         with open(settings_path, 'r') as f:
             settings = json.load(f)
@@ -153,10 +148,7 @@ def _is_writable_dir(path) -> bool:
 
 def _hook_settings_parseable(provider) -> dict:
     """Whether the active provider's hook settings file is valid JSON."""
-    if provider.provider_id == "claude":
-        path = os.path.expanduser('~/.claude/settings.json')
-    else:
-        path = str(provider.hook_settings_path())
+    path = str(provider.hook_settings_path())
     if not os.path.isfile(path):
         return {'present': False, 'path': path, 'version': 'missing'}
     try:
@@ -207,12 +199,12 @@ def _radon_engine_items(cfg, check_module) -> list[dict]:
 
 
 def _bundle_engine_items(cfg) -> list[dict]:
-    present = bool(cfg.bundle_root) and os.path.isdir(str(cfg.bundle_root))
+    root = os.path.expanduser(str(cfg.bundle_root)) if cfg.bundle_root else None
     return [{
         'id': f'engine_{cfg.id}_bundle',
         'label': f'{cfg.id}: bundle_root',
-        'present': present,
-        'path': str(cfg.bundle_root) if cfg.bundle_root else None,
+        'present': bool(root) and os.path.isdir(root),
+        'path': root,
         'version': '',
     }]
 
@@ -638,7 +630,10 @@ def _hook_wiring_items(active_provider) -> list[dict]:
 
 def run_checks() -> dict:
     """Return structured doctor check results."""
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    from lib import settings as _settings_mod
+    from lib.orm import engine as _engine
+
+    root = str(_settings.project_root)
     provider = get_active_provider()
 
     frontend = {
@@ -659,9 +654,9 @@ def run_checks() -> dict:
     project = {
         'venv': os.path.isdir(os.path.join(root, '.venv')),
         'node_modules': os.path.isdir(os.path.join(root, 'frontend', 'node_modules')),
-        'settings_local': os.path.isfile(os.path.join(root, 'config', 'settings.local.json')),
+        'settings_local': os.path.isfile(_settings_mod.SETTINGS_LOCAL_PATH),
         'web_ui': os.path.isdir(os.path.join(root, 'web', 'static', 'dist')),
-        'sqlite_db': os.path.isfile(os.path.join(root, 'db', 'regin.db')),
+        'sqlite_db': os.path.isfile(_engine.DB_PATH),
         'mysql_configured': _mysql_ok(),
         'data_dir_writable': _is_writable_dir(_settings.data_dir),
         'log_dir_writable': _is_writable_dir(_settings.log_dir),

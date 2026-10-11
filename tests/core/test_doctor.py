@@ -15,10 +15,7 @@ from lib import doctor
 # ── _scan_hook_scripts ───────────────────────────────────────
 
 def test_scan_hook_scripts_missing_file(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        "os.path.expanduser",
-        lambda p: str(tmp_path / "no-settings.json") if "settings.json" in p else p,
-    )
+    _patch_settings_path(monkeypatch, tmp_path / "no-settings.json")
     assert doctor._scan_hook_scripts() == []
 
 
@@ -344,14 +341,11 @@ def test_run_checks_mysql_ok_exception_is_false(monkeypatch):
 # ── helper ──────────────────────────────────────────────────
 
 def _patch_settings_path(monkeypatch, settings_file):
-    real_expanduser = __import__("os.path", fromlist=["expanduser"]).expanduser
+    from types import SimpleNamespace
 
-    def _redir(p):
-        if "settings.json" in p:
-            return str(settings_file)
-        return real_expanduser(p)
-
-    monkeypatch.setattr("os.path.expanduser", _redir)
+    provider = SimpleNamespace(provider_id="claude",
+                               hook_settings_path=lambda: settings_file)
+    monkeypatch.setattr(doctor, "get_active_provider", lambda: provider)
 
 
 # ── _topics_pending_promote_items ────────────────────────────

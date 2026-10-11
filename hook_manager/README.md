@@ -21,7 +21,6 @@ settings/log/traces paths are resolved by the active provider adapter
 
 ```
 hook_manager/
-  settings.example.json         — drop-in hooks block for Claude settings.json
   core.py                       — HookPayload, HookResponse, Handler, matchers
   merge.py                      — response-precedence rules
   runner.py                     — stdin → dispatch → stdout pipeline
@@ -29,7 +28,6 @@ hook_manager/
   custom_registry.py            — USER-OWNED registrations (env-dependent, opt-in)
   custom_registry.example.py    — template for a fresh custom registry
   handlers/                     — one module per handler behavior
-  migration_preview.py          — report what a settings.json swap would change
   e2e_smoke.sh                  — end-to-end harness against real `claude`
   tests/                        — pytest suite
 ```
@@ -72,7 +70,7 @@ your `custom_registry.py` registers.
 
 ## Wiring into Claude
 
-`hook_manager/settings.example.json` is a drop-in `hooks` block for the
-provider settings file (Claude default: `~/.claude/settings.json`).
-`migration_preview.py` reports the diff between the current settings
-file and the manager's expected wiring without modifying anything.
+Install the wiring with `regin hooks install --provider claude` (or
+`--all`); it writes the dispatcher into the provider's settings file
+(Claude default: `~/.claude/settings.json`). `regin hooks status` compares installed against
+expected commands, and `regin hooks repair` rewrites any that drifted.

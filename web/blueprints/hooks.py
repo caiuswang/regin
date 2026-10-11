@@ -20,10 +20,12 @@ predates hook_manager and stays opt-in):
 - `POST /api/debug-hook-install` / `/api/debug-hook-uninstall`
 - `GET  /api/debug-hook-payloads`
 
-Legacy aggregated dashboard (kept for backward-compat with the SettingsView):
-- `GET  /api/hooks`                 — aggregate status (debug only today)
-- `POST /api/hooks/<name>/install`  — dispatcher (debug only today)
+Per-provider installers (Settings → Hook Installers, `SettingsHookInstallers.vue`),
+`<name>` being `hook_manager` or `debug`:
+- `GET  /api/hooks`                   — per-provider wiring status
+- `POST /api/hooks/<name>/install`
 - `POST /api/hooks/<name>/uninstall`
+- `POST /api/hooks/<name>/adopt`
 
 Command construction, ownership detection, and the install/uninstall writers
 live in `lib/hooks_wiring.py` so `regin hooks` and `regin doctor` share one
@@ -434,7 +436,7 @@ def api_reset_all_priorities():
     return jsonify({'ok': True, 'msg': 'All handler priorities reset to defaults'})
 
 
-# ── Legacy grouped dispatcher (debug only — kept for UI compat) ─
+# ── Per-provider installer dispatcher ─────────────────────────
 
 _INSTALLERS = {
     'hook_manager': api_hook_manager_install,
