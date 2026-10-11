@@ -72,9 +72,13 @@ Internals: [Patterns](ARCHITECTURE.md#patterns-procedure-guides), [Rule engines]
 
 ```bash
 git clone https://github.com/caiuswang/regin && cd regin
-./scripts/setup.sh
+./scripts/setup.sh                       # needs Python ≥ 3.11 and Node; asks to wire the Claude Code hooks
 .venv/bin/python cli/regin.py serve      # dashboard on http://localhost:8321
 ```
+
+- **Hooks** — setup offers to wire them; otherwise run `regin hooks install --provider claude`. Without them no session is recorded.
+- **Upgrade** — `git pull && ./scripts/setup.sh`; it keeps your database, settings and users and runs `regin migrate`.
+- **Uninstall** — `regin uninstall` (`--dry-run` to preview, `--purge-data` to drop data too), then delete the checkout.
 
 Manual setup, settings, server mode and the CLI reference: [docs/setup.md](docs/setup.md).
 

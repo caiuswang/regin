@@ -56,8 +56,24 @@ def test_cli_reference_is_complete():
     missing_subs = _missing_subcommands(groups, rows)
     assert not missing_subs, f"CLI reference is missing subcommands {missing_subs}"
 
+
+def test_cli_reference_is_current():
+    gen = _generator()
     doc = SETUP.read_text(encoding="utf-8")
-    assert gen.splice(doc, gen.render(root)) == doc, "CLI reference is stale — run scripts/gen_cli_reference.py"
+    assert gen.splice(doc, gen.render(gen.command_tree())) == doc, \
+        "CLI reference is stale — run scripts/gen_cli_reference.py"
+    assert "| `regin uninstall` |" in _section(doc, "CLI reference")
+
+
+def test_setup_documents_upgrade_and_uninstall_without_rebuild():
+    doc = SETUP.read_text(encoding="utf-8")
+    assert "git pull && ./scripts/setup.sh" in _section(doc, "Upgrade")
+    assert "regin uninstall --dry-run" in _section(doc, "Uninstall")
+    for heading in ("Manual Setup", "Troubleshooting"):
+        section = _section(doc, heading)
+        assert "cli/regin.py init --force" not in section
+        assert "cli/regin.py rebuild" not in section
+        assert "Run `regin rebuild`" not in section
 
 
 def test_kimi_walkthrough_lives_in_setup_not_readme():

@@ -89,7 +89,7 @@ CLI mirror is `regin memory supersede <old-id> --body … `. Internals: *Agent M
 .venv/bin/python cli/regin.py init          # Initialize DB + directories
 .venv/bin/python cli/regin.py doctor        # Environment + missing CLI tools
 .venv/bin/python cli/regin.py add-repo <path>
-.venv/bin/python cli/regin.py rebuild       # Rebuild DB from git-tracked files
+.venv/bin/python cli/regin.py rebuild       # Re-derive pattern/tag/repo cache tables; other tables untouched
 .venv/bin/python cli/regin.py migrate       # Sync an existing DB to the current schema
 .venv/bin/python cli/regin.py hooks status  # Installed vs. expected hook commands per provider
 .venv/bin/python cli/regin.py hooks repair  # Rewrite any hook command that has drifted
