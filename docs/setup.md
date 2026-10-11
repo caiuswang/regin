@@ -10,31 +10,33 @@ cd regin
 ./scripts/setup.sh /path/to/your/source-repos
 ```
 
-The setup script creates a Python venv, builds the frontend, initializes the database, discovers repos, and prompts you to create your user account. Then:
+The setup script needs Python ≥ 3.11 (pick one with `PYTHON=/path/to/python3.12 ./scripts/setup.sh`) and Node/npm. It creates a Python venv, links `regin` into `~/.local/bin` (`REGIN_BIN_DIR` to change), builds the frontend, creates or migrates the database, discovers repos, offers to wire regin's hooks into Claude Code, and prompts you to create your user account. Then:
 
 ```bash
 .venv/bin/python cli/regin.py serve
 # Open http://localhost:8321 and log in
 ```
 
+Re-running `./scripts/setup.sh` is safe — it is also how you [upgrade](#upgrade).
+
 ## Manual Setup
 
 ### 1. Install dependencies
 
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install -e .
-cd frontend && npm install && npx vite build && cd ..
+python3.11 -m venv .venv
+.venv/bin/pip install -e '.[agent-sdk]'
+cd frontend && npm ci && npx vite build && cd ..
 ```
 
 ### 2. Initialize database
 
 ```bash
-.venv/bin/python cli/regin.py init --force
-.venv/bin/python cli/regin.py rebuild
+.venv/bin/python cli/regin.py init       # builds db/regin.db at the current schema; skips an existing DB
+.venv/bin/python cli/regin.py migrate    # brings an existing DB up to the current schema
 ```
 
-`init --force` does a true local reset: it recreates the SQLite DB from scratch, removes tracked deployed skill directories, clears local experiments, tags, accounts, deployment records, and rotates the JWT secret so old login tokens stop working.
+`init --force` is a reset, not a setup step: it recreates the SQLite DB from scratch — every session, feature, task and account is gone — removes tracked deployed skill directories, and rotates the JWT secret so old login tokens stop working. Back up `db/` before using it.
 
 ### 3. Configure local settings
 
@@ -78,10 +80,19 @@ Repos are registered explicitly through the `/repos` page in the web UI, or from
 
 Registered repo paths persist in `settings.repo_paths`. Use `regin remove-repo <name>` (or the Remove button on `/repos`) to unregister.
 
-### 4. Initialize auth/audit tables and create your account
+### 4. Wire the agent hooks
 
 ```bash
-.venv/bin/python cli/regin.py users init-db                               # create tables (first time only)
+.venv/bin/python cli/regin.py hooks install --provider claude   # writes ~/.claude/settings.json
+.venv/bin/python cli/regin.py hooks status                      # installed vs expected, per provider
+```
+
+Without this step regin records no sessions and no rule engine runs. `--provider` also takes `codex` and `kimi`.
+
+### 5. Create your account
+
+```bash
+.venv/bin/python cli/regin.py users init-db                               # shared mode only: create the MySQL tables
 .venv/bin/python cli/regin.py users create <username> <password> --display-name "Your Name"
 .venv/bin/python cli/regin.py serve
 ```
@@ -100,6 +111,31 @@ Changing `mode` does **not** delete any data.
   - `standalone` → stored in the same **SQLite** file.
 
 When you switch modes, the app simply looks at a different database for auth/audit data, so you may need to re-create your admin user in the new mode. The old accounts remain in the previous database.
+
+## Upgrade
+
+```bash
+git pull && ./scripts/setup.sh
+```
+
+Re-running setup is the upgrade path. It installs new Python and npm dependencies, rebuilds the frontend, runs `regin migrate` to bring `db/regin.db` to the new schema, and runs `regin hooks repair` when the hooks are already wired. Your database, `config/settings.local.json`, users and JWT secret are kept.
+
+Upgrading by hand is the same steps: `pip install -e '.[agent-sdk]'`, `npm ci && npx vite build`, `regin migrate`, `regin hooks repair`.
+
+`regin migrate` only upgrades a DB that carries an Alembic stamp, which every DB built by `regin init` does. A DB without one is stamped when it already has every table and column of `db/schema.sql`; otherwise `migrate` changes nothing, lists what is missing and exits non-zero. Such a DB predates v0.3.0 and has no upgrade path: back up `db/`, then `regin init --force`.
+
+## Uninstall
+
+```bash
+regin uninstall --dry-run      # list what would be removed
+regin uninstall                # remove it, after a confirmation prompt
+```
+
+`regin uninstall` removes what this checkout wrote outside the repo: its hook entries in each provider's settings (Claude, Codex, the Kimi managed block), the debug hooks, the deployed skill directories it has a deployment record for, each provider's `hook-manager-config.json`, and the `regin` symlink in `~/.local/bin` (`--bin-dir` or `REGIN_BIN_DIR` if setup linked it elsewhere). `--purge-data` also deletes `settings.data_dir` and `db/*.db`; without it your data stays.
+
+Skill directories, hook-manager config and data are shared between checkouts, so they are kept — and the listing names who still uses them — while another checkout's hooks are still wired, while a provider's hook config can't be parsed, or when you run it from a git worktree rather than the main checkout. Hook entries written by another checkout are never touched.
+
+It does not delete the checkout or anything you installed by hand. Finish with the steps it prints: `/plugin uninstall …` for the Claude Code plugins, remove any `statusLine` entry pointing into the checkout, then `rm -rf <checkout>`.
 
 ## Shared vs local state
 
@@ -247,6 +283,7 @@ Run any command with `--help` for its arguments and flags.
 | `regin route` | EXPERIMENTAL. Route a query through the dense pattern index |
 | `regin session-id` | Print the current agent session id (from $REGIN_SESSION_ID or the provider's own variable, e.g. $CLAUDE_CODE_SESSION_ID). |
 | `regin serve` | Start web dashboard |
+| `regin uninstall` | Remove regin's hooks, deployed skills, hook-manager config and launcher symlink written by this checkout; --purge-data also deletes its data. |
 | `regin bootstrap-hook-schemas` | Infer hook-event JSON Schemas from the hook-payload JSONL log |
 
 Command groups — `regin <group> <subcommand>`:
@@ -282,6 +319,12 @@ Regenerate this section after adding or renaming a command: `.venv/bin/python sc
 ## Troubleshooting
 
 **"Database not initialized"** — Run `regin init`.
+
+**Pages 500 after `git pull`** — The schema moved on and the DB is behind; `regin doctor` says so. Run `regin migrate` (or re-run `./scripts/setup.sh`). Don't reach for `regin rebuild`: it only re-derives the pattern, tag and repo cache tables and never changes the schema.
+
+**`regin migrate` refuses, listing missing tables or columns** — See [Upgrade](#upgrade): back up `db/`, then `regin init --force`.
+
+**Sessions don't show up in `/trace`** — The hooks aren't wired, or point at a moved checkout. `regin hooks status` shows what is installed; `regin hooks repair` rewrites drifted entries and names `regin hooks adopt` when the entries belong to a checkout that has since moved.
 
 **Login not working after `regin init --force`** — User accounts are local. Re-create: `regin users create <name> <pass> --role admin`
 
