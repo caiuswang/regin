@@ -56,27 +56,10 @@ from ..core import HookPayload, HookResponse
 # tmux socket longer than this.
 _TMUX_QUERY_TIMEOUT_SEC = 2.0
 
-_schema_ready = False
-
 # (trace_id, pane_id) pairs registered in THIS process — lets the turn-event
 # self-heal skip a redundant tmux query once the pane is already recorded,
 # while still catching a resume that moved the session to a new pane.
 _registered_panes: set[tuple[str, str]] = set()
-
-_SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS bridge_panes (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    trace_id        TEXT NOT NULL UNIQUE,
-    pane_id         TEXT NOT NULL,
-    tmux_server_pid INTEGER NOT NULL,
-    pane_pid        INTEGER NOT NULL,
-    tmux_socket     TEXT,
-    reachable       INTEGER NOT NULL DEFAULT 0,
-    cwd             TEXT,
-    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
-)
-"""
 
 # Overwrites ALL mutable columns on conflict: a resume re-registration must
 # never inherit stale coordinates from a prior tmux server lifetime.
@@ -229,7 +212,6 @@ def _retire_pane(trace_id: str | None) -> None:
     """
     if not trace_id:
         return
-    ensure_schema()
     from lib.agent_bridge.store import retire_pane
     retire_pane(trace_id)
 
@@ -285,43 +267,9 @@ def _log_command_refusal(trace_id: str, pane_id: str, command: str,
         pass
 
 
-def _column_exists(conn, table: str, column: str) -> bool:
-    return any(row[1] == column
-               for row in conn.execute(f"PRAGMA table_info({table})"))
-
-
-def ensure_schema() -> None:
-    """Create `bridge_panes` if this DB predates the agent bridge, and
-    backfill `tmux_socket` on tables created before that column landed.
-
-    `CREATE TABLE IF NOT EXISTS` is a no-op on a pre-existing table, so an
-    upgraded install (or the live `db/regin.db` from slice 1) needs the
-    additive ALTER — otherwise the socket-aware UPSERT/SELECT hit
-    `OperationalError: no column named tmux_socket`. Same DDL as
-    `db/schema.sql` (fresh installs); a new column also needs an alembic
-    revision under `alembic/versions/` — keep them in sync.
-    """
-    global _schema_ready
-    if _schema_ready:
-        return
-    from lib.orm.engine import get_connection
-    conn = get_connection()
-    try:
-        conn.execute(_SCHEMA_SQL)
-        if not _column_exists(conn, "bridge_panes", "tmux_socket"):
-            conn.execute("ALTER TABLE bridge_panes ADD COLUMN tmux_socket TEXT")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_bridge_panes_reachable "
-                     "ON bridge_panes(reachable)")
-        conn.commit()
-    finally:
-        conn.close()
-    _schema_ready = True
-
-
 def _upsert_pane(trace_id: str, pane_id: str, server_pid: int,
                  pane_pid: int, tmux_socket: str | None,
                  cwd: str | None) -> None:
-    ensure_schema()
     from lib.orm.engine import get_connection
     conn = get_connection()
     try:

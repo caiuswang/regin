@@ -392,7 +392,7 @@ class AgentMemoryConfig(BaseModel):
     negative_max_per_memory: int = 10
     # Topic-route query-local suppression/protection: when a `<topic_context>`
     # banner is graded `fail` (`InjectedRelated`), the prompt embedding is stored as a
-    # topic negative (`TopicNegative`). At route time the banner is *withheld*
+    # topic negative (`TopicExemplar`). At route time the banner is *withheld*
     # when the incoming query's max cosine to that topic's negatives clears this
     # threshold — query-local suppression replacing the binary global fail-rate
     # gate, overridable by a human `allowed` pin. Computed server-side (the hook

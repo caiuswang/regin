@@ -15,7 +15,7 @@ from lib.topics.proposal_external import (
     _topic_wiki_section,
 )
 from lib.topics.proposal_orm.serializers import _proposed_topic_kwargs, _topic_to_dict
-from lib.topics.wiki_backfill import backfill_topic_wiki, ensure_topic_wiki_columns
+from lib.topics.wiki_backfill import backfill_topic_wiki
 
 
 # ── source-side: per-topic wiki -> combined ──────────────────────────
@@ -132,11 +132,6 @@ def _seed_legacy_revision() -> int:
         s.add(ProposalRevisionTopic(revision_id=rev_id, topic_id="beta", label="Beta", wiki_md=""))
         s.commit()
     return rev_id
-
-
-def test_ensure_columns_idempotent_on_current_schema():
-    # tmp_db already has the column, so nothing to add.
-    assert ensure_topic_wiki_columns() == []
 
 
 def test_backfill_splits_combined_into_distinct_topic_bodies():

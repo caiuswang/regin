@@ -13,17 +13,33 @@ users_app = typer.Typer(
 )
 
 
-@users_app.command("init-db", help="Create users/audit tables (MySQL in shared mode, SQLite in standalone mode)")
+_AUTH_TABLES = ("users", "audit_log")
+
+
+@users_app.command("init-db", help="Create the users/audit_log tables on the shared-mode MySQL auth DB (standalone: checks `regin init` created them)")
 def cmd_users_init_db() -> None:
     from lib.settings import settings
-    if settings.mode == 'standalone':
-        from lib.orm.engine import init_db
-        init_db()
-        print("SQLite tables initialized (includes users, audit_log).")
-    else:
+    if settings.mode == 'shared':
         from lib.mysql_db import init_mysql
         init_mysql()
         print("MySQL tables created (users, audit_log).")
+        return
+    # Standalone auth lives in the primary DB, whose shape belongs to
+    # schema.sql + alembic; creating the tables here would build an unstamped
+    # DB that diverges from a `regin init` one.
+    import os
+
+    from sqlalchemy import inspect
+
+    from lib.orm import engine
+    present = (set(inspect(engine.get_auth_engine()).get_table_names())
+               if os.path.exists(engine.DB_PATH) else set())
+    missing = [t for t in _AUTH_TABLES if t not in present]
+    if missing:
+        print(f"Missing auth tables: {', '.join(missing)}. "
+              "Run `regin init` (new DB) or `regin migrate` (existing DB).")
+        raise typer.Exit(1)
+    print("SQLite auth tables present (users, audit_log).")
 
 
 @users_app.command("list", help="List all users")

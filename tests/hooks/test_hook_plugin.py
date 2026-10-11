@@ -690,7 +690,6 @@ def test_get_url_returns_default_for_known_endpoint(monkeypatch):
     """No env override → use DEFAULT_URLS."""
     for key in ('session_spans', 'skill_reads', 'plan_sessions', 'rule_triggers'):
         monkeypatch.delenv(f'REGIN_{key.upper()}_TRACE_URL', raising=False)
-    monkeypatch.delenv('REGIN_RULE_TRACE_URL', raising=False)
     assert hook_plugin._get_url('session_spans') == \
         hook_plugin.DEFAULT_URLS['session_spans']
 
@@ -701,26 +700,14 @@ def test_get_url_respects_env_override(monkeypatch):
     assert hook_plugin._get_url('session_spans') == 'http://staging/api/spans'
 
 
-def test_get_url_prefers_new_env_over_legacy(monkeypatch):
-    """For rule_triggers, REGIN_RULE_TRIGGERS_TRACE_URL (new) must win
-    over REGIN_RULE_TRACE_URL (legacy) when both are set — otherwise
-    migrations are stuck because the new env never takes effect."""
-    monkeypatch.setenv('REGIN_RULE_TRIGGERS_TRACE_URL', 'http://new/rules')
-    monkeypatch.setenv('REGIN_RULE_TRACE_URL', 'http://legacy/rules')
-    assert hook_plugin._get_url('rule_triggers') == 'http://new/rules'
-
-
-def test_get_url_falls_back_to_legacy_when_new_absent(monkeypatch):
-    """Legacy env still works for users who haven't migrated."""
+def test_get_url_ignores_the_retired_rule_trace_env(monkeypatch):
     monkeypatch.delenv('REGIN_RULE_TRIGGERS_TRACE_URL', raising=False)
     monkeypatch.setenv('REGIN_RULE_TRACE_URL', 'http://legacy/rules')
-    assert hook_plugin._get_url('rule_triggers') == 'http://legacy/rules'
+    assert hook_plugin._get_url('rule_triggers') == \
+        hook_plugin.DEFAULT_URLS['rule_triggers']
 
 
-def test_get_url_legacy_fallback_only_for_rule_triggers(monkeypatch):
-    """The legacy fallback is scoped to rule_triggers — setting
-    REGIN_SESSION_SPANS_LEGACY_URL or similar must NOT resolve for
-    other endpoints."""
+def test_get_url_ignores_look_alike_env(monkeypatch):
     monkeypatch.delenv('REGIN_SESSION_SPANS_TRACE_URL', raising=False)
     # Setting a look-alike env that isn't recognized.
     monkeypatch.setenv('REGIN_SESSION_LEGACY_URL', 'http://nope')

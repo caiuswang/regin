@@ -1,28 +1,25 @@
 """Central MySQL connection for shared tables (users, audit_log).
 
-Configure via settings.json or settings.local.json:
-  "database_url": "mysql://user:password@host:3306/regin"
-
-Or with individual keys:
-  "db_host": "localhost",
-  "db_port": 3306,
-  "db_user": "root",
-  "db_password": "password",
-  "db_name": "regin"
+Configured by `settings.database_url` (`REGIN_DATABASE_URL`), e.g.
+`mysql://user:password@host:3306/regin` or `mysql+pymysql://…`.
 """
-
-import os
 
 import pymysql
 import pymysql.cursors
 
-from lib.settings import _load_settings
+from lib.settings import settings
+
+_URL_PREFIXES = ("mysql+pymysql://", "mysql://")
 
 
 def _parse_database_url(url: str) -> dict:
-    """Parse mysql://user:pass@host:port/dbname into connection kwargs."""
-    # mysql://user:pass@host:port/dbname
-    url = url.removeprefix('mysql://')
+    """Parse mysql[+pymysql]://user:pass@host:port/dbname into connection kwargs."""
+    for prefix in _URL_PREFIXES:
+        if url.startswith(prefix):
+            url = url[len(prefix):]
+            break
+    else:
+        raise ValueError(f"database_url must start with one of {_URL_PREFIXES}")
     user_pass, rest = url.split('@', 1)
     user, password = user_pass.split(':', 1) if ':' in user_pass else (user_pass, '')
     host_port, dbname = rest.split('/', 1) if '/' in rest else (rest, 'regin')
@@ -31,21 +28,10 @@ def _parse_database_url(url: str) -> dict:
 
 
 def _get_config() -> dict:
-    """Build MySQL connection kwargs from settings."""
-    settings = _load_settings()
-
-    # database_url takes priority
-    url = settings.get('database_url') or os.environ.get('REGIN_DATABASE_URL')
-    if url:
-        return _parse_database_url(url)
-
-    return {
-        'host': settings.get('db_host', 'localhost'),
-        'port': int(settings.get('db_port', 3306)),
-        'user': settings.get('db_user', 'root'),
-        'password': settings.get('db_password', ''),
-        'database': settings.get('db_name', 'regin'),
-    }
+    """Build MySQL connection kwargs from `settings.database_url`."""
+    if not settings.database_url:
+        raise RuntimeError("settings.database_url is not set")
+    return _parse_database_url(settings.database_url)
 
 
 def get_mysql_connection():
@@ -60,13 +46,8 @@ def get_mysql_connection():
 
 
 def is_configured() -> bool:
-    """Check if MySQL connection settings are present."""
-    settings = _load_settings()
-    return bool(
-        settings.get('database_url')
-        or os.environ.get('REGIN_DATABASE_URL')
-        or settings.get('db_host')
-    )
+    """Check if a MySQL connection URL is configured."""
+    return bool(settings.database_url)
 
 
 def init_mysql():

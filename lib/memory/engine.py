@@ -52,17 +52,6 @@ _INDEX_DDL = (
     "ON topic_exemplars(topic_id)",
 )
 
-# Table renames for DBs that predate the negative→exemplar unification. A
-# pre-existing `topic_negatives` table (negatives only) is renamed in place so
-# its rows survive as `polarity = -1` exemplars once the column migration below
-# backfills the default. Idempotent: skipped when the new table already exists.
-# Must run *before* `create_all`, or it would create an empty new table and
-# orphan the old rows.
-# (old_table, new_table)
-_RENAME_MIGRATIONS = (
-    ("topic_negatives", "topic_exemplars"),
-)
-
 _memory_engine: Optional[Engine] = None
 _memory_engine_url: Optional[str] = None
 _MemorySessionFactory: Optional[sessionmaker] = None
@@ -87,58 +76,12 @@ def _resolve_memory_url() -> str:
     return f"sqlite:///{memory_db_path()}"
 
 
-# Additive column migrations for tables that predate a column. `create_all`
-# only creates missing *tables*, never alters an existing one, so a column
-# added to a model needs an explicit, idempotent ALTER for DBs in the wild.
-# (table, column, type) — applied only when the column is absent.
-_COLUMN_MIGRATIONS = (
-    ("injection_events", "engaged", "INTEGER"),
-    ("injection_events", "scored_at", "TEXT"),
-    ("injection_events", "matched", "INTEGER"),
-    ("injection_events", "query", "TEXT"),
-    ("topic_injections", "query", "TEXT"),
-    # Negative→exemplar unification: the renamed `topic_exemplars` table (and
-    # any old-shaped row) gains the polarity/source axes. The DEFAULT clause
-    # backfills pre-existing negatives to `polarity = -1`, `source = 'auto'`;
-    # a fresh table already carries the columns from the model, so the ALTER is
-    # skipped there.
-    ("topic_exemplars", "polarity", "INTEGER NOT NULL DEFAULT -1"),
-    ("topic_exemplars", "source", "TEXT NOT NULL DEFAULT 'auto'"),
-    # The raw prompt behind each exemplar (inspect + per-row revert). Older
-    # rows predate it and stay NULL — shown as "(query not recorded)".
-    ("topic_exemplars", "query", "TEXT"),
-)
-
-
-def _apply_rename_migrations(conn) -> None:
-    tables = {r[0] for r in conn.execute(sa_text(
-        "SELECT name FROM sqlite_master WHERE type='table'"))}
-    for old, new in _RENAME_MIGRATIONS:
-        if old in tables and new not in tables:
-            conn.execute(sa_text(f"ALTER TABLE {old} RENAME TO {new}"))
-            tables.add(new)
-
-
-def _apply_column_migrations(conn) -> None:
-    for table, column, col_type in _COLUMN_MIGRATIONS:
-        cols = {r[1] for r in conn.execute(
-            sa_text(f"PRAGMA table_info({table})"))}
-        if column not in cols:
-            conn.execute(sa_text(
-                f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"))
-
-
 def _init_memory_schema(engine: Engine) -> None:
-    # Rename legacy tables before create_all, so it sees them as present and
-    # doesn't create empty new ones that would orphan the existing rows.
-    with engine.begin() as conn:
-        _apply_rename_migrations(conn)
     memory_metadata.create_all(engine)
     with engine.begin() as conn:
         conn.execute(sa_text(_FTS_DDL))
         for ddl in _INDEX_DDL:
             conn.execute(sa_text(ddl))
-        _apply_column_migrations(conn)
 
 
 def get_memory_engine() -> Engine:

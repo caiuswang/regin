@@ -264,7 +264,7 @@ class TopicInjection(MemoryBase, table=True):
     topic_id: str = Field(
         sa_column=Column("topic_id", String, primary_key=True))
     # The recall query (user prompt) this banner was routed on, kept so a
-    # `fail` verdict can become a topic negative exemplar (`TopicNegative`).
+    # `fail` verdict can become a topic negative exemplar (`TopicExemplar`).
     # NULL for rows written before the column existed.
     query: Optional[str] = Field(
         default=None, sa_column=Column("query", Text))
@@ -497,12 +497,6 @@ class TopicExemplar(MemoryBase, table=True):
         sa_column=Column("created_at", Text, nullable=False))
 
 
-# Back-compat alias for the pre-unification class name (negatives-only).
-# Resolves to the polarity-tagged table above; callers that only ever wrote
-# negatives keep working unchanged.
-TopicNegative = TopicExemplar
-
-
 @dataclass
 class MemoryInput:
     """Write-side payload for `remember` / `supersede`."""
@@ -539,7 +533,7 @@ __all__ = [
     "InjectionEvent",
     "MemoryEdge", "MemoryTopic", "MemoryTopicMember",
     "MemoryAuthoritativeTopic", "ReferentSessionDF",
-    "TopicNegative",
+    "TopicExemplar",
     "MemoryInput", "MemoryHit",
     "MEMORY_TIERS", "MEMORY_KINDS", "MEMORY_STATUSES", "VERACITY_VALUES",
     "DEFAULT_KIND", "DEFAULT_TIER", "DEFAULT_STATUS",

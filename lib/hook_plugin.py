@@ -242,13 +242,8 @@ DEFAULT_URLS = {name: _DEFAULT_BASE + path for name, path in _ENDPOINT_PATHS.ite
 
 def _get_url(endpoint: str) -> str | None:
     env_var = f"REGIN_{endpoint.upper()}_TRACE_URL"
-    # Legacy env-var fallback for rule_triggers endpoint
-    legacy_env_var = None
-    if endpoint == 'rule_triggers':
-        legacy_env_var = 'REGIN_RULE_TRACE_URL'
-    for ev in (env_var, legacy_env_var):
-        if ev and ev in os.environ:
-            return os.environ[ev]
+    if env_var in os.environ:
+        return os.environ[env_var]
     return DEFAULT_URLS.get(endpoint)
 
 

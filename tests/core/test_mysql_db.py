@@ -1,17 +1,18 @@
 """Unit tests for lib.mysql_db config helpers.
 
-Exercises the URL parser, config resolution (settings / env / key
-breakdown), and is_configured. The actual MySQL connection path
+Exercises the URL parser, config resolution off `settings.database_url`,
+and is_configured. The actual MySQL connection path
 (`get_mysql_connection`, `init_mysql`) depends on a live server and
 stays out of scope for the unit test.
 """
 
 from __future__ import annotations
 
-import json
+import pytest
 
 from lib import mysql_db
 from lib.mysql_db import _get_config, _parse_database_url, is_configured
+from lib.settings import settings
 
 
 # ── _parse_database_url ──────────────────────────────────────
@@ -40,103 +41,43 @@ def test_parse_url_default_database():
     assert cfg["database"] == "regin"
 
 
+def test_parse_url_accepts_pymysql_driver_prefix():
+    assert _parse_database_url("mysql+pymysql://u:p@h:3310/d") == {
+        "host": "h", "port": 3310, "user": "u",
+        "password": "p", "database": "d",
+    }
+
+
+def test_parse_url_rejects_a_non_mysql_scheme():
+    with pytest.raises(ValueError):
+        _parse_database_url("postgresql://u:p@h/d")
+
+
 # ── _get_config ──────────────────────────────────────────────
 
-def test_get_config_honours_database_url_from_settings(tmp_path, monkeypatch):
-    settings = tmp_path / "settings.json"
-    settings.write_text(json.dumps({
-        "database_url": "mysql://alice:pw@host:3307/mydb",
-    }))
-    from lib import settings as _config_module
-    monkeypatch.setattr(_config_module, "SETTINGS_PATH", str(settings))
-    monkeypatch.setattr(_config_module, "SETTINGS_LOCAL_PATH",
-                        str(tmp_path / "none.json"))
-    monkeypatch.delenv("REGIN_DATABASE_URL", raising=False)
+def test_get_config_reads_settings_database_url(monkeypatch):
+    monkeypatch.setattr(settings, "database_url",
+                        "mysql+pymysql://alice:pw@host:3307/mydb")
     cfg = _get_config()
     assert cfg["user"] == "alice"
     assert cfg["database"] == "mydb"
 
 
-def test_get_config_honours_env_var(tmp_path, monkeypatch):
-    from lib import settings as _config_module
-    monkeypatch.setattr(_config_module, "SETTINGS_PATH", str(tmp_path / "s.json"))
-    monkeypatch.setattr(_config_module, "SETTINGS_LOCAL_PATH", str(tmp_path / "l.json"))
-    monkeypatch.setenv("REGIN_DATABASE_URL", "mysql://env:envpw@eh:3308/envdb")
-    cfg = _get_config()
-    assert cfg["host"] == "eh"
-    assert cfg["database"] == "envdb"
-
-
-def test_get_config_falls_back_to_individual_keys(tmp_path, monkeypatch):
-    settings = tmp_path / "settings.json"
-    settings.write_text(json.dumps({
-        "db_host": "myhost", "db_port": 3309,
-        "db_user": "u", "db_password": "p", "db_name": "mydb",
-    }))
-    from lib import settings as _config_module
-    monkeypatch.setattr(_config_module, "SETTINGS_PATH", str(settings))
-    monkeypatch.setattr(_config_module, "SETTINGS_LOCAL_PATH",
-                        str(tmp_path / "l.json"))
-    monkeypatch.delenv("REGIN_DATABASE_URL", raising=False)
-    cfg = _get_config()
-    assert cfg == {
-        "host": "myhost", "port": 3309, "user": "u",
-        "password": "p", "database": "mydb",
-    }
-
-
-def test_get_config_final_fallback_defaults(tmp_path, monkeypatch):
-    from lib import settings as _config_module
-    monkeypatch.setattr(_config_module, "SETTINGS_PATH", str(tmp_path / "no.json"))
-    monkeypatch.setattr(_config_module, "SETTINGS_LOCAL_PATH",
-                        str(tmp_path / "no2.json"))
-    monkeypatch.delenv("REGIN_DATABASE_URL", raising=False)
-    cfg = _get_config()
-    assert cfg == {
-        "host": "localhost", "port": 3306, "user": "root",
-        "password": "", "database": "regin",
-    }
+def test_get_config_without_a_url_raises(monkeypatch):
+    monkeypatch.setattr(settings, "database_url", None)
+    with pytest.raises(RuntimeError):
+        _get_config()
 
 
 # ── is_configured ────────────────────────────────────────────
 
-def test_is_configured_true_with_database_url(tmp_path, monkeypatch):
-    settings = tmp_path / "s.json"
-    settings.write_text(json.dumps({"database_url": "mysql://x:x@x/x"}))
-    from lib import settings as _config_module
-    monkeypatch.setattr(_config_module, "SETTINGS_PATH", str(settings))
-    monkeypatch.setattr(_config_module, "SETTINGS_LOCAL_PATH",
-                        str(tmp_path / "l.json"))
-    monkeypatch.delenv("REGIN_DATABASE_URL", raising=False)
+def test_is_configured_true_with_database_url(monkeypatch):
+    monkeypatch.setattr(settings, "database_url", "mysql://x:x@x/x")
     assert is_configured() is True
 
 
-def test_is_configured_true_with_env_var(tmp_path, monkeypatch):
-    from lib import settings as _config_module
-    monkeypatch.setattr(_config_module, "SETTINGS_PATH", str(tmp_path / "s.json"))
-    monkeypatch.setattr(_config_module, "SETTINGS_LOCAL_PATH",
-                        str(tmp_path / "l.json"))
-    monkeypatch.setenv("REGIN_DATABASE_URL", "mysql://x:x@x/x")
-    assert is_configured() is True
-
-
-def test_is_configured_true_with_db_host(tmp_path, monkeypatch):
-    settings = tmp_path / "s.json"
-    settings.write_text(json.dumps({"db_host": "foo"}))
-    from lib import settings as _config_module
-    monkeypatch.setattr(_config_module, "SETTINGS_PATH", str(settings))
-    monkeypatch.setattr(_config_module, "SETTINGS_LOCAL_PATH",
-                        str(tmp_path / "l.json"))
-    monkeypatch.delenv("REGIN_DATABASE_URL", raising=False)
-    assert is_configured() is True
-
-
-def test_is_configured_false_when_nothing_set(tmp_path, monkeypatch):
-    from lib import settings as _config_module
-    monkeypatch.setattr(_config_module, "SETTINGS_PATH", str(tmp_path / "s.json"))
-    monkeypatch.setattr(_config_module, "SETTINGS_LOCAL_PATH",
-                        str(tmp_path / "l.json"))
-    monkeypatch.delenv("REGIN_DATABASE_URL", raising=False)
+def test_is_configured_false_when_nothing_set(monkeypatch):
+    monkeypatch.setattr(settings, "database_url", None)
     assert is_configured() is False
 
 
@@ -148,15 +89,7 @@ def test_get_mysql_connection_passes_config_to_pymysql(
     from unittest.mock import MagicMock
     import pymysql
 
-    # Isolate settings resolution.
-    from lib import settings as _config_module
-    monkeypatch.setattr(_config_module, "SETTINGS_PATH",
-                        str(tmp_path / "s.json"))
-    monkeypatch.setattr(_config_module, "SETTINGS_LOCAL_PATH",
-                        str(tmp_path / "l.json"))
-    monkeypatch.setenv(
-        "REGIN_DATABASE_URL", "mysql://u:p@h:3310/db",
-    )
+    monkeypatch.setattr(settings, "database_url", "mysql://u:p@h:3310/db")
 
     fake_conn = MagicMock()
     called = {}
