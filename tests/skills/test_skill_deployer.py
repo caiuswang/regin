@@ -33,6 +33,13 @@ def _make_pattern_source(root, procedure_id, body="## Body\n\nguide body"):
     return src
 
 
+def _record(skill_dir):
+    from lib.patterns import pattern_deployments
+    pattern_deployments.record_deployment(
+        skill_dir.name, "global", None, str(skill_dir), provider="claude",
+    )
+
+
 # ── _validate_id ─────────────────────────────────────────────
 
 def test_validate_id_accepts_lowercase_slug():
@@ -215,6 +222,7 @@ def test_deploy_pattern_rebuilds_existing(
 def test_undeploy_removes_directory(tmp_skills_dir):
     d = tmp_skills_dir / "victim"
     d.mkdir()
+    _record(d)
     (d / "SKILL.md").write_text("body")
     assert skill_deployer.undeploy_skill("victim") is True
     assert not d.exists()
@@ -269,6 +277,7 @@ def test_deploy_rules_index_skill_removes_stale_content_md(configured_grit_engin
     rules_md.write_text("# Rules\n\n- rule-one: a\n")
     skill_dir = tmp_skills_dir / skill_deployer.RULES_INDEX_SKILL_ID
     skill_dir.mkdir()
+    _record(skill_dir)
     (skill_dir / "content.md").write_text("stale legacy body")
 
     skill_deployer.deploy_rules_index_skill(str(rules_md))
@@ -293,6 +302,7 @@ def test_deploy_rules_index_skill_overwrites_existing_grit_dir(configured_grit_e
     # Pre-seed an .grit/ dir next to where the re-deploy will land.
     skill_dir = tmp_skills_dir / skill_deployer.RULES_INDEX_SKILL_ID
     skill_dir.mkdir()
+    _record(skill_dir)
     (skill_dir / ".grit").mkdir()
     (skill_dir / ".grit" / "old.txt").write_text("stale")
 
@@ -302,3 +312,77 @@ def test_deploy_rules_index_skill_overwrites_existing_grit_dir(configured_grit_e
     # existing (non-test environments); we only assert the old marker
     # is gone, which proves the wipe-and-recopy path ran.
     assert not (skill_dir / ".grit" / "old.txt").exists()
+
+
+# ── ownership ledger (pattern_deployments) ───────────────────
+
+def test_skill_deploy_refuses_an_unrecorded_directory(tmp_skills_dir, tmp_path):
+    src = _make_pattern_source(tmp_path / "src", "mine")
+    user_dir = tmp_skills_dir / "mine"
+    user_dir.mkdir()
+    (user_dir / "SKILL.md").write_text("user-authored")
+
+    with pytest.raises(skill_deployer.UnrecordedSkillDirError) as exc:
+        skill_deployer.deploy_pattern_as_skill(str(src), "mine", "Mine")
+    assert str(user_dir) in str(exc.value)
+    assert (user_dir / "SKILL.md").read_text() == "user-authored"
+
+    with pytest.raises(skill_deployer.UnrecordedSkillDirError):
+        skill_deployer.undeploy_skill("mine")
+    assert (user_dir / "SKILL.md").read_text() == "user-authored"
+
+
+def test_skill_deploy_records_then_redeploys_and_undeploys(tmp_skills_dir, tmp_path):
+    from lib.patterns import pattern_deployments
+    src = _make_pattern_source(tmp_path / "src", "fresh")
+    skill_dir = tmp_skills_dir / "fresh"
+
+    skill_deployer.deploy_pattern_as_skill(str(src), "fresh", "Fresh")
+    assert pattern_deployments.is_recorded_path(str(skill_dir))
+    rows = pattern_deployments.list_deployments(pattern_slug="fresh")
+    assert [r["deployed_path"] for r in rows] == [str(skill_dir)]
+
+    (src / "SKILL.md").write_text("---\ntitle: fresh\n---\nv2 body")
+    skill_deployer.deploy_pattern_as_skill(str(src), "fresh", "Fresh")
+    assert "v2 body" in (skill_dir / "SKILL.md").read_text()
+
+    assert skill_deployer.undeploy_skill("fresh") is True
+    assert not skill_dir.exists()
+
+
+def test_skill_md_form_of_deployed_path_counts_as_recorded(tmp_skills_dir, tmp_path):
+    from lib.patterns import pattern_deployments
+    src = _make_pattern_source(tmp_path / "src", "legacy")
+    skill_dir = tmp_skills_dir / "legacy"
+    skill_dir.mkdir()
+    pattern_deployments.record_deployment(
+        "legacy", "global", None, str(skill_dir / "SKILL.md"), provider="claude",
+    )
+    skill_deployer.deploy_pattern_as_skill(str(src), "legacy", "Legacy")
+    assert (skill_dir / "SKILL.md").exists()
+
+
+def test_rules_index_skill_refuses_unrecorded_and_records_fresh(
+        tmp_skills_dir, tmp_path, configured_grit_engine):
+    from lib.patterns import pattern_deployments
+    rules_md = tmp_path / "RULES.md"
+    rules_md.write_text("# rules\n")
+
+    user_dir = tmp_skills_dir / skill_deployer.RULES_INDEX_SKILL_ID
+    user_dir.mkdir()
+    with pytest.raises(skill_deployer.UnrecordedSkillDirError):
+        skill_deployer.deploy_rules_index_skill(str(rules_md))
+    assert list(user_dir.iterdir()) == []
+
+    user_dir.rmdir()
+    skill_deployer.deploy_rules_index_skill(str(rules_md))
+    assert pattern_deployments.is_recorded_path(str(user_dir))
+    skill_deployer.deploy_rules_index_skill(str(rules_md))
+
+
+def test_skill_sync_reports_refusal_instead_of_raising(tmp_skills_dir):
+    from lib.skills import skill_sync
+    (tmp_skills_dir / "someone-elses").mkdir()
+    msg = skill_sync.undeploy("someone-elses", disable_linked_rules=False)
+    assert msg.startswith("refused:")
+    assert (tmp_skills_dir / "someone-elses").is_dir()

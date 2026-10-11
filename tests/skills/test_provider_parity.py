@@ -11,6 +11,7 @@ import pytest
 
 from lib.orm import SessionLocal
 from lib.orm.models import Repo
+from lib.patterns import pattern_deployments
 from lib.settings import settings, ProviderConfig
 
 
@@ -201,10 +202,13 @@ def test_global_undeploy_across_providers(flask_client, harness):
     _set_providers(mp, {"kimi": ProviderConfig(skills_dir=str(harness["kimi_global"]),
                                                enabled=True)})
     # A deployed skill dir present in BOTH global skills dirs.
-    for base in (harness["claude_global"], harness["kimi_global"]):
+    for pid, base in (("claude", harness["claude_global"]), ("kimi", harness["kimi_global"])):
         d = base / "demo-skill"
         d.mkdir(parents=True)
         (d / "SKILL.md").write_text("deployed\n")
+        pattern_deployments.record_deployment(
+            "demo-skill", "global", None, str(d), provider=pid,
+        )
 
     r = flask_client.post("/api/skills/demo-skill/undeploy")
     body = r.get_json()
@@ -260,3 +264,18 @@ def test_provider_handler_config_merge(harness):
     # A provider with no config returns empty (claude here).
     empty = provider_handler_config("claude")
     assert empty == {"disabled_handlers": [], "priority_overrides": {}}
+
+
+def test_project_unpush_refuses_an_unrecorded_dir_with_its_path(flask_client, harness):
+    mp, rid, repo = harness["monkeypatch"], harness["repo_id"], harness["repo_dir"]
+    mp.setattr(settings, "active_provider", "claude")
+    _set_providers(mp, {})
+    user_dir = repo / ".claude" / "skills" / "demo-skill"
+    user_dir.mkdir(parents=True)
+    (user_dir / "SKILL.md").write_text("user-authored\n")
+
+    r = flask_client.delete(f"/api/skills/demo-skill/project-deployment/{rid}")
+    assert r.status_code == 409
+    body = r.get_json()
+    assert body["ok"] is False and str(user_dir) in body["msg"]
+    assert (user_dir / "SKILL.md").read_text() == "user-authored\n"

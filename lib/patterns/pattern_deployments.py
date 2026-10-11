@@ -93,8 +93,7 @@ def record_deployment(pattern_slug: str, scope: str,
     SQLite's UNIQUE constraint treats NULL as distinct from NULL, so we
     can't rely on a single INSERT ... ON CONFLICT for the global
     (project_id IS NULL) case. Delete any matching row in the same
-    transaction and insert fresh — the SQLModel Session batches both
-    statements into one commit.
+    transaction and insert fresh, in one commit.
     """
     provider = provider or _active_provider_id()
     with SessionLocal() as session:
@@ -110,6 +109,9 @@ def record_deployment(pattern_slug: str, scope: str,
 
         for existing in session.exec(stmt).all():
             session.delete(existing)
+        # The unit of work orders INSERTs before DELETEs; without this flush
+        # the replacement row trips the UNIQUE key of the one it replaces.
+        session.flush()
 
         session.add(PatternDeployment(
             pattern_slug=pattern_slug, scope=scope, project_id=project_id,
@@ -121,6 +123,21 @@ def record_deployment(pattern_slug: str, scope: str,
         pattern_slug=pattern_slug, scope=scope, project_id=project_id,
         provider=provider, deployed_path=deployed_path, user_id=user_id,
     )
+
+
+def is_recorded_path(skill_dir: str) -> bool:
+    """True when some row's `deployed_path` names `skill_dir`.
+
+    Rows store either the skill directory or its `SKILL.md`, so both forms
+    count.
+    """
+    skill_dir = os.path.abspath(skill_dir)
+    candidates = [skill_dir, os.path.join(skill_dir, "SKILL.md")]
+    with SessionLocal() as session:
+        rows = session.exec(
+            select(PatternDeployment.deployed_path)
+        ).all()
+    return any(os.path.abspath(p) in candidates for p in rows if p)
 
 
 def list_deployments(pattern_slug: Optional[str] = None,
