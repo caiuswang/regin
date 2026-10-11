@@ -15,6 +15,8 @@ from pathlib import Path
 
 import pytest
 
+from lib.patterns import pattern_deployments
+
 from lib.skills import skill_sync
 from lib.skills import skill_registry
 from lib.settings import settings
@@ -69,6 +71,9 @@ def _seed_deployed(skills_dir: Path, skill_id: str, *,
                     extras: dict[str, str] | None = None) -> Path:
     dep = skills_dir / skill_id
     dep.mkdir()
+    pattern_deployments.record_deployment(
+        skill_id, "global", None, str(dep), provider="claude",
+    )
     # Real deploys write a shim SKILL.md + content.md; skill_sync reads
     # content.md first when present.
     (dep / "SKILL.md").write_text(

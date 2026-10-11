@@ -260,8 +260,11 @@ def undeploy(skill_id, target_dir=None, provider_id=None,
     provider = build_provider(provider_id) if provider_id else get_active_provider()
     if not provider.capabilities.skills:
         return f"refused: skill deployment is not supported for {provider.display_name}"
-    from lib.skills.skill_deployer import undeploy_skill as _undeploy
-    removed = _undeploy(skill_id, target_dir=target_dir)
+    from lib.skills.skill_deployer import UnrecordedSkillDirError, undeploy_skill as _undeploy
+    try:
+        removed = _undeploy(skill_id, target_dir=target_dir)
+    except UnrecordedSkillDirError as exc:
+        return f"refused: {exc}"
     if disable_linked_rules:
         disabled = _set_linked_rules_disabled(skill_id, True)
     else:
@@ -409,6 +412,14 @@ def push(skill_id, force=False, target_dir=None):
     entry = skill_registry.get(skill_id)
     t = entry['type']
 
+    from lib.skills.skill_deployer import UnrecordedSkillDirError
+    try:
+        return _push_by_type(skill_id, entry, t, force, target_dir)
+    except UnrecordedSkillDirError as exc:
+        return f"refused: {exc}"
+
+
+def _push_by_type(skill_id, entry, t, force, target_dir):
     if t == 'auto':
         return _push_auto(skill_id, target_dir)
 

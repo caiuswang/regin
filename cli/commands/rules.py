@@ -60,12 +60,20 @@ def cmd_rules_index() -> None:
     print(f"Updated {summary['guides_updated']} pattern guide Verification section(s)")
 
 
+def _deploy_rules_skill(rules_md: str) -> str:
+    from lib.skills.skill_deployer import UnrecordedSkillDirError, deploy_rules_index_skill
+    try:
+        return deploy_rules_index_skill(rules_md)
+    except UnrecordedSkillDirError as exc:
+        print(exc)
+        raise typer.Exit(1)
+
+
 @rules_app.command("deploy", help="Regenerate index and deploy grit-rules skill")
 def cmd_rules_deploy() -> None:
     from lib.rules import grit_rule_index
-    from lib.skills.skill_deployer import deploy_rules_index_skill
     summary = grit_rule_index.regenerate(write_guides=True)
-    skill_path = deploy_rules_index_skill(summary['rules_md'])
+    skill_path = _deploy_rules_skill(summary['rules_md'])
     print(f"Indexed {summary['rules']} rules, deployed skill to {skill_path}")
 
 
@@ -83,7 +91,6 @@ def cmd_rules_list_disabled() -> None:
 
 def _rules_set_disabled(disabled: bool, id: Optional[str], guide: Optional[str]) -> None:
     from lib.rules import grit_rule_index
-    from lib.skills.skill_deployer import deploy_rules_index_skill
 
     target_ids: list[str] = []
     if id:
@@ -102,7 +109,7 @@ def _rules_set_disabled(disabled: bool, id: Optional[str], guide: Optional[str])
     verb = 'disabled' if disabled else 'enabled'
     print(f"{verb} {len(target_ids)} rule(s): {', '.join(target_ids)}")
     print(f"Current disabled set: {len(new_set)} rule(s)")
-    deploy_rules_index_skill(grit_rule_index.RULES_MD_PATH)
+    _deploy_rules_skill(grit_rule_index.RULES_MD_PATH)
 
 
 @rules_app.command("disable", help="Disable rules by id or by guide")

@@ -13,9 +13,64 @@ _VALID_ID = re.compile(r'^[a-z0-9][a-z0-9-]*$')
 _DEFAULT_SKILLS_DIR = str(settings.skills_dir)
 
 
+class UnrecordedSkillDirError(RuntimeError):
+    """A skill directory exists that `pattern_deployments` does not record."""
+
+    def __init__(self, path: str, action: str):
+        self.path = path
+        super().__init__(
+            f"refusing to {action} {path}: the directory exists but regin has "
+            f"no pattern_deployments record for it, so it was not deployed by "
+            f"regin. Move or delete it yourself, then retry."
+        )
+
+
 def _validate_id(procedure_id):
     if not _VALID_ID.match(procedure_id):
         raise ValueError(f"Invalid procedure ID: {procedure_id}")
+
+
+def _ensure_owned(skill_dir: str, action: str) -> bool:
+    """Raise unless `skill_dir` is absent or recorded. Returns whether recorded."""
+    from lib.patterns import pattern_deployments
+    recorded = pattern_deployments.is_recorded_path(skill_dir)
+    if os.path.lexists(skill_dir) and not recorded:
+        raise UnrecordedSkillDirError(skill_dir, action)
+    return recorded
+
+
+def _ledger_key(target_dir) -> tuple[str, int | None, str]:
+    """(scope, project_id, provider) for a deploy into `target_dir`."""
+    from lib.providers import build_provider, enabled_provider_ids
+    active = get_active_provider().provider_id
+    if not target_dir:
+        return 'global', None, active
+    base = os.path.abspath(target_dir)
+    from lib.orm import SessionLocal
+    from lib.orm.models import Repo
+    from sqlmodel import select
+    with SessionLocal() as session:
+        repos = [(r.id, r.path) for r in session.exec(select(Repo)).all()]
+    for pid in enabled_provider_ids():
+        provider = build_provider(pid)
+        if base == os.path.abspath(str(provider.global_skills_dir())):
+            return 'global', None, pid
+        subpath = provider.project_skills_subpath()
+        for repo_id, repo_path in repos:
+            if base == os.path.abspath(os.path.join(repo_path, *subpath)):
+                return 'project', repo_id, pid
+    return 'project', None, active
+
+
+def _record_owned(procedure_id: str, skill_dir: str, target_dir, recorded: bool) -> None:
+    if recorded:
+        return
+    from lib.patterns import pattern_deployments
+    scope, project_id, provider = _ledger_key(target_dir)
+    pattern_deployments.record_deployment(
+        procedure_id, scope, project_id, os.path.abspath(skill_dir),
+        provider=provider,
+    )
 
 
 def _resolve_base(target_dir) -> str:
@@ -85,10 +140,12 @@ def deploy_pattern_as_skill(pattern_source_dir, procedure_id, title, target_dir=
     base = _resolve_base(target_dir)
     os.makedirs(base, exist_ok=True)
     skill_dir = os.path.join(base, procedure_id)
+    recorded = _ensure_owned(skill_dir, 'overwrite')
     # Rebuild destination from scratch so removed references don't linger.
     if os.path.isdir(skill_dir):
         shutil.rmtree(skill_dir)
     shutil.copytree(pattern_source_dir, skill_dir)
+    _record_owned(procedure_id, skill_dir, target_dir, recorded)
 
     # Rewrite the frontmatter into the provider-neutral skill format
     # (name + description) and keep the full guide body inline in SKILL.md.
@@ -210,7 +267,9 @@ def deploy_rules_index_skill(rules_md_path: str) -> str:
 
     skill_path = get_skill_path(RULES_INDEX_SKILL_ID)
     skill_dir = os.path.dirname(skill_path)
+    recorded = _ensure_owned(skill_dir, 'overwrite')
     os.makedirs(skill_dir, exist_ok=True)
+    _record_owned(RULES_INDEX_SKILL_ID, skill_dir, None, recorded)
 
     # Write the full rule index inline in SKILL.md — the Skill tool loads it
     # directly on invocation (no content.md shim).
@@ -375,9 +434,14 @@ def _parse_simple_frontmatter(content: str) -> dict[str, str]:
 
 
 def undeploy_skill(procedure_id, target_dir=None):
-    """Remove the skill directory. Returns True if removed."""
+    """Remove the skill directory. Returns True if removed.
+
+    Raises `UnrecordedSkillDirError` when the directory exists but no
+    `pattern_deployments` row records it.
+    """
     _validate_id(procedure_id)
     skill_dir = os.path.join(_resolve_base(target_dir), procedure_id)
+    _ensure_owned(skill_dir, 'remove')
     if os.path.isdir(skill_dir):
         shutil.rmtree(skill_dir)
         return True

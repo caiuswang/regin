@@ -541,6 +541,12 @@ def _install_request_logging(app: Flask) -> None:
         )
         return response
 
+    from lib.skills.skill_deployer import UnrecordedSkillDirError
+
+    @app.errorhandler(UnrecordedSkillDirError)
+    def _refuse_unrecorded_skill_dir(exc):
+        return jsonify({"ok": False, "msg": str(exc), "path": exc.path}), 409
+
     @app.errorhandler(Exception)
     def _emit_unhandled(exc):
         log.error(
