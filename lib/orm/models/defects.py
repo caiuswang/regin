@@ -54,6 +54,7 @@ class Defect(Base, table=True):
         # correct, there is nothing for it to collide with.
         Index("uq_defects_session_symptom", "reported_by_trace", "symptom_key",
               unique=True, sqlite_where=text("feature_id IS NULL")),
+        {"sqlite_autoincrement": True},
     )
 
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -157,7 +158,8 @@ class DefectImage(Base, table=True):
 
     __tablename__ = "defect_images"
     __table_args__ = (UniqueConstraint("defect_id", "idx",
-                                       name="uq_defect_images_idx"),)
+                                       name="uq_defect_images_idx"),
+                      {"sqlite_autoincrement": True})
 
     id: Optional[int] = Field(default=None, primary_key=True)
     defect_id: int = Field(

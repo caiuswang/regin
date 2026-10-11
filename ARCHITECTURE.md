@@ -78,7 +78,7 @@ Two modules handle hook ingestion/tracing. They are complementary:
 | `lib/tags/tag_manager.py` | Auto-tagging from layers, annotations, repo names |
 | `lib/sync/git_ops.py` | Git subprocess wrapper used by `repo_discovery` |
 | `lib/sync/repo_discovery.py` | Manage `settings.repo_paths`: registration, default-branch detection |
-| `lib/db_rebuild.py` | Rebuild DB from git-tracked files (patterns, tags, rules) |
+| `lib/db_rebuild.py` | Re-derive the file-backed cache tables (patterns, tags, repos); every other table is untouched |
 | `lib/auth.py` | JWT authentication, password hashing, role decorators (uses SQLModel) |
 | `lib/audit.py` | Audit trail for web dashboard actions (uses SQLModel) |
 | `lib/skills/skill_sync.py` | Push/pull skills via the active provider global skills dir (Claude default: `~/.claude/skills/`) |
@@ -110,9 +110,9 @@ Two databases serve different purposes, controlled by the `mode` setting:
 In `shared` mode, configure MySQL via `database_url` in `config/settings.local.json` or `REGIN_DATABASE_URL` env var.
 Initialize tables: `regin users init-db`
 
-### SQLite (local — per-machine cache)
+### SQLite (local — per-machine)
 
-At `db/regin.db`. Rebuilt from on-disk files via `regin rebuild`.
+At `db/regin.db`. Most tables are regin's own records (sessions, features, tasks, users) and exist nowhere else. `regin rebuild` re-derives only the file-backed cache tables — `pattern_docs`, `tags`, `doc_tags`, the pattern FTS / vector tables, and `repos` / `branches` (reconciled in place, so their ids survive).
 
 | Table | Source / Purpose |
 |-------|-----------------|

@@ -42,6 +42,7 @@ class CommentThread(Base, table=True):
     names."""
 
     __tablename__ = "comment_threads"
+    __table_args__ = {"sqlite_autoincrement": True}
 
     id: Optional[int] = Field(default=None, primary_key=True)
     subject_kind: str = Field(
@@ -70,6 +71,7 @@ class Comment(Base, table=True):
     """
 
     __tablename__ = "comments"
+    __table_args__ = {"sqlite_autoincrement": True}
 
     id: Optional[int] = Field(default=None, primary_key=True)
     thread_id: int = Field(

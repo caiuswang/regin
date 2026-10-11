@@ -211,11 +211,7 @@ def _print_reset_report(
 # ── rebuild ───────────────────────────────────────────────────
 
 def _render_rebuild_stats(stats: dict) -> None:
-    for table, n in stats["backed_up"].items():
-        typer.echo(f"  backed up {n} rows from {table}")
-    typer.echo("  schema re-created")
-    for table, n in stats["restored"].items():
-        typer.echo(f"  restored {n} rows to {table}")
+    typer.echo("  cache tables re-created")
     if stats["tags_seeded"] is None:
         typer.echo("  no config/tags.yaml found — leaving tags empty")
     else:
@@ -238,20 +234,16 @@ def _render_repo_stats(repos: dict | None) -> None:
     )
 
 
-def cmd_rebuild(
-    clean: bool = typer.Option(
-        False, "--clean",
-        help="Drop local-only tables too (experiments, triggers, users)",
-    ),
-) -> None:
+def cmd_rebuild() -> None:
+    """Re-derive the file-backed cache tables (patterns, tags, repos).
+
+    Every other table — sessions, features, tasks, users, the alembic stamp —
+    is left as it is.
+    """
     from lib.db_rebuild import rebuild_from_files
-    typer.echo("Rebuilding database from files...")
-    stats = rebuild_from_files(preserve_local=not clean)
+    typer.echo("Rebuilding cache tables from files...")
+    stats = rebuild_from_files()
     _render_rebuild_stats(stats)
-    # Rebuild re-creates the schema from schema.sql (== alembic head); re-stamp
-    # so the rebuilt DB stays enrolled in the revision chain.
-    from lib.db_migrate import stamp_head
-    stamp_head()
     typer.echo("Done.")
 
 
@@ -261,20 +253,31 @@ def cmd_migrate() -> None:
     """Bring an existing DB up to the current schema via alembic.
 
     Fresh installs are already at head (`regin init` stamps them); this
-    applies any alembic version files newer than an existing DB's stamp, or
-    one-time enrolls a pre-wiring DB into the revision chain. Safe to run
-    repeatedly; an up-to-date DB is a no-op.
+    applies any alembic version files newer than an existing DB's stamp. An
+    unstamped DB is stamped only if it already has every table and column of
+    `db/schema.sql`, and refused otherwise. Safe to run repeatedly; an
+    up-to-date DB is a no-op.
     """
     if not db_exists():
         typer.echo(f"No database at {_engine.DB_PATH}. Run `regin init` first.")
         raise typer.Exit(1)
-    from lib.db_migrate import run_migrate
-    action = run_migrate()
+    from lib.db_migrate import IncompleteUnstampedDB, run_migrate
+    try:
+        action = run_migrate()
+    except IncompleteUnstampedDB as exc:
+        typer.echo(
+            f"{_engine.DB_PATH} has no alembic stamp and is missing part of "
+            "db/schema.sql, so it cannot be migrated:", err=True)
+        for item in exc.missing:
+            typer.echo(f"  missing {item}", err=True)
+        typer.echo("Back it up, then rebuild it with `regin init --force`.",
+                   err=True)
+        raise typer.Exit(1)
     if action == "upgraded":
         typer.echo(f"Applied pending migrations to {_engine.DB_PATH}")
     else:
         typer.echo(
-            f"Enrolled existing DB into the alembic chain (already at head): {_engine.DB_PATH}"
+            f"Stamped existing DB at head (it already matches db/schema.sql): {_engine.DB_PATH}"
         )
 
 
@@ -368,7 +371,11 @@ def cmd_search(
 
 def register(app: typer.Typer) -> None:
     app.command("init", help="Initialize database and directories")(cmd_init)
-    app.command("rebuild", help="Rebuild DB from git-tracked files")(cmd_rebuild)
+    app.command(
+        "rebuild",
+        help="Re-derive the pattern, tag and repo cache tables from files; "
+             "other tables are untouched",
+    )(cmd_rebuild)
     app.command(
         "migrate",
         help="Reconcile an existing DB with the current code's schema",

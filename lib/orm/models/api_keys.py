@@ -33,6 +33,7 @@ class ApiKey(Base, table=True):
     """One minted API key. `revoked_at` non-null ⇒ the key is refused."""
 
     __tablename__ = "api_keys"
+    __table_args__ = {"sqlite_autoincrement": True}
 
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str = Field(sa_column=Column("name", String, nullable=False))

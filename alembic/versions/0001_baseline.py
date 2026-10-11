@@ -4,15 +4,16 @@ Revision ID: 0001
 Revises: (none)
 Create Date: 2026-05-18
 
-No-op migration that anchors the Alembic revision chain at the schema
-defined by `db/schema.sql`. Fresh installs run `regin init` (which
-executes `db/schema.sql`) followed by `alembic stamp head` so future
-migrations have a known starting point.
+No-op migration that anchors the Alembic revision chain. The pre-1.0
+migrations were collapsed into `db/schema.sql`; every table, column and
+index they added lives there directly, and later changes land as revisions
+on top of this one.
 
-The pre-1.0 migration chain (0002–0019) was collapsed into this
-baseline ahead of the first published release; every table, column, and
-index those revisions added now lives in `db/schema.sql` directly.
-Post-1.0 schema changes land as new revisions on top of this baseline.
+`regin init` builds a DB from `db/schema.sql` — which is kept equal to the
+current head, not to this baseline — and stamps it at head itself. An
+existing DB is brought up to head with `regin migrate`. Upgrading an empty
+DB from here produces no schema at all, so never compare schema.sql against
+an alembic-from-empty build.
 """
 from __future__ import annotations
 

@@ -28,6 +28,7 @@ class AgentRun(Base, table=True):
     """One regin-launched agent session."""
 
     __tablename__ = "agent_runs"
+    __table_args__ = {"sqlite_autoincrement": True}
 
     id: Optional[int] = Field(default=None, primary_key=True)
     trace_id: str = Field(
@@ -81,7 +82,8 @@ class AgentRunSession(Base, table=True):
 
     __tablename__ = "agent_run_sessions"
     __table_args__ = (UniqueConstraint("trace_id", "cli_session_id",
-                                       name="uq_agent_run_sessions_pair"),)
+                                       name="uq_agent_run_sessions_pair"),
+                      {"sqlite_autoincrement": True})
 
     id: Optional[int] = Field(default=None, primary_key=True)
     trace_id: str = Field(

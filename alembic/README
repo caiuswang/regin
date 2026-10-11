@@ -1,39 +1,64 @@
 Alembic migrations for regin.
 
-The Alembic environment lives in `env.py` one directory up and targets
-`lib.orm.base.metadata` — the single MetaData that every SQLModel class
-under `lib/orm/models/` registers on. The DB URL comes from
-`lib.orm.engine._resolve_primary_url()` (the project-local SQLite file);
-override for ad-hoc runs with `-x url=<override>` or `ALEMBIC_URL=`.
+`env.py` (in this directory) targets `lib.orm.base.metadata` — the single
+MetaData that every SQLModel class under `lib/orm/models/` registers on. The
+DB URL comes from `lib.orm.engine._resolve_primary_url()` (the project-local
+SQLite file); override for ad-hoc runs with `-x url=<override>` or
+`ALEMBIC_URL=`.
 
-Common workflows
-----------------
+How a DB gets onto the chain
+----------------------------
 
-Existing install — stamp the current revision without running upgrades:
+- Fresh install: `regin init` builds the DB from `db/schema.sql` and stamps
+  it at head. There is nothing to stamp or upgrade by hand.
+- Upgrade: after `git pull`, run `regin migrate` (`./scripts/setup.sh` does
+  this for you). It runs `alembic upgrade head` on a stamped DB.
+- A DB with no stamp: `regin migrate` stamps it only if it already has every
+  table and column of `db/schema.sql`. Otherwise it changes nothing, lists
+  what is missing, and exits non-zero — back the DB up and rebuild it with
+  `regin init --force`.
 
-    .venv/bin/alembic stamp head
+Do not run `alembic stamp head` on an existing DB yourself: stamping a DB
+that is behind head skips the revisions that would bring it there.
 
-Apply all pending migrations (fresh install after `regin init`):
+Adding a schema change
+----------------------
 
-    .venv/bin/alembic upgrade head
+A change is three edits that must agree, or fresh and migrated installs
+diverge:
 
-Generate a new migration from SQLModel class changes:
+1. a new revision here (`0042_*.py`, `down_revision` = the current head);
+2. the same change in `db/schema.sql`;
+3. the SQLModel field / table in `lib/orm/models/`.
 
-    .venv/bin/alembic revision --autogenerate -m "<short description>"
+Rules for the revision:
 
-Inspect current + pending:
+- A table with an integer primary key is created with
+  `sqlite_autoincrement=True` (and the model carries
+  `{"sqlite_autoincrement": True}` in `__table_args__`), matching
+  `INTEGER PRIMARY KEY AUTOINCREMENT` in schema.sql. Without it SQLite reuses
+  a deleted row's id on a migrated install but not on a fresh one — revision
+  0041 exists to repair exactly that.
+- ADD COLUMN appends. If schema.sql puts the column anywhere but last,
+  rebuild the table in schema.sql's column order (see 0028, 0041).
+- Take the connection from `op.get_bind()`; a `SessionLocal()` opened
+  inside the migration deadlocks on SQLite.
+
+`tests/core/test_db_migrate.py::test_upgraded_schema_matches_fresh_schema`
+builds a DB from a frozen 0008-era schema (`tests/fixtures/schema/`), runs
+`regin migrate`, and requires the result to equal a fresh `regin init` —
+tables, columns and their order, indexes, foreign keys and AUTOINCREMENT.
+
+Useful commands
+---------------
 
     .venv/bin/alembic current
     .venv/bin/alembic history --verbose
+    .venv/bin/alembic revision -m "<short description>"
 
 Migration chain
 ---------------
 
-- 0001_baseline.py — no-op. Anchors the revision chain at the schema
-  represented by the current `db/schema.sql` (first published release).
-  The pre-1.0 incremental migrations were collapsed into this baseline;
-  every table/column/index they added now lives in `db/schema.sql`.
-
-Schema changes from here forward land as new alembic revisions on top
-of 0001. Keep `db/schema.sql` in sync so fresh `regin init` runs match
-what `alembic upgrade head` would produce.
+- 0001_baseline.py — no-op anchor. The pre-1.0 migrations were collapsed
+  into `db/schema.sql`; 0001 marks that starting point.
+- 0002 onward — incremental changes, each mirrored in `db/schema.sql`.

@@ -22,6 +22,7 @@ class ProjectStage(Base, table=True):
         # treats every NULL project_id as distinct.
         Index("uq_project_stages_global_key", "key", unique=True,
               sqlite_where=text("project_id IS NULL")),
+        {"sqlite_autoincrement": True},
     )
 
     id: Optional[int] = Field(default=None, primary_key=True)
