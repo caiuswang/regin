@@ -8,7 +8,12 @@ import sqlite3
 import pytest
 
 from cli.commands import db as db_cmd
+from lib import hooks_wiring
+from lib.providers.claude import ClaudeProvider
 from lib.settings import settings
+
+_OURS_POST = hooks_wiring.interpreter_prefix() + "-P -m hook_manager PostToolUse --agent-type claude"
+_OTHER_POST = "/other/regin/.venv/bin/python -P -m hook_manager PostToolUse --agent-type claude"
 
 
 def test_cmd_init_force_clears_db_rows_deployments_and_jwt_secret(
@@ -30,7 +35,8 @@ def test_cmd_init_force_clears_db_rows_deployments_and_jwt_secret(
         "hooks": {
             "PostToolUse": [
                 {"hooks": [
-                    {"type": "command", "command": "python -m hook_manager PostToolUse"},
+                    {"type": "command", "command": _OURS_POST},
+                    {"type": "command", "command": _OTHER_POST},
                     {"type": "command", "command": "python /keep/me.py"},
                 ]},
             ],
@@ -45,6 +51,7 @@ def test_cmd_init_force_clears_db_rows_deployments_and_jwt_secret(
     monkeypatch.setattr(settings, "patterns_dir", str(patterns_dir))
     monkeypatch.setattr(db_cmd, "HOOK_MANAGER_CONFIG_PATH", str(hook_manager_cfg))
     monkeypatch.setattr(db_cmd, "CLAUDE_SETTINGS_PATH", str(claude_settings))
+    monkeypatch.setattr(db_cmd, "_PROVIDER", ClaudeProvider({"hook_settings_path": claude_settings}))
     monkeypatch.setattr(auth_mod, "_SECRET_PATH", str(jwt_secret))
 
     conn = sqlite3.connect(str(tmp_db))
@@ -85,7 +92,8 @@ def test_cmd_init_force_clears_db_rows_deployments_and_jwt_secret(
         for entry in settings_after["hooks"]["PostToolUse"]
         for hook in entry["hooks"]
     ]
-    assert "python -m hook_manager PostToolUse" not in commands
+    assert _OURS_POST not in commands
+    assert _OTHER_POST in commands
     assert "python /keep/me.py" in commands
 
     conn = sqlite3.connect(str(tmp_db))
@@ -157,7 +165,8 @@ def test_reset_shared_auth_tables_drops_and_recreates(monkeypatch):
 
 
 _KEEP = {"type": "command", "command": "python /keep/me.py"}
-_HM = {"type": "command", "command": "python -m hook_manager Stop"}
+_HM = {"type": "command",
+       "command": hooks_wiring.interpreter_prefix() + "-P -m hook_manager Stop --agent-type claude"}
 
 
 @pytest.mark.parametrize("before,removed,after", [
@@ -180,6 +189,7 @@ def test_clear_hook_manager_settings_shapes(tmp_path, monkeypatch, before, remov
     path = tmp_path / "settings.json"
     path.write_text(json.dumps(before))
     monkeypatch.setattr(db_cmd, "CLAUDE_SETTINGS_PATH", str(path))
+    monkeypatch.setattr(db_cmd, "_PROVIDER", ClaudeProvider({"hook_settings_path": path}))
     assert db_cmd._clear_hook_manager_settings() == removed
     assert json.loads(path.read_text()) == (before if after is None else after)
 
@@ -187,6 +197,7 @@ def test_clear_hook_manager_settings_shapes(tmp_path, monkeypatch, before, remov
 def test_clear_hook_manager_settings_missing_or_corrupt(tmp_path, monkeypatch):
     path = tmp_path / "settings.json"
     monkeypatch.setattr(db_cmd, "CLAUDE_SETTINGS_PATH", str(path))
+    monkeypatch.setattr(db_cmd, "_PROVIDER", ClaudeProvider({"hook_settings_path": path}))
     assert db_cmd._clear_hook_manager_settings() == 0
     path.write_text("{not json")
     assert db_cmd._clear_hook_manager_settings() == 0

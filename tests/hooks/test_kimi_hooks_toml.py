@@ -28,7 +28,7 @@ def test_install_preserves_existing_config_and_routes_events(tmp_path: Path):
     cfg = tmp_path / "config.toml"
     cfg.write_text(_EXISTING)
 
-    kimi_hooks.install(str(cfg), ["PreToolUse", "PostToolUse", "Stop"], _cmd_for, timeout=60)
+    kimi_hooks.install(str(cfg), ["PreToolUse", "PostToolUse", "Stop"], _cmd_for, timeout=60, is_ours=_is_ours)
 
     text = cfg.read_text()
     # User-authored config is untouched.
@@ -45,9 +45,9 @@ def test_install_is_idempotent(tmp_path: Path):
     cfg = tmp_path / "config.toml"
     cfg.write_text(_EXISTING)
     events = ["PreToolUse", "PostToolUse"]
-    kimi_hooks.install(str(cfg), events, _cmd_for)
+    kimi_hooks.install(str(cfg), events, _cmd_for, is_ours=_is_ours)
     first = cfg.read_text()
-    kimi_hooks.install(str(cfg), events, _cmd_for)
+    kimi_hooks.install(str(cfg), events, _cmd_for, is_ours=_is_ours)
     assert cfg.read_text() == first
     assert kimi_hooks.routed_events(str(cfg), _is_ours) == set(events)
 
@@ -55,15 +55,15 @@ def test_install_is_idempotent(tmp_path: Path):
 def test_uninstall_removes_only_managed_block(tmp_path: Path):
     cfg = tmp_path / "config.toml"
     cfg.write_text(_EXISTING)
-    kimi_hooks.install(str(cfg), ["PreToolUse"], _cmd_for)
+    kimi_hooks.install(str(cfg), ["PreToolUse"], _cmd_for, is_ours=_is_ours)
 
-    assert kimi_hooks.uninstall(str(cfg)) is True
+    assert kimi_hooks.uninstall(str(cfg), is_ours=_is_ours) is True
     text = cfg.read_text()
     assert 'default_model = "kimi-code/kimi-for-coding"' in text
     assert "hook_manager" not in text
     assert kimi_hooks.routed_events(str(cfg), _is_ours) == set()
     # Second uninstall is a no-op.
-    assert kimi_hooks.uninstall(str(cfg)) is False
+    assert kimi_hooks.uninstall(str(cfg), is_ours=_is_ours) is False
 
 
 def test_routed_events_ignores_foreign_hooks(tmp_path: Path):
@@ -86,11 +86,11 @@ def test_labelled_blocks_coexist_without_clobber(tmp_path: Path):
     blocks in one config.toml; installing one must not wipe the other."""
     cfg = tmp_path / "config.toml"
     cfg.write_text(_EXISTING)
-    kimi_hooks.install(str(cfg), ["PreToolUse", "Stop"], _cmd_for)
+    kimi_hooks.install(str(cfg), ["PreToolUse", "Stop"], _cmd_for, is_ours=_is_ours)
     kimi_hooks.install(
         str(cfg), ["UserPromptSubmit", "PreToolUse"],
         lambda _e: "/x/.venv/bin/python /x/scripts/hook_payload_debug.py",
-        timeout=10, label="debug",
+        timeout=10, label="debug", is_ours=_is_debug,
     )
 
     text = cfg.read_text()
@@ -103,7 +103,7 @@ def test_labelled_blocks_coexist_without_clobber(tmp_path: Path):
     assert 'default_model = "kimi-code/kimi-for-coding"' in text
 
     # Uninstalling debug leaves hook_manager intact.
-    assert kimi_hooks.uninstall(str(cfg), label="debug") is True
+    assert kimi_hooks.uninstall(str(cfg), label="debug", is_ours=_is_debug) is True
     assert kimi_hooks.routed_events(str(cfg), _is_debug) == set()
     assert kimi_hooks.routed_events(str(cfg), _is_ours) == {"PreToolUse", "Stop"}
 
