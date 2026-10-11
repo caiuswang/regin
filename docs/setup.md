@@ -110,7 +110,7 @@ Each machine runs its own local instance. Shareable skills (the packaged, versio
 | **Git (shared)** | team settings | `config/settings.json` |
 | **XDG data dir (user-local)** | procedure guides, rule-engine sources + generated index, tag definitions | `$XDG_DATA_HOME/regin/patterns/`, `$XDG_DATA_HOME/regin/grit/` (when the grit engine is configured), `$XDG_DATA_HOME/regin/config/tags.yaml` (default base `~/.local/share/regin/`) |
 | **Auth/audit** | user accounts, roles, audit log | MySQL when `mode: shared`; SQLite when `mode: standalone` |
-| **SQLite (local)** | pattern index, repo tracking, experiments, rule triggers | `db/*.db` (rebuilt from on-disk files via `regin rebuild`) |
+| **SQLite (local)** | sessions, features, tasks, experiments, rule triggers, plus a pattern / tag / repo cache | `db/*.db` (`regin rebuild` re-derives only the cache tables) |
 | **Local files** | machine-specific paths, JWT secret | `config/settings.local.json`, `config/jwt_secret.txt` |
 
 **Patterns, rule-engine sources, and tag definitions are user-generated data** and live in your XDG data directory, not the repo. Override locations with env vars `REGIN_PATTERNS_DIR`, `REGIN_GRIT_DIR`, `REGIN_TAGS_PATH`, or settings `patterns_dir`, `grit_dir`, `tags_path` (local-only) in `config/settings.local.json`. Use `REGIN_DATA_DIR` to relocate the whole regin data tree at once.
@@ -235,7 +235,7 @@ Run any command with `--help` for its arguments and flags.
 | Command | What it does |
 |---|---|
 | `regin init` | Initialize database and directories |
-| `regin rebuild` | Rebuild DB from git-tracked files |
+| `regin rebuild` | Re-derive the pattern, tag and repo cache tables from files; other tables are untouched |
 | `regin migrate` | Reconcile an existing DB with the current code's schema |
 | `regin tags` | Manage tags |
 | `regin search` | Search patterns |
@@ -272,8 +272,8 @@ Command groups — `regin <group> <subcommand>`:
 | `regin hooks` | Inspect, install, and repair regin's agent hook wiring. | `status` · `install` · `remove` · `adopt` · `repair` |
 | `regin stats` | Engineering-time analytics over real (non-test) sessions | `time` · `sessions` · `daily` · `session` · `by` |
 | `regin defects` | The defect ledger: what a feature got wrong, and what escaped | `open` · `list` · `rounds` · `attribute` · `close` · `reopen` · `edit` · `merge` · `fix-item` · `image` |
-| `regin feature` | Where a feature stands in the pipeline, and what it cost | `stage` · `attribute` · `unattribute` · `ledger` · `new` · `spec` · `image` · `ship` · `reopen` · `abandon` · `refresh` |
-| `regin task` | Capture and inspect task ideas (agent_tasks) | `add` · `list` · `show` · `delete` · `comment` · `finish` · `commands` · `slice-check` · `transcribe` · `tail` |
+| `regin feature` | Where a feature stands in the pipeline, and what it cost | `stage` · `attribute` · `unattribute` · `ledger` · `new` · `link` · `unlink` · `spec` · `image` · `ship` · `reopen` · `abandon` · `refresh` |
+| `regin task` | Capture and inspect task ideas (agent_tasks) | `add` · `list` · `show` · `delete` · `comment` · `finish` · `arm` · `commands` · `slice-check` · `transcribe` · `tail` |
 
 <!-- cli-reference:end -->
 
@@ -281,9 +281,9 @@ Regenerate this section after adding or renaming a command: `.venv/bin/python sc
 
 ## Troubleshooting
 
-**"Database not initialized"** — Run `regin init` then `regin rebuild`.
+**"Database not initialized"** — Run `regin init`.
 
-**Login not working after DB rebuild** — User accounts are local. Re-create: `regin users create <name> <pass> --role admin`
+**Login not working after `regin init --force`** — User accounts are local. Re-create: `regin users create <name> <pass> --role admin`
 
 **Forgot admin password** — Reset from CLI: `regin users reset-password <name> <newpass>`
 

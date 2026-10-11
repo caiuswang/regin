@@ -1,10 +1,9 @@
 """Unit tests for lib.db_rebuild.
 
-lib/db_rebuild.py was at 0% coverage. Covers the pure helpers
-(_parse_frontmatter, _content_hash),
-DB-touching helpers (_seed_tags, _rebuild_patterns, _backup_local_tables,
-_restore_local_tables, _recreate_schema, _rediscover_repos) and the
-end-to-end rebuild_from_files orchestration.
+Covers the pure helpers (_parse_frontmatter, _content_hash), the
+DB-touching helpers (_seed_tags, _rebuild_patterns, _recreate_cache_tables,
+_rediscover_repos), the end-to-end rebuild_from_files orchestration, and the
+rule that a rebuild touches nothing outside the cache tables.
 """
 
 from __future__ import annotations
@@ -19,8 +18,6 @@ from lib.settings import settings
 def _stats() -> dict:
     """Fresh stats dict matching what rebuild_from_files() builds internally."""
     return {
-        "backed_up": {},
-        "restored": {},
         "tags_seeded": None,
         "patterns_rebuilt": 0,
         "patterns_skipped": [],
@@ -196,80 +193,23 @@ def test_rebuild_patterns_ignores_underscore_dirs(
         conn.close()
 
 
-# ── _backup_local_tables / _restore_local_tables ────────────
+# ── _recreate_cache_tables ──────────────────────────────────
 
-def test_backup_and_restore_local_tables(tmp_db):
+def test_recreate_cache_tables_empties_only_the_cache(tmp_db):
     conn = get_connection()
     try:
-        # Seed an experiments row (schema: pattern_slug, name, conceal_spec).
-        conn.execute(
-            "INSERT INTO experiments (pattern_slug, name, conceal_spec) "
-            "VALUES (?, ?, ?)",
-            ("some-proc", "test-exp", '{"sections": ["Disciplines"]}'),
-        )
-        conn.commit()
-
-        backup = dbr._backup_local_tables(conn, _stats())
-        assert "experiments" in backup
-        assert len(backup["experiments"]["rows"]) == 1
-
-        # Wipe the table and restore.
-        conn.execute("DELETE FROM experiments")
-        conn.commit()
-        dbr._restore_local_tables(conn, backup, _stats())
-        rows = conn.execute(
-            "SELECT pattern_slug FROM experiments"
-        ).fetchall()
-        assert rows[0]["pattern_slug"] == "some-proc"
-    finally:
-        conn.close()
-
-
-def test_backup_local_tables_handles_missing_table(tmp_db, monkeypatch):
-    """Tables listed in _LOCAL_TABLES but absent from DB don't crash the backup."""
-    monkeypatch.setattr(dbr, "_LOCAL_TABLES",
-                        {"experiments", "nonexistent_table"})
-    conn = get_connection()
-    try:
-        backup = dbr._backup_local_tables(conn, _stats())
-        # nonexistent_table silently skipped.
-        assert "nonexistent_table" not in backup
-    finally:
-        conn.close()
-
-
-def test_restore_local_tables_empty_backup_is_noop(tmp_db):
-    conn = get_connection()
-    try:
-        dbr._restore_local_tables(conn, {}, _stats())
-    finally:
-        conn.close()
-
-
-# ── _recreate_schema ────────────────────────────────────────
-
-def test_recreate_schema_drops_and_rebuilds(tmp_db):
-    conn = get_connection()
-    try:
-        # Create an extra table not in the schema.
+        conn.execute("INSERT INTO tags (name, category) VALUES ('t', 'concept')")
         conn.execute("CREATE TABLE junk (x INTEGER)")
         conn.execute("INSERT INTO junk VALUES (1)")
         conn.commit()
 
-        dbr._recreate_schema(conn)
+        dbr._recreate_cache_tables(conn)
 
-        # junk table gone.
-        row = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='junk'"
-        ).fetchone()
-        assert row is None
-
-        # pattern_docs exists (part of the real schema).
-        row = conn.execute(
-            "SELECT name FROM sqlite_master "
-            "WHERE type='table' AND name='pattern_docs'"
-        ).fetchone()
-        assert row is not None
+        assert conn.execute("SELECT COUNT(*) FROM tags").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM junk").fetchone()[0] == 1
+        assert conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='trigger' "
+            "AND name='pattern_docs_ad_patterns_fts'").fetchone()
     finally:
         conn.close()
 
@@ -300,96 +240,87 @@ def test_rediscover_repos_swallows_exceptions(monkeypatch):
 
 # ── rebuild_from_files ──────────────────────────────────────
 
-def test_rebuild_from_files_end_to_end(tmp_db, monkeypatch, tmp_path):
-    # Seed a pattern, a tags.yaml, and an experiments row that must
-    # survive the rebuild.
-    patterns = tmp_path / "patterns"
-    patterns.mkdir()
-    (patterns / "rebuild-me").mkdir()
-    (patterns / "rebuild-me" / "SKILL.md").write_text(
-        "---\ntitle: Rebuilt\nsource_repos: [svc]\n---\nbody\n"
-    )
-
-    tags_yaml = tmp_path / "tags.yaml"
-    tags_yaml.write_text("concept:\n  - rebuild-smoke\n")
-
-    monkeypatch.setattr(settings, "patterns_dir", str(patterns))
-    monkeypatch.setattr(settings, "project_root", str(tmp_path))
-    monkeypatch.setattr(settings, "tags_path", str(tags_yaml))
-
-    # Stub repo discovery so the rebuild doesn't try to scan real
-    # sibling directories.
-    from lib.sync import repo_discovery
-    monkeypatch.setattr(repo_discovery, "scan_repos", lambda: [])
-    monkeypatch.setattr(repo_discovery, "register_repos",
-                        lambda repos: {"added": 0, "updated": 0})
-
-    # Seed an experiments row we expect to preserve.
-    conn = get_connection()
-    try:
-        conn.execute(
-            "INSERT INTO experiments (pattern_slug, name, conceal_spec) "
-            "VALUES (?, ?, ?)",
-            ("p", "preserve-me", '{"sections": []}'),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-    dbr.rebuild_from_files(preserve_local=True)
-
-    conn = get_connection()
-    try:
-        # Pattern doc exists.
-        row = conn.execute(
-            "SELECT title FROM pattern_docs WHERE slug = 'rebuild-me'"
-        ).fetchone()
-        assert row is not None
-        assert row["title"] == "Rebuilt"
-
-        # Tag seeded.
-        row = conn.execute(
-            "SELECT 1 FROM tags WHERE name = 'rebuild-smoke'"
-        ).fetchone()
-        assert row is not None
-
-        # Experiment preserved.
-        row = conn.execute(
-            "SELECT 1 FROM experiments WHERE pattern_slug = 'p'"
-        ).fetchone()
-        assert row is not None
-    finally:
-        conn.close()
-
-
-def test_rebuild_from_files_without_preserve_local_drops_experiments(
-        tmp_db, monkeypatch, tmp_path):
+def _stub_files(monkeypatch, tmp_path, repos=()):
     monkeypatch.setattr(settings, "patterns_dir", str(tmp_path / "patterns"))
     monkeypatch.setattr(settings, "project_root", str(tmp_path))
     monkeypatch.setattr(settings, "tags_path", str(tmp_path / "missing.yaml"))
     from lib.sync import repo_discovery
-    monkeypatch.setattr(repo_discovery, "scan_repos", lambda: [])
-    monkeypatch.setattr(repo_discovery, "register_repos",
-                        lambda repos: {"added": 0, "updated": 0})
+    monkeypatch.setattr(repo_discovery, "scan_repos", lambda: list(repos))
+
+
+def test_rebuild_from_files_end_to_end(tmp_db, monkeypatch, tmp_path):
+    patterns = tmp_path / "patterns"
+    (patterns / "rebuild-me").mkdir(parents=True)
+    (patterns / "rebuild-me" / "SKILL.md").write_text(
+        "---\ntitle: Rebuilt\nsource_repos: [svc]\n---\nbody\n"
+    )
+    tags_yaml = tmp_path / "tags.yaml"
+    tags_yaml.write_text("concept:\n  - rebuild-smoke\n")
+    _stub_files(monkeypatch, tmp_path)
+    monkeypatch.setattr(settings, "tags_path", str(tags_yaml))
+
+    dbr.rebuild_from_files()
 
     conn = get_connection()
     try:
-        conn.execute(
-            "INSERT INTO experiments (pattern_slug, name, conceal_spec) "
-            "VALUES (?, ?, ?)",
-            ("p", "drop-me", '{"sections": []}'),
-        )
-        conn.commit()
+        row = conn.execute(
+            "SELECT title FROM pattern_docs WHERE slug = 'rebuild-me'"
+        ).fetchone()
+        assert row["title"] == "Rebuilt"
+        assert conn.execute(
+            "SELECT 1 FROM tags WHERE name = 'rebuild-smoke'").fetchone()
     finally:
         conn.close()
 
-    dbr.rebuild_from_files(preserve_local=False)
+
+_NON_CACHE = ("sessions", "session_repos", "features", "agent_tasks",
+              "api_keys", "experiments", "alembic_version")
+
+
+def _counts(conn) -> dict:
+    return {t: conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+            for t in _NON_CACHE}
+
+
+def test_rebuild_keeps_non_cache_tables(tmp_db, monkeypatch, tmp_path):
+    from cli.commands import db as db_cmd
+    from lib import db_migrate
+
+    repo_path = str(tmp_path / "svc")
+    _stub_files(monkeypatch, tmp_path, repos=[
+        {"name": "svc", "path": repo_path, "default_branch": "main"}])
+    db_migrate.stamp_head()
+    conn = get_connection()
+    try:
+        conn.execute("INSERT INTO repos (id, name, path, default_branch) "
+                     "VALUES (7, 'svc', ?, 'main')", (repo_path,))
+        conn.execute("INSERT INTO sessions (trace_id, started_at, last_seen) "
+                     "VALUES ('t1', '2026-01-01', '2026-01-01')")
+        conn.execute("INSERT INTO session_repos (trace_id, repo_id) "
+                     "VALUES ('t1', 7)")
+        conn.execute("INSERT INTO features (title) VALUES ('f')")
+        conn.execute("INSERT INTO agent_tasks (title, source) "
+                     "VALUES ('t', 'manual')")
+        conn.execute("INSERT INTO api_keys (name, key_hash, key_prefix) "
+                     "VALUES ('k', 'h', 'p')")
+        conn.execute("INSERT INTO experiments (pattern_slug, name, "
+                     "conceal_spec) VALUES ('p', 'e', '{}')")
+        conn.commit()
+        before = _counts(conn)
+        stamp = conn.execute(
+            "SELECT version_num FROM alembic_version").fetchall()
+    finally:
+        conn.close()
+
+    db_cmd.cmd_rebuild()
 
     conn = get_connection()
     try:
-        count = conn.execute(
-            "SELECT COUNT(*) FROM experiments"
-        ).fetchone()[0]
-        assert count == 0  # not preserved
+        assert _counts(conn) == before
+        assert conn.execute(
+            "SELECT version_num FROM alembic_version").fetchall() == stamp
+        # The repo a session points at keeps its id across the rebuild.
+        assert conn.execute(
+            "SELECT id FROM repos WHERE name = 'svc'").fetchone()[0] == 7
     finally:
         conn.close()

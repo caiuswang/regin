@@ -82,7 +82,8 @@ class Feature(Base, table=True):
     __tablename__ = "features"
     __table_args__ = (
         UniqueConstraint("origin", "external_ref",
-                         name="uq_features_origin_ref"),)
+                         name="uq_features_origin_ref"),
+        {"sqlite_autoincrement": True})
 
     id: Optional[int] = Field(default=None, primary_key=True)
     #: Highest image `idx` ever issued to this row. Survives a detach, so a
@@ -138,6 +139,7 @@ class FeatureEvent(Base, table=True):
     """
 
     __tablename__ = "feature_events"
+    __table_args__ = {"sqlite_autoincrement": True}
 
     id: Optional[int] = Field(default=None, primary_key=True)
     feature_id: int = Field(
@@ -202,7 +204,8 @@ class FeatureImage(Base, table=True):
 
     __tablename__ = "feature_images"
     __table_args__ = (UniqueConstraint("feature_id", "idx",
-                                       name="uq_feature_images_idx"),)
+                                       name="uq_feature_images_idx"),
+                      {"sqlite_autoincrement": True})
 
     id: Optional[int] = Field(default=None, primary_key=True)
     feature_id: int = Field(
@@ -235,7 +238,8 @@ class FeatureLink(Base, table=True):
     __tablename__ = "feature_links"
     __table_args__ = (UniqueConstraint("feature_id", "other_id", "kind",
                                        name="uq_feature_links"),
-                      Index("idx_feature_links_other", "other_id"))
+                      Index("idx_feature_links_other", "other_id"),
+                      {"sqlite_autoincrement": True})
 
     id: Optional[int] = Field(default=None, primary_key=True)
     feature_id: int = Field(

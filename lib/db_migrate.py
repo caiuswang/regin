@@ -7,10 +7,12 @@ version files are the single source for post-baseline schema changes — nothing
 is hand-maintained a second time:
 
 - `stamp_head()` marks a freshly built (schema.sql == head) DB as current;
-  `regin init` / `regin rebuild` call it so every new DB is versioned.
-- `run_migrate()` backs `regin migrate`: it upgrades a versioned DB to head,
-  or one-time enrolls a pre-wiring DB (built from schema.sql, already at head)
-  into the revision chain.
+  `regin init` calls it so every new DB is versioned.
+- `run_migrate()` backs `regin migrate`: it upgrades a versioned DB to head.
+  An unversioned DB is stamped only when it already carries every table and
+  column `db/schema.sql` declares; otherwise it is refused with the missing
+  list, because stamping a DB that is behind head would skip the revisions
+  that bring it there.
 
 A new schema change is therefore one alembic revision plus the matching
 `db/schema.sql` edit.
@@ -61,22 +63,67 @@ def stamp_head() -> None:
     command.stamp(_config(), "head")
 
 
+class IncompleteUnstampedDB(Exception):
+    """An unstamped DB lacks part of `db/schema.sql`, so it cannot be stamped."""
+
+    def __init__(self, missing: list[str]):
+        super().__init__(", ".join(missing))
+        self.missing = missing
+
+
+def _table_columns(conn: sqlite3.Connection) -> dict[str, list[str]]:
+    rows = conn.execute(
+        "SELECT name, sql FROM sqlite_master WHERE type='table' "
+        "AND name NOT LIKE 'sqlite_%'").fetchall()
+    virtual = [n for n, sql in rows
+               if (sql or "").upper().startswith("CREATE VIRTUAL")]
+    # FTS shadow tables come and go with their virtual table.
+    tables = [n for n, _ in rows
+              if not any(n.startswith(f"{v}_") for v in virtual)]
+    return {t: [r[1] for r in conn.execute(
+        f"PRAGMA table_info('{t}')").fetchall()] for t in tables}
+
+
+def missing_schema_objects() -> list[str]:
+    """Every table and column `db/schema.sql` declares that the primary DB
+    lacks, as `table <t>` / `column <t>.<c>`; empty when nothing is missing."""
+    from lib.orm.engine import DB_PATH, load_schema_sql
+    reference = sqlite3.connect(":memory:")
+    try:
+        reference.executescript(load_schema_sql())
+        expected = _table_columns(reference)
+    finally:
+        reference.close()
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        actual = _table_columns(conn)
+    finally:
+        conn.close()
+    missing: list[str] = []
+    for table, columns in expected.items():
+        if table not in actual:
+            missing.append(f"table {table}")
+            continue
+        missing.extend(f"column {table}.{c}" for c in columns
+                       if c not in actual[table])
+    return missing
+
+
 def run_migrate() -> str:
     """Bring the primary DB up to head; return the action taken.
 
     A DB already in the revision chain is upgraded — applying any version
-    files newer than its stamp. A DB with no `alembic_version` predates the
-    alembic wiring: it was built from `db/schema.sql` (== head) and kept
-    current by the now-retired boot self-heal, so its shape *is* head. It is
-    stamped into the chain rather than replaying baseline ALTERs that would
-    collide with columns schema.sql already created. Every DB created after
-    this change is stamped by `regin init`, so it never reaches this branch
-    behind head.
+    files newer than its stamp. A DB with no stamp is stamped at head only
+    when it already holds every table and column of `db/schema.sql`; one that
+    lacks any raises `IncompleteUnstampedDB` without writing to the DB.
     """
     from alembic import command
     cfg = _config()
     if _is_stamped():
         command.upgrade(cfg, "head")
         return "upgraded"
+    missing = missing_schema_objects()
+    if missing:
+        raise IncompleteUnstampedDB(missing)
     command.stamp(cfg, "head")
     return "stamped"

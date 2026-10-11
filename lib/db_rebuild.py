@@ -1,18 +1,22 @@
-"""Rebuild the SQLite database from git-tracked files.
+"""Rebuild the file-derived cache tables of the SQLite database.
 
-The DB is a derived cache — all authoritative data lives in:
-  - patterns/*/SKILL.md          (procedure guides with YAML frontmatter)
-  - .grit/rules.json             (GritQL rule index)
-  - config/tags.yaml             (shared tag definitions)
-  - config/settings.json         (shared settings)
+Only the tables whose rows are derived from files are rebuilt:
+  - pattern_docs, patterns_fts, pattern_embeddings  (patterns/*/SKILL.md)
+  - tags, doc_tags                                   (config/tags.yaml)
+  - repos, branches                                  (settings.repo_paths)
 
-Tables rebuilt: repos, branches, pattern_docs, tags, doc_tags.
-Tables preserved (local-only): experiments, rule_triggers, users, audit_log.
+`pattern_docs`, `doc_tags`, `tags` and the FTS / vector tables are dropped
+and re-created from their `db/schema.sql` definitions. `repos` and
+`branches` are reconciled in place rather than dropped: sessions, features,
+tasks and topic audits refer to `repos.id`, and a drop would renumber it.
+Every other table — sessions, spans, features, tasks, defects, users, API
+keys, `alembic_version` — is left untouched.
 """
 
 import glob
 import hashlib
 import os
+import sqlite3
 
 import yaml
 
@@ -22,22 +26,20 @@ from lib.orm.engine import get_connection, load_schema_sql
 
 _log = get_activity_logger("rebuild")
 
-# Tables that hold local-only runtime data and should survive a rebuild.
-# In standalone mode, users and audit_log live in SQLite and must be preserved.
-_LOCAL_TABLES = {'experiments', 'rule_triggers', 'users', 'audit_log', 'pattern_deployments'}
+#: Dropped and re-created from schema.sql. FTS shadow tables and the
+#: `pattern_docs` delete trigger go with their owning table.
+CACHE_TABLES = ("tags", "pattern_docs", "doc_tags", "pattern_embeddings",
+                "patterns_fts")
 
 
-def rebuild_from_files(preserve_local: bool = True) -> dict:
-    """Drop shared tables, re-create schema, and re-populate from files.
+def rebuild_from_files() -> dict:
+    """Drop and re-create the cache tables, then re-populate them from files.
 
     Returns a stats dict the caller can render. Progress is also written
     to the activity log under feature=rebuild.
     """
     stats: dict = {
-        "backed_up": {},
-        "restored": {},
         "tags_seeded": None,
-        "prompt_skeletons_seeded": 0,
         "patterns_rebuilt": 0,
         "patterns_skipped": [],
         "repos": None,
@@ -45,23 +47,13 @@ def rebuild_from_files(preserve_local: bool = True) -> dict:
 
     conn = get_connection()
     try:
-        local_backup = {}
-        if preserve_local:
-            local_backup = _backup_local_tables(conn, stats)
-
-        _recreate_schema(conn)
-
-        if local_backup:
-            _restore_local_tables(conn, local_backup, stats)
-
+        _recreate_cache_tables(conn)
         _seed_tags(conn, stats)
-        _seed_prompt_skeletons(stats)
         _rebuild_patterns(conn, stats)
-        _rediscover_repos(stats)
-
         conn.commit()
     finally:
         conn.close()
+    _rediscover_repos(stats)
 
     _log.write("rebuild_complete", **{
         "patterns_rebuilt": stats["patterns_rebuilt"],
@@ -70,69 +62,36 @@ def rebuild_from_files(preserve_local: bool = True) -> dict:
     return stats
 
 
-def _backup_local_tables(conn, stats):
-    """Save rows from local-only tables before schema reset."""
-    backup = {}
-    for table in _LOCAL_TABLES:
-        try:
-            rows = conn.execute(f"SELECT * FROM {table}").fetchall()
-            if rows:
-                cols = rows[0].keys()
-                backup[table] = {'cols': list(cols), 'rows': [dict(r) for r in rows]}
-                stats["backed_up"][table] = len(rows)
-                _log.write("table_backed_up", table=table, rows=len(rows))
-        except Exception:
-            pass  # table may not exist yet
-    return backup
+def _cache_table_ddl() -> list[str]:
+    """schema.sql's CREATE statements for the cache tables and their indexes
+    and triggers, in schema.sql's order."""
+    reference = sqlite3.connect(":memory:")
+    try:
+        reference.executescript(load_schema_sql())
+        placeholders = ", ".join("?" * len(CACHE_TABLES))
+        return [r[0] for r in reference.execute(
+            "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL "
+            f"AND tbl_name IN ({placeholders}) ORDER BY rowid",
+            CACHE_TABLES).fetchall()]
+    finally:
+        reference.close()
 
 
-def _restore_local_tables(conn, backup, stats):
-    """Re-insert rows into local-only tables after schema reset."""
-    for table, data in backup.items():
-        cols = data['cols']
-        rows = data['rows']
-        if not rows:
-            continue
-        placeholders = ', '.join(['?'] * len(cols))
-        col_names = ', '.join(cols)
-        for row in rows:
-            vals = [row.get(c) for c in cols]
-            try:
-                conn.execute(
-                    f"INSERT OR IGNORE INTO {table} ({col_names}) VALUES ({placeholders})",
-                    vals,
-                )
-            except Exception:
-                pass  # skip rows that violate new schema constraints
-        stats["restored"][table] = len(rows)
-        _log.write("table_restored", table=table, rows=len(rows))
-
-
-def _seed_prompt_skeletons(stats):
-    """Seed builtin skeleton rows for the registered prompt surfaces. Bodies
-    live in the Python registry, so this runs after schema.sql (which only
-    seeds the fragment). Idempotent by slug."""
-    from lib.prompt_templates import seed_builtin_skeletons
-    inserted = seed_builtin_skeletons()
-    stats["prompt_skeletons_seeded"] = inserted
-    _log.write("prompt_skeletons_seeded", count=inserted)
-
-
-def _recreate_schema(conn):
-    """Drop all tables and re-run schema.sql."""
+def _recreate_cache_tables(conn):
+    """Drop the cache tables and re-create them from schema.sql."""
+    ddl = _cache_table_ddl()
+    # Off for the drop: with enforcement on, dropping `pattern_docs` runs an
+    # implicit DELETE that cascades through its foreign keys.
     conn.execute("PRAGMA foreign_keys = OFF")
-    tables = [r[0] for r in conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name != 'sqlite_sequence'"
-    ).fetchall()]
-    for table in tables:
-        conn.execute(f"DROP TABLE IF EXISTS {table}")
-    conn.commit()
-    conn.execute("PRAGMA foreign_keys = ON")
-
-    schema_sql = load_schema_sql()
-    conn.executescript(schema_sql)
-    conn.commit()
-    _log.write("schema_recreated", dropped=len(tables))
+    try:
+        for table in reversed(CACHE_TABLES):
+            conn.execute(f"DROP TABLE IF EXISTS {table}")
+        for statement in ddl:
+            conn.execute(statement)
+        conn.commit()
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
+    _log.write("cache_tables_recreated", tables=len(CACHE_TABLES))
 
 
 def _seed_tags(conn, stats):

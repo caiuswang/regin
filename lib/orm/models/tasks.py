@@ -98,7 +98,8 @@ class AgentTask(Base, table=True):
 
     __tablename__ = "agent_tasks"
     __table_args__ = (UniqueConstraint("source", "external_id",
-                                       name="uq_agent_tasks_source_external"),)
+                                       name="uq_agent_tasks_source_external"),
+                      {"sqlite_autoincrement": True})
 
     id: Optional[int] = Field(default=None, primary_key=True)
     #: Highest image `idx` ever issued to this row. Survives a detach, so a
@@ -202,7 +203,8 @@ class AgentTaskRun(Base, table=True):
 
     __tablename__ = "agent_task_runs"
     __table_args__ = (UniqueConstraint("task_id", "attempt",
-                                       name="uq_agent_task_runs_attempt"),)
+                                       name="uq_agent_task_runs_attempt"),
+                      {"sqlite_autoincrement": True})
 
     id: Optional[int] = Field(default=None, primary_key=True)
     task_id: int = Field(
@@ -293,7 +295,8 @@ class AgentTaskImage(Base, table=True):
 
     __tablename__ = "agent_task_images"
     __table_args__ = (UniqueConstraint("task_id", "idx",
-                                       name="uq_agent_task_images_idx"),)
+                                       name="uq_agent_task_images_idx"),
+                      {"sqlite_autoincrement": True})
 
     id: Optional[int] = Field(default=None, primary_key=True)
     task_id: int = Field(
