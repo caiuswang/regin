@@ -59,6 +59,18 @@ def _start_pending_reaper(debug: bool) -> None:
           f"{cfg.interval_hours}h)")
 
 
+def _warn_if_schema_behind() -> None:
+    """Booting never migrates, so a DB behind head only surfaces later as a
+    500 on whichever page reads a changed table — say so at startup instead."""
+    from lib.doctor import _schema_revision_items
+
+    for item in _schema_revision_items():
+        if not item["present"]:
+            typer.secho(f"WARNING: database schema is {item['version']} — "
+                        "run `regin migrate` before using the dashboard",
+                        fg=typer.colors.YELLOW, err=True)
+
+
 def cmd_serve(
     host: str = typer.Option(
         "127.0.0.1", "--host",
@@ -75,6 +87,7 @@ def cmd_serve(
     ),
 ) -> None:
     from web.app import create_app
+    _warn_if_schema_behind()
     server = create_app(replica=replica)
     display_host = 'localhost' if host in ('127.0.0.1', '0.0.0.0') else host
     print(f"Starting dashboard at http://{display_host}:{port}")

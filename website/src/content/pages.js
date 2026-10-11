@@ -24,7 +24,7 @@ export const GETTING_STARTED = [
     N('WARN', '**Serving the dashboard is not enough on its own.** Neither `setup.sh` nor `regin serve` wires regin into your agent — until you install the hooks, no traces are captured, no rules fire, no memory is injected, and `send_to_user` messages go nowhere.'),
     P('regin drives every Claude Code event through one dispatcher — `python -m hook_manager <Event>` — registered in the provider\'s settings file (`~/.claude/settings.json`). Install it once from the running dashboard, under **Settings → Hook Installers**:'),
     S(install, 'Settings → Hook Installers: the Claude Code card with the settings.json path and the Hook Manager dispatcher installed.', 'Install Hook Manager for Claude Code. It writes the dispatcher into the settings.json shown on the card; the optional Debug Hook only logs raw payloads.'),
-    P('Prefer to wire it by hand? Merge `hook_manager/settings.example.json` into `~/.claude/settings.json`, or preview the diff with `.venv/bin/python -m hook_manager.migration_preview`. New Claude sessions pick the hooks up automatically.'),
+    P('Prefer the shell? `.venv/bin/python cli/regin.py hooks install --provider claude` writes the same wiring; `regin hooks status` shows installed vs. expected and `regin hooks repair` rewrites any entry that has drifted. New Claude sessions pick the hooks up automatically.'),
   ]],
   ['Manual setup', [
     H('1. Install dependencies'),

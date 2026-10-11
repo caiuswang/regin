@@ -240,16 +240,19 @@ def test_agent_memory_put_preserves_shared_fields_when_block_also_in_local(
     )
     assert resp.status_code == 200, resp.get_data(as_text=True)
 
-    shared = json.loads(
-        isolated_settings_files["shared"].read_text())["agent_memory"]
-    assert shared["scope_policy"] == "global"        # the change landed
-    assert shared["auto_inject"] is False            # …and nothing was dropped
-    assert shared["inject_top_k"] == 9
-    assert shared["inject_skip_commands"] == ["/goal", "/review"]
-    # the local override is left where it belongs, untouched
-    local = json.loads(
-        isolated_settings_files["local"].read_text())["agent_memory"]
-    assert local == {"recall_mode": "subagent"}
+    from lib.settings import _deep_merge
+    shared = json.loads(isolated_settings_files["shared"].read_text())
+    local = json.loads(isolated_settings_files["local"].read_text())
+    effective = _deep_merge(shared, local)["agent_memory"]
+    assert effective["scope_policy"] == "global"     # the change landed
+    assert effective["auto_inject"] is False         # …and nothing was dropped
+    assert effective["inject_top_k"] == 9
+    assert effective["inject_skip_commands"] == ["/goal", "/review"]
+    assert effective["recall_mode"] == "subagent"    # the local override kept
+    # local overrides the block, so the edit lands there, not in the shadowed
+    # shared copy
+    assert shared["agent_memory"] == {"auto_inject": False, "inject_top_k": 9,
+                                      "inject_skip_commands": ["/goal", "/review"]}
 
 
 def test_agent_memory_put_accepts_empty_skip_commands(

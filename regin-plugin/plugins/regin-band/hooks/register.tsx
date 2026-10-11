@@ -3,7 +3,6 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Inbox, InboxMessage } from '../types'
 
-const REGIN = '/Users/taowang/regin'
 const PANE = 'regin-inbox'
 const LIMIT = 200
 const inbox = atom({ plugin: 'regin-band', key: 'inbox' } as const, null)
@@ -27,8 +26,14 @@ export function parseInbox(stdout: string): Inbox | null {
   return { unread: messages.length, messages }
 }
 
-function regin($: EngineInterface, ...args: string[]) {
-  return $.process.run([`${REGIN}/.venv/bin/python`, `${REGIN}/cli/regin.py`, ...args], { cwd: REGIN })
+// Same resolution as regin-agents/bin/regin-mcp.sh: $REGIN_HOME, else ~/regin.
+async function reginHome($: EngineInterface): Promise<string> {
+  return (await $.env.get('REGIN_HOME')) || `${await $.env.get('HOME')}/regin`
+}
+
+async function regin($: EngineInterface, ...args: string[]) {
+  const home = await reginHome($)
+  return $.process.run([`${home}/.venv/bin/python`, `${home}/cli/regin.py`, ...args], { cwd: home })
 }
 
 // Refreshed on session start, at each turn's end and after an action rather

@@ -660,6 +660,15 @@ def _write_json_atomic(path: str, data: dict) -> None:
         raise
 
 
+def _deep_merge(base: dict, updates: dict) -> dict:
+    out = dict(base)
+    for key, value in updates.items():
+        if isinstance(out.get(key), dict) and isinstance(value, dict):
+            value = _deep_merge(out[key], value)
+        out[key] = value
+    return out
+
+
 def _save_to_file(path: str, updates: dict) -> None:
     """Merge updates into a JSON file."""
     with settings_file_lock():
@@ -668,29 +677,39 @@ def _save_to_file(path: str, updates: dict) -> None:
         _write_json_atomic(path, existing)
 
 
+def _route_updates(updates: dict, scope: str) -> tuple[dict, dict]:
+    """Split `updates` into (shared, local) writes."""
+    if scope == "local":
+        return {}, dict(updates)
+    local_keys = set(_load_json(SETTINGS_LOCAL_PATH))
+    if scope == "auto":
+        local_keys |= LOCAL_SETTINGS_KEYS
+    local = {k: v for k, v in updates.items() if k in local_keys}
+    return {k: v for k, v in updates.items() if k not in local}, local
+
+
 def save_settings(updates: dict, scope: str = "auto") -> None:
     """Merge updates into the appropriate settings file and write back.
 
     scope: 'shared' → settings.json (git-tracked), 'local' →
     settings.local.json (gitignored), 'auto' → route each key by
-    LOCAL_SETTINGS_KEYS.
+    LOCAL_SETTINGS_KEYS. Under 'shared' and 'auto', a key the local file
+    already sets is written to the local file instead: local wins at load,
+    so a write to the shared file would report success and change nothing.
+    The value replaces the local one whole, so a caller saving a partial
+    block must build it from the effective (shared + local) value.
 
     The process-wide `settings` singleton is refreshed via
     `reload_settings()` so long-running web processes pick up UI edits.
     """
     os.makedirs(CONFIG_DIR, exist_ok=True)
 
-    if scope == "auto":
-        shared_updates = {k: v for k, v in updates.items() if k not in LOCAL_SETTINGS_KEYS}
-        local_updates = {k: v for k, v in updates.items() if k in LOCAL_SETTINGS_KEYS}
-        if shared_updates:
-            _save_to_file(SETTINGS_PATH, shared_updates)
-        if local_updates:
-            _save_to_file(SETTINGS_LOCAL_PATH, local_updates)
-    elif scope == "local":
-        _save_to_file(SETTINGS_LOCAL_PATH, updates)
-    else:
-        _save_to_file(SETTINGS_PATH, updates)
+    with settings_file_lock():
+        shared, local = _route_updates(updates, scope)
+        if shared:
+            _save_to_file(SETTINGS_PATH, shared)
+        if local:
+            _save_to_file(SETTINGS_LOCAL_PATH, local)
 
     try:
         reload_settings()

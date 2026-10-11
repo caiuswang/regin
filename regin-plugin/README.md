@@ -29,16 +29,17 @@ This solves the two gaps from the portability discussion natively:
 
 ```bash
 # from anywhere, inside any repo you want to test in:
-/plugin marketplace add /Users/taowang/regin/regin-plugin
+/plugin marketplace add ~/regin/regin-plugin   # or $REGIN_HOME/regin-plugin
 /plugin install regin-agents@regin-local
 /plugin list                      # confirm enabled
 # then: /agents shows regin-agents:goal-verifier, and the skills are invocable
 ```
 
-To test in a *different* repo, point the launcher at your regin checkout:
+If your regin checkout is not at `~/regin`, point the plugins at it — the MCP
+launcher and the `regin-band` / `regin-bridge` mods all read the same variable:
 
 ```bash
-export REGIN_HOME=/Users/taowang/regin   # default is ~/regin
+export REGIN_HOME=/path/to/regin   # default is ~/regin
 ```
 
 ## Mods
@@ -59,7 +60,7 @@ the two drift apart.
 Install a mod the same way as any plugin in this marketplace:
 
 ```bash
-/plugin marketplace add /Users/taowang/regin/regin-plugin   # once
+/plugin marketplace add ~/regin/regin-plugin   # once
 /plugin install regin-band@regin-local
 ```
 
