@@ -40,8 +40,7 @@ _DEBUG_SCRIPT_TOKEN = 'hook_payload_debug.py'
 # and replaces them; new installs no longer emit any env prefix.
 _LEADING_ENV_RE = re.compile(r'^(?:/usr/bin/)?env(?:\s+[A-Za-z_][A-Za-z0-9_]*=\S*)+\s+')
 
-# The checkout a foreign command runs out of, read back from its interpreter.
-_VENV_PYTHON_RE = re.compile(r'(?P<root>\S+?)/\.venv/bin/python(?:\s|$)')
+_VENV_PYTHON_SUFFIX = '/.venv/bin/python'
 
 
 # ── Command construction ──────────────────────────────────────
@@ -59,11 +58,19 @@ def interpreter_prefix() -> str:
     clobber another's entries. Trailing space anchors to a token boundary
     so `/foo/regin` doesn't match `/foo/regin-fork`.
     """
-    return _venv_python() + ' '
+    return shlex.quote(_venv_python()) + ' '
+
+
+def _interpreter_prefixes() -> tuple[str, ...]:
+    """The quoted prefix install writes, plus the bare form an older regin
+    wrote — which on a path with spaces never ran, so it must still read as
+    ours for install to rewrite it."""
+    return (interpreter_prefix(), _venv_python() + ' ')
 
 
 def script_command(script_name: str) -> str:
-    return f"{_venv_python()} {os.path.join(str(settings.project_root), 'scripts', script_name)}"
+    script = os.path.join(str(settings.project_root), 'scripts', script_name)
+    return f"{shlex.quote(_venv_python())} {shlex.quote(script)}"
 
 
 def debug_base_command() -> str:
@@ -94,7 +101,7 @@ def hook_manager_command(event_name: str, provider) -> str:
     # when Claude ran from there, sending spans to the wrong DB.
     agent_type = getattr(provider, 'provider_id', None) or 'generic'
     return (
-        f"{_venv_python()} -P "
+        f"{shlex.quote(_venv_python())} -P "
         f"-m hook_manager {shlex.quote(event_name)} "
         f"--agent-type {shlex.quote(agent_type)}"
     )
@@ -124,11 +131,14 @@ def expected_debug_commands(provider) -> dict[str, str]:
 # ── Ownership predicates ──────────────────────────────────────
 
 def _ours_prefix(command: str) -> bool:
-    idx = command.find(interpreter_prefix())
-    if idx < 0:
-        return False
-    prefix = command[:idx]
-    return prefix == '' or _LEADING_ENV_RE.match(prefix) is not None
+    for token in _interpreter_prefixes():
+        idx = command.find(token)
+        if idx < 0:
+            continue
+        prefix = command[:idx]
+        if prefix == '' or _LEADING_ENV_RE.match(prefix) is not None:
+            return True
+    return False
 
 
 def _runs_hook_manager(command) -> bool:
@@ -180,9 +190,20 @@ def is_foreign_debug_hook_command(command: str) -> bool:
 
 
 def checkout_root(command: str) -> str | None:
-    """The regin checkout a command's interpreter lives in, when readable."""
-    match = _VENV_PYTHON_RE.search(command or '')
-    return match.group('root') if match else None
+    """The regin checkout a command's interpreter lives in, when readable.
+
+    Tokenised the way the shell will run it, so a path install quoted — a
+    space, or an apostrophe that `shlex.quote` renders as `'"'"'` — reads
+    back as the path it is, not as the fragment after the last quote.
+    """
+    try:
+        tokens = shlex.split(command or '')
+    except ValueError:
+        tokens = (command or '').split()
+    for token in tokens:
+        if token.endswith(_VENV_PYTHON_SUFFIX) and len(token) > len(_VENV_PYTHON_SUFFIX):
+            return token[:-len(_VENV_PYTHON_SUFFIX)]
+    return None
 
 
 # ── On-disk readers ───────────────────────────────────────────
@@ -230,9 +251,21 @@ def _unreadable_error(settings_path: str) -> dict | None:
 
 
 def write_json_settings(data: dict, path: str) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, 'w') as f:
+    """Atomic, like `hook_manager/config.py`: the agent reads this file on
+    every hook event, and a torn write is an agent with no hooks at all.
+
+    Resolved through symlinks first — `os.replace` on the link itself would
+    swap a dotfiles-managed settings.json for a plain file — and the target's
+    permission bits carried over to the replacement.
+    """
+    target = os.path.realpath(path)
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    tmp = target + '.tmp'
+    with open(tmp, 'w') as f:
         json.dump(data, f, indent=2)
+    if os.path.exists(target):
+        os.chmod(tmp, os.stat(target).st_mode & 0o7777)
+    os.replace(tmp, target)
 
 
 def read_text(path: str) -> str:
@@ -679,34 +712,70 @@ def _strip_matching_blocks(hooks: dict, is_match) -> int:
         entries = hooks[event_name]
         if not isinstance(entries, list):
             continue
-        filtered = []
-        for entry in entries:
-            next_entry, dropped = _strip_entry(entry, is_match)
-            removed += dropped
-            # An entry we emptied goes; one that was already empty is the
-            # user's, and deleting it is not this function's business.
-            if dropped == 0 or next_entry['hooks']:
-                filtered.append(next_entry)
-        if filtered:
+        filtered, dropped = _strip_event(entries, is_match)
+        removed += dropped
+        # Same rule one level up: an event key we emptied goes, one the
+        # user left empty stays.
+        if filtered or not dropped:
             hooks[event_name] = filtered
         else:
             del hooks[event_name]
     return removed
 
 
-def uninstall_hook_manager(provider, settings_path: str) -> dict:
-    if is_toml_provider(provider):
-        removed = kimi_hooks.uninstall(settings_path, is_ours=is_hook_manager_command)
-        return {'ok': True,
-                'msg': 'Hook manager removed' if removed else 'Hook manager was not installed'}
-    if refusal := _unreadable_error(settings_path):
-        return refusal
+def _strip_event(entries: list, is_match) -> tuple[list, int]:
+    filtered = []
+    removed = 0
+    for entry in entries:
+        next_entry, dropped = _strip_entry(entry, is_match)
+        removed += dropped
+        # An entry we emptied goes; one that was already empty is the
+        # user's, and deleting it is not this function's business.
+        if dropped == 0 or next_entry['hooks']:
+            filtered.append(next_entry)
+    return filtered, removed
+
+
+def _remove_json_entries(settings_path: str, is_ours) -> int:
     data = read_json_settings(settings_path)
-    hooks = data.get('hooks', {})
-    removed = _strip_matching_blocks(hooks, is_hook_manager_command) if isinstance(hooks, dict) else 0
+    hooks = data.get('hooks')
+    if not isinstance(hooks, dict):
+        return 0
+    removed = _strip_matching_blocks(hooks, is_ours)
+    if not removed:
+        return 0
     if not hooks:
         data.pop('hooks', None)
     write_json_settings(data, settings_path)
+    return removed
+
+
+def _remove_toml_entries(settings_path: str, is_ours, label: str) -> int:
+    before = sum(len(c) for c in kimi_hooks.installed_command_map(settings_path, is_ours).values())
+    removed = kimi_hooks.uninstall(settings_path, label=label, is_ours=is_ours)
+    return before if removed else 0
+
+
+def remove_entries(provider, settings_path: str, kind: str) -> int:
+    """Delete this checkout's `kind` entries from a provider's hook config.
+
+    The one removal every entry point shares, so none of them can grow its
+    own looser idea of "ours" — `init --force` once matched any
+    `-m hook_manager` and stripped a second checkout's wiring with it. A
+    missing or unparseable file is left exactly as found, and the file is
+    only rewritten when something was removed. Returns how many went.
+    """
+    is_ours = _kind_specs(provider)[kind]['is_ours']
+    if is_toml_provider(provider):
+        label = kimi_hooks.DEFAULT_LABEL if kind == 'hook_manager' else DEBUG_LABEL
+        return _remove_toml_entries(settings_path, is_ours, label)
+    return _remove_json_entries(settings_path, is_ours)
+
+
+def uninstall_hook_manager(provider, settings_path: str) -> dict:
+    if not is_toml_provider(provider) and (refusal := _unreadable_error(settings_path)):
+        return refusal
+    removed = remove_entries(provider, settings_path, 'hook_manager')
     return {'ok': True,
             'msg': 'Hook manager removed' if removed else 'Hook manager was not installed'}
 
@@ -764,29 +833,10 @@ def install_debug_hook(provider, settings_path: str) -> dict:
 
 
 def uninstall_debug_hook(provider, settings_path: str) -> dict:
-    if is_toml_provider(provider):
-        kimi_hooks.uninstall(settings_path, label=DEBUG_LABEL, is_ours=is_debug_hook_command)
-        return {'ok': True, 'msg': 'Debug hook removed'}
-    if refusal := _unreadable_error(settings_path):
+    if not is_toml_provider(provider) and (refusal := _unreadable_error(settings_path)):
         return refusal
-    data = read_json_settings(settings_path)
-    for event_name in list(data.get('hooks', {}).keys()):
-        event_hooks = data['hooks'][event_name]
-        if not isinstance(event_hooks, list):
-            continue
-        filtered = []
-        for entry in event_hooks:
-            # Scoped to this checkout, like every other write here: two regin
-            # instances share one settings.json, and `regin hooks remove` now
-            # reaches this path directly.
-            entry_hooks = [h for h in entry.get('hooks', [])
-                           if not is_debug_hook_command(h.get('command', ''))]
-            if entry_hooks:
-                entry['hooks'] = entry_hooks
-                filtered.append(entry)
-        data['hooks'][event_name] = filtered
-    write_json_settings(data, settings_path)
-    return {'ok': True, 'msg': 'Debug hook removed'}
+    removed = remove_entries(provider, settings_path, 'debug')
+    return {'ok': True, 'msg': 'Debug hook removed' if removed else 'Debug hook was not installed'}
 
 
 INSTALLERS = {'hook_manager': install_hook_manager, 'debug': install_debug_hook}
@@ -803,13 +853,7 @@ def _strip_foreign(provider, settings_path: str, is_foreign) -> None:
             with open(settings_path, 'w') as f:
                 f.write(cleaned.rstrip() + '\n')
         return
-    data = read_json_settings(settings_path)
-    hooks = data.get('hooks')
-    if not isinstance(hooks, dict) or not _strip_matching_blocks(hooks, is_foreign):
-        return
-    if not hooks:
-        data.pop('hooks', None)
-    write_json_settings(data, settings_path)
+    _remove_json_entries(settings_path, is_foreign)
 
 
 def _adopt(provider, settings_path: str, kind: str) -> dict:

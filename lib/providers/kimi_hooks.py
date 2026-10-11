@@ -26,7 +26,7 @@ from typing import Callable
 # The default managed block (hook_manager router). A `label` lets independent
 # installers (e.g. the debug fan-out hook) own a *separate* delimited block in
 # the same config.toml so they never clobber each other on install/uninstall.
-_DEFAULT_LABEL = "hook_manager"
+DEFAULT_LABEL = "hook_manager"
 
 
 def _begin(label: str) -> str:
@@ -45,10 +45,21 @@ def _block_re(label: str) -> re.Pattern:
     )
 
 
-# Back-compat aliases for the default (hook_manager) block.
-_BEGIN = _begin(_DEFAULT_LABEL)
-_END = _end(_DEFAULT_LABEL)
-_BLOCK_RE = _block_re(_DEFAULT_LABEL)
+def _strip_owned_blocks(text: str, label: str, is_ours: Callable[[str], bool]) -> str:
+    """Drop the `label` blocks whose commands are this checkout's.
+
+    Every regin checkout writes the same markers, so the label alone cannot
+    say whose block it is — removing by label would take a second checkout's
+    wiring with ours. A block left with no command at all (what `adopt`
+    leaves behind after stripping a moved checkout's entries) wires nothing
+    for anyone and goes too.
+    """
+    def replace(match: re.Match) -> str:
+        commands = [c for c in map(_entry_command, match.group(0).splitlines()) if c]
+        if not commands or any(is_ours(c) for c in commands):
+            return ""
+        return match.group(0)
+    return _block_re(label).sub(replace, text)
 
 
 def _read_text(path: str) -> str:
@@ -251,8 +262,8 @@ def install(
     command_for_event: Callable[[str], str],
     *,
     timeout: int = 60,
-    label: str = _DEFAULT_LABEL,
-    is_ours: Callable[[str], bool] | None = None,
+    label: str = DEFAULT_LABEL,
+    is_ours: Callable[[str], bool],
 ) -> None:
     """Write (or rewrite) one managed hook block, preserving all other config.
 
@@ -260,15 +271,14 @@ def install(
     hook_manager router and the debug fan-out hook) each own their own block
     in the same config.toml and never overwrite one another.
 
-    `is_ours` additionally clears unmarked legacy entries for the same hook, so
-    a reinstall refreshes a stale command instead of duplicating it.
+    `is_ours` scopes which labelled block is this checkout's (another
+    checkout's block under the same label is left alone), and also clears
+    unmarked legacy entries, so a reinstall refreshes a stale command instead
+    of duplicating it.
     """
     os.makedirs(os.path.dirname(path), exist_ok=True)
     existing = _read_text(path)
-    cleaned = _block_re(label).sub("", existing)
-    if is_ours is not None:
-        cleaned = strip_entries(cleaned, is_ours)
-    cleaned = cleaned.rstrip()
+    cleaned = strip_entries(_strip_owned_blocks(existing, label, is_ours), is_ours).rstrip()
     block = _render_block(sorted(events), command_for_event, timeout, label)
     body = f"{cleaned}\n\n{block}\n" if cleaned else f"{block}\n"
     with open(path, "w") as f:
@@ -278,10 +288,10 @@ def install(
 def uninstall(
     path: str,
     *,
-    label: str = _DEFAULT_LABEL,
-    is_ours: Callable[[str], bool] | None = None,
+    label: str = DEFAULT_LABEL,
+    is_ours: Callable[[str], bool],
 ) -> bool:
-    """Strip the labelled managed hook block. Returns True if anything was removed.
+    """Strip this checkout's labelled block. Returns True if anything was removed.
 
     `is_ours` also removes unmarked legacy entries for the same hook, which
     predate the delimited block and are otherwise unreachable.
@@ -289,9 +299,7 @@ def uninstall(
     existing = _read_text(path)
     if not existing:
         return False
-    cleaned = _block_re(label).sub("", existing)
-    if is_ours is not None:
-        cleaned = strip_entries(cleaned, is_ours)
+    cleaned = strip_entries(_strip_owned_blocks(existing, label, is_ours), is_ours)
     if cleaned == existing:
         return False
     with open(path, "w") as f:

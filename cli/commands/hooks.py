@@ -222,10 +222,43 @@ def cmd_repair(
     on a healthy machine is a genuine no-op and safe to suggest from doctor.
     """
     providers = {p.provider_id: p for p in _providers(provider)}
-    stale = [r for r in _status_rows(providers.values()) if r['stale']]
-    if not stale:
+    rows = _status_rows(providers.values())
+    stale = [r for r in rows if r['stale']]
+    foreign = [r for r in rows if r['foreign_events']]
+    if not (stale or foreign):
         echo("Hook wiring is up to date — nothing to repair.")
         return
+    failures = _repair_rows(stale, providers) + _report_foreign(foreign)
+    if failures:
+        raise typer.Exit(1)
+
+
+def _adopt_command(rows: list[dict]) -> str:
+    providers = sorted({r['provider'] for r in rows})
+    kinds = {r['hook'] for r in rows}
+    scope = f"--provider {providers[0]}" if len(providers) == 1 else '--all'
+    flags = {frozenset({'hook_manager'}): '', frozenset({'debug'}): ' --only-debug'}
+    return f"regin hooks adopt {scope}{flags.get(frozenset(kinds), ' --debug')}"
+
+
+def _report_foreign(rows: list[dict]) -> int:
+    """Name each row routed to another checkout and point at `adopt`; return
+    how many there were.
+
+    A moved checkout's entries read as *foreign*, not stale, so repair cannot
+    rewrite them — and calling the wiring "up to date" while every event still
+    routes to the old path is the silent failure this replaces.
+    """
+    for row in rows:
+        error(f"  {row['provider']}/{row['hook']}: routed to another checkout "
+              f"({_foreign_label(row)}) — repair will not rewrite it.")
+    if rows:
+        error(f"If that checkout moved here, run `{_adopt_command(rows)}` to take its entries "
+              "over. If it is a second live checkout, leave them — adopt would unwire it.")
+    return len(rows)
+
+
+def _repair_rows(stale: list[dict], providers: dict) -> int:
     failures = 0
     for row in stale:
         target = providers[row['provider']]
@@ -240,5 +273,4 @@ def cmd_repair(
             error(f"  {row['provider']}/{row['hook']}: {result['msg']}")
             continue
         echo(f"  {row['provider']}/{row['hook']}: {result['msg']}")
-    if failures:
-        raise typer.Exit(1)
+    return failures

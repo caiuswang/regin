@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import json
 import os
-import re
 import shutil
 import sqlite3
 from typing import Optional
@@ -14,13 +12,13 @@ import typer
 from cli.deps import require_db
 import lib.orm.engine as _engine
 from lib.orm.engine import init_db as _init_db, db_exists
+from lib import hooks_wiring
 from lib.providers import get_active_provider
 from lib.settings import settings
 
 _PROVIDER = get_active_provider()
 CLAUDE_SETTINGS_PATH = str(_PROVIDER.hook_settings_path())
 HOOK_MANAGER_CONFIG_PATH = str(_PROVIDER.hook_manager_config_path())
-_HOOK_MANAGER_CMD_RE = re.compile(r'(^|\s)-m\s+hook_manager(?:\s|$)')
 
 
 def _remove_path(path: str) -> bool:
@@ -95,61 +93,10 @@ def _clear_jwt_secret() -> bool:
     return _remove_path(auth._SECRET_PATH)
 
 
-def _is_hook_manager_command(command: str) -> bool:
-    return bool(isinstance(command, str) and _HOOK_MANAGER_CMD_RE.search(command))
-
-
-def _strip_hook_manager_entries(entries: list) -> tuple[list, int]:
-    """Drop hook_manager commands from one event's entries; entries left with
-    no hooks are dropped too. Returns (kept entries, commands removed)."""
-    filtered_entries = []
-    removed = 0
-    for entry in entries:
-        entry_hooks = entry.get('hooks', [])
-        if not isinstance(entry_hooks, list):
-            filtered_entries.append(entry)
-            continue
-        kept_hooks = [h for h in entry_hooks
-                      if not _is_hook_manager_command(h.get('command', ''))]
-        removed += len(entry_hooks) - len(kept_hooks)
-        if kept_hooks:
-            filtered_entries.append({**entry, 'hooks': kept_hooks})
-    return filtered_entries, removed
-
-
 def _clear_hook_manager_settings() -> int:
-    """Remove hook_manager dispatcher commands from ~/.claude/settings.json."""
-    try:
-        with open(CLAUDE_SETTINGS_PATH, 'r') as f:
-            settings_json = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return 0
-
-    hooks = settings_json.get('hooks')
-    if not isinstance(hooks, dict):
-        return 0
-
-    removed = 0
-    for event_name in list(hooks.keys()):
-        entries = hooks[event_name]
-        if not isinstance(entries, list):
-            continue
-        filtered_entries, event_removed = _strip_hook_manager_entries(entries)
-        removed += event_removed
-        if filtered_entries:
-            hooks[event_name] = filtered_entries
-        else:
-            del hooks[event_name]
-
-    if removed == 0:
-        return 0
-
-    if not hooks:
-        settings_json.pop('hooks', None)
-
-    with open(CLAUDE_SETTINGS_PATH, 'w') as f:
-        json.dump(settings_json, f, indent=2)
-    return removed
+    """Remove this checkout's hook_manager entries from the active provider's
+    hook config; another checkout's wiring in the same file stays."""
+    return hooks_wiring.remove_entries(_PROVIDER, CLAUDE_SETTINGS_PATH, 'hook_manager')
 
 
 def _clear_hook_manager_state() -> tuple[bool, int]:
