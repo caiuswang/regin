@@ -1,10 +1,7 @@
 """Persistence for session grades (`session_grades` in the primary DB).
 
 Append-only by convention: every grading run inserts new rows; readers
-take the latest row per (trace_id, axis). `ensure_schema()` keeps CLI
-paths working against older local DBs that predate the table — the same
-table `regin init` bakes from `db/schema.sql` and alembic migrations
-evolve.
+take the latest row per (trace_id, axis).
 """
 
 from __future__ import annotations
@@ -21,47 +18,8 @@ from lib.orm.models.trace import Session as SessionRow
 
 log = get_activity_logger("grader")
 
-_schema_ready = False
-
-_SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS session_grades (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    trace_id        TEXT NOT NULL,
-    axis            TEXT NOT NULL,
-    verdict         TEXT NOT NULL,
-    tier            TEXT NOT NULL DEFAULT 'screen',
-    scoreboard      TEXT NOT NULL DEFAULT '{}',
-    report          TEXT NOT NULL DEFAULT '',
-    detail          TEXT NOT NULL DEFAULT '{}',
-    rubric_version  TEXT,
-    judge           TEXT,
-    is_test         INTEGER NOT NULL DEFAULT 0,
-    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
-)
-"""
-
-
-def ensure_schema() -> None:
-    """Create `session_grades` if this DB predates the grader."""
-    global _schema_ready
-    if _schema_ready:
-        return
-    from lib.orm.engine import get_connection
-    conn = get_connection()
-    try:
-        conn.execute(_SCHEMA_SQL)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_session_grades_trace "
-                     "ON session_grades(trace_id, axis)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_session_grades_created "
-                     "ON session_grades(created_at DESC)")
-        conn.commit()
-    finally:
-        conn.close()
-    _schema_ready = True
-
 
 def save_grade(trace_id: str, grade: AxisGrade, *, is_test: int = 0) -> int:
-    ensure_schema()
     row = SessionGrade(
         trace_id=trace_id,
         axis=grade.axis,
@@ -104,7 +62,6 @@ def _serialize(row: SessionGrade, *, with_detail: bool = False) -> dict:
 
 def latest_grades(trace_id: str, *, with_detail: bool = True) -> dict:
     """Latest grade per axis for one session."""
-    ensure_schema()
     with SessionLocal() as db:
         rows = db.exec(
             select(SessionGrade)
@@ -138,7 +95,6 @@ def list_grades(*, limit: int = 100, axis: str | None = None,
     dedup, so a session whose newest grade superseded an older verdict
     never resurfaces under the old one.
     """
-    ensure_schema()
     latest_ids = select(func.max(SessionGrade.id)).group_by(
         SessionGrade.trace_id, SessionGrade.axis)
     query = (select(SessionGrade)
@@ -171,7 +127,6 @@ def recent_failing_trace_ids(*, limit: int = 200,
     aggregation. Latest-per-(trace, axis) is resolved with the same
     MAX(id) window `list_grades` uses, so a session whose newest grade was
     upgraded to satisfied never resurfaces under an older failing row."""
-    ensure_schema()
     latest_ids = select(func.max(SessionGrade.id)).group_by(
         SessionGrade.trace_id, SessionGrade.axis)
     query = (select(SessionGrade.trace_id, SessionGrade.id)
@@ -190,5 +145,5 @@ def recent_failing_trace_ids(*, limit: int = 200,
     return seen
 
 
-__all__ = ["ensure_schema", "save_grade", "latest_grades", "list_grades",
+__all__ = ["save_grade", "latest_grades", "list_grades",
            "recent_failing_trace_ids"]

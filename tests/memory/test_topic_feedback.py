@@ -203,7 +203,7 @@ def test_fail_verdict_records_topic_negative_when_enabled(monkeypatch):
     gated on suppression being enabled."""
     from sqlmodel import select
     from lib.memory.engine import MemorySessionLocal
-    from lib.memory.models import TopicNegative
+    from lib.memory.models import TopicExemplar
 
     monkeypatch.setattr(settings.agent_memory,
                         "topic_negative_suppress_sim", 0.5)
@@ -212,15 +212,15 @@ def test_fail_verdict_records_topic_negative_when_enabled(monkeypatch):
     store.apply_topic_relevance("s-neg", "fail")
 
     with MemorySessionLocal() as session:
-        rows = session.exec(select(TopicNegative)
-                            .where(TopicNegative.topic_id == "topicX")).all()
+        rows = session.exec(select(TopicExemplar)
+                            .where(TopicExemplar.topic_id == "topicX")).all()
     assert len(rows) == 1 and rows[0].source_session == "s-neg"
 
 
 def test_no_topic_negative_when_disabled(monkeypatch):
     from sqlmodel import select
     from lib.memory.engine import MemorySessionLocal
-    from lib.memory.models import TopicNegative
+    from lib.memory.models import TopicExemplar
 
     monkeypatch.setattr(settings.agent_memory,
                         "topic_negative_suppress_sim", 0.0)
@@ -229,7 +229,7 @@ def test_no_topic_negative_when_disabled(monkeypatch):
     store.apply_topic_relevance("s-off", "fail")
 
     with MemorySessionLocal() as session:
-        assert session.exec(select(TopicNegative)).all() == []
+        assert session.exec(select(TopicExemplar)).all() == []
 
 
 def test_topic_route_suppressed_is_query_local(monkeypatch):

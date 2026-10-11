@@ -22,9 +22,6 @@ from lib.orm.models import PatternDeployment, Repo, User
 from lib.activity_log import get_activity_logger as _get_activity_logger
 
 
-_DEFAULT_PROVIDER = "claude"
-
-
 def _active_provider_id() -> str:
     """Return the active provider id without creating a circular import."""
     from lib.providers import active_provider_id
@@ -33,54 +30,6 @@ def _active_provider_id() -> str:
 
 def _patterns_log():
     return _get_activity_logger("patterns")
-
-
-def _provider_segment_map() -> dict[str, str]:
-    """Map each provider's project-skills directory segment (`.claude`,
-    `.codex`, `.kimi-code`, `.agent`) to its provider id — the discriminator
-    that identifies which provider owns a deployment from its path."""
-    from lib.providers import list_provider_ids, build_provider
-    seg_map: dict[str, str] = {}
-    for pid in list_provider_ids():
-        seg = build_provider(pid).project_skills_subpath()[0]
-        seg_map.setdefault(seg, pid)
-    return seg_map
-
-
-def _infer_provider_from_path(deployed_path: str, seg_map: dict[str, str]) -> str:
-    """Infer the owning provider from a deployed path's directory segment,
-    falling back to claude (the only provider before multi-provider support)."""
-    parts = (deployed_path or "").replace("\\", "/").split("/")
-    for seg, pid in seg_map.items():
-        if seg in parts:
-            return pid
-    return _DEFAULT_PROVIDER
-
-
-def backfill_null_providers() -> int:
-    """Assign a concrete provider to legacy rows (`provider IS NULL`).
-
-    Rows written before the provider column all predate multi-provider
-    support; their on-disk location unambiguously identifies the owning
-    provider. Without this, a per-provider scan can't see them and re-reports
-    the same on-disk skill dir as "untracked", and provider-scoped removes/
-    re-deploys miss the NULL row. Returns the number of rows updated.
-    """
-    seg_map = _provider_segment_map()
-    updated = 0
-    with SessionLocal() as session:
-        rows = session.exec(
-            select(PatternDeployment).where(PatternDeployment.provider.is_(None))
-        ).all()
-        for row in rows:
-            row.provider = _infer_provider_from_path(row.deployed_path, seg_map)
-            session.add(row)
-            updated += 1
-        if updated:
-            session.commit()
-    if updated:
-        _patterns_log().write("provider_backfilled", rows=updated)
-    return updated
 
 
 def record_deployment(pattern_slug: str, scope: str,
