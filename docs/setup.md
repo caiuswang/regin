@@ -292,6 +292,7 @@ Command groups — `regin <group> <subcommand>`:
 |---|---|---|
 | `regin goal` | Loop-engineering helpers (roadmap preflight for /goal-verified) | `preflight` · `feedback` |
 | `regin gate` | Trace-derived pass/fail gates for unenforced skill steps | `recall-ran` · `task-recall-ran` · `pipeline-ran` |
+| `regin session` | What regin holds about one agent session | `context` |
 | `regin users` | Manage user accounts | `init-db` · `list` · `create` · `reset-password` · `set-role` · `delete` |
 | `regin skills` | Manage the active provider's skills directory entries | `list` · `check` · `pull` · `push` · `undeploy` |
 | `regin topics` | Maintain repo-local curated topic graphs | `bootstrap` · `scan` · `list` · `promote` · `delete` · `drift` · `evolve` · `drift-dismiss` · `drift-note` · `cascade-stale` · `digest-refs` · `review-note` · `review-finish` · `proposal-finish` · `proposal-reap` · `propose` · `proposal-list` · `proposal-show` · `proposal-wiki` · `proposal-diff` · `proposal-apply` · `proposal-review-state` · `proposal-feedback` · `proposal-export` · `proposal-import` · `check` · `reconcile` · `import` · `install-hook` · `router-skill` · `rebuild-query-df` · `wiki` · `wiki-debt` · `wiki-stats` · `backfill-tiers` · `backfill-topic-wiki` · `route` · `audit` · `audit-fix` · `split-leaf` · `group` |
@@ -311,6 +312,7 @@ Command groups — `regin <group> <subcommand>`:
 | `regin defects` | The defect ledger: what a feature got wrong, and what escaped | `open` · `list` · `rounds` · `attribute` · `close` · `reopen` · `edit` · `merge` · `fix-item` · `image` |
 | `regin feature` | Where a feature stands in the pipeline, and what it cost | `stage` · `attribute` · `unattribute` · `ledger` · `new` · `link` · `unlink` · `spec` · `image` · `ship` · `reopen` · `abandon` · `refresh` |
 | `regin task` | Capture and inspect task ideas (agent_tasks) | `add` · `list` · `show` · `delete` · `comment` · `finish` · `arm` · `commands` · `slice-check` · `transcribe` · `tail` |
+| `regin usage` | Act on a session's usage measurements (rate-limit alerts) | `measure` |
 
 <!-- cli-reference:end -->
 

@@ -49,10 +49,17 @@ def _bounded(field: dict, num) -> "str | None":
 
 
 def _coerce_list(field: dict, val) -> tuple:
-    """Strip each entry and drop the empties → list[str]."""
+    """Strip each entry and drop the empties → list[str], or list[int] for a
+    field declaring `"item": "int"`."""
     if not isinstance(val, list):
         return None, f"{field['key']} must be a list"
-    return [s for v in val if (s := str(v).strip())], None
+    entries = [s for v in val if (s := str(v).strip())]
+    if field.get('item') != 'int':
+        return entries, None
+    try:
+        return [int(s) for s in entries], None
+    except ValueError:
+        return None, f"{field['key']} entries must be whole numbers"
 
 
 def _coerce_choice(field: dict, val) -> tuple:

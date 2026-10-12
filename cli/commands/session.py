@@ -19,7 +19,31 @@ import typer
 from lib.session_probe import resolve, resolve_from_trace
 
 
+session_app = typer.Typer(
+    name="session",
+    help="What regin holds about one agent session",
+    no_args_is_help=True,
+)
+
+
+@session_app.command(
+    "context",
+    help="Print what a compaction of this session must keep (its feature, "
+         "task and finish command); print nothing when there is none.")
+def cmd_context(
+    session: str = typer.Option(..., "--session",
+                                help="The session being compacted."),
+) -> None:
+    from lib.session_context import session_context  # noqa: PLC0415
+
+    text = session_context(session)
+    if text:
+        print(text)
+
+
 def register(app: typer.Typer) -> None:
+    app.add_typer(session_app)
+
     @app.command(
         "session-id",
         help="Print the current agent session id (from $REGIN_SESSION_ID or "

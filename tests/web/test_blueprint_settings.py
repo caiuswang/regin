@@ -423,6 +423,26 @@ def test_agent_messages_channel_enable_switches(
     assert local["agent_messages"]["telegram_enabled"] is False
 
 
+def test_rate_limit_thresholds_round_trip_as_whole_numbers(
+        flask_client, isolated_settings_files):
+    body = flask_client.get("/api/settings/agent-messages").get_json()
+    field = {f["key"]: f for f in body["fields"]}["rate_limit_alert_at"]
+    assert (field["type"], field["value"], field["default"]) == (
+        "list", [80, 95], [80, 95])
+
+    resp = flask_client.put("/api/settings/agent-messages",
+                            json={"rate_limit_alert_at": ["70", " 90 ", ""]},
+                            headers=_editor_auth_header())
+    assert resp.status_code == 200
+    local = json.loads(isolated_settings_files["local"].read_text())
+    assert local["agent_messages"]["rate_limit_alert_at"] == [70, 90]
+
+    resp = flask_client.put("/api/settings/agent-messages",
+                            json={"rate_limit_alert_at": ["eighty"]},
+                            headers=_editor_auth_header())
+    assert resp.status_code == 400
+
+
 # ── /api/settings/agent-sdk ──────────────────────────────────
 
 def _agent_sdk_fields(flask_client):

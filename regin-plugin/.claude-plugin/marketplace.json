@@ -31,6 +31,16 @@
       "name": "regin-attribution",
       "source": "./plugins/regin-attribution",
       "description": "Mod: drops the Claude-Session trailer and bare claude.ai/code/session_ links from commit and PR attribution text"
+    },
+    {
+      "name": "regin-meter",
+      "source": "./plugins/regin-meter",
+      "description": "Mod: hands rate-limit readings (session.measure) to regin, which raises one warning per window and threshold across sessions"
+    },
+    {
+      "name": "regin-compact",
+      "source": "./plugins/regin-compact",
+      "description": "Mod: keeps the session's regin feature, task and finish command in the summary when the main conversation compacts (session.compact)"
     }
   ]
 }
