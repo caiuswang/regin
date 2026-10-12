@@ -157,6 +157,19 @@ CREATE INDEX IF NOT EXISTS idx_agent_messages_unread ON agent_messages(read_at);
 -- Supersede lookup: one live keyed message per (session, key).
 CREATE INDEX IF NOT EXISTS idx_agent_messages_key ON agent_messages(trace_id, msg_key);
 
+-- Rate-limit thresholds already alerted, one row per (window kind, reset
+-- time, threshold). The UNIQUE is the cross-session dedup: inserting the row
+-- is the claim to alert, so no time window decides what counts as a repeat.
+CREATE TABLE IF NOT EXISTS rate_limit_alerts (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind        TEXT NOT NULL,
+    resets_at   TEXT NOT NULL,
+    threshold   INTEGER NOT NULL,
+    trace_id    TEXT,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    CONSTRAINT uq_rate_limit_alerts UNIQUE (kind, resets_at, threshold)
+);
+
 -- Agent-bridge pane registry: session → tmux pane identity triple (pane id,
 -- tmux server pid, pane shell pid). Canonical, mutable store written by the
 -- SessionStart hook — NOT reconstructed from session_spans. One row per

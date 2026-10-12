@@ -231,6 +231,12 @@ _AGENT_MESSAGES_FIELDS: list[dict] = [
      "label": "Push plan-ready",
      "description": "Surface a plan ready for review (ExitPlanMode) as a warning "
                     "inbox card that also fans out to the channels above."},
+    {"key": "rate_limit_alert_at", "group": "Rate-limit alerts", "type": "list",
+     "item": "int", "placeholder": "80", "add_label": "+ Add threshold",
+     "label": "Alert at (% used)",
+     "description": "A rate-limit window reaching one of these percentages "
+                    "raises one warning (via the regin-meter mod), once per "
+                    "window and threshold across all sessions."},
     {"key": "base_url", "group": "General", "type": "string",
      "label": "Base URL",
      "description": "Woven into every push payload so the notification links "

@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import Optional
 
 from sqlmodel import Column, Field, Integer, String, Text
-from sqlalchemy import text
+from sqlalchemy import UniqueConstraint, text
 
 from lib.orm.base import Base
 
@@ -112,8 +112,35 @@ class AgentMessage(Base, table=True):
                          server_default=text("(datetime('now'))")))
 
 
+class RateLimitAlert(Base, table=True):
+    """One rate-limit threshold already alerted for one reset window.
+
+    The unique `(kind, resets_at, threshold)` is the dedup: a measurement
+    claims a threshold by inserting it, and the insert that loses the race —
+    from this session or any other — is the one that stays quiet.
+    """
+
+    __tablename__ = "rate_limit_alerts"
+    __table_args__ = (UniqueConstraint("kind", "resets_at", "threshold",
+                                       name="uq_rate_limit_alerts"),
+                      {"sqlite_autoincrement": True})
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    kind: str = Field(sa_column=Column("kind", Text, nullable=False))
+    resets_at: str = Field(sa_column=Column("resets_at", Text, nullable=False))
+    threshold: int = Field(
+        sa_column=Column("threshold", Integer, nullable=False))
+    trace_id: Optional[str] = Field(default=None,
+                                    sa_column=Column("trace_id", Text))
+    created_at: Optional[str] = Field(
+        default=None,
+        sa_column=Column("created_at", Text, nullable=False,
+                         server_default=text("(datetime('now'))")))
+
+
 __all__ = [
     "AgentMessage",
+    "RateLimitAlert",
     "MESSAGE_TYPES",
     "DEFAULT_MESSAGE_TYPE",
     "severity_rank",

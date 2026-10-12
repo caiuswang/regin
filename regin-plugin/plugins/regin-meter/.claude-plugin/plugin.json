@@ -1,0 +1,1 @@
+{ "name": "regin-meter", "version": "0.1.0", "description": "Hands each rate-limit reading to regin, which warns once per window and threshold across sessions", "author": { "name": "regin" } }

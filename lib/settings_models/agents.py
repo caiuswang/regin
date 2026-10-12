@@ -74,6 +74,12 @@ class AgentMessagesConfig(BaseModel):
     push_permission_events: bool = False
     push_plan_events: bool = False
 
+    # ── Rate-limit alerts ──
+    # `regin usage measure` (the regin-meter mod) raises one `warning` when a
+    # rate-limit window's percent used reaches one of these thresholds —
+    # once per (window kind, reset time, threshold) across every session.
+    rate_limit_alert_at: list[int] = Field(default_factory=lambda: [80, 95])
+
     # ── Event bus overrides ──
     # Per-kind enable/disable for the declared notifiable events in
     # `lib.agent_messages.events.REGISTRY` (proposal.ready, content.drift,

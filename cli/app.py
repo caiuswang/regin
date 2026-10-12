@@ -19,7 +19,7 @@ import typer
 
 from lib.activity_log import configure_activity_log, get_activity_logger
 from lib.logging_setup import configure_logging
-from cli.commands import bridge, db, defects, events, feature, gate, goal, grader, hooks, logs, memory, messages, meta, patterns, repo, route, rules, schema, server, session, skills, stats, tasks, topics, trace, uninstall, users, wiki
+from cli.commands import bridge, db, defects, events, feature, gate, goal, grader, hooks, logs, memory, messages, meta, patterns, repo, route, rules, schema, server, session, skills, stats, tasks, topics, trace, uninstall, usage, users, wiki
 
 
 app = typer.Typer(
@@ -109,6 +109,7 @@ app.add_typer(stats.stats_app)  # stats time / sessions / daily / by
 app.add_typer(defects.defects_app)  # defects open / list / rounds / close
 app.add_typer(feature.feature_app)  # feature stage
 app.add_typer(tasks.tasks_app)  # task add / list / show (captured ideas)
+app.add_typer(usage.usage_app)  # usage measure (rate-limit alerts)
 
 
 __all__ = ["app"]

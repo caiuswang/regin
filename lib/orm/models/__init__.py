@@ -7,7 +7,7 @@ autogenerate relies on that single MetaData collection.
 
 from __future__ import annotations
 
-from lib.orm.models.agent_messages import AgentMessage
+from lib.orm.models.agent_messages import AgentMessage, RateLimitAlert
 from lib.orm.models.agent_runs import AgentRun, AgentRunSession
 from lib.orm.models.api_keys import ApiKey
 from lib.orm.models.comments import Comment, CommentThread
@@ -41,6 +41,7 @@ from lib.orm.models.users import AuditLog, User
 
 __all__ = [
     "AgentMessage",
+    "RateLimitAlert",
     "AgentRun",
     "AgentRunSession",
     "AgentTask",
