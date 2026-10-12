@@ -11,6 +11,11 @@
 //   didn't (ExitPlanMode today; see `lib/agent_bridge/menu_parse.py`). Either
 //   way the actual drive re-validates against the live pane server-side —
 //   this UI never assumes a pick will land.
+// - held (`heldCard`): regin-permit holds the call open in `tool.check`, so
+//   it is decided like the SDK tier — Allow/Deny, POSTed with its
+//   `tool_use_id`. The card only claims a hold; `live-state.mod_held` says
+//   whether it still stands, and one that ended (released, the hold process
+//   gone) has handed the call to the native dialog, i.e. the tmux branch.
 //
 // Same two-step select→confirm gate throughout: a mis-tap here can run a
 // shell command, or auto-accept a plan's edits, on the live agent's machine.
@@ -33,6 +38,10 @@ const props = defineProps({
   tmuxOptions: { type: Array, default: () => [] },
   // Fetch a live-parsed menu on mount when `tmuxOptions` has no usable data.
   tmuxLive: { type: Boolean, default: false },
+  // False when no pane reaches the session: a card whose hold has ended can
+  // then only be answered in the terminal.
+  tmuxReachable: { type: Boolean, default: true },
+  heldCard: { type: Boolean, default: false },
 })
 const emit = defineEmits(['decided'])
 
@@ -40,7 +49,11 @@ const phase = ref('ready')
 const detail = ref('')
 const sending = computed(() => phase.value === 'sending')
 
-// ── SDK-owned: Allow/Deny + optional reason (unchanged) ──────
+const holdState = ref(props.heldCard && !props.sdkOwned && props.toolUseId
+  ? 'probing' : 'none')
+const typed = computed(() => props.sdkOwned || holdState.value === 'held')
+
+// ── SDK-owned or held: Allow/Deny + optional reason ──────
 const staged = ref('')
 const reason = ref('')
 const isPlan = computed(() => props.kind === 'plan')
@@ -97,8 +110,23 @@ const pickOptions = computed(() => (usingLive.value
   ? liveOptions.value : props.tmuxOptions.map(o => o.label)))
 const pickStaged = ref(null)
 
+async function probeHold() {
+  let state = null
+  try {
+    state = await api.get(`/sessions/${props.sessionId}/live-state`)
+  } catch { state = null }
+  const held = (state?.mod_held || []).some(h => h.tool_use_id === props.toolUseId)
+  holdState.value = held ? 'held' : 'none'
+}
+
 onMounted(async () => {
-  if (props.sdkOwned || !usingLive.value || !props.tmuxLive) return
+  if (holdState.value === 'probing') await probeHold()
+  if (typed.value) return
+  if (!props.tmuxReachable) {
+    menuState.value = 'unavailable'
+    return
+  }
+  if (!usingLive.value || !props.tmuxLive) return
   let res = null
   try {
     res = await api.get(`/sessions/${props.sessionId}/bridge-menu`)
@@ -145,7 +173,12 @@ async function confirmPick() {
 </script>
 
 <template>
-  <div v-if="sdkOwned" data-testid="live-qa-decision">
+  <p v-if="holdState === 'probing'" class="live-qa-answer-meta"
+     data-testid="live-qa-decide-loading">
+    checking the hold…
+  </p>
+
+  <div v-else-if="typed" data-testid="live-qa-decision">
     <div class="live-qa-verbs">
       <Button
         variant="primary" size="sm" :disabled="sending"

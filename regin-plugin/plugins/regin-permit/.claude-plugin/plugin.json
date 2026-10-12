@@ -1,0 +1,1 @@
+{ "name": "regin-permit", "version": "0.1.0", "description": "Holds a permission ask open while regin's web card decides it, and gives it back to the native dialog on release or when regin is unreachable", "author": { "name": "regin" }, "types": "./types/index.d.ts" }
