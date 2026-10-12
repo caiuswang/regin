@@ -332,6 +332,8 @@ PUBLIC_API_ENDPOINTS = frozenset({
     "bridge.api_bridge_list_sessions",
     "bridge.api_bridge_list_messages",
     "bridge.api_bridge_listen",
+    "bridge.api_bridge_hold",
+    "bridge.api_bridge_release",
     # Task capture: guarded by its own API key (require_scope), a principal
     # SEPARATE from the web-UI JWT — resolving one never produces a user, so a
     # key fails every user-gated route. The gate's PUBLIC branch returns with
