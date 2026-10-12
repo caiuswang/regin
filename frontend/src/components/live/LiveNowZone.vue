@@ -29,7 +29,7 @@ import {
   toolDisplayName,
 } from '../../utils/traceFormatters.js'
 import {
-  stripMarkdown, findLastSpan, agentStatusLabel, isAskSpan,
+  stripMarkdown, findLastSpan, agentStatusLabel, isAskSpan, isHeldToolSpan,
 } from '../../utils/liveRows.js'
 import { parseLocalIso } from '../../utils/sessionActivity.js'
 import { useAgentElapsed } from '../../composables/useAgentElapsed.js'
@@ -105,12 +105,13 @@ const scopeStatus = computed(() => (props.scopeAgent
 // options to offer and cannot resolve a question park anyway.
 const pendingPerm = computed(() => findLastSpan(props.spans, s =>
   s.status_code === 'PENDING' && !isAskSpan(s)
-  && (s.name === 'permission.request' || (s.span_id || '').startsWith('permreq-'))))
+  && (s.name === 'permission.request' || (s.span_id || '').startsWith('permreq-')
+    || isHeldToolSpan(s))))
 const pendingQuestion = computed(() => findLastSpan(props.spans, s =>
   s.status_code === 'PENDING' && isAskSpan(s)))
 const pendingTool = computed(() => findLastSpan(props.spans, s =>
   s.status_code === 'PENDING' && (s.span_id || '').startsWith('pending-')
-  && !isAskSpan(s)))
+  && !isAskSpan(s) && !isHeldToolSpan(s)))
 const livePrompt = computed(() => findLastSpan(props.spans, s =>
   s.status_code === 'PENDING' && (s.span_id || '').startsWith('promptlive-')))
 const lastResponse = computed(() => findLastSpan(props.spans, s =>
@@ -229,7 +230,8 @@ const permAction = computed(() => {
   const decidableSdk = props.sdkOwned
     && (attrs.kind === 'plan' || attrs.kind === 'tool')
   const decidableTmux = !props.sdkOwned && props.bridgeReachable
-  return decidableSdk || decidableTmux ? 'decide ▾' : 'details ▾'
+  const decidableHeld = !props.sdkOwned && !!attrs.mod_held
+  return decidableSdk || decidableTmux || decidableHeld ? 'decide ▾' : 'details ▾'
 })
 const questionText = computed(() => {
   const qs = pendingQuestion.value?.attributes?.questions || []

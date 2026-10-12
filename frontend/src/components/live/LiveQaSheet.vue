@@ -102,7 +102,11 @@ const canDecideSdk = computed(() => decidableBase.value && props.sdkOwned
 const tmuxOptions = computed(() => (Array.isArray(a.value.options)
   ? a.value.options : []))
 const canDecideTmux = computed(() => decidableBase.value && !props.sdkOwned)
-const canDecide = computed(() => canDecideSdk.value || canDecideTmux.value)
+// A held call needs no pane: regin-permit's hold stream is the channel.
+const heldCard = computed(() => !isAsk.value && pending.value && !!props.sessionId
+  && !props.sdkOwned && !!a.value.mod_held && !!a.value.tool_use_id)
+const canDecide = computed(() => canDecideSdk.value || canDecideTmux.value
+  || heldCard.value)
 const permEyebrow = computed(() => (isPlan.value
   ? 'plan · your approval'
   : `requested · ${toolDisplayName(a.value.tool_name || 'tool')}`))
@@ -216,6 +220,8 @@ function chosen(q, opt) {
       :sdk-owned="sdkOwned"
       :tmux-options="tmuxOptions"
       :tmux-live="canDecideTmux"
+      :tmux-reachable="canDecideTmux"
+      :held-card="heldCard"
       @decided="$emit('answered')"
     />
   </div>

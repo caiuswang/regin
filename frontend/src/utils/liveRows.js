@@ -55,6 +55,14 @@ export function isQaSpan(span) {
   return n === 'tool.AskUserQuestion' || n === 'permission.request'
     || n === 'permission.denied'
     || (span?.span_id || '').startsWith('permreq-')
+    || isHeldToolSpan(span)
+}
+
+// A gated call regin-permit holds for the web: its `pending-<tool_use_id>`
+// tool row is the permission card, since a call allowed or denied from the
+// web never raises a classic PermissionRequest of its own (F158 P0 Q3).
+export function isHeldToolSpan(span) {
+  return span?.status_code === 'PENDING' && !!span?.attributes?.mod_held
 }
 
 // Which of those spans is a QUESTION — answered with a pick, not allowed or

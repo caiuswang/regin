@@ -41,6 +41,11 @@
       "name": "regin-compact",
       "source": "./plugins/regin-compact",
       "description": "Mod: keeps the session's regin feature, task and finish command in the summary when the main conversation compacts (session.compact)"
+    },
+    {
+      "name": "regin-permit",
+      "source": "./plugins/regin-permit",
+      "description": "Mod: holds a permission ask while regin's web card allows or denies it; release or an unreachable regin hands it back to the native dialog"
     }
   ]
 }
