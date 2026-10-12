@@ -174,7 +174,8 @@ def test_a_held_request_resolves_at_most_once(flask_client, tmux):
 
 def test_concurrent_endings_pick_exactly_one():
     hold = mod_hold.HoldBody("A", "T", None)
-    assert json.loads(next(iter(hold)))["type"] == "ready"
+    lines = iter(hold)
+    assert json.loads(next(lines))["type"] == "ready"
     barrier = threading.Barrier(3)
     won: list[str] = []
 
@@ -202,6 +203,20 @@ def test_a_body_never_streamed_holds_nothing():
     body = mod_hold.HoldBody("A", "T", None)
     assert not mod_hold.is_held("A", "T")
     body.close()
+
+
+def test_a_stream_whose_peer_died_deregisters_without_close():
+    import socket
+    server_end, client_end = socket.socketpair()
+    body = mod_hold.HoldBody("A", "T", server_end)
+    lines = iter(body)
+    next(lines)
+    assert mod_hold.is_held("A", "T")
+    client_end.close()
+
+    assert list(lines) == []
+    assert not mod_hold.is_held("A", "T")
+    server_end.close()
 
 
 def test_a_hold_that_ends_before_it_is_decided_leaves_it_to_tmux(

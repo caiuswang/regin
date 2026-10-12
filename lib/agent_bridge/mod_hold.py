@@ -132,11 +132,18 @@ class HoldBody:
         except AlreadyHeld:
             yield _line({"type": "refused", "reason": "already held"})
             return
-        yield _line({"type": "ready", "session_id": hold.session_id,
-                     "tool_use_id": hold.tool_use_id})
-        frame = hold.wait(self._peer)
-        if frame is not None:
-            yield _line(frame)
+        # Deregister here as well as in `close`: werkzeug drains the socket
+        # before it calls `close`, and that read raises on a peer that was
+        # killed (connection reset), so `close` never runs and the hold would
+        # stay registered for a stream nobody reads.
+        try:
+            yield _line({"type": "ready", "session_id": hold.session_id,
+                         "tool_use_id": hold.tool_use_id})
+            frame = hold.wait(self._peer)
+            if frame is not None:
+                yield _line(frame)
+        finally:
+            self.close()
 
     def close(self) -> None:
         if not self._closed:
