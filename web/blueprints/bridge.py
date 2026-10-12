@@ -3,7 +3,9 @@
 Three routes for the inverse of the `send_to_user` inbox: push a steering
 message into a running session's tmux pane (`POST`), and read the reachable
 sessions / delivered messages back (`GET`). See `docs/agent-bridge-design.md`
-(*Architecture*, *Security model*, *Slice 4*).
+(*Architecture*, *Security model*, *Slice 4*). The Mod channel adds two held
+streams under the same token: `listen` (prompts) and `hold` (one permission
+request awaiting a web decision).
 
 Auth is the `require_bridge_token` decorator ALONE: these endpoints join the
 app's PUBLIC_API_ENDPOINTS allowlist (the JWT gate returns without auth for
@@ -38,7 +40,8 @@ from flask import Blueprint, Response, request, jsonify
 from lib.auth import get_current_user, require_editor
 from lib.settings import settings
 from lib.agent_bridge import (store, delivery, commands, files, ansi_html,
-                              attachments, attach, mod_channel)
+                              attachments, attach, mod_channel,
+                              mod_hold)
 from lib import agent_sdk, live_session
 
 bridge_bp = Blueprint('bridge', __name__)
@@ -382,9 +385,13 @@ def api_session_live_state(trace_id):
     can stop it first. Editor-gated with the rest of this blueprint even
     though it injects nothing — the answer names a reachable terminal.
     """
+    enabled = settings.agent_bridge.enabled
     return jsonify({**live_session.manageability(trace_id),
-                    "mod_listener": (settings.agent_bridge.enabled
-                                     and mod_channel.has_listener(trace_id))})
+                    "mod_listener": (enabled
+                                     and mod_channel.has_listener(trace_id)),
+                    "mod_held": ([{"tool_use_id": tu}
+                                  for tu in mod_hold.held_ids(trace_id)]
+                                 if enabled else [])})
 
 
 @bridge_bp.route('/api/sessions/<trace_id>/shutdown', methods=['POST'])
@@ -594,6 +601,39 @@ def _bridge_tier_decide(trace_id: str, payload: dict, sender: str | None):
                     "id": row_id})
 
 
+def _held_decide(trace_id: str, payload: dict, sender: str | None):
+    """Decide a permission request the session's regin-permit mod is holding,
+    by writing `{behavior, reason}` into its hold stream — or None when no held
+    request matches, which leaves the tmux path exactly as it was.
+
+    Off with the bridge: a held stream opened before the kill switch was thrown
+    is not a reason to keep steering the session.
+    """
+    if not settings.agent_bridge.enabled:
+        return None
+    named = _target(payload).get("tool_use_id")
+    hit = mod_hold.match(trace_id, named)
+    if hit.ambiguous:
+        return jsonify({"delivered": False,
+                        "error": "ambiguous held request"}), 409
+    if hit.tool_use_id is None:
+        return None
+    parsed = _parse_decision(payload)
+    if parsed is None:
+        return jsonify({"error": "behavior must be allow or deny"}), 400
+    behavior, reason = parsed
+    # Ended since the match: the mod has fallen back to the native dialog,
+    # which only the tmux path can answer.
+    if not mod_hold.resolve(trace_id, hit.tool_use_id, behavior, reason):
+        return None
+    detail = "decided over the held stream"
+    row_id = store.record_bridge_message(
+        trace_id, _decision_body(behavior, reason), sender, kind="decision")
+    store.mark_delivered(row_id, True, detail)
+    return jsonify({"delivered": True, "detail": detail, "id": row_id,
+                    "channel": "mod"})
+
+
 @bridge_bp.route('/api/sessions/<trace_id>/bridge-decide', methods=['POST'])
 @require_editor
 def api_session_bridge_decide(trace_id):
@@ -614,14 +654,19 @@ def api_session_bridge_decide(trace_id):
     in the steering inbox like every sibling route, so the audit trail reads
     the same whichever transport steered the session.
 
-    `tool_use_id` (SDK path only) names which parked call this decides — a
-    session gating tools holds one park per call in a multi-call assistant
-    message, and the card the operator tapped is not necessarily the oldest.
+    `tool_use_id` names which parked call this decides — a session gating
+    tools holds one park per call in a multi-call assistant message, and the
+    card the operator tapped is not necessarily the oldest. On a tmux-observed
+    session it also picks the request its regin-permit mod holds
+    (`_held_decide`); with none held the tmux path runs unchanged.
     """
     payload = request.get_json(silent=True) or {}
     user = get_current_user()
     sender = _clip_sender(f"web:{user['username']}" if user else "web")
     if not agent_sdk.is_sdk_owned(trace_id):
+        held = _held_decide(trace_id, payload, sender)
+        if held is not None:
+            return held
         return _bridge_tier_decide(trace_id, payload, sender)
     parsed = _parse_decision(payload)
     if parsed is None:
@@ -854,6 +899,36 @@ def api_bridge_listen():
     peer = request.environ.get("werkzeug.socket")
     return Response(mod_channel.ndjson_stream(session_id, peer),
                     mimetype="application/x-ndjson")
+
+
+@bridge_bp.route('/api/bridge/hold', methods=['GET'])
+@require_bridge_token
+def api_bridge_hold():
+    """Hold `?session_id`'s permission request `?tool_use_id` open as an
+    NDJSON stream until the web decides it, the terminal releases it, or the
+    stream ends (`lib/agent_bridge/mod_hold.py`)."""
+    session_id = request.args.get("session_id")
+    tool_use_id = request.args.get("tool_use_id")
+    if not session_id or not tool_use_id:
+        return jsonify({"error": "session_id and tool_use_id required"}), 400
+    if mod_hold.is_held(session_id, tool_use_id):
+        return jsonify({"error": "already held"}), 409
+    peer = request.environ.get("werkzeug.socket")
+    return Response(mod_hold.HoldBody(session_id, tool_use_id, peer),
+                    mimetype="application/x-ndjson")
+
+
+@bridge_bp.route('/api/bridge/release', methods=['POST'])
+@require_bridge_token
+def api_bridge_release():
+    """Hand a held request back to the terminal's native dialog."""
+    payload = request.get_json(silent=True) or {}
+    session_id = payload.get("session_id")
+    tool_use_id = payload.get("tool_use_id")
+    if not (isinstance(session_id, str) and session_id
+            and isinstance(tool_use_id, str) and tool_use_id):
+        return jsonify({"error": "session_id and tool_use_id required"}), 400
+    return jsonify({"released": mod_hold.release(session_id, tool_use_id)})
 
 
 @bridge_bp.route('/api/bridge/sessions', methods=['GET'])
