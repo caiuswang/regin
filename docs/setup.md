@@ -304,7 +304,7 @@ Command groups — `regin <group> <subcommand>`:
 | `regin logs` | View and manage the regin activity log | `list` · `tail` · `grep` · `prune` · `path` |
 | `regin memory` | Cross-session agent memory | `recall` · `read` · `index-root` · `index-expand` · `index-fetch` · `recall-for-task` · `list` · `stats` · `remember` · `backfill-titles` · `retitle` · `export-tree` · `import-tree` · `topic-feedback` · `topic-decide` · `exemplar-add` · `exemplar-rm` · `exemplar-list` · `exemplar-forget` · `reflect` · `distill` · `link-topics` · `consolidate-skills` · `approve` · `forget` · `restore` · `supersede` · `eval` · `curate-apply` |
 | `regin messages` | Inspect and prune the send_to_user inbox (agent_messages) | `list` · `read` · `stats` · `prune` |
-| `regin bridge` | Agent bridge: a session's Mod channel | `listen` |
+| `regin bridge` | Agent bridge: a session's Mod channel | `listen` · `hold` · `release` |
 | `regin events` | Inspect the declared notification event bus (agent_messages). | `list` |
 | `regin grade` | Post-hoc session rubric grades | `run` · `show` · `list` · `reflect` · `pareto` |
 | `regin hooks` | Inspect, install, and repair regin's agent hook wiring. | `status` · `install` · `remove` · `adopt` · `repair` |
