@@ -10,9 +10,10 @@ import { usePipelineHeader } from '../composables/usePipelineHeader'
 import { usePipelineCounts, usePipelineUpdatedAt } from '../composables/usePipelineCounts'
 import { usePipelineTabState } from '../composables/usePipelineTabState'
 import { usePipelineScope, persistScope, publishShellScope, scopeQuery, storedScope,
-  SCOPE_ALL, SCOPE_NONE }
+  SCOPE_ALL, SCOPE_NONE, isWorkspaceScope, workspaceIdOf }
   from '../composables/usePipelineScope'
 import { useProjects } from '../composables/useProjects'
+import { useWorkspaces } from '../composables/useWorkspaces'
 import { useTaskShortcuts } from '../composables/useTaskShortcuts'
 import { useBreakpoint } from '../composables/useBreakpoint'
 import { usePipelineCreate } from '../composables/usePipelineCreate'
@@ -61,9 +62,10 @@ const { counts, error: countsError, load: loadCounts, revision: countsRevision }
 const updatedAt = usePipelineUpdatedAt()
 const { queryFor } = usePipelineTabState(p => TABS.some(t => t.path === p))
 const { items: projects, ensure: ensureProjects } = useProjects()
+const { items: workspaces, ensure: ensureWorkspaces } = useWorkspaces()
 const { isMdUp } = useBreakpoint()
 
-const isLegalScope = v => v === SCOPE_NONE || /^\d+$/.test(v)
+const isLegalScope = v => v === SCOPE_NONE || /^\d+$/.test(v) || isWorkspaceScope(v)
 // `/defects` is not a tab, but its list is filtered by `?project=`, so the chip
 // over it has to name that same scope.
 const readsQuery = onList
@@ -83,6 +85,8 @@ const scopeLabel = computed(() => {
   const s = carried.value
   if (s === SCOPE_ALL) return 'All projects'
   if (s === SCOPE_NONE) return 'No project'
+  const wsId = workspaceIdOf(s)
+  if (wsId != null) return workspaces.value.find(w => w.id === wsId)?.name || `workspace #${wsId}`
   return projects.value.find(p => String(p.id) === s)?.name || `project #${s}`
 })
 
@@ -176,6 +180,7 @@ function defectCreated({ defect, outcome }) {
 
 onMounted(() => {
   ensureProjects()
+  ensureWorkspaces()
   if (onTab.value) restoreStored(isLegalScope)
 })
 watch(carried, (s) => { loadCounts(s); publishShellScope(s) }, { immediate: true })

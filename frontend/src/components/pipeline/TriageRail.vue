@@ -10,7 +10,7 @@ import TriageCard from './TriageCard.vue'
 import DefectRefusal from '../defects/DefectRefusal.vue'
 import { chordOf, useDefectTriage } from '../../composables/useDefectTriage'
 import { invalidatePipelineCounts } from '../../composables/usePipelineCounts'
-import { isProjectScope } from '../../composables/usePipelineScope'
+import { isProjectScope, isWorkspaceScope } from '../../composables/usePipelineScope'
 
 const props = defineProps({
   scope: { type: String, default: '' },
@@ -23,7 +23,7 @@ const props = defineProps({
 const emit = defineEmits(['changed', 'update:folded'])
 
 const triage = useDefectTriage()
-const allProjects = computed(() => isProjectScope(props.scope))
+const allProjects = computed(() => isProjectScope(props.scope) || isWorkspaceScope(props.scope))
 const {
   items, total, loading, busy, error, refusal, notice, cursor, pending, blamed,
   load, reach, move, focus, begin, submit, cancel, remedy,

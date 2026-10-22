@@ -51,6 +51,7 @@ from lib.tasks import next_step
 from lib.tasks import query as task_query
 from lib.tasks import rows as task_rows
 from lib.tasks import store as task_store
+from lib.workspaces import scope as ws_scope
 
 log = get_activity_logger("features")
 
@@ -81,7 +82,7 @@ def _stage(label: str, parts: list[tuple[str, str, int]]) -> dict:
 
 def _project_args(scope) -> tuple:
     """`(project_id, unassigned)` — the pair every feed filter speaks."""
-    return (scope if isinstance(scope, int) else None), scope == SCOPE_NONE
+    return counts_module.project_of(scope), scope == SCOPE_NONE
 
 
 def _task_scoped(stmt, scope):
@@ -89,7 +90,8 @@ def _task_scoped(stmt, scope):
     if unassigned:
         return stmt.where(AgentTask.project_id.is_(None))
     if project_id is not None:
-        return stmt.where(AgentTask.project_id == project_id)
+        return stmt.where(ws_scope.project_clause(AgentTask.project_id,
+                                                  project_id))
     return stmt
 
 
@@ -259,7 +261,7 @@ def _needs_decision(session, scope) -> dict:
     waiting = session.exec(select(func.count(Defect.id))
                            .where(defect_store.in_queue())).one()
     return {"waiting": int(waiting),
-            "all_projects": isinstance(scope, int),
+            "all_projects": isinstance(scope, (int, tuple)),
             "rows": [{"id": d.id, "round": d.round, "opened_at": d.opened_at,
                       "symptom": d.symptom,
                       "paths": (json.loads(d.suspect_paths_json)
@@ -306,7 +308,11 @@ def _project_features(scope: int) -> dict:
     return {"total": matched, "rows": [row.to_dict() for row in found]}
 
 
-def overview(scope: int | str = SCOPE_ALL) -> dict:
+def _scope_label(scope) -> str:
+    return str(ws_scope.echo(scope))
+
+
+def overview(scope: int | tuple[int, ...] | str = SCOPE_ALL) -> dict:
     """Every Overview panel under `scope`.
 
     Raises `projects.ProjectNotFound` for a project id nothing is filed under,
@@ -314,7 +320,7 @@ def overview(scope: int | str = SCOPE_ALL) -> dict:
     """
     head = _project_head(scope) if isinstance(scope, int) else None
     with SessionLocal() as session:
-        body = {"scope": str(scope), "loop": _loop(session, scope),
+        body = {"scope": _scope_label(scope), "loop": _loop(session, scope),
                 "features_in_flight": _features_in_flight(session, scope),
                 "running": _running(session, scope),
                 "run_next": _run_next(session, scope),
@@ -322,8 +328,13 @@ def overview(scope: int | str = SCOPE_ALL) -> dict:
                 "needs_decision": _needs_decision(session, scope)}
     if scope == SCOPE_ALL:
         body["projects"] = projects_module.panel()
+    elif isinstance(scope, tuple) and scope:
+        # An empty workspace omits the panel: its zero-total state is the
+        # first-run "add a project" card, which is not what an empty
+        # workspace means.
+        body["projects"] = projects_module.panel(only=scope)
     if head is not None:
         body["project_head"] = head
         body["project_features"] = _project_features(scope)
-    log.read("pipeline_overview_read", scope=str(scope))
+    log.read("pipeline_overview_read", scope=_scope_label(scope))
     return body

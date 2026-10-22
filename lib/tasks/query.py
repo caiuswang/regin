@@ -20,6 +20,7 @@ from sqlmodel import func, select
 from lib.orm.models.tasks import (
     AgentTask, TASK_PRIORITIES, TASK_STATUS_ARCHIVED, TASK_STATUSES,
 )
+from lib.workspaces import scope as ws_scope
 
 Q_MAX = 200
 TAG_MAX = 60
@@ -92,6 +93,11 @@ def parse_filters(args) -> dict:
     # project" is the backlog, and it has to be expressible.
     raw_project = _arg(args, "project_id")
     unassigned = raw_project == "none"
+    if ws_scope.is_ws(raw_project):
+        project_id = ws_scope.member_ids(raw_project)
+    else:
+        project_id = None if unassigned else parse_int(raw_project,
+                                                       "project_id")
 
     return {
         "status": _enum(args, "status", TASK_STATUSES),
@@ -108,8 +114,7 @@ def parse_filters(args) -> dict:
         "q": _arg(args, "q")[:Q_MAX],
         "tag": _arg(args, "tag")[:TAG_MAX],
         "source": _arg(args, "source"),
-        "project_id": None if unassigned else parse_int(raw_project,
-                                                           "project_id"),
+        "project_id": project_id,
         "unassigned": unassigned,
         "include_archived": _flag(args, "include_archived"),
     }
@@ -148,7 +153,8 @@ def ordered(stmt, sort: str):
     return stmt.order_by(*cols)
 
 
-def population_stmt(stmt, project_id: Optional[int], unassigned: bool):
+def population_stmt(stmt, project_id: Optional[ws_scope.ProjectId],
+                    unassigned: bool):
     """The tab's unnarrowed population under one project scope.
 
     What `/tasks` shows with no control touched: archived is a world you ask
@@ -161,7 +167,8 @@ def population_stmt(stmt, project_id: Optional[int], unassigned: bool):
     if unassigned:
         return stmt.where(AgentTask.project_id.is_(None))
     if project_id is not None:
-        return stmt.where(AgentTask.project_id == project_id)
+        return stmt.where(ws_scope.project_clause(AgentTask.project_id,
+                                                  project_id))
     return stmt
 
 
@@ -216,7 +223,8 @@ def _by_project(stmt, filters: dict):
     if filters["unassigned"]:
         return stmt.where(AgentTask.project_id.is_(None))
     if filters["project_id"] is not None:
-        return stmt.where(AgentTask.project_id == filters["project_id"])
+        return stmt.where(ws_scope.project_clause(AgentTask.project_id,
+                                                  filters["project_id"]))
     return stmt
 
 

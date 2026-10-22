@@ -36,6 +36,7 @@ from lib.tasks.query import like_pattern
 from lib.utils.pagination import (
     DEFAULT_PAGE_SIZE, Page, paginate_query_stmt,
 )
+from lib.workspaces import scope as ws_scope
 
 log = get_activity_logger("defects")
 
@@ -890,7 +891,8 @@ def _by_project(stmt, query):
     from lib.orm.models.features import Feature  # noqa: PLC0415
 
     if query.project_id is not None:
-        return stmt.where(Feature.project_id == query.project_id)
+        return stmt.where(ws_scope.project_clause(Feature.project_id,
+                                                  query.project_id))
     if query.project_none:
         # The outer join already renders an unattributed defect's project as
         # NULL, which is the answer the ledger gives: it has none. One

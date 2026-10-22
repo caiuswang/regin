@@ -24,6 +24,7 @@ from typing import Optional
 
 from lib.orm.models.defects import STATUS_CLOSED, STATUS_OPEN
 from lib.tasks.query import Q_MAX
+from lib.workspaces import scope as ws_scope
 
 SCOPE_ALL = "all"
 SCOPE_UNATTRIBUTED = "unattributed"
@@ -99,7 +100,7 @@ class DefectQuery:
     queue_out: bool = False
     status: Optional[str] = None
     q: str = ""
-    project_id: Optional[int] = None
+    project_id: Optional[ws_scope.ProjectId] = None
     project_none: bool = False
     sort: Sort = field(default_factory=Sort)
 
@@ -152,13 +153,15 @@ def parse_queue(raw) -> bool:
     return True
 
 
-def parse_project(raw) -> tuple[Optional[int], bool]:
-    """`(project_id, in_no_project)`."""
+def parse_project(raw) -> tuple[Optional[ws_scope.ProjectId], bool]:
+    """`(project_id, in_no_project)`; `ws:<id>` gives the member id tuple."""
     value = (raw or "").strip()
     if not value:
         return None, False
     if value == PROJECT_NONE:
         return None, True
+    if ws_scope.is_ws(value):
+        return ws_scope.member_ids(value), False
     try:
         return int(value), False
     except ValueError:

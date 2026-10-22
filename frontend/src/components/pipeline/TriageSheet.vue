@@ -12,7 +12,7 @@ import DefectMergePicker from '../defects/DefectMergePicker.vue'
 import DefectRefusal from '../defects/DefectRefusal.vue'
 import { useDefectTriage, VERBS } from '../../composables/useDefectTriage'
 import { invalidatePipelineCounts } from '../../composables/usePipelineCounts'
-import { isProjectScope } from '../../composables/usePipelineScope'
+import { isProjectScope, isWorkspaceScope } from '../../composables/usePipelineScope'
 import { defectRef, monthDay, reopenedLabel } from '../../utils/pipelineFormat'
 
 const props = defineProps({
@@ -25,7 +25,7 @@ const {
   items, total, loading, busy, error, refusal, notice, cursor, pending, blamed, focused,
   load, move, begin, submit, cancel, remedy,
 } = useDefectTriage()
-const allProjects = computed(() => isProjectScope(props.scope))
+const allProjects = computed(() => isProjectScope(props.scope) || isWorkspaceScope(props.scope))
 
 const value = ref('')
 const field = ref(null)

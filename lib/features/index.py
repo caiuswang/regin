@@ -40,6 +40,7 @@ from lib.tasks.query import (
     FilterRejected, Q_MAX, like_pattern, parse_int,
 )
 from lib.utils import pagination as offset
+from lib.workspaces import scope as ws_scope
 
 log = get_activity_logger("defects")
 
@@ -368,14 +369,18 @@ def parse_filters(args) -> dict:
     # have to be able to ask for.
     raw_project = (args.get("project_id") or "").strip()
     unassigned = raw_project == "none"
+    if ws_scope.is_ws(raw_project):
+        project_id = ws_scope.member_ids(raw_project)
+    else:
+        project_id = None if unassigned else parse_int(raw_project or None,
+                                                       "project_id")
     stage = (args.get("stage") or "").strip()
     if stage and stage not in events_module.STAGES:
         raise FilterRejected(f"unknown stage: {stage}", "stage")
     return {
         "q": (args.get("q") or "").strip()[:Q_MAX],
         "stage": stage,
-        "project_id": None if unassigned else parse_int(raw_project or None,
-                                                        "project_id"),
+        "project_id": project_id,
         "unassigned": unassigned,
         "sort": (args.get("sort") or "").strip(),
     }
@@ -420,8 +425,8 @@ def _where(spec: dict) -> tuple[str, dict]:
     if spec["unassigned"]:
         clauses.append("project_id IS NULL")
     elif spec["project_id"] is not None:
-        clauses.append("project_id = :project_id")
-        binds["project_id"] = spec["project_id"]
+        clauses.append(ws_scope.project_sql("project_id", spec["project_id"],
+                                            binds))
     return (" WHERE " + " AND ".join(clauses)) if clauses else "", binds
 
 
@@ -518,7 +523,7 @@ def page(q: str = "", *, filters: Optional[dict] = None,
                 sort=f"{sort_key}:{sort_dir.lower()}",
                 filters={"q": spec["q"], "stage": spec["stage"],
                          "project_id": "none" if spec["unassigned"]
-                         else spec["project_id"]})
+                         else ws_scope.echo(spec["project_id"])})
 
 
 def rows(filters: dict, *, size: int,
@@ -583,7 +588,7 @@ def stage_counts(spec: dict) -> dict[str, int]:
     return {"all": sum(out.values()), **out}
 
 
-def spent(project_id: Optional[int], unassigned: bool = False) -> Optional[float]:
+def spent(project_id: Optional[ws_scope.ProjectId], unassigned: bool = False) -> Optional[float]:
     """What the features under one scope cost, summed the way each row's
     `cost_usd` is — `None` when no feature there has a declared cost."""
     spec = {**NO_FILTERS, "project_id": project_id, "unassigned": unassigned,

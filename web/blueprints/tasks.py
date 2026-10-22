@@ -61,6 +61,7 @@ from lib.utils.pagination import (
     clamp_page, clamp_size, list_page, paginate_query_stmt,
 )
 from lib.image_payload import decoded_image, wanted_idx
+from lib.workspaces import scope as ws_scope
 
 tasks_bp = Blueprint('tasks', __name__)
 
@@ -201,7 +202,7 @@ def api_list_tasks():
 def _applied(filters: dict) -> dict:
     applied = {k: v for k, v in filters.items() if k != "sort"}
     applied["project_id"] = ("none" if filters["unassigned"]
-                             else filters["project_id"])
+                             else ws_scope.echo(filters["project_id"]))
     applied.pop("unassigned", None)
     return applied
 

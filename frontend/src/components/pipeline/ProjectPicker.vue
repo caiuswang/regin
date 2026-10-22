@@ -14,7 +14,9 @@ import SegmentBar from './SegmentBar.vue'
 import PlGlyph from './PlGlyph.vue'
 import AddProjectDialog from '../projects/AddProjectDialog.vue'
 import { stageParts } from '../../utils/pipelineFormat'
-import { SCOPE_ALL, SCOPE_NONE } from '../../composables/usePipelineScope'
+import { SCOPE_ALL, SCOPE_NONE, workspaceScope } from '../../composables/usePipelineScope'
+import { useWorkspaces } from '../../composables/useWorkspaces'
+import { workspaceSections } from '../../utils/pickerSections'
 import { MODE_REPO, canAddProjects } from '../../composables/useAddProject'
 
 const props = defineProps({
@@ -59,9 +61,11 @@ async function load({ more = false } = {}) {
 
 const needsAttention = row => row.id != null
   && ((row.features?.by_stage?.escaped || 0) > 0 || (row.defects?.open || 0) > 0)
+const { items: workspaces, load: loadWorkspaces } = useWorkspaces()
+const split = computed(() => workspaceSections(workspaces.value, items.value, q.value))
 const groups = computed(() => [
-  { label: 'Needs attention', rows: items.value.filter(needsAttention) },
-  { label: 'Recent', rows: items.value.filter(r => !needsAttention(r)) },
+  { label: 'Needs attention', rows: split.value.loose.filter(needsAttention) },
+  { label: 'Recent', rows: split.value.loose.filter(r => !needsAttention(r)) },
 ].filter(g => g.rows.length))
 const more = computed(() => Math.max(0, total.value - items.value.length))
 
@@ -71,7 +75,11 @@ const chipGlyph = computed(() => {
   if (props.scope === SCOPE_ALL) return 'portfolio'
   return props.scope === SCOPE_NONE ? 'project.none' : 'project'
 })
-const order = computed(() => [SCOPE_ALL, ...groups.value.flatMap(g => g.rows.map(scopeOfRow))])
+const order = computed(() => [
+  SCOPE_ALL,
+  ...split.value.sections.flatMap(s => [workspaceScope(s.ws.id), ...s.rows.map(scopeOfRow)]),
+  ...groups.value.flatMap(g => g.rows.map(scopeOfRow)),
+])
 function scopeOfRow(row) {
   return row.id == null ? SCOPE_NONE : String(row.id)
 }
@@ -107,6 +115,7 @@ watch(open, async (isOpen) => {
   if (!isOpen) return
   q.value = ''
   load()
+  loadWorkspaces()
   await nextTick()
   search.value?.focus()
 })
@@ -119,6 +128,7 @@ function pick(scope) {
 
 const selected = row => String(row.scope) === props.scope
 const manageTo = computed(() => (/^\d+$/.test(props.scope) ? `/projects/${props.scope}` : null))
+const wsSelected = ws => props.scope === workspaceScope(ws.id)
 
 const canAdd = canAddProjects()
 const adding = ref(false)
@@ -126,9 +136,14 @@ function startAdd() {
   open.value = false
   adding.value = true
 }
-// A workspace has no scope of its own yet, so adding one leaves the scope be.
-function added(result) {
-  if (result.kind === MODE_REPO && result.project) emit('select', String(result.project.id))
+async function added(result) {
+  if (result.kind === MODE_REPO && result.project) {
+    emit('select', String(result.project.id))
+    return
+  }
+  if (!result.workspace) return
+  await loadWorkspaces()
+  emit('select', workspaceScope(result.workspace.id))
 }
 
 defineExpose({ open: () => { open.value = true } })
@@ -205,6 +220,43 @@ defineExpose({ open: () => { open.value = true } })
           <span class="pp-hint">portfolio view</span>
         </Button>
         <p v-if="error" class="pp-error" role="alert">{{ error }}</p>
+        <div v-if="split.sections.length" class="pp-group" data-testid="project-picker-workspaces">
+          <div class="pp-group__label" data-pl-part="picker-group">Workspaces</div>
+          <template v-for="s in split.sections" :key="`ws-${s.ws.id}`">
+            <Button
+              variant="ghost"
+              class="pp-row pp-row--ws"
+              data-pl-part="picker-row"
+              :class="{ 'is-selected': wsSelected(s.ws), 'is-active': isActive(workspaceScope(s.ws.id)) }"
+              :aria-current="isActive(workspaceScope(s.ws.id)) ? 'true' : undefined"
+              :data-testid="`project-picker-ws-${s.ws.id}`"
+              @click="pick(workspaceScope(s.ws.id))"
+            >
+              <span class="pp-check"><Icon v-if="wsSelected(s.ws)" name="check" :size="12" /></span>
+              <Icon name="folder" :size="13" />
+              <span class="pp-name">{{ s.ws.name }}</span>
+              <span class="pp-hint">{{ s.ws.members.length }} repos</span>
+            </Button>
+            <Button
+              v-for="row in s.rows"
+              :key="row.scope"
+              variant="ghost"
+              class="pp-row pp-row--member"
+              data-pl-part="picker-row"
+              :class="{ 'is-selected': selected(row), 'is-active': isActive(scopeOfRow(row)) }"
+              :aria-current="isActive(scopeOfRow(row)) ? 'true' : undefined"
+              :data-testid="`project-picker-row-${row.scope}`"
+              @click="pick(scopeOfRow(row))"
+            >
+              <span class="pp-check"><Icon v-if="selected(row)" name="check" :size="12" /></span>
+              <PlGlyph :kind="rowGlyph(row)" />
+              <span class="pp-name">{{ row.name || `project #${row.id}` }}</span>
+              <span class="pp-bar"><SegmentBar :parts="stageParts(row.features?.by_stage)" :height="4" /></span>
+              <span v-if="row.defects?.open" class="pp-open">{{ row.defects.open }} open</span>
+              <span v-else class="pp-none">—</span>
+            </Button>
+          </template>
+        </div>
         <div v-for="g in groups" :key="g.label" class="pp-group">
           <div class="pp-group__label" data-pl-part="picker-group">{{ g.label }}</div>
           <Button
@@ -318,6 +370,8 @@ defineExpose({ open: () => { open.value = true } })
 .pp-panel .pp-row.is-active { box-shadow: inset 2px 0 0 var(--color-primary); background: var(--color-surface-2); }
 .pp-panel .pp-row.is-selected { background: var(--color-info-soft); font-weight: 600; }
 .pp-row--all { border-bottom: 1px solid var(--color-border); }
+.pp-panel .pp-row--ws { font-weight: 500; }
+.pp-panel .pp-row--member { padding-left: 1.75rem; }
 .pp-panel .pp-row--manage { border-top: 1px solid var(--color-border); margin-top: 0.35rem; text-decoration: none; color: var(--color-fg-muted); }
 .pp-panel .pp-row--add { border-top: 1px solid var(--color-border); color: var(--color-fg-muted); }
 .pp-panel .pp-row--manage + .pp-row--add { border-top: 0; }

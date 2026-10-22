@@ -2,11 +2,12 @@ import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 // The project is the ONE axis the three Pipeline tabs share, so it lives in
-// the shell and rides the URL: `?project=` is `all` (absent), `none`, or a
-// repo id. "No project" is a scope, not the absence of one — a feature filed
+// the shell and rides the URL: `?project=` is `all` (absent), `none`, a repo
+// id, or `ws:<id>` — every repo under that workspace. "No project" is a scope, not the absence of one — a feature filed
 // under nothing has to be reachable, or it is invisible under every scope.
 export const SCOPE_ALL = 'all'
 export const SCOPE_NONE = 'none'
+export const WS_PREFIX = 'ws:'
 
 const STORAGE_KEY = 'regin.pipeline.project'
 
@@ -38,6 +39,20 @@ export function scopeParam(raw) {
 /** True when the scope names one project by id — not `all`, not `none`. */
 export function isProjectScope(raw) {
   return /^\d+$/.test(scopeParam(raw))
+}
+
+/** True when the scope names a workspace (`ws:<id>`). */
+export function isWorkspaceScope(raw) {
+  return /^ws:\d+$/.test(scopeParam(raw))
+}
+
+/** The workspace id a `ws:<id>` scope names, or null. */
+export function workspaceIdOf(raw) {
+  return isWorkspaceScope(raw) ? Number(scopeParam(raw).slice(WS_PREFIX.length)) : null
+}
+
+export function workspaceScope(id) {
+  return `${WS_PREFIX}${id}`
 }
 
 function readStored() {

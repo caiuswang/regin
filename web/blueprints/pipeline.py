@@ -63,8 +63,9 @@ def api_pipeline_project(scope: str):
         parsed = counts_module.parse_scope(scope)
     except counts_module.ScopeError as exc:
         return jsonify({"error": str(exc)}), 400
-    if parsed == counts_module.SCOPE_ALL:
-        return jsonify({"error": "a project panel is one scope, not 'all'"}), 400
+    if parsed == counts_module.SCOPE_ALL or isinstance(parsed, tuple):
+        return jsonify({"error": "a project panel is one repo or 'none', "
+                                 f"not {scope!r}"}), 400
     try:
         return jsonify(projects_module.overview(parsed))
     except projects_module.ProjectNotFound as exc:

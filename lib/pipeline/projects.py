@@ -32,6 +32,7 @@ from lib.orm.models.tasks import (
 from lib.pipeline.counts import SCOPE_NONE
 from lib.tasks import query as task_query
 from lib.utils import pagination as offset
+from lib.workspaces import scope as ws_scope
 
 log = get_activity_logger("features")
 
@@ -256,8 +257,11 @@ def parse_filters(args) -> dict:
     status = (args.get("status") or "").strip()
     if status and status not in STATUSES:
         raise ProjectFilterRejected(f"unknown status: {status}", "status")
+    raw_project = (args.get("project") or "").strip()
+    only = (ws_scope.member_ids(raw_project)
+            if ws_scope.is_ws(raw_project) else None)
     return {"q": (args.get("q") or "").strip()[:200], "status": status,
-            "sort": parse_sort(args.get("sort"))}
+            "sort": parse_sort(args.get("sort")), "only": only}
 
 
 def _label(summary: Summary) -> str:
@@ -296,10 +300,13 @@ def listing(filters: dict, *, page: int, size: int) -> dict:
     narrowed in Python; what matters is that the narrowing is the server's.
     "No project" stays last under every sort: it is a bucket, not a project.
     """
-    collected = _collect()
-    none = collected.pop(None)
-    population = len(collected) + 1
-    ordered = [*_sorted(list(collected.values()), filters["sort"]), none]
+    only = filters.get("only")
+    collected = _members(_collect(), only)
+    # A workspace is a set of repos; "No project" is in none of them.
+    none = collected.pop(None, None)
+    population = len(collected) + (none is not None)
+    ordered = [*_sorted(list(collected.values()), filters["sort"]),
+               *([none] if none is not None else [])]
     matched = [s for s in ordered if _matches(s, filters)]
     start = page * size
     items = [s.to_dict() for s in matched[start:start + size]]
@@ -393,7 +400,15 @@ def _quiet(summary: Summary) -> bool:
     return not (summary.escaped or summary.defects_open or summary.open_tasks)
 
 
-def panel(limit: int = PANEL_ROWS) -> dict:
+def _members(collected: dict, only: Optional[tuple[int, ...]]) -> dict:
+    """Narrow to a workspace's member repos; `None` keeps every project."""
+    if only is None:
+        return collected
+    return {pid: s for pid, s in collected.items() if pid in only}
+
+
+def panel(limit: int = PANEL_ROWS,
+          only: Optional[tuple[int, ...]] = None) -> dict:
     """The Overview's Projects panel under the attention sort.
 
     | project                        | goes to                                      |
@@ -402,8 +417,9 @@ def panel(limit: int = PANEL_ROWS) -> dict:
     | anything else                  | counted in `active`; first `limit` in `rows` |
 
     "No project" is a bucket, not a project, and is not counted here.
+    `only` narrows to a workspace's members.
     """
-    collected = _collect()
+    collected = _members(_collect(), only)
     collected.pop(None, None)
     summaries = list(collected.values())
     active = _sorted([s for s in summaries if not _quiet(s)], "attention:desc")

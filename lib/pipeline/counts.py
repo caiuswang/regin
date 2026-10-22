@@ -20,6 +20,7 @@ from lib.orm.models.defects import Defect
 from lib.orm.models.features import Feature
 from lib.orm.models.tasks import AgentTask
 from lib.tasks import query as task_query
+from lib.workspaces import scope as ws_scope
 
 SCOPE_ALL = "all"
 SCOPE_NONE = "none"
@@ -29,22 +30,34 @@ class ScopeError(ValueError):
     """The `project` parameter named something that is not a scope."""
 
 
-def parse_scope(raw: str | None) -> int | str:
-    """`all` (default), `none`, or a repo id.
+def parse_scope(raw: str | None) -> int | tuple[int, ...] | str:
+    """`all` (default), `none`, a repo id, or `ws:<id>` — the tuple of that
+    workspace's member repo ids.
 
     Refused rather than silently widened: a dropped scope shows a list that
-    does not match the selector above it.
+    does not match the selector above it. The one widening is a workspace
+    that no longer exists, which reads as `all` (spec Rules C).
     """
     value = (raw or "").strip()
     if not value or value == SCOPE_ALL:
         return SCOPE_ALL
     if value == SCOPE_NONE:
         return SCOPE_NONE
+    if ws_scope.is_ws(value):
+        members = ws_scope.member_ids(value)
+        return SCOPE_ALL if members is None else members
     try:
         return int(value)
     except ValueError:
-        raise ScopeError(f"project must be 'all', 'none' or a repo id, "
+        raise ScopeError(f"project must be 'all', 'none', a repo id or "
+                         f"'ws:<id>', "
                          f"got {value!r}") from None
+
+
+def project_of(scope):
+    """The scope as a `project_id` filter value: a repo id, a workspace's
+    member tuple, or None for `all` / `none`."""
+    return scope if isinstance(scope, (int, tuple)) else None
 
 
 def _scoped(stmt, column, scope):
@@ -52,7 +65,7 @@ def _scoped(stmt, column, scope):
         return stmt
     if scope == SCOPE_NONE:
         return stmt.where(column.is_(None))
-    return stmt.where(column == scope)
+    return stmt.where(ws_scope.project_clause(column, scope))
 
 
 def defects_stmt(scope):
@@ -64,7 +77,7 @@ def defects_stmt(scope):
         # An unattributed defect belongs to no project, so it belongs here —
         # dropping it would make it invisible under every scope.
         return stmt.where(Feature.project_id.is_(None))
-    return stmt.where(Feature.project_id == scope)
+    return stmt.where(ws_scope.project_clause(Feature.project_id, scope))
 
 
 def tasks_stmt(scope):
@@ -72,7 +85,7 @@ def tasks_stmt(scope):
     `population`, so the strip and the toolbar count cannot disagree."""
     return task_query.population_stmt(
         select(func.count(AgentTask.id)),
-        scope if isinstance(scope, int) else None, scope == SCOPE_NONE)
+        project_of(scope), scope == SCOPE_NONE)
 
 
 def features_stmt(scope):
@@ -84,7 +97,7 @@ def features_stmt(scope):
                    Feature.project_id, scope)
 
 
-def counts(scope: int | str = SCOPE_ALL) -> dict[str, int]:
+def counts(scope: int | tuple[int, ...] | str = SCOPE_ALL) -> dict[str, int]:
     with SessionLocal() as session:
         return {
             "tasks": session.exec(tasks_stmt(scope)).one(),

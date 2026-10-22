@@ -112,7 +112,8 @@ let secretAsked = 0
 async function openSecret() {
   const mine = ++secretAsked
   const scope = scopeOf(route.query)
-  const label = scope === SCOPE_ALL ? 'All projects' : scope === SCOPE_NONE ? 'No project' : `project #${scope}`
+  const label = scope === SCOPE_ALL ? 'All projects' : scope === SCOPE_NONE ? 'No project'
+    : scope.startsWith('ws:') ? `workspace #${scope.slice(3)}` : `project #${scope}`
   secret.value = { open: true, loop: null, label, error: '' }
   try {
     const qs = scope !== SCOPE_ALL ? `?project=${encodeURIComponent(scope)}` : ''

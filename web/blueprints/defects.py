@@ -33,6 +33,7 @@ from lib.defects import store
 from lib.defects import view as defect_view
 from lib.utils.pagination import clamp_page, clamp_size, list_page
 from lib.image_payload import decoded_image, wanted_idx
+from lib.workspaces import scope as ws_scope
 
 defects_bp = Blueprint("defects", __name__)
 
@@ -111,7 +112,7 @@ def api_list_defects():
                  "feature_id": query.feature_id,
                  "fix_item": query.fix_task_id,
                  "project": "none" if query.project_none
-                 else query.project_id},
+                 else ws_scope.echo(query.project_id)},
         # Over the whole filtered population, not this page — the I-B2 count.
         extras={"scope": query.scope,
                 "fix_drift": store.fix_drift_count(query)}))
