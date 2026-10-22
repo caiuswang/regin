@@ -106,6 +106,9 @@ class AgentProvider:
     # fallback instead (see `lib/session_probe.py`). Read off the class, so
     # declaring one must not require constructing the provider.
     session_id_env_vars: tuple[str, ...] = ()
+    # True when an MCP entry regin writes stays inert until the user approves
+    # it inside the agent's own UI (WorkBuddy's connector center).
+    mcp_needs_user_trust: bool = False
 
     def hook_events(self) -> tuple[str, ...] | None:
         """Supported hook event names for install wiring.
