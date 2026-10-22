@@ -176,13 +176,13 @@ def test_new_seams_default_to_none(pid):
         assert p.acp_argv() is None
 
 
-def test_hook_settings_list_the_family_without_the_experimental_flag(flask_client, monkeypatch):
+def test_hook_settings_list_non_experimental_providers_without_the_flag(flask_client, monkeypatch):
     monkeypatch.setattr(settings_mod.settings, "experimental_providers", False)
 
     hooks = {row["id"] for row in flask_client.get("/api/hooks").get_json()["providers"]}
     configs = {row["id"] for row in
                flask_client.get("/api/settings/providers").get_json()["providers"]}
 
-    assert {"claude", "codebuddy", "workbuddy"} <= hooks
-    assert {"claude", "codebuddy", "workbuddy"} <= configs
-    assert not {"codex", "generic", "kimi"} & (hooks | configs)
+    assert {"claude", "kimi", "codebuddy", "workbuddy"} <= hooks
+    assert {"claude", "kimi", "codebuddy", "workbuddy"} <= configs
+    assert not {"codex", "generic"} & (hooks | configs)

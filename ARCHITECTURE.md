@@ -172,7 +172,7 @@ Two-layer merge: `config/settings.json` (shared, git-tracked) + `config/settings
 | `repo_paths` | local | `[]` (managed by `/repos` page and `regin add-repo` / `regin remove-repo`; each entry is an absolute git working tree path) |
 | `active_provider` | local | `claude` |
 | `providers` | local | `{}` (optional per-provider path overrides) |
-| `experimental_providers` | local | `false` — when true, surfaces `codex`, `generic`, and `kimi` in the settings UI and `/api/providers` |
+| `experimental_providers` | local | `false` — when true, surfaces `codex` and `generic` in the settings UI and `/api/providers` |
 | `skills_dir` | local | `~/.claude/skills` (legacy Claude fallback) |
 | `web_port` | shared | 8321 |
 | `mode` | local | `standalone` (also: `shared`) |

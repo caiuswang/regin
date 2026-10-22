@@ -544,7 +544,7 @@ SETTINGS_SCHEMA: list[tuple[str, object, str]] = [
     ("active_provider", "claude",
      "Primary agent provider (claude, codex, generic, kimi). Used as the default for single-provider operations and as the source of truth when no explicit provider is given."),
     ("experimental_providers", False,
-     "Surface experimental agent providers (codex, generic, kimi) in the Settings hook-manager UI. When off, only claude, codebuddy, workbuddy and the active provider are shown."),
+     "Surface experimental agent providers (codex, generic) in the Settings hook-manager UI. When off, only claude, kimi, codebuddy, workbuddy and the active provider are shown."),
     ("experimental_dense_search", False,
      "Surface the dense (semantic) pattern search UI on the Patterns page (toggle, query input, Route button). When off, only the standard tag/category filters are shown."),
     ("dense_rerank_min_corpus", 1,

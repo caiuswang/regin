@@ -229,6 +229,7 @@ _KIMI_HOOK_EVENTS: tuple[str, ...] = (
 
 class KimiProvider(AgentProvider):
     provider_id = "kimi"
+    experimental = False
     display_name = "Kimi Code"
     capabilities = ProviderCapabilities(
         # Kimi loads skills from ~/.kimi-code/skills (auto-discovered) and via
