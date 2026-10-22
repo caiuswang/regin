@@ -9,10 +9,12 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import api from '../../api'
 import Button from '../ui/Button.vue'
+import Checkbox from '../ui/Checkbox.vue'
 import Dialog from '../ui/Dialog.vue'
 import Input from '../ui/Input.vue'
 import Select from '../ui/Select.vue'
 import { DEFAULT_PROVIDER, useTaskArm } from '../../composables/useTaskArm.js'
+import { rememberedAutoClose } from '../../composables/useArmPrefs.js'
 import { useProjects } from '../../composables/useProjects.js'
 import { ADD_PROJECT_VALUE, withAddProject } from '../../composables/useAddProject.js'
 import AddProjectDialog from '../projects/AddProjectDialog.vue'
@@ -29,7 +31,7 @@ const { loading, error, cwdOptions, providerOptions, loadOptions } = useTaskArm(
 const { ensure: ensureProjects, byId } = useProjects()
 
 const drafts = ref([])
-const shared = reactive({ cwd: '', provider: DEFAULT_PROVIDER })
+const shared = reactive({ cwd: '', provider: DEFAULT_PROVIDER, one_shot: rememberedAutoClose() })
 const reasons = ref({})
 const saving = ref(false)
 const failed = ref('')
@@ -71,6 +73,7 @@ async function projectAdded(added) {
 function item(d) {
   const body = {
     task_id: d.task_id, provider: shared.provider, cwd: shared.cwd,
+    one_shot: shared.one_shot,
   }
   if (d.branch.trim()) body.worktree = { branch: d.branch.trim(), base: d.base.trim() }
   if (d.skill.trim()) body.skill = { name: d.skill.trim() }
@@ -121,6 +124,10 @@ function close() {
           aria-label="Agent provider" data-testid="slice-arm-provider"
         />
       </template>
+      <label class="sa-check">
+        <Checkbox v-model="shared.one_shot" data-testid="slice-arm-oneshot" />
+        <span>Auto close — agent 报告完成后结束会话</span>
+      </label>
       <fieldset
         v-for="d in drafts" :key="d.task_id" class="sa-row"
         :data-testid="`slice-arm-row-${d.n}`"
@@ -153,6 +160,7 @@ function close() {
 <style scoped>
 .sa-body { display: flex; flex-direction: column; gap: 0.6rem; }
 .sa-lbl { font-size: 0.8125rem; color: var(--color-fg-muted); }
+.sa-check { display: flex; align-items: center; gap: 0.5rem; font-size: 0.8125rem; }
 .sa-note { font-size: 0.8125rem; color: var(--color-fg-muted); }
 .sa-row {
     border: 1px solid var(--color-border); border-radius: var(--radius-md);

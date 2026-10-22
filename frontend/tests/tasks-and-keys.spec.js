@@ -516,7 +516,7 @@ test.describe('/tasks — arming', () => {
     const stored = await page.evaluate(
       () => JSON.parse(localStorage.getItem('regin.tasks.arm.last')))
     expect(Object.keys(stored).sort()).toEqual([
-      'cwd', 'effort', 'model', 'one_shot', 'permission_mode',
+      'auto_close', 'cwd', 'effort', 'model', 'permission_mode',
       'provider', 'skillArgs', 'skills',
     ])
     expect(stored.skills).toEqual(['goal-verified', 'feature-pipeline'])

@@ -25,6 +25,9 @@ const props = defineProps({
   // A resumed session cannot move: `claude --resume` resolves its id against
   // the directory it ran in, so the whole section is held shut.
   disabled: { type: Boolean, default: false },
+  // Why this directory can never host a worktree (a non-git workspace root).
+  // Known before asking the server, so the branch lookup is skipped outright.
+  blockedReason: { type: String, default: '' },
 })
 
 const enabled = defineModel('enabled', { type: Boolean, default: false })
@@ -77,7 +80,14 @@ async function loadOptions(cwd) {
   }
 }
 
-watch(() => props.cwd, (cwd) => loadOptions(cwd), { immediate: true })
+watch(() => [props.cwd, props.blockedReason], ([cwd, blocked]) => {
+  if (!blocked) return loadOptions(cwd)
+  latest++
+  opts.value = null
+  unavailable.value = ''
+  loading.value = false
+  enabled.value = false
+}, { immediate: true })
 
 const baseOptions = computed(() => (opts.value?.branches || []).map(
   b => ({ value: b, label: b })))
@@ -109,7 +119,7 @@ const branchMissing = computed(() => enabled.value && !slug.value)
     <label class="live-launch-check" data-pl-part="check">
       <Checkbox
         v-model="enabled"
-        :disabled="disabled || !opts"
+        :disabled="disabled || !!blockedReason || !opts"
         data-testid="live-launch-worktree"
       />
       <span>run in a new git worktree</span>
@@ -122,6 +132,12 @@ const branchMissing = computed(() => enabled.value && !slug.value)
     >
       a continued session stays in the directory it ran in.
     </p>
+    <p
+      v-else-if="blockedReason"
+      class="launch-wt-note"
+      role="status"
+      data-testid="live-launch-worktree-blocked"
+    >{{ blockedReason }}</p>
     <p
       v-else-if="loading && !opts"
       class="launch-wt-note"

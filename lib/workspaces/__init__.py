@@ -172,6 +172,16 @@ def list_workspaces() -> list[dict]:
         return [_to_dict(ws, repos) for ws in rows]
 
 
+def launch_choices() -> list[dict]:
+    """Each workspace as a run's working directory. `is_git` is read off the
+    disk now, because a non-git root cannot host a worktree."""
+    return [
+        {"id": ws["id"], "name": ws["name"], "root_path": ws["root_path"],
+         "repos": len(ws["members"]), "is_git": is_worktree_root(ws["root_path"])}
+        for ws in list_workspaces()
+    ]
+
+
 def _delete(where) -> dict | None:
     with SessionLocal() as session:
         ws = session.exec(select(Workspace).where(where)).first()

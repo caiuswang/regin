@@ -8,6 +8,16 @@ export { CUSTOM_MODEL, DEFAULT_PROVIDER, declares }
 
 const LAUNCH_MODES = ['sdk', 'tmux']
 const LAUNCH_HINTS = { sdk: 'ends if the server restarts', tmux: 'survives a server restart' }
+const NON_GIT_ROOT = 'workspace 根目录不是 git 仓库，无法使用 worktree'
+
+export function workspaceLabel(w) {
+  return `workspace: ${w.name} (${w.repos} ${w.repos === 1 ? 'repo' : 'repos'})`
+}
+
+function samePath(a, b) {
+  const trim = p => String(p || '').replace(/\/+$/, '')
+  return !!a && !!b && trim(a) === trim(b)
+}
 
 /** Every skill a task was armed with, in invocation order. */
 export function armedSkills(skill) {
@@ -39,7 +49,8 @@ export function armDraft(task) {
     modelCustom: '',
     permission_mode: params.permission_mode || '',
     effort: params.effort || '',
-    one_shot: !!params.one_shot,
+    // Auto close is the default (F167 B): only an explicit false opts out.
+    one_shot: params.one_shot !== false,
     useWorktree: !!worktree.branch,
     worktreeBranch: worktree.branch || '',
     worktreeBase: worktree.base || '',
@@ -125,7 +136,7 @@ export function useTaskArm() {
       draft.model = ''
     }
     const offered = {
-      cwd: options.value?.cwds || [],
+      cwd: [...workspaceRoots.value, ...(options.value?.cwds || [])],
       permission_mode: options.value?.permission_modes || [],
       effort: options.value?.efforts || [],
     }
@@ -192,10 +203,25 @@ export function useTaskArm() {
     })
   }
 
+  const workspaces = computed(() => options.value?.workspaces || [])
+  const workspaceRoots = computed(() => workspaces.value.map(w => w.root_path))
+
+  // A workspace whose root is itself a registered repo is offered once, under
+  // the workspace label, so the menu never lists the same directory twice.
   const cwdOptions = computed(() => [
     { value: '', label: 'server working directory' },
-    ...(options.value?.cwds || []).map(p => ({ value: p, label: p })),
+    ...workspaces.value.map(w => ({ value: w.root_path, label: workspaceLabel(w) })),
+    ...(options.value?.cwds || [])
+      .filter(p => !workspaceRoots.value.includes(p))
+      .map(p => ({ value: p, label: p })),
   ])
+
+  // Said before the run, not after: `check_target` refuses a worktree here
+  // anyway, but only once the operator has pressed Arm.
+  function worktreeBlocked(cwd) {
+    const root = workspaces.value.find(w => samePath(w.root_path, cwd))
+    return root && !root.is_git ? NON_GIT_ROOT : ''
+  }
   const modeOptions = computed(() => {
     const cfg = options.value?.default_permission_mode || 'default'
     return [
@@ -227,7 +253,7 @@ export function useTaskArm() {
   return {
     options, loading, error, saving, armError,
     skillCatalog, skillsLoaded, loadSkills, pruneUnavailableSkills, skillMissing,
-    cwdOptions, modeOptions, modelOptions, effortOptions,
+    cwdOptions, modeOptions, modelOptions, effortOptions, worktreeBlocked,
     providers, providerRow, providerOptions, launchOptions,
     loadOptions, adoptUnlisted, pruneUnlisted, arm,
   }

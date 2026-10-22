@@ -10,8 +10,12 @@ const KEY = 'regin.tasks.arm.last'
 // was picked for.
 const REMEMBERED = [
   'provider', 'cwd', 'model', 'permission_mode', 'effort',
-  'skills', 'skillArgs', 'one_shot',
+  'skills', 'skillArgs',
 ]
+// Stored under its own key, not `one_shot`: older stores wrote `one_shot:
+// false` for every arm because that was the unticked default, and reading it
+// back would silently opt everyone out of the new auto-close default.
+const AUTO_CLOSE = 'auto_close'
 
 function read() {
   try {
@@ -47,6 +51,7 @@ export function rememberArm(draft) {
   // moment no skill is ticked, so storing them would let an invisible field
   // be the sole reason the next sheet claims a carry-over.
   if (!kept.skills.length) kept.skillArgs = ''
+  kept[AUTO_CLOSE] = draft.one_shot !== false
   try {
     localStorage.setItem(KEY, JSON.stringify(kept))
   } catch {
@@ -70,9 +75,15 @@ export function forgetArm() {
  * there.
  */
 export function hasRecalledValues(draft) {
-  return REMEMBERED.some(field => field === 'provider'
+  return draft.one_shot === false || REMEMBERED.some(field => field === 'provider'
     ? !isEmpty(draft.provider) && draft.provider !== DEFAULT_PROVIDER
     : !isEmpty(draft[field]))
+}
+
+/** The auto-close tick a fresh arm opens with: on, unless the operator's
+ * last arm turned it off. */
+export function rememberedAutoClose() {
+  return read()?.[AUTO_CLOSE] !== false
 }
 
 // R4b: once the plan (a slice's arm-proposal) or history (the last attempt)
@@ -174,6 +185,10 @@ export function prefilledArmDraft(task, { proposal = null, lastRun = null, integ
   // claude id, so the remembered provider must not re-aim it.
   if (lastRun && !draft.provider) draft.provider = DEFAULT_PROVIDER
   const recalledFields = fillFromStored(draft, task, higher.length ? HOW_ONLY : REMEMBERED)
+  // A preference about how this operator runs things, like the model — so it
+  // outlives a plan or a history speaking, and only an opt-out is a carry-over.
+  draft.one_shot = rememberedAutoClose()
+  if (!draft.one_shot) recalledFields.push('one_shot')
   return { draft: withProvider(draft), recalled: recalledFields.length > 0, recalledFields }
 }
 

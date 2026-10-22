@@ -33,7 +33,7 @@ const emit = defineEmits(['close', 'armed'])
 const {
   options, loading, error, saving, armError,
   skillCatalog, loadSkills, pruneUnavailableSkills, skillMissing,
-  cwdOptions, modeOptions, modelOptions, effortOptions,
+  cwdOptions, modeOptions, modelOptions, effortOptions, worktreeBlocked,
   providerRow, providerOptions, launchOptions,
   loadOptions, adoptUnlisted, pruneUnlisted, arm,
 } = useTaskArm()
@@ -256,6 +256,7 @@ async function submit() {
           v-model:branch="draft.worktreeBranch"
           v-model:base="draft.worktreeBase"
           :cwd="draft.cwd"
+          :blocked-reason="worktreeBlocked(draft.cwd)"
         />
         <p v-if="baseNote" class="task-arm-note" role="status" data-testid="task-arm-base-note">
           {{ baseNote }}
@@ -355,7 +356,7 @@ async function submit() {
 
         <label class="live-launch-check" data-pl-part="check">
           <Checkbox v-model="draft.one_shot" data-testid="task-arm-oneshot" />
-          <span>end the session once the agent reports finished</span>
+          <span>Auto close — agent 报告完成后结束会话</span>
         </label>
       </div>
 

@@ -24,6 +24,7 @@ from lib.providers import registry as provider_registry
 from lib.providers.base import provider_for_trace
 from lib.settings import settings
 from lib.tasks import skill_catalog, slots
+from lib import workspaces
 
 agent_runs_bp = Blueprint('agent_runs', __name__)
 
@@ -278,6 +279,7 @@ def api_launch_options():
         "enabled": bool(cfg.enabled),
         # `repo_paths` are `Path`s, which jsonify cannot serialize.
         "cwds": [str(path) for path in (settings.repo_paths or [])],
+        "workspaces": workspaces.launch_choices(),
         "permission_modes": list(client.PERMISSION_MODES),
         "default_permission_mode": cfg.permission_mode or "default",
         "models": list(client.MODEL_CHOICES),
