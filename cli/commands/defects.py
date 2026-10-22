@@ -26,7 +26,7 @@ from typing import Optional
 
 import typer
 
-from lib.defects import fix_items, store
+from lib.defects import auto_attribute, fix_items, store
 from lib.features import attribution, events
 from lib.features import store as feature_store
 
@@ -255,10 +255,13 @@ def rounds_cmd(
 @defects_app.command("attribute")
 def attribute_cmd(
     defect_id: int = typer.Argument(..., help="Defect id"),
-    feature: str = typer.Argument(
-        ..., help=f"The feature that CAUSED the bug, or `{AT_SESSION}`"),
+    feature: Optional[str] = typer.Argument(
+        None, help=f"The feature that CAUSED the bug, or `{AT_SESSION}`"),
     ref: Optional[str] = typer.Option(
         None, "--ref", help="Name the feature by its tracker reference"),
+    auto: bool = typer.Option(
+        False, "--auto",
+        help="Let the external agent pick the feature from the live ones"),
     session: Optional[str] = typer.Option(
         None, "--session", help="This session's trace id"),
 ) -> None:
@@ -268,9 +271,18 @@ def attribute_cmd(
     the feature's current last event, and that pointer never moves again unless
     blame moves to another feature.
     """
-    resolved = _resolve_feature(feature, ref, session)
+    if auto == (feature is not None or ref is not None):
+        typer.echo("name the feature (an id or --ref), or pass --auto — "
+                   "exactly one", err=True)
+        raise typer.Exit(2)
     try:
-        row = store.attribute(defect_id, resolved)
+        if auto:
+            result = auto_attribute.auto_attribute(defect_id)
+            typer.echo(f"agent: {result.reason or '(no reason given)'}")
+            row = result.defect
+        else:
+            row = store.attribute(defect_id,
+                                  _resolve_feature(feature, ref, session))
     except store.DefectError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(2)

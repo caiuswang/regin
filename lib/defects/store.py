@@ -431,7 +431,8 @@ def queue_position(row: Defect) -> Optional[str]:
     return defect_query.TRIAGE_QUEUE
 
 
-def attribute(defect_id: int, feature_id: int) -> Defect:
+def attribute(defect_id: int, feature_id: int, *,
+              only_if_unattributed: bool = False) -> Defect:
     """Late-bind a defect to the feature that caused it — normally once blame
     on the fix commit names the origin, not at report time.
 
@@ -445,6 +446,10 @@ def attribute(defect_id: int, feature_id: int) -> Defect:
     _require_feature(feature_id)
     with SessionLocal() as session:
         row = _get(session, defect_id)
+        if only_if_unattributed and row.feature_id is not None:
+            raise DefectError(
+                f"#{row.id} was attributed to feature {row.feature_id} "
+                "meanwhile — left as it is")
         clash = _existing(session, feature_id, row.symptom_key)
         if clash is not None and clash.id != row.id:
             raise DefectError(

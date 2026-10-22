@@ -60,3 +60,42 @@ for _sha in (
         "79332799a7cea8f6d9e4deed5f0a1d73f9682c3d202239c7ce34838ad4248315",
         "143dff4206367c8a9127b6adb64268e59603e333905fa0e772e1ad661d7b4cef"):
     register_retired_default(FIX_TASK_SURFACE_ID, sha256=_sha)
+
+
+AUTO_ATTRIBUTE_SURFACE_ID = "defect-auto-attribute"
+
+_AUTO_ATTRIBUTE_BODY = """A defect was reported against this repository and nobody has said which feature caused it. Pick the one feature below whose work most plausibly introduced the bug.
+
+<defect>
+symptom: {{symptom}}
+suspect paths: {{suspect_paths}}
+</defect>
+
+<features>
+{{features}}
+</features>
+
+You may read the repository to check which feature owns the suspect paths. Choose only from the ids listed above. If no listed feature plausibly caused it, answer null rather than guessing.
+
+Answer with exactly one line of JSON and nothing after it:
+{"feature_id": <id or null>, "reason": "<one sentence naming the evidence>"}"""
+
+
+register_surface(
+    AUTO_ATTRIBUTE_SURFACE_ID,
+    label="Defect — AI attribution",
+    area="defect",
+    default_body=_AUTO_ATTRIBUTE_BODY,
+    description=(
+        "Asks the external agent which feature caused an unattributed "
+        "defect, when the operator presses \"Let AI attribute\" (or runs "
+        "`regin defects attribute <ID> --auto`). The answer must name one of "
+        "the listed feature ids or null."
+    ),
+    applies_to=("external-agent",),
+    variables=(
+        PromptVariable("symptom", "The defect's symptom, verbatim.", example="the gutter folds the newest span"),
+        PromptVariable("suspect_paths", "Comma-separated suspect paths, or `none recorded`.", example="lib/trace/merge.py"),
+        PromptVariable("features", "One line per live feature: `F<id> | <title> | project: <name> | <spec lead>`.", example="F80 | Agent SDK runs | project: regin | Runs launched from a task…"),
+    ),
+)

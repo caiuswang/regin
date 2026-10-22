@@ -12,7 +12,8 @@ import { useFlash } from './useFlash'
 //
 // Nothing here proposes a feature. Accept posts the feature the operator
 // blamed in the picker, and the picker starts empty on every card: a wrong
-// parent inflates one feature's rounds and exonerates another.
+// parent inflates one feature's rounds and exonerates another. When the
+// operator cannot find it, `autoAccept` asks the agent explicitly.
 //
 // Accept means one thing on every surface (D6): attribute AND author the fix
 // task, because most accepts need one. Accept only (⇧A) attributes and stops.
@@ -211,6 +212,35 @@ export function useDefectTriage() {
     return settle(VERBS.A.done(row.id))
   }
 
+  /** The operator cannot find the feature: the agent names it and the fix
+   *  task is filed, or the server's refusal lands on the card. */
+  async function autoAccept() {
+    const row = focused.value
+    if (!row || busy.value) return undefined
+    notice.value = null
+    busy.value = true
+    let body
+    try {
+      body = await api.post(`/defects/${row.id}/auto-attribute`, { fix_task: true })
+    } catch (e) {
+      body = { ok: false, error: e?.message || String(e) }
+    } finally {
+      busy.value = false
+    }
+    if (body?.ok === false) {
+      refusal.value = refusalOf(body)
+      return undefined
+    }
+    const named = body.defect.feature_title || `feature #${body.defect.feature_id}`
+    if (body.fix_error) {
+      await settle('')
+      notice.value = { msg: `AI attributed #${row.id} to ${named}, but the fix task was refused — ${body.fix_error}` }
+      return undefined
+    }
+    return settle(`AI attributed #${row.id} to ${named}; fix task created`
+      + (body.reason ? ` — ${body.reason}` : '.'))
+  }
+
   async function submit(chord, value = '') {
     const verb = VERBS[chord]
     const row = focused.value
@@ -262,6 +292,6 @@ export function useDefectTriage() {
 
   return {
     items, total, loading, busy, error, refusal, notice, cursor, pending, blamed,
-    focused, load, reach, move, focus, begin, submit, cancel, remedy,
+    focused, load, reach, move, focus, begin, submit, cancel, remedy, autoAccept,
   }
 }

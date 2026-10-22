@@ -164,6 +164,29 @@ test('an unattributed defect cannot file one, and says why', async ({ page }) =>
     .toContainText('Attribute it to a feature')
 })
 
+test('an unattributed defect lets the agent attribute it and file the task',
+  async ({ page }) => {
+    const unattributed = { ...OPEN, feature_id: null, feature_title: null }
+    const state = { row: unattributed }
+    const posted = []
+    await stubList(page, state)
+    await page.route('**/api/defects/*/auto-attribute', async (route) => {
+      posted.push(route.request().postDataJSON())
+      state.row = { ...OPEN, fix_task_id: 142 }
+      await route.fulfill({ json: { defect: state.row, reason: 'merge.py belongs to it' } })
+    })
+
+    await page.goto('/defects/7')
+    const row = page.locator('li.card', { hasText: 'the gutter folds' })
+    await row.getByTestId('defect-auto-attribute-fix-7').click()
+
+    expect(posted).toEqual([{ fix_task: true }])
+    await expect(page.getByText('AI attributed #7 to The ledger and filed task #142'))
+      .toBeVisible()
+    await expect(row.getByTestId('defect-fix-created-7')).toContainText('task #142')
+    await expect(row.getByTestId('defect-auto-attribute-fix-7')).toHaveCount(0)
+  })
+
 test('the row menu is fully visible on the defects ledger, outside a feature row',
   async ({ page }) => {
     await stubList(page, { row: OPEN })

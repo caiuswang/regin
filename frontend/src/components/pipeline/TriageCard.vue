@@ -22,7 +22,7 @@ const props = defineProps({
   busy: { type: Boolean, default: false },
 })
 const blamed = defineModel('blamed', { type: String, default: '' })
-const emit = defineEmits(['focus', 'verb', 'submit', 'cancel', 'remedy'])
+const emit = defineEmits(['focus', 'verb', 'submit', 'cancel', 'remedy', 'auto'])
 
 const value = ref('')
 const field = ref(null)
@@ -100,6 +100,9 @@ defineExpose({ focus: () => card.value?.focus() })
           <kbd>{{ VERBS[chord].kbd || chord }}</kbd>{{ VERBS[chord].label }}
         </Button>
       </div>
+      <!-- Below the verbs: a click on the card's body must never land on a write. -->
+      <Button v-if="!blamed && !pending" size="sm" variant="ghost" class="tc-auto" :disabled="busy"
+              data-testid="triage-auto-attribute" @click.stop="emit('auto')">Can't find it? Let AI attribute &amp; create task</Button>
       <div v-if="pending && VERBS[pending].picker" :data-testid="`triage-prompt-${VERBS[pending].key}`">
         <DefectMergePicker
           :defect="defect" :busy="busy"
@@ -162,6 +165,7 @@ defineExpose({ focus: () => card.value?.focus() })
 .tc-verbs .tc-verb { grid-column: span 2; }
 .tc-verbs .tc-verb--wide { grid-column: span 3; }
 .tc-verbs .tc-verb { gap: 0.3rem; padding: 0 0.3rem; background: var(--color-surface-2); }
+.tc-auto { align-self: flex-start; }
 .tc-verbs .tc-verb--accept { background: var(--color-info-soft); color: var(--color-info); }
 .tc-verbs .tc-verb--accept.is-ready { background: var(--color-info); color: var(--color-primary-fg); }
 .tc-verb kbd { font-family: var(--font-mono, monospace); font-size: 10px; opacity: 0.7; }

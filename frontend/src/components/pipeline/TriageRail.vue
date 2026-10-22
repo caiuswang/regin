@@ -26,7 +26,7 @@ const triage = useDefectTriage()
 const allProjects = computed(() => isProjectScope(props.scope) || isWorkspaceScope(props.scope))
 const {
   items, total, loading, busy, error, refusal, notice, cursor, pending, blamed,
-  load, reach, move, focus, begin, submit, cancel, remedy,
+  load, reach, move, focus, begin, submit, cancel, remedy, autoAccept,
 } = triage
 
 const cards = ref([])
@@ -46,6 +46,10 @@ async function verb(chord) {
 
 async function onSubmit(chord, value) {
   after(await submit(chord, value))
+}
+
+async function onAuto() {
+  after(await autoAccept())
 }
 
 async function onRemedy(r) {
@@ -225,6 +229,7 @@ defineExpose({ load: reload })
         @submit="onSubmit"
         @cancel="cancel"
         @remedy="onRemedy"
+        @auto="onAuto"
       />
     </ul>
 

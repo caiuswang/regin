@@ -26,7 +26,7 @@ from __future__ import annotations
 from flask import Blueprint, Response, jsonify, request
 
 from lib.auth import require_auth, require_editor
-from lib.defects import fix_items
+from lib.defects import auto_attribute, fix_items
 from lib.defects import images as defect_images
 from lib.defects import query as defect_query
 from lib.defects import store
@@ -217,6 +217,7 @@ def _refused(exc):
 @require_editor
 def api_attribute_defect(defect_id: int):
     """Name the feature that caused the bug — a human's assertion.
+    `auto-attribute` below is the explicit agent-picked alternative.
 
     Nothing here proposes a key from the defect's suspect paths, its session
     or its cost. An unattributed defect stays unattributed until somebody
@@ -228,6 +229,33 @@ def api_attribute_defect(defect_id: int):
     if not feature_id:
         return jsonify({"error": "attribution needs a feature id"}), 400
     return _write(defect_id, lambda: store.attribute(defect_id, feature_id))
+
+
+@defects_bp.route("/api/defects/<int:defect_id>/auto-attribute",
+                  methods=["POST"])
+@require_editor
+def api_auto_attribute_defect(defect_id: int):
+    """Have the external agent name the feature, for a defect the operator
+    cannot place; `fix_task: true` also files the fix task it unblocks.
+
+    The agent may only choose a live feature id it was shown, and any other
+    answer is a 409 that writes nothing. A fix task refused after the
+    attribution landed is `fix_error` on a 200, not a 409 over a write.
+    """
+    payload = request.get_json(silent=True) or {}
+    fix_task = payload.get("fix_task", False)
+    if fix_task is not True and fix_task is not False:
+        return jsonify({"error": "fix_task is a flag: send true, or leave "
+                                 "it out"}), 400
+    if _missing(defect_id):
+        return jsonify({"error": f"no defect {defect_id}"}), 404
+    try:
+        result = auto_attribute.auto_attribute(defect_id, fix_task=fix_task)
+    except store.DefectError as exc:
+        return _refused(exc)
+    return jsonify({"defect": defect_view.serialize(result.defect),
+                    "reason": result.reason,
+                    "fix_error": result.fix_error}), 200
 
 
 @defects_bp.route("/api/defects/<int:defect_id>/close", methods=["POST"])

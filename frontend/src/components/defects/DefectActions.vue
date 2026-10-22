@@ -8,7 +8,8 @@
 //
 // Neither the feature nor the missing check is ever pre-filled: both are the
 // assertion this control exists to collect, and a default is an inference
-// wearing a human's signature.
+// wearing a human's signature. An operator who cannot find the feature asks
+// the agent outright (`autoAttribute`), and its pick and reason are flashed.
 //
 // What the row offers is the R5 matrix (`utils/defectVerbs.js`): one primary
 // verb for its state, the rest behind ⋯. Every refusal is the server's own
@@ -165,6 +166,24 @@ async function createFixTask() {
   emit('changed', `#${props.defect.id} will be fixed by task #${body.defect.fix_task_id}.`)
 }
 
+// For the defect nobody can place: the agent names a live feature, the server
+// refuses anything else, and the reason is flashed so the pick can be judged
+// — and re-attributed by hand if it is wrong.
+async function autoAttribute(fixTask) {
+  const body = await call(() => api.post(`/defects/${props.defect.id}/auto-attribute`,
+                                         { fix_task: fixTask }))
+  if (!body) return
+  form.value = ''
+  offered.value = false
+  const filedOk = fixTask && !body.fix_error
+  if (filedOk) created.value = body.defect.fix_task_id
+  if (body.fix_error) refuse(`Attributed, but the fix task was refused — ${body.fix_error}`)
+  const named = body.defect.feature_title || `feature #${body.defect.feature_id}`
+  const filed = filedOk ? ` and filed task #${body.defect.fix_task_id}` : ''
+  emit('changed', `AI attributed #${props.defect.id} to ${named}${filed}`
+    + (body.reason ? ` — ${body.reason}` : '.'))
+}
+
 // The fix drift's two ways out: the task was not finished after all, or a
 // fresh one takes over. Neither touches the defect — it stays open either way.
 async function reopenFixTask() {
@@ -256,6 +275,9 @@ async function onRemedy(remedy) {
       </template>
       <span v-if="attributeNote" class="note" data-pl-part="hint"
             :data-testid="`defect-fix-create-blocked-${defect.id}`">{{ ATTRIBUTE_FIRST }}</span>
+      <Button v-if="attributeNote" variant="secondary" size="sm" :disabled="busy"
+              :data-testid="`defect-auto-attribute-fix-${defect.id}`"
+              @click="autoAttribute(true)">{{ busy ? 'Attributing…' : 'Let AI attribute & create task' }}</Button>
       <input
         ref="filePick" type="file" accept="image/*" multiple class="sr-only"
         tabindex="-1" aria-hidden="true"
@@ -280,6 +302,9 @@ async function onRemedy(remedy) {
               :data-testid="`defect-attribute-submit-${defect.id}`">
         {{ defect.feature_id ? 'Re-attribute' : 'Attribute' }} #{{ defect.id }}
       </Button>
+      <Button v-if="!defect.feature_id" type="button" variant="ghost" size="sm" :disabled="busy"
+              :data-testid="`defect-auto-attribute-${defect.id}`"
+              @click="autoAttribute(false)">Can't find it? Let AI pick</Button>
       <p class="hint">{{ FORMS.attribute.hint }}</p>
     </form>
     <DefectTaskPicker
@@ -298,11 +323,11 @@ async function onRemedy(remedy) {
          :data-testid="`defect-fix-offer-${defect.id}`">
       <span>Closed. <b>{{ defect.missing_check }}</b> still has to be written — file the task?</span>
       <Button
-        variant="secondary" size="sm" :disabled="busy || !defect.feature_id"
-        :title="defect.feature_id ? '' : ATTRIBUTE_FIRST"
+        variant="secondary" size="sm" :disabled="busy"
+        :title="defect.feature_id ? '' : 'Unattributed — the agent picks its feature first.'"
         :data-testid="`defect-fix-create-${defect.id}`"
-        @click="createFixTask"
-      >Create fix task</Button>
+        @click="defect.feature_id ? createFixTask() : autoAttribute(true)"
+      >{{ defect.feature_id ? 'Create fix task' : 'Let AI attribute & create task' }}</Button>
       <Button variant="ghost" size="sm" :disabled="busy"
               @click="offered = false">Not now</Button>
     </div>
