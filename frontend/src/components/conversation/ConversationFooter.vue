@@ -10,18 +10,21 @@
 //                      on a terminal regin has no handle on (the CLI's
 //                      background daemon runs one on a private PTY), so there
 //                      is nothing to type into and nothing to resume
+//   another app's    → neither, because regin cannot launch that provider at
+//                      all (WorkBuddy's desktop app): it only records it
 //
 // The third case is why this is a component. It renders as an empty rail
 // otherwise, which reads like a broken page rather than a running session.
 import FollowUpComposer from './FollowUpComposer.vue'
 import ResumeSessionBar from './ResumeSessionBar.vue'
 import HeldSessionBar from './HeldSessionBar.vue'
+import ExternalSessionBar from './ExternalSessionBar.vue'
 
 defineProps({
   sessionId: { type: String, required: true },
   turnNumber: { type: Number, required: true },
   // The follow-up bundle off the session row: { canFollowUp, canResume,
-  // heldByCli, cwd, endedReason, model, ctxPct, … }.
+  // heldByCli, drivenBy, cwd, endedReason, model, ctxPct, … }.
   context: { type: Object, default: () => ({}) },
 })
 
@@ -48,5 +51,9 @@ defineEmits(['sent', 'resumed'])
     v-else-if="context.heldByCli"
     :session-id="sessionId"
     @attached="$emit('resumed')"
+  />
+  <ExternalSessionBar
+    v-else-if="context.drivenBy"
+    :app="context.drivenBy"
   />
 </template>

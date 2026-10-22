@@ -54,6 +54,10 @@ def provider(monkeypatch):
 
     class _Provider:
         provider_id = "claude"
+        display_name = "Claude Code"
+
+        def launch_capabilities(self):
+            return {"launch_modes": ["sdk"]}
 
         def find_session_transcript(self, session_id):
             return f"/t/{session_id}.jsonl" if session_id in transcripts else None

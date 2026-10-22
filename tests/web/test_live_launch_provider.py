@@ -309,3 +309,37 @@ def test_steer_sent_during_resume_handshake_runs_after_load(
 
     turn = _until(lambda: _requests(record, "session/prompt"), "the steer")
     assert turn[0]["params"]["prompt"][0]["text"] == "early steer"
+
+
+_WORKBUDDY_SESSION = "41ebef82-0c6e-4a0e-96be-cb68188420ce"
+
+
+def test_workbuddy_session_is_not_offered_resume(flask_client, enabled,
+                                                 monkeypatch):
+    """D304 follow-up: WorkBuddy's desktop app owns its sessions and regin
+    cannot launch it, yet the page said "no longer running — Resume" and the
+    button posted a launch the route refuses ("no launch channel")."""
+    from lib.providers.codebuddy import WorkBuddyProvider
+    from web.blueprints.trace.sessions.map_view import _bridge_reachability
+
+    _session(_WORKBUDDY_SESSION, "workbuddy", ended=False)
+    monkeypatch.setattr(WorkBuddyProvider, "find_session_transcript",
+                        lambda self, sid: "/w/x.jsonl")
+
+    assert resumable.resume_refusal(_WORKBUDDY_SESSION) == \
+        resumable.REFUSED_NOT_LAUNCHABLE
+    assert _WORKBUDDY_SESSION not in {
+        r["session_id"] for r in resumable.list_resumable()}
+    state = _bridge_reachability(_WORKBUDDY_SESSION)
+    assert (state["resumable"], state["driven_by"]) == (False, "WorkBuddy")
+    res = flask_client.post("/api/agent-runs",
+                            json={"resume": _WORKBUDDY_SESSION})
+    assert res.status_code == 400
+
+
+def test_resumable_session_names_no_outside_driver(flask_client, enabled,
+                                                   recorded):
+    from web.blueprints.trace.sessions.map_view import _bridge_reachability
+
+    state = _bridge_reachability(_KIMI_SESSION)
+    assert (state["resumable"], state["driven_by"]) == (True, None)

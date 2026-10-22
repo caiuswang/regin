@@ -272,6 +272,9 @@ def _bridge_reachability(trace_id: str) -> dict:
     # The one refusal a reader needs: neither steerable nor resumable is an
     # empty rail either way, and only this says the conversation is alive.
     state['cli_held'] = refusal == resumable_mod.REFUSED_CLI_HELD
+    state['driven_by'] = (_provider_name(trace_id)
+                          if refusal == resumable_mod.REFUSED_NOT_LAUNCHABLE
+                          else None)
     return state
 
 
@@ -323,6 +326,11 @@ def _heal_ended_while_owned(trace_id: str) -> None:
         get_activity_logger("agent_sdk").error(
             "sdk_ended_while_owned_heal_failed", trace_id=trace_id,
             exc_info=True)
+
+
+def _provider_name(trace_id: str) -> str:
+    from lib.providers.base import provider_for_trace
+    return provider_for_trace(trace_id).display_name
 
 
 def _resume_refusal(trace_id: str) -> str:

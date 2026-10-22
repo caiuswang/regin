@@ -165,3 +165,17 @@ test('a refused resume says why and stays on the page', async ({ page }) => {
   // A refusal re-enables the button; only a launch that started keeps it busy.
   await expect(resumeButton(page)).toBeEnabled()
 })
+
+test('a session another app owns names it and offers no Resume', async ({ page }) => {
+  // WorkBuddy's desktop app owns its sessions and regin cannot launch it, so
+  // "no longer running — Resume" was both unfounded and a dead button.
+  await seed(page, { ...REAPED, ended_at: null, ended_reason: '',
+                     resumable: false, driven_by: 'WorkBuddy' })
+
+  const external = page.getByTestId('external-session-bar')
+  await expect(external).toBeVisible()
+  await expect(external).toContainText('Recorded from WorkBuddy')
+  await expect(external).not.toContainText('no longer running')
+  await expect(bar(page)).toHaveCount(0)
+  await expect(composer(page)).toHaveCount(0)
+})

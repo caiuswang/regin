@@ -156,7 +156,8 @@ def test_sdk_session_reads_as_reachable_without_a_tmux_pane(sdk_session,
                                             "bridge_pane": None,
                                             "sdk_owned": True,
                                             "resumable": False,
-                                            "cli_held": False}
+                                            "cli_held": False,
+                                            "driven_by": None}
     assert _bridge_reachability("not-ours")["bridge_reachable"] is False
     # The Stop control keys off this: only a run regin still holds a channel
     # to can be ended from the browser.

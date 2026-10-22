@@ -106,6 +106,10 @@ def _held_by_nothing() -> frozenset[str] | None:
 # composer and no Resume button can say what it is waiting on instead of
 # rendering an empty rail. The rest are ordinary absences.
 REFUSED_CLI_HELD = 'cli_held'
+# The session's provider has no launch mode at all (WorkBuddy's desktop app,
+# codex): the route can only refuse a resume, and whether the session is still
+# running is the owning app's to know, not regin's.
+REFUSED_NOT_LAUNCHABLE = 'not_launchable'
 
 
 def _refusal(session_id: str, run_trace: str | None, provider,
@@ -114,6 +118,8 @@ def _refusal(session_id: str, run_trace: str | None, provider,
     from lib import agent_sdk
     from lib.agent_bridge import delivery
 
+    if not provider.launch_capabilities().get('launch_modes'):
+        return REFUSED_NOT_LAUNCHABLE
     if run_trace and (agent_sdk.is_sdk_owned(run_trace)
                       or agent_sdk.is_starting(run_trace)):
         return 'run_live'

@@ -585,8 +585,9 @@ const resumeMeta = computed(() => {
   // this says the conversation is alive — the CLI is holding it somewhere
   // regin cannot type, so there is nothing to resume and nothing is wrong.
   const heldByCli = !!s && !s.bridge_reachable && !!s.cli_held
-  if (!s || !s.resumable || s.bridge_reachable) return { canResume: false, heldByCli }
-  return { canResume: true, heldByCli: false,
+  const drivenBy = (s && !s.bridge_reachable && s.driven_by) || ''
+  if (!s || !s.resumable || s.bridge_reachable) return { canResume: false, heldByCli, drivenBy }
+  return { canResume: true, heldByCli: false, drivenBy: '',
            cwd: s.cwd || '', endedReason: s.ended_reason || '' }
 })
 
