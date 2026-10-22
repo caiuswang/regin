@@ -5,6 +5,7 @@
 // link is stretched over the card, and the controls sit above it — a button
 // inside an anchor is not a button a keyboard or a screen reader can reach.
 import { computed } from 'vue'
+import { slotsFull } from '../../composables/useRunSlots.js'
 import Icon from '../ui/Icon.vue'
 import TaskFacts from './TaskFacts.vue'
 import TaskPrimaryAction from './TaskPrimaryAction.vue'
@@ -67,7 +68,7 @@ const hasControls = computed(() => !!props.task.action || !!props.task.waits_on
     </span>
     <span v-if="hasControls" class="tbc-actions">
       <TaskPrimaryAction
-        :task="task" :busy="busy" :can-write="canWrite"
+        :task="task" :busy="busy || slotsFull(refusal)" :can-write="canWrite"
         @verb="v => emit('verb', v, task)"
       />
       <TaskVerbMenu

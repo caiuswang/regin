@@ -12,6 +12,7 @@
 // of reading as an agent still working. It says nothing at all until the
 // answer arrives — silence, not an accusation.
 import { computed } from 'vue'
+import { slotsFull } from '../../composables/useRunSlots.js'
 import Badge from '../Badge.vue'
 import Button from '../ui/Button.vue'
 import Checkbox from '../ui/Checkbox.vue'
@@ -165,7 +166,7 @@ const runCount = computed(() => props.task.run_count || 0)
       <span class="task-primary">
         <TaskPrimaryAction
           :task="task"
-          :busy="busy"
+          :busy="busy || slotsFull(refusal)"
           :liveness="liveness"
           :can-write="canWrite"
           @verb="v => emit('verb', v, task)"

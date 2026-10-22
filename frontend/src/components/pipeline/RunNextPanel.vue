@@ -5,7 +5,8 @@
 // The card opens with "Running now" while any agent is working and closes
 // with "Done recently" once anything in scope finished this week. Mobile shows
 // the same blocks and rows as desktop; `compact` only changes row density.
-import { computed } from 'vue'
+import { computed, onMounted, watch } from 'vue'
+import { finishedHolders, slotsFull, useRunSlots } from '../../composables/useRunSlots.js'
 import api from '../../api'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
@@ -25,7 +26,18 @@ const props = defineProps({
 const emit = defineEmits(['ran'])
 
 const canWrite = computed(() => api.getStoredUser()?.role !== 'viewer')
-const { refusals, busyId, act } = useTaskVerbs(async () => emit('ran'))
+const { refusals, busyId, act, releaseTrace } = useTaskVerbs(async () => emit('ran'))
+
+// Re-read whenever the overview hands down a new `running` — that is the
+// pipeline event a run starting or settling already raised.
+const { slots, load: loadSlots } = useRunSlots()
+onMounted(loadSlots)
+watch(() => props.running, loadSlots)
+function slotClosed(traceId) {
+  releaseTrace(traceId)
+  loadSlots()
+}
+const showRunning = computed(() => !!props.running?.total || finishedHolders(slots.value).length > 0)
 
 // "Run next" is the Ready group of the next-step list; with nothing armed, the
 // ideas waiting to be armed are the place to go.
@@ -48,8 +60,11 @@ const isHero = (row, i) => i === 0 && row.action.kind === 'run'
 
 <template>
   <section class="pl-panel rn" data-pl-part="panel" data-testid="run-next" aria-labelledby="rn-title">
-    <RunningNow v-if="running?.total" :running="running" :compact="compact" @stopped="emit('ran')" />
-    <header class="pl-panel__head" data-pl-part="panel-head" :class="{ 'rn-head--after': running?.total }">
+    <RunningNow
+      v-if="showRunning" :running="running || { total: 0, rows: [] }" :slots="slots" :compact="compact"
+      @stopped="emit('ran')" @closed="slotClosed"
+    />
+    <header class="pl-panel__head" data-pl-part="panel-head" :class="{ 'rn-head--after': showRunning }">
       <h2 id="rn-title" class="pl-panel__title" data-pl-part="panel-title">Run next</h2>
       <span class="pl-panel__sub" data-pl-part="panel-meta" data-pl-label="ready" data-testid="run-next-count">{{ runNext.ready }}</span>
       <router-link
@@ -104,7 +119,7 @@ const isHero = (row, i) => i === 0 && row.action.kind === 'run'
           class="rn-run"
           :class="{ 'rn-run--compact': compact }"
           :data-pl-part="isHero(row, i) ? 'key--primary' : 'key'"
-          :disabled="busyId === row.id"
+          :disabled="busyId === row.id || slotsFull(refusals[row.id])"
           :aria-label="`Run #${row.id}`"
           :data-testid="`run-next-run-${row.id}`"
           @click="act('run', row)"
@@ -113,6 +128,7 @@ const isHero = (row, i) => i === 0 && row.action.kind === 'run'
         </Button>
         <TaskRefusal
           v-if="refusals[row.id]" class="rn-refusal" :refusal="refusals[row.id]"
+          @released="loadSlots"
           :data-testid="`run-next-refusal-${row.id}`"
         />
       </li>

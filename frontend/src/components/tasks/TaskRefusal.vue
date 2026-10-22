@@ -2,14 +2,34 @@
 // A refusal the row keeps showing. The 409 from `run` names the dependencies
 // still blocking the task, and each is rendered as a link to that task rather
 // than a bare number — an operator told only "blocked by 7" has to go find 7.
-defineProps({
+// A refusal for capacity carries the slot holders instead, so the operator can
+// free one where they stand; `release` is the owner's, since the refusal map
+// is not this component's to edit.
+import api from '../../api'
+import RunSlotList from './RunSlotList.vue'
+
+const props = defineProps({
   refusal: { type: Object, required: true },
 })
-defineEmits(['focus'])
+const emit = defineEmits(['focus', 'released'])
+const canWrite = api.getStoredUser()?.role !== 'viewer'
+
+function released(traceId) {
+  props.refusal.release?.(traceId)
+  emit('released', traceId)
+}
 </script>
 
 <template>
-  <p class="task-refusal" role="alert" data-testid="task-refusal">
+  <div v-if="refusal.slots" class="task-refusal" role="alert" data-testid="task-refusal">
+    <span data-testid="task-refusal-slots">运行槽已满（{{ refusal.slots.used }}/{{ refusal.slots.limit }}）</span>
+    <RunSlotList
+      :holders="refusal.slots.holders" :can-write="canWrite"
+      testid="task-refusal-holders"
+      @closed="released"
+    />
+  </div>
+  <p v-else class="task-refusal" role="alert" data-testid="task-refusal">
     {{ refusal.message }}
     <template v-if="refusal.blocking.length">
       <span class="task-refusal-links">

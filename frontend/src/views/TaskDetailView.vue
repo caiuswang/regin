@@ -6,6 +6,7 @@
 // list needs an address, and a modal has none.
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { closeRun, slotsFull, useRunSlots } from '../composables/useRunSlots.js'
 import api from '../api'
 import Badge from '../components/Badge.vue'
 import Button from '../components/ui/Button.vue'
@@ -115,9 +116,29 @@ const armed = ref(null)
 
 // The same primary action and ⋯ menu every other surface offers for this
 // state (feature #119 R4a), through the same routes.
-const { refusals, liveness, busyId, act: actOn, syncLiveness } = useTaskVerbs(load, {
+const { refusals, liveness, busyId, act: actOn, syncLiveness, releaseTrace } = useTaskVerbs(load, {
   openSheet: (kind) => { sheet.value = kind },
 })
+
+// A finished task whose session nobody closed still holds a run slot; the
+// registry is the authority on that, so the banner reads the slot list.
+const { slots, load: loadSlots } = useRunSlots()
+const openSession = computed(() => (['done', 'failed'].includes(task.value?.status)
+  ? (slots.value?.holders || []).find(h => h.task_id === task.value.id) || null
+  : null))
+const closingSession = ref(false)
+async function closeSession() {
+  closingSession.value = true
+  const traceId = openSession.value.trace_id
+  const refused = await closeRun(traceId)
+  closingSession.value = false
+  if (refused) flash(refused, 'error')
+  else {
+    releaseTrace(traceId)
+    flash(`Closed the session of #${task.value.id}`, 'success')
+  }
+  await loadSlots()
+}
 
 // Delete leaves an address that can now only 404, so it is the one verb the
 // page answers itself.
@@ -151,7 +172,8 @@ async function load({ quiet = false } = {}) {
     // something the row's own route already knows.
     feature.value = data.feature || null
     armed.value = data.armed || null
-    await syncLiveness([data.task])
+    await Promise.all([syncLiveness([data.task]),
+      ['done', 'failed'].includes(data.task.status) ? loadSlots() : null])
   } catch (e) {
     if (want !== id.value) return
     error.value = e.status === 404
@@ -205,7 +227,7 @@ onMounted(() => { ensureProjects(); load() })
         <TaskPrimaryAction
           :task="task"
           :liveness="liveness[task.id] || null"
-          :busy="busyId === task.id"
+          :busy="busyId === task.id || slotsFull(refusals[task.id])"
           :can-write="canWrite"
           @verb="act"
         />
@@ -248,9 +270,18 @@ onMounted(() => { ensureProjects(); load() })
     </div>
 
     <template v-else-if="task">
+      <div v-if="openSession" class="td-open-session" role="status" data-testid="task-open-session">
+        <span>会话仍开着（{{ openSession.phase }}），占用 1 个运行槽</span>
+        <Button
+          v-if="canWrite && openSession.phase === 'idle'" variant="secondary" size="sm"
+          :disabled="closingSession" data-testid="task-open-session-close"
+          @click="closeSession"
+        >Close session</Button>
+      </div>
       <TaskRefusal
         v-if="refusals[task.id]"
         :refusal="refusals[task.id]"
+        @released="loadSlots"
         @focus="id => router.push(`/tasks/${id}`)"
       />
       <Card>
@@ -386,6 +417,18 @@ onMounted(() => { ensureProjects(); load() })
 </template>
 
 <style scoped>
+.td-open-session {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.8125rem;
+    color: var(--color-fg);
+    background: var(--color-warning-soft);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+}
 .td-back {
     display: inline-flex;
     align-items: center;

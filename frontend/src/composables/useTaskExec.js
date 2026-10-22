@@ -35,12 +35,36 @@ export function useTaskExec(reload) {
     refusals.value = next
   }
 
+  // A capacity refusal keeps its slot list current as holders are closed from
+  // it: once one is gone the list no longer reads full and Run comes back —
+  // without re-running, since the operator pressed Run before the slot freed.
+  function releaseSlot(id, traceId) {
+    const refusal = refusals.value[id]
+    if (!refusal?.slots) return
+    const holders = refusal.slots.holders.filter(h => h.trace_id !== traceId)
+    refusals.value = {
+      ...refusals.value,
+      [id]: { ...refusal, slots: { ...refusal.slots, holders, used: holders.length } },
+    }
+  }
+
+  // A session closed from any slot list on the page frees the slot for every
+  // capacity refusal that named it, not only the one it was clicked in.
+  function releaseTrace(traceId) {
+    for (const [id, refusal] of Object.entries(refusals.value)) {
+      if (refusal.slots?.holders.some(h => h.trace_id === traceId)) releaseSlot(id, traceId)
+    }
+  }
+
   function refuse(id, result) {
+    const slots = result.body?.slots || null
     refusals.value = {
       ...refusals.value,
       [id]: {
         message: result.msg || 'The server refused this.',
         blocking: result.body?.blocking || [],
+        slots,
+        release: slots ? releaseTrace : undefined,
       },
     }
   }
@@ -92,5 +116,5 @@ export function useTaskExec(reload) {
     return true
   }
 
-  return { refusals, liveness, busyId, control, clearRefusal, syncLiveness }
+  return { refusals, liveness, busyId, control, clearRefusal, releaseTrace, syncLiveness }
 }

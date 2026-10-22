@@ -6,6 +6,7 @@
 // are always visible, never revealed on hover. A row waiting on a dependency
 // is dimmed and its primary is the link to what it waits on.
 import { computed } from 'vue'
+import { slotsFull } from '../../composables/useRunSlots.js'
 import Checkbox from '../ui/Checkbox.vue'
 import TaskFacts from './TaskFacts.vue'
 import TaskPrimaryAction from './TaskPrimaryAction.vue'
@@ -61,7 +62,7 @@ const waiting = computed(() => !!props.task.waits_on)
     <div class="nsr-action">
       <TaskPrimaryAction
         :task="task"
-        :busy="busy"
+        :busy="busy || slotsFull(refusal)"
         :can-write="canWrite"
         @verb="v => emit('verb', v, task)"
       />
