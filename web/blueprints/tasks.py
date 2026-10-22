@@ -59,7 +59,7 @@ from lib.tasks import integrations
 from lib.utils.pagination import (
     clamp_page, clamp_size, list_page, paginate_query_stmt,
 )
-from web.blueprints.image_payload import decoded_image, wanted_idx
+from lib.image_payload import decoded_image, wanted_idx
 
 tasks_bp = Blueprint('tasks', __name__)
 
@@ -67,9 +67,7 @@ log = get_activity_logger("tasks")
 
 WEB_SOURCE = "web"
 
-#: The one `subject_kind` regin writes today. The tables are polymorphic; the
-#: surface is widened exactly as far as tasks need.
-COMMENT_SUBJECT = "task"
+COMMENT_SUBJECT = comments.TASK_SUBJECT
 
 
 @tasks_bp.route('/api/tasks/capture', methods=['POST'])
@@ -792,13 +790,8 @@ def api_add_task_comment(task_id: int):
 
 
 def _thread_for(task_id: int, thread_id, user):
-    """The named thread, or a fresh one. None when the id names nothing."""
-    if thread_id is None:
-        return comments.open_thread(COMMENT_SUBJECT, str(task_id),
-                                    created_by=user["id"] if user else None)
-    existing = [t for t in comments.threads_for(COMMENT_SUBJECT, str(task_id))
-                if t["id"] == thread_id]
-    return existing[0] if existing else None
+    return comments.thread_for(COMMENT_SUBJECT, str(task_id), thread_id,
+                               created_by=user["id"] if user else None)
 
 
 @tasks_bp.route('/api/tasks/<int:task_id>/comments/<int:thread_id>',

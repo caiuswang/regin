@@ -71,6 +71,10 @@ class NoDeclaration(RuntimeError):
     """`@session` was asked to resolve a feature and could not."""
 
 
+class UnknownSession(ValueError):
+    """A trace regin never captured, named as the session to attribute."""
+
+
 @dataclass(frozen=True)
 class AttributedSession:
     """One session of a feature, as the ledger counts it."""
@@ -113,6 +117,22 @@ def canonical_trace(trace_id: str) -> str:
             "WHERE trace_id = :t ORDER BY id LIMIT 1"
         ).bindparams(t=trace_id)).first()
     return row[0] if row else trace_id
+
+
+def require_known_trace(trace_id: str) -> None:
+    """Refuse a trace regin never captured.
+
+    Attributing one would put a row under a feature for a session nothing else
+    can resolve — no cost, no spans, no page to open.
+    """
+    with SessionLocal() as session:
+        known = session.exec(text(
+            "SELECT 1 FROM sessions WHERE trace_id = :t"
+        ).bindparams(t=trace_id)).first() is not None
+    if not known:
+        raise UnknownSession(
+            f"regin has no session {trace_id} — attributing one it never "
+            "captured would put a row under a feature that does not exist")
 
 
 def _lane_traces(feature_id: int) -> list[tuple]:
@@ -283,6 +303,19 @@ def unattribute(feature_id: int, trace_id: str) -> bool:
     log.write("feature_unattributed", feature_id=feature_id,
               trace_id=canonical)
     return True
+
+
+def no_declaration(feature_id: int, trace_id: str) -> str:
+    """Why `unattribute` found nothing to withdraw.
+
+    A session reaching the feature through a run has no row to remove: the
+    assertion is the task's placement under the feature, withdrawn there.
+    """
+    reaches = any(row.feature_id == feature_id
+                  for row in attributions_for_session(trace_id))
+    detail = (" — it is attributed through a run, which is withdrawn by moving"
+              " that run's task, not here" if reaches else "")
+    return f"{trace_id} has no declaration of feature {feature_id}{detail}"
 
 
 def _provenance_for(target: str, attributing: Optional[str]) -> str:

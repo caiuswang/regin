@@ -817,7 +817,7 @@ def _fire(task_id: int, *, in_server: bool = True) -> bool:
     return True
 
 
-def fire_if_ready(task_id: int) -> bool:
+def fire_if_ready(task_id: int, *, in_server: bool = True) -> bool:
     """Resolve one task against a write that could have made it runnable.
 
     Completion is not the only such write: arming a task whose dependencies
@@ -836,7 +836,7 @@ def fire_if_ready(task_id: int) -> bool:
     if not deps.depends_on(task_id):
         return False
     try:
-        return _fire(task_id)
+        return _fire(task_id, in_server=in_server)
     finally:
         deps.retire_satisfied_after(task_id)
 

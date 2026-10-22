@@ -21,7 +21,14 @@ from lib.trace import span_gates
 PIPELINE_TOOL_NAMES = {
     "pipeline_overview", "feature_list", "feature_get", "feature_create",
     "feature_set_spec", "task_list", "task_get", "task_create",
-    "defect_open", "defect_list", "defect_close"}
+    "defect_open", "defect_list", "defect_close",
+    "image_attach", "image_remove", "image_get",
+    "feature_update", "feature_lifecycle", "feature_link",
+    "feature_attribute", "feature_open_step", "feature_slices",
+    "feature_transcribe",
+    "task_update", "task_set_deps", "task_comment", "task_finish",
+    "defect_get", "defect_update", "defect_attribute", "defect_set_fix_task",
+    "defect_triage"}
 
 
 def _tool_names(mcp) -> set[str]:

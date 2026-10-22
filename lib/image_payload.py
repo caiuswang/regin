@@ -3,8 +3,8 @@
 Base64 in JSON rather than multipart because that is what the
 `bridge-attachments` ingest takes and what the SPA's api client can send
 without a second transport. Shared because three blueprints — tasks, features,
-defects — take the identical body, and the third copy is where the first one
-would have started drifting.
+defects — and the `regin` MCP server's `image_attach` take the identical body,
+and a second copy is where the first one would have started drifting.
 """
 
 from __future__ import annotations

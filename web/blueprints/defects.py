@@ -23,8 +23,6 @@ it name one would let it attribute a report to a trace it never ran.
 
 from __future__ import annotations
 
-import json
-
 from flask import Blueprint, Response, jsonify, request
 
 from lib.auth import require_auth, require_editor
@@ -32,8 +30,9 @@ from lib.defects import fix_items
 from lib.defects import images as defect_images
 from lib.defects import query as defect_query
 from lib.defects import store
+from lib.defects import view as defect_view
 from lib.utils.pagination import clamp_page, clamp_size, list_page
-from web.blueprints.image_payload import decoded_image, wanted_idx
+from lib.image_payload import decoded_image, wanted_idx
 
 defects_bp = Blueprint("defects", __name__)
 
@@ -46,81 +45,6 @@ SCOPE_FEATURE = defect_query.SCOPE_FEATURE
 SCOPE_FIX_ITEM = defect_query.SCOPE_FIX_ITEM
 
 _TRUE = {"1", "true", "yes", "on"}
-
-
-def _view(row, feature_title, blamed_event_kind, images=None,
-          fix_state=None, fix_drift=False) -> dict:
-    return {
-        "id": row.id, "feature_id": row.feature_id, "symptom": row.symptom,
-        # The feature's own title, never a task's: the two answer different
-        # questions and diverge, and no surface falls back from one to the
-        # other.
-        "feature_title": feature_title,
-        "status": row.status, "round": row.round,
-        # What blame was assigned against, read off the event it points at. An
-        # escape is `blamed_event_kind == 'shipped'` — one comparison, and no
-        # "we never looked" reading to render as a gap.
-        "blamed_event_kind": blamed_event_kind,
-        "missing_check": row.missing_check,
-        "suspect_paths": json.loads(row.suspect_paths_json)
-        if row.suspect_paths_json else [],
-        "fix_task_id": row.fix_task_id,
-        # The fix task's CURRENT status, and only when asked for: it costs a
-        # second read, and a list that always carried it would pay for a
-        # column most readers never open. `regin defects list --with-fix-state`
-        # is the same read under the same name.
-        "fix_state": fix_state,
-        # Open while its fix task reads done/archived — always carried,
-        # because it is the one fix-task fact a row cannot be read without.
-        "fix_drift": fix_drift,
-        # How this defect left the triage queue, or None while it is still in
-        # it. Separate from `status` because a declined report and a fixed bug
-        # are both closed, and only one of them was ever looked at.
-        "triage_state": row.triage_state,
-        "triage_reason": row.triage_reason,
-        # The row's place on the triage axis as the queue predicate reads it,
-        # so a surface never re-derives the snooze-watermark rule.
-        "queue_position": store.queue_position(row),
-        "opened_at": row.opened_at, "updated_at": row.updated_at,
-        "closed_at": row.closed_at,
-        # Metadata only — the bytes are a separate GET, so a page of 50
-        # reports does not carry a megabyte of base64.
-        "images": defect_images.list_for(row.id) if images is None
-        else images,
-    }
-
-
-def _serialize(row) -> dict:
-    """One defect, for the response to a write.
-
-    Two reads for one row, and deliberately not the shape the list uses: this
-    is a single row the caller just changed, so there is no loop for the cost
-    to multiply through. The list reads its two extra facts off the row.
-    """
-    state = store.fix_states([row]).get(row.id)
-    return _view(row, _feature_title(row), _blamed_kind(row),
-                 fix_drift=store.is_fix_drift(row, state))
-
-
-def _feature_title(row):
-    if row.feature_id is None:
-        return None
-    from lib.features import store as feature_store  # noqa: PLC0415
-
-    feature = feature_store.get(row.feature_id)
-    return feature.title if feature else None
-
-
-def _blamed_kind(row):
-    """The kind of the event this defect is blamed against, or None."""
-    if row.blamed_event_id is None:
-        return None
-    from lib.orm import SessionLocal  # noqa: PLC0415
-    from lib.orm.models.features import FeatureEvent  # noqa: PLC0415
-
-    with SessionLocal() as session:
-        event = session.get(FeatureEvent, row.blamed_event_id)
-    return event.kind if event else None
 
 
 def _bad_request(payload: dict):
@@ -168,13 +92,13 @@ def api_list_defects():
     # needs it on every page; the raw status is echoed only when asked.
     states = store.fix_states([row.defect for row in result.items])
     with_state = (request.args.get("with_fix_state") or "").lower() in _TRUE
-    body["items"] = [_view(row.defect, row.feature_title,
-                           row.blamed_event_kind,
-                           by_defect.get(row.defect.id, []),
-                           states.get(row.defect.id) if with_state else None,
-                           store.is_fix_drift(row.defect,
-                                              states.get(row.defect.id)))
-                     for row in result.items]
+    body["items"] = [
+        defect_view.view(row.defect, row.feature_title, row.blamed_event_kind,
+                         by_defect.get(row.defect.id, []),
+                         states.get(row.defect.id) if with_state else None,
+                         store.is_fix_drift(row.defect,
+                                            states.get(row.defect.id)))
+        for row in result.items]
     # The scope and the sort are echoed because the controls above the list
     # have to be able to render what the server actually applied — a sort key
     # the server fell back on, shown as the one that was asked for, is a
@@ -206,7 +130,7 @@ def api_read_defect(defect_id: int):
         row = store.get(defect_id)
     except store.DefectError:
         return jsonify({"error": f"no defect {defect_id}"}), 404
-    return jsonify({"defect": _serialize(row)})
+    return jsonify({"defect": defect_view.serialize(row)})
 
 
 def _edit_problem(payload: dict):
@@ -253,7 +177,7 @@ def api_open_defect():
     except store.DefectError as exc:
         return _refused(exc)
     return jsonify({"outcome": recorded.outcome,
-                    "defect": _serialize(recorded.defect)}), \
+                    "defect": defect_view.serialize(recorded.defect)}), \
         200 if recorded.deduped else 201
 
 
@@ -278,7 +202,7 @@ def _write(defect_id: int, act):
         row = act()
     except store.DefectError as exc:
         return _refused(exc)
-    return jsonify({"defect": _serialize(row)}), 200
+    return jsonify({"defect": defect_view.serialize(row)}), 200
 
 
 def _refused(exc):
@@ -401,7 +325,8 @@ def api_create_fix_task():
     except store.DefectError as exc:
         return _refused(exc)
     return jsonify({"task_id": task_id,
-                    "defects": [_serialize(row) for row in rows]}), 200
+                    "defects": [defect_view.serialize(row)
+                                for row in rows]}), 200
 
 
 @defects_bp.route("/api/defects/<int:defect_id>/merge", methods=["POST"])

@@ -27,6 +27,8 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import tempfile
+from pathlib import Path
 from typing import Optional
 
 from sqlalchemy import delete, func, select, update
@@ -47,6 +49,42 @@ def summarize(row) -> dict:
             "byte_size": row.byte_size}
 
 
+def check_usable(data: bytes, already: int, noun: str) -> str:
+    """The media type of `data` as the `already`+1-th image of a `noun`, or
+    ValueError with a sentence the operator can read.
+
+    Callable before the owning row exists, so a caller attaching images to a
+    row it is about to create can refuse the whole request up front.
+    """
+    from lib.settings import settings  # noqa: PLC0415
+
+    media_type = sniff_media_type(data)
+    if media_type is None:
+        raise ValueError("not a supported image (png, jpeg, gif or webp)")
+    if len(data) > settings.prompt_image_max_bytes:
+        raise ValueError(
+            f"image is larger than {settings.prompt_image_max_bytes} bytes")
+    if already >= settings.prompt_images_max_count:
+        raise ValueError(
+            f"at most {settings.prompt_images_max_count} images per {noun}")
+    return media_type
+
+
+def write_file(noun: str, owner_id: int, idx: int, data: bytes,
+               media_type: str, out: Optional[str] = None) -> Path:
+    """Write one image where a run can open it, and return the path.
+
+    `<tmp>/regin-<noun>-images/<owner>-<idx>.<ext>` unless `out` names a file,
+    so the same picture asked for twice lands on the same path.
+    """
+    suffix = media_type.split("/", 1)[-1]
+    target = (Path(out) if out else Path(tempfile.gettempdir())
+              / f"regin-{noun}-images" / f"{owner_id}-{idx}.{suffix}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(data)
+    return target
+
+
 class ImageSet:
     """The image table of one owning entity, named by `noun`."""
 
@@ -61,24 +99,8 @@ class ImageSet:
     def _owner(self):
         return getattr(self.model, self.owner_field)
 
-    def _limits(self) -> tuple[int, int]:
-        from lib.settings import settings  # noqa: PLC0415
-
-        return settings.prompt_image_max_bytes, settings.prompt_images_max_count
-
     def _reject_unusable(self, owner_id: int, data: bytes) -> str:
-        """The media type, or ValueError with a sentence the operator can
-        read."""
-        media_type = sniff_media_type(data)
-        if media_type is None:
-            raise ValueError("not a supported image (png, jpeg, gif or webp)")
-        max_bytes, max_count = self._limits()
-        if len(data) > max_bytes:
-            raise ValueError(f"image is larger than {max_bytes} bytes")
-        if self._count(owner_id) >= max_count:
-            raise ValueError(
-                f"at most {max_count} images per {self.noun}")
-        return media_type
+        return check_usable(data, self._count(owner_id), self.noun)
 
     def _count(self, owner_id: int) -> int:
         with SessionLocal() as session:

@@ -21,7 +21,6 @@ appends to an append-only table. Native features have no such route at all.
 from __future__ import annotations
 
 from flask import Blueprint, Response, jsonify, request
-from sqlmodel import text
 
 from lib.auth import require_auth, require_editor
 from lib.features import attribution, images as images_module
@@ -34,24 +33,15 @@ from lib.features import spans
 from lib.features import steps as steps_module
 from lib.features import store as feature_store
 from lib.features import sync as sync_module
-from lib.orm import SessionLocal
-from lib.orm.models.tasks import BODY_MAX
 from lib.refs import backlinks
 from lib.tasks import feature_slices
 from lib.tasks.integrations import IntegrationError
 from lib.tasks.transcribe import TranscribeRefused
 from lib.tasks.query import FilterRejected
 from lib.utils.pagination import clamp_page, clamp_size
-from web.blueprints.image_payload import decoded_image, wanted_idx
+from lib.image_payload import decoded_image, wanted_idx
 
 features_bp = Blueprint("features", __name__)
-
-
-def _known_trace(trace_id: str) -> bool:
-    with SessionLocal() as session:
-        return session.exec(text(
-            "SELECT 1 FROM sessions WHERE trace_id = :t"
-        ).bindparams(t=trace_id)).first() is not None
 
 
 def _payload() -> dict:
@@ -254,11 +244,10 @@ def api_feature_attribute(feature_id):
     trace_id = (_payload().get("trace_id") or "").strip()
     if not trace_id:
         return jsonify({"error": "trace_id is required"}), 400
-    if not _known_trace(trace_id):
-        return jsonify({
-            "error": f"regin has no session {trace_id} — attributing one it "
-                     "never captured would put a row under a feature that "
-                     "does not exist"}), 404
+    try:
+        attribution.require_known_trace(trace_id)
+    except attribution.UnknownSession as exc:
+        return jsonify({"error": str(exc)}), 404
 
     row = attribution.attribute(feature_id, trace_id,
                                 primary=bool(_payload().get("is_primary")))
@@ -284,13 +273,8 @@ def api_feature_unattribute(feature_id, trace_id):
                            attribution.canonical_trace(trace_id))
         return jsonify({"feature_id": feature_id, "trace_id": trace_id,
                         "unattributed": True})
-    reaches = any(row.feature_id == feature_id for row in
-                  attribution.attributions_for_session(trace_id))
-    detail = (" — it is attributed through a run, which is withdrawn by moving"
-              " that run's task, not here" if reaches else "")
     return jsonify({
-        "error": f"{trace_id} has no declaration of feature {feature_id}"
-                 f"{detail}"}), 404
+        "error": attribution.no_declaration(feature_id, trace_id)}), 404
 
 
 @features_bp.route("/api/features/<int:feature_id>/refresh", methods=["POST"])
@@ -469,14 +453,10 @@ def api_feature_step(feature_id: int):
     second attempt is another run of that row, not another task.
     """
     payload = _payload()
-    body = payload.get("body")
-    if body is not None and (not isinstance(body, str)
-                             or len(body) > BODY_MAX):
-        return jsonify({"error": f"body must be text of at most {BODY_MAX} "
-                                 "characters", "field": "body"}), 400
     try:
         task, created = steps_module.open_step(
-            feature_id, payload.get("stage", payload.get("kind")), body)
+            feature_id, payload.get("stage", payload.get("kind")),
+            payload.get("body"))
     except steps_module.StepRejected as exc:
         return jsonify({"error": str(exc), "field": exc.field}), 400
     except feature_store.FeatureError as exc:

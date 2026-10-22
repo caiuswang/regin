@@ -28,9 +28,12 @@ SOURCE = "feature"
 
 
 class StepRejected(ValueError):
-    """A stage the feature's project does not offer — a 400 naming `stage`."""
+    """A stage the feature's project does not offer, or a body that is not a
+    task body — a 400 naming the field."""
 
-    field = "stage"
+    def __init__(self, message: str, field: str = "stage") -> None:
+        super().__init__(message)
+        self.field = field
 
 
 def external_id(feature_id: int, stage_key: str) -> str:
@@ -45,8 +48,13 @@ def open_step(feature_id: int, stage_key,
     and `StepRejected` for a key that is not a live stage of the feature's
     project (the global defaults when it has none).
     """
+    from lib.orm.models.tasks import BODY_MAX  # noqa: PLC0415
     from lib.tasks import store as task_store  # noqa: PLC0415
 
+    if body is not None and (not isinstance(body, str)
+                             or len(body) > BODY_MAX):
+        raise StepRejected(f"body must be text of at most {BODY_MAX} "
+                           "characters", "body")
     feature = feature_store.require(feature_id)
     stage = (stages.resolve(feature.project_id, stage_key)
              if isinstance(stage_key, str) else None)

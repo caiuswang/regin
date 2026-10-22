@@ -310,39 +310,21 @@ def cmd_finish(
     calling this is still alive and can act on it — the same retry affordance
     `topics proposal-finish` gives a drafting agent whose ingest was refused.
     """
-    from lib.settings import settings
+    from lib.tasks import finish_report
 
     # Prompts issued before the task id led the command still read
     # `task finish <run id>`, and those sessions are alive to run it.
     if run_id is None:
         run_id, task_id = task_id, None
-    base = settings.agent_memory.inject_server_url.rstrip("/")
-    url = f"{base}/api/tasks/runs/{run_id}/finish"
-    payload = {"status": status, "reason": reason or ""}
-    if task_id is not None:
-        payload["task_id"] = task_id
-    body = _json.dumps(payload).encode()
-    request = urllib.request.Request(
-        url, data=body, method="POST",
-        headers={"Content-Type": "application/json"})
     try:
-        with _open_loopback(request, timeout=15) as response:
-            result = _json.loads(response.read() or b"{}")
-    except urllib.error.HTTPError as exc:
-        detail = (exc.read() or b"").decode(errors="replace")
-        try:
-            detail = _json.loads(detail).get("error") or detail
-        except (ValueError, AttributeError):
-            pass
-        typer.echo(f"task finish: server refused ({exc.code}): {detail}",
-                   err=True)
-        raise typer.Exit(code=1)
-    except OSError as exc:
-        if not _refused_connection(exc):
-            typer.echo(f"task finish: cannot reach regin at {url}: {exc}",
-                       err=True)
-            raise typer.Exit(code=1)
-        result = _finish_here(task_id, run_id, status, reason or "")
+        result = finish_report.report_finish(
+            task_id, run_id, status, reason or "", opener=_open_loopback,
+            on_local=lambda: typer.echo(
+                "task finish: regin is not running — settling here",
+                err=True))
+    except finish_report.ReportRefused as exc:
+        typer.echo(f"task finish: {exc}", err=True)
+        raise typer.Exit(code=1) from None
     _emit(result, json, _render_finish)
 
 
@@ -456,34 +438,13 @@ def _render_arm(result: dict) -> None:
 
 
 def _open_loopback(request, timeout: float):
-    """`urlopen` without the environment's proxy: through one, a server that
-    is down answers 502/503 instead of refusing the connection, and the
-    no-server fallback never runs."""
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    return opener.open(request, timeout=timeout)
+    from lib.tasks.finish_report import open_loopback
+    return open_loopback(request, timeout)
 
 
 def _refused_connection(exc: OSError) -> bool:
-    """Nothing is listening — the server is down, not slow. A timeout is not
-    this: a server that may still be handling the report must not race a
-    second settle from here."""
-    return isinstance(getattr(exc, "reason", exc), ConnectionRefusedError)
-
-
-def _finish_here(task_id: Optional[int], run_id: int, status: str,
-                 reason: str) -> dict:
-    """Settle in this process when no server is up (a tmux run can outlive
-    one). An `sdk` dependent is left for the server's next
-    boot, since an SDK child of this CLI would die with it."""
-    from lib.tasks import runs
-
-    typer.echo("task finish: regin is not running — settling here", err=True)
-    try:
-        return runs.finish_run(run_id, status=status, reason=reason,
-                               in_server=False, task_id=task_id)
-    except (runs.RunRefused, ValueError) as exc:
-        typer.echo(f"task finish: refused: {exc}", err=True)
-        raise typer.Exit(code=1) from None
+    from lib.tasks.finish_report import refused_connection
+    return refused_connection(exc)
 
 
 def _render_finish(result: dict) -> None:

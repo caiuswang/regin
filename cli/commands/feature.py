@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import json
 import sys
-import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -345,13 +344,11 @@ def image_cmd(
         typer.echo(f"feature #{feature_id} has no image {idx} "
                    f"(it has: {', '.join(map(str, held)) or 'none'})", err=True)
         raise typer.Exit(2)
+    from lib.attached_images import write_file  # noqa: PLC0415
+
     data, media_type = found
-    suffix = media_type.split("/", 1)[-1]
-    target = (Path(out) if out else Path(tempfile.gettempdir())
-              / "regin-feature-images" / f"{feature_id}-{idx}.{suffix}")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(data)
-    typer.echo(str(target))
+    typer.echo(str(write_file("feature", feature_id, idx, data, media_type,
+                              out)))
 
 
 @feature_app.command("ship")

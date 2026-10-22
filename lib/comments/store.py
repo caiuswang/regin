@@ -28,6 +28,10 @@ from lib.orm.models.comments import (
     RESOLUTION_OPEN, RESOLUTION_STATES,
 )
 
+#: The one `subject_kind` regin writes today. The tables are polymorphic; the
+#: surface is widened exactly as far as tasks need.
+TASK_SUBJECT = "task"
+
 log = get_activity_logger("tasks")
 
 
@@ -165,6 +169,20 @@ def threads_for(subject_kind: str, subject_id: str) -> list[dict]:
     log.read("comment_threads_read", subject_kind=subject_kind,
              subject_id=str(subject_id), count=len(out))
     return out
+
+
+def thread_for(subject_kind: str, subject_id: str, thread_id: Optional[int],
+               created_by: Optional[int] = None) -> Optional[dict]:
+    """The named thread of this subject, or a fresh one when none is named.
+
+    None when `thread_id` names a thread of some other subject or of none: an
+    id is not proof of what it belongs to.
+    """
+    if thread_id is None:
+        return open_thread(subject_kind, str(subject_id),
+                           created_by=created_by)
+    return next((t for t in threads_for(subject_kind, str(subject_id))
+                 if t["id"] == thread_id), None)
 
 
 def comments_for(thread_id: int) -> list[dict]:
