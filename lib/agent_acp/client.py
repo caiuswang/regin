@@ -310,10 +310,53 @@ class _Dead:
     """Sentinel settled on every pending request when the pipe closes."""
 
 
+_CANCEL_DETAIL = "regin ACP channel: no human on the wire"
+
+
 def _cancel_permission(params: dict) -> dict:
     """The phase-1 answer to any approval/question on the unattended wire."""
-    return {"outcome": {"outcome": "cancelled"},
-            "message": "regin ACP channel: no human on the wire"}
+    _record_cancelled(params)
+    return {"outcome": {"outcome": "cancelled"}, "message": _CANCEL_DETAIL}
+
+
+def _record_cancelled(params: dict) -> None:
+    """Put the cancellation on the trace as the request's resolution.
+
+    An agent that also runs hooks (codebuddy) files its own PENDING
+    `permission.request` for the same call, and nothing else ever resolves
+    it — the call was cancelled, so no tool span follows. Left alone it reads
+    as a park forever: a blocker card with no answer to give, because this
+    wire already gave it. Keyed on the call id, so it retires the park
+    whichever of the two writes lands first.
+    """
+    trace_id = params.get("sessionId")
+    call = params.get("toolCall") or {}
+    call_id = call.get("toolCallId")
+    if not trace_id or not call_id:
+        return
+    from lib.agent_acp.activity import hook_tool_use_id
+    from lib.agent_events import PermissionResolved
+    from lib.agent_events.spans import to_span
+    from lib.hook_plugin import post_span
+
+    span = to_span(PermissionResolved(
+        trace_id=trace_id, tool_use_id=hook_tool_use_id(call_id),
+        tool_name=_meta_tool_name(call), behavior="cancelled",
+        detail=_CANCEL_DETAIL))
+    try:
+        post_span(**span)
+    except Exception:  # noqa: BLE001 — the agent must still get its answer
+        log.error("acp_permission_cancel_unrecorded", trace_id=trace_id,
+                  exc_info=True)
+
+
+def _meta_tool_name(call: dict) -> str:
+    """The tool's own name, which ACP leaves to vendor `_meta` (codebuddy:
+    `codebuddy.ai/toolName`). `title` is display prose, not a name. The
+    serve-time merge needs the name to retire the call's tool placeholder."""
+    meta = call.get("_meta") or {}
+    return next((str(v) for k, v in meta.items()
+                 if k.endswith("/toolName") and v), "")
 
 
 _DEAD = _Dead()

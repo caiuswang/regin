@@ -22,7 +22,7 @@ _STREAM_VERBS = {
 }
 
 
-def _hook_tool_use_id(call_id: str) -> str:
+def hook_tool_use_id(call_id: str) -> str:
     prefix, sep, rest = call_id.partition(":")
     return rest if sep and prefix.isdigit() else call_id
 
@@ -86,7 +86,7 @@ class AcpActivity:
         (`0:tool_…`), which the hook's tool_use_id does not carry."""
         with self._lock:
             ids = list(self._open_tools)
-        return {_hook_tool_use_id(call_id) for call_id in ids}
+        return {hook_tool_use_id(call_id) for call_id in ids}
 
     def screen_state(self, *, session_id: str, cwd: str | None,
                      model: str | None):
