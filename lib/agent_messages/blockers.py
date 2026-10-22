@@ -169,14 +169,18 @@ def _live_hook_trace_ids() -> list[str]:
     Where no such proof is obtainable — the bridge is off, and the run is not
     SDK-owned — there is no authority to appeal to and the window stands.
 
-    SDK runs and their CLI children are the registry's to report.
+    SDK runs and their CLI children are the registry's to report, and so are
+    live ACP runs: their parks are read off the handle (`_acp_parked`), and a
+    hook-filed PENDING span for the same call would be its twin.
     """
+    from lib.agent_acp import registry as acp_registry
     from lib.agent_sdk.store import sdk_child_session_ids
     recent = _recent_trace_ids()
     aged = {t for t in _parked_trace_ids() - recent if _reachable(t)}
-    children = sdk_child_session_ids()
+    owned = sdk_child_session_ids() | {h.trace_id
+                                       for h in acp_registry.handles()}
     return sorted(t for t in recent | aged
-                  if not t.startswith('sdk-') and t not in children)
+                  if not t.startswith('sdk-') and t not in owned)
 
 
 def _decision_spans(trace_ids: list[str]) -> dict:
@@ -725,6 +729,24 @@ def _sdk_parked() -> list[dict]:
                     'parked_since': ask.parked_at,
                     'alias_trace_ids': [child] if child else [],
                     'kind': ask.kind, 'sdk': True})
+    return out + _acp_parked()
+
+
+def _acp_parked() -> list[dict]:
+    """One entry per permission request a live ACP run is holding open."""
+    from lib.agent_acp import registry as acp_registry
+    from lib.agent_sdk import policy
+    out = []
+    for handle in acp_registry.handles():
+        for park in handle.permissions.pending():
+            attrs = policy.notify_attrs(park.kind, park.tool_name,
+                                        park.tool_input, park.tool_use_id)
+            attrs.setdefault('kind', park.kind)
+            out.append({'trace_id': park.trace_id, 'attrs': attrs,
+                        'span_id': park.tool_use_id or None,
+                        'parked_since': park.parked_at,
+                        'alias_trace_ids': [], 'kind': park.kind,
+                        'sdk': True})
     return out
 
 

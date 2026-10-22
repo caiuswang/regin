@@ -14,6 +14,10 @@ it after, and FAKE_ACP_RECORD=<path> appends every request received to that
 file, one JSON object per line. FAKE_ACP_REQUIRE_ARG=<flag> exits unless argv
 carries that flag; FAKE_ACP_HOOK_PROVIDER=<id> runs regin's real PostToolUse
 hook (`--agent-type <id>`) for one Bash call at the start of each prompt turn.
+FAKE_ACP_PERMISSION=1 asks `session/request_permission` (codebuddy's option
+shape) at the start of each turn and waits for the answer, which it records;
+a `cancelled` answer ends the turn with stopReason `cancelled`, as codebuddy
+does.
 """
 
 from __future__ import annotations
@@ -74,6 +78,11 @@ def _handle_prompt(params, msg_id, sessions, busy, serial, open_turns,
         return
     open_turns.add(sid)
     _fire_hook(sid)
+    if os.environ.get("FAKE_ACP_PERMISSION") == "1" \
+            and _ask_permission(sid) == "cancelled":
+        open_turns.discard(sid)
+        _respond(msg_id, {"stopReason": "cancelled"})
+        return
     tool = os.environ.get("FAKE_ACP_TOOL")
     if tool:
         _update(sid, {"sessionUpdate": "tool_call", "toolCallId": "0:fake-1",
@@ -98,6 +107,39 @@ def _handle_prompt(params, msg_id, sessions, busy, serial, open_turns,
     open_turns.discard(sid)
     _respond(msg_id, {"stopReason": os.environ.get("FAKE_ACP_STOP_REASON")
                       or "end_turn"})
+
+
+_PERMISSION_OPTIONS = [
+    {"kind": "allow_always", "name": "Always Allow", "optionId": "allow_always"},
+    {"kind": "allow_once", "name": "Allow", "optionId": "allow"},
+    {"kind": "reject_once", "name": "Reject", "optionId": "reject"},
+]
+
+
+def _ask_permission(sid: str) -> str:
+    """Ask for one gated Bash call and block on the reply, as the agent
+    does; every line read meanwhile is recorded. The chosen optionId, or
+    `cancelled`."""
+    print(json.dumps({"jsonrpc": "2.0", "id": "perm-1",
+                      "method": "session/request_permission",
+                      "params": {"sessionId": sid,
+                                 "options": _PERMISSION_OPTIONS,
+                                 "toolCall": {
+                                     "toolCallId": "call_perm_1",
+                                     "rawInput": {"command":
+                                                  "git worktree remove --force x"},
+                                     "_meta": {"codebuddy.ai/toolName":
+                                               "Bash"}}}}), flush=True)
+    for line in sys.stdin:
+        try:
+            msg = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        _record(msg)
+        if msg.get("id") == "perm-1" and "method" not in msg:
+            outcome = (msg.get("result") or {}).get("outcome") or {}
+            return outcome.get("optionId") or outcome.get("outcome") or ""
+    return "cancelled"
 
 
 def _fire_hook(sid: str) -> None:

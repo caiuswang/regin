@@ -782,6 +782,8 @@ def run_phase(trace_id: str) -> str | None:
     """
     handle = _acp_handle(trace_id)
     if handle is not None:
+        if handle.permissions.pending():
+            return 'waiting-permission'
         return 'working' if handle.turn_in_flight else 'idle'
     trace_id = owning_run(trace_id)
     with _lock:
@@ -907,6 +909,7 @@ def interrupt_run(trace_id: str) -> tuple[bool, str]:
             log.error("sdk_run_interrupt_failed", trace_id=trace_id,
                       exc_info=True)
             return False, "cancel failed"
+        handle.permissions.cancel_all()
         log.write("sdk_run_interrupt_requested", trace_id=trace_id)
         return True, "cancelled"
     runner, refusal = _live_runner(trace_id)
@@ -946,6 +949,9 @@ def resolve_permission(trace_id: str, decision,
     a park only accepts its own: an answer list means nothing to a gated Bash,
     and a decision means nothing to a question.
     """
+    handle = _acp_handle(trace_id)
+    if handle is not None:
+        return handle.permissions.resolve(decision, tool_use_id)
     return _resolve(trace_id, decision, _DECISION_KINDS,
                     "no pending permission request",
                     "permission request already decided", "decision delivered",

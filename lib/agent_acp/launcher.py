@@ -42,6 +42,7 @@ from lib.settings import settings
 from . import registry as acp_registry
 from .activity import AcpActivity
 from .client import (AcpClient, AcpError, AcpLaunchRefused, AcpTurnBusy)
+from .permissions import PermissionParks
 
 log = get_activity_logger("agent_acp")
 
@@ -88,6 +89,7 @@ class AcpRunHandle:
         self._cwd = cwd
         self._model = model
         self._activity = AcpActivity()
+        self.permissions = PermissionParks(trace_id)
         # Every turn that ran, launch turn first. Written by the pump thread
         # only; readers poll it from other threads (a list append is atomic
         # under the GIL, and each outcome is a frozen dataclass).
@@ -255,6 +257,7 @@ class AcpRunHandle:
             self._closed = True
             self._queue.clear()
             self._cond.notify_all()
+        self.permissions.cancel_all(close=True)
         acp_registry.unregister(self.trace_id)
         # Taken only once unregistered, so a callback added mid-close still
         # runs here rather than at once while the id reads as owned.
@@ -326,9 +329,9 @@ def _open_session(client: AcpClient, cwd: str, model: str,
     the armed model.
 
     `mode` is the provider's unattended tier — kimi's yolo ("Ask When
-    Needed"), codebuddy's bypassPermissions. yolo is the phase-1 equivalent of an operator-armed
-    run: routine calls never reach the wire, and what does is answered with
-    the cancellation policy the client registers. An armed model or image
+    Needed"), codebuddy's bypassPermissions. Routine calls never reach the
+    wire; what does parks for the operator (`permissions.PermissionParks`).
+    An armed model or image
     the agent cannot take refuses the launch rather than running without it.
     """
     init = client.initialize()
@@ -452,6 +455,8 @@ def launch_run(prompt: str, *, cwd: str | None = None,
     handle = AcpRunHandle(session_id, future, client, session_id,
                           cwd=cwd, model=model)
     client.on_update(handle._on_update)
+    client.on_request("session/request_permission", handle.permissions.ask,
+                      blocking=True)
     acp_registry.register(handle)
     _record_run_started(handle, cwd, model,
                         getattr(provider, "provider_id", None) or "kimi")

@@ -206,7 +206,7 @@ A task can be armed on Kimi Code instead of Claude.
 
 Known limits:
 
-- Runs are unattended: panes start with `--yolo`, and an ACP run answers approval and question requests with `cancelled`.
+- Runs are unattended: panes start with `--yolo`, and an approval an ACP run still asks for waits on the blocker card for Allow/Deny.
 - A steer into a running turn is cancel-then-re-prompt; the ACP protocol exposes no mid-turn injection.
 - `codex` and `generic` cannot be armed — arming them is refused rather than run as Claude.
 - `/live` can launch and Resume Kimi sessions over ACP, but its *terminal* session type still opens only Claude.

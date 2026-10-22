@@ -526,7 +526,7 @@ A report written first always wins over the failure the handle would settle. A p
 
 **Workspace and skills.** Before either arm starts, `provider.prepare_workspace(cwd)` runs (kimi pre-writes its workspace-trust record, since an untrusted directory blocks an unattended launch behind a Trust dialog); `provider.skill_invocation` renders a task's skill line and `skill_catalog_layout` / `project_config_dir` say where its skills live and which directory a worktree must carry over.
 
-**Not covered.** `codex` and `generic` declare no launch mode. The ACP wire has no real steer, so a steer is cancel then re-prompt. kimi has no `permission_mode` or `effort`; its panes run `--yolo` and its channel runs `yolo` mode, with approval and question requests answered `cancelled`. A `/live` terminal session still opens only a Claude pane. Walkthrough for operators: *Run a task with Kimi* in `README.md`.
+**Not covered.** `codex` and `generic` declare no launch mode. The ACP wire has no real steer, so a steer is cancel then re-prompt. kimi has no `permission_mode` or `effort`; its panes run `--yolo` and its channel runs `yolo` mode. An approval the agent still asks for over ACP parks on the run handle (`lib/agent_acp/permissions.py`) as an answerable blocker until the operator allows or denies it through `bridge-decide`; an interrupt or close answers it `cancelled`. A `/live` terminal session still opens only a Claude pane. Walkthrough for operators: *Run a task with Kimi* in `README.md`.
 
 ## Feature pipeline (features, defects, slices)
 

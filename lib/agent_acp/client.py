@@ -82,12 +82,12 @@ class AcpClient:
         self._ids = itertools.count(1)
         self._pending: dict[int, queue.Queue] = {}
         self._handlers: dict[str, object] = {
-            # Phase-1 policy (feature #140): the channel is unattended — no
-            # human reads this wire. Routine calls never reach here (the
-            # launcher sets yolo mode); what does is answered with the one
-            # outcome that is neither allow nor a fabricated deny.
+            # A client nobody parks for (a probe, a bare handshake) answers
+            # with the one outcome that is neither allow nor a fabricated
+            # deny; a launched run replaces this with its operator park.
             "session/request_permission": _cancel_permission,
         }
+        self._blocking: set[str] = set()
         self._update_callbacks: list[object] = []
         self._update_listeners: list[object] = []
         self._send_lock = threading.Lock()
@@ -201,10 +201,17 @@ class AcpClient:
         notification, on the reader thread."""
         self._update_listeners.append(listener)
 
-    def on_request(self, method: str, handler: object) -> None:
+    def on_request(self, method: str, handler: object, *,
+                   blocking: bool = False) -> None:
         """Answer an agent→client reverse-RPC; the callable returns the
-        `result` object echoed back."""
+        `result` object echoed back. A `blocking` handler — one that waits on
+        a human — runs on its own thread: on the reader thread it would stall
+        every update and reply behind it, including the turn it is part of."""
         self._handlers[method] = handler
+        if blocking:
+            self._blocking.add(method)
+        else:
+            self._blocking.discard(method)
 
     def _read_loop(self) -> None:
         assert self._proc is not None and self._proc.stdout is not None
@@ -240,14 +247,29 @@ class AcpClient:
                         "error": {"code": -32601,
                                   "message": f"methodNotFound: {method}"}})
             return
+        if method in self._blocking:
+            threading.Thread(target=self._answer_reverse_rpc,
+                             args=(msg, handler), daemon=True,
+                             name=f"acp-{method}").start()
+            return
+        self._answer_reverse_rpc(msg, handler)
+
+    def _answer_reverse_rpc(self, msg: dict, handler) -> None:
+        method = msg["method"]
         try:
             result = handler(msg.get("params") or {})
-            self._send({"jsonrpc": "2.0", "id": msg["id"],
-                        "result": result if result is not None else {}})
+            reply = {"jsonrpc": "2.0", "id": msg["id"],
+                     "result": result if result is not None else {}}
         except Exception as exc:  # noqa: BLE001 — answer, don't hang the agent
             log.error("acp_reverse_rpc_failed", method=method, exc_info=True)
-            self._send({"jsonrpc": "2.0", "id": msg["id"],
-                        "error": {"code": -32603, "message": str(exc)}})
+            reply = {"jsonrpc": "2.0", "id": msg["id"],
+                     "error": {"code": -32603, "message": str(exc)}}
+        try:
+            self._send(reply)
+        except (AcpError, OSError, ValueError):
+            # A blocking handler can outlive the wire: the close that
+            # cancelled its park is the close that took the pipe away.
+            log.read("acp_reverse_rpc_unsent", method=method)
 
     def _fan_out(self, msg: dict) -> None:
         if msg.get("method") != "session/update":
@@ -301,9 +323,11 @@ class AcpClient:
 
     def _send(self, msg: dict) -> None:
         with self._send_lock:
-            assert self._proc is not None and self._proc.stdin is not None
-            self._proc.stdin.write(json.dumps(msg) + "\n")
-            self._proc.stdin.flush()
+            proc = self._proc
+            if proc is None or proc.stdin is None:
+                raise AcpError("ACP client is not connected")
+            proc.stdin.write(json.dumps(msg) + "\n")
+            proc.stdin.flush()
 
 
 class _Dead:
@@ -335,28 +359,10 @@ def _record_cancelled(params: dict) -> None:
     if not trace_id or not call_id:
         return
     from lib.agent_acp.activity import hook_tool_use_id
-    from lib.agent_events import PermissionResolved
-    from lib.agent_events.spans import to_span
-    from lib.hook_plugin import post_span
+    from lib.agent_acp.permissions import meta_tool_name, post_resolution
 
-    span = to_span(PermissionResolved(
-        trace_id=trace_id, tool_use_id=hook_tool_use_id(call_id),
-        tool_name=_meta_tool_name(call), behavior="cancelled",
-        detail=_CANCEL_DETAIL))
-    try:
-        post_span(**span)
-    except Exception:  # noqa: BLE001 — the agent must still get its answer
-        log.error("acp_permission_cancel_unrecorded", trace_id=trace_id,
-                  exc_info=True)
-
-
-def _meta_tool_name(call: dict) -> str:
-    """The tool's own name, which ACP leaves to vendor `_meta` (codebuddy:
-    `codebuddy.ai/toolName`). `title` is display prose, not a name. The
-    serve-time merge needs the name to retire the call's tool placeholder."""
-    meta = call.get("_meta") or {}
-    return next((str(v) for k, v in meta.items()
-                 if k.endswith("/toolName") and v), "")
+    post_resolution(trace_id, hook_tool_use_id(call_id), meta_tool_name(call),
+                    "cancelled", _CANCEL_DETAIL)
 
 
 _DEAD = _Dead()
