@@ -122,6 +122,10 @@ def run(
 
     if agent_type and isinstance(data, dict):
         data.setdefault('agent_type', agent_type)
+        # CodeBuddy-family payloads carry their own `agent_type: "cli"`, which
+        # the setdefault above cannot displace; the flag still has to reach
+        # provider resolution.
+        data['provider_id'] = agent_type
 
     payload = HookPayload.from_stdin_json(event_hint, data)
 

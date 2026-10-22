@@ -243,23 +243,9 @@ def _session_agent_type_from_db(trace_id: str | None) -> str | None:
 
 
 def _session_agent_type(payload: HookPayload) -> str | None:
-    provider_id = payload.raw.get('provider_id')
-    if isinstance(provider_id, str) and provider_id.strip():
-        return provider_id.strip()
-
-    raw = payload.raw.get('agent_type')
-    if isinstance(raw, str) and raw.strip():
-        return raw.strip()
-
-    # Defensive fallback for legacy hook commands installed before
-    # `--agent-type` was required. Delegate the model→provider inference to
-    # the registry (single source of truth) rather than re-implementing the
-    # per-vendor prefix table here.
-    from lib.providers import provider_id_from_model
-    inferred = provider_id_from_model(payload.raw.get('model'))
-    if inferred:
-        return inferred
-
+    # The resolver takes the first *registered* provider_id/agent_type tag,
+    # then the model, then active_provider — so a payload's own unregistered
+    # `agent_type` (CodeBuddy's "cli") never becomes sessions.agent_type.
     resolved_id = getattr(payload.resolved_provider, 'provider_id', None)
     return resolved_id if isinstance(resolved_id, str) and resolved_id else None
 
