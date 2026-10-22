@@ -34,6 +34,7 @@ cd regin
 | CLI on `PATH` | `regin.exe` is **copied** into `%USERPROFILE%\.local\bin` (a symlink needs admin rights), and that directory is added to the user `PATH` — open a new terminal afterwards |
 | Hook commands | `C:/…/.venv/Scripts/python.exe -X utf8 …` — forward slashes because Claude Code runs hooks through Git Bash; UTF-8 mode because the default ANSI code page (cp936 on Chinese Windows) cannot decode hook payloads |
 | Agent bridge / live terminal | Not offered: both drive tmux, which has no native Windows build |
+| Windows on ARM | Needs the **x64** Python (runs under emulation): `cryptography`, `tiktoken`, `brotli` and `claude-agent-sdk` publish no `win_arm64` wheels. Setup picks an installed x64 Python over the ARM64 one and stops with this advice when only ARM64 is installed; an existing ARM64 `.venv` must be deleted first |
 
 Upgrade with `git pull; .\scripts\setup.cmd`.
 

@@ -62,10 +62,12 @@ Write-Host ""
 $Venv = Join-Path $Root ".venv"
 $VenvPy = Join-Path $Venv "Scripts\python.exe"
 
-function Py-Version([string[]]$Cmd) {
-  $out = Probe @Cmd -c "import sys; print('%d.%d' % sys.version_info[:2])"
+# Version plus the platform tag pip asks PyPI wheels for, e.g. "3.12 win-amd64".
+function Py-Info([string[]]$Cmd) {
+  $out = Probe @Cmd -c "import sys, sysconfig; print('%d.%d %s' % (sys.version_info[0], sys.version_info[1], sysconfig.get_platform()))"
   if ($LASTEXITCODE -ne 0 -or -not $out) { return $null }
-  return "$out".Trim()
+  $ver, $plat = "$out".Trim().Split(" ")
+  return [pscustomobject]@{ Cmd = $Cmd; Ver = $ver; Plat = $plat }
 }
 
 function Py-AtLeastMin([string]$Ver) {
@@ -73,33 +75,53 @@ function Py-AtLeastMin([string]$Ver) {
   return ($major -gt 3) -or ($major -eq 3 -and $minor -ge 11)
 }
 
+# Paths of every Python the py launcher knows. Its default alone is not
+# enough: on Windows on ARM that default is usually the ARM64 build.
+function Launcher-Pythons {
+  if (-not (Get-Command py -ErrorAction SilentlyContinue)) { return }
+  foreach ($line in (Probe py -0p)) {
+    if ("$line" -match "([A-Za-z]:\\.*?\.exe)\s*$") { ,@($Matches[1]) }
+  }
+  ,@("py", "-3")
+}
+
+$ArmHint = "cryptography, tiktoken, brotli and claude-agent-sdk publish no Windows ARM64 wheels, so pip would have to compile them from source. Install the x64 (AMD64) Python 3.11+ from python.org - Windows on ARM runs it under emulation"
+
 if (Test-Path $Venv) {
   # A venv whose interpreter vanished (e.g. after uninstalling that Python)
   # can't be repaired in place.
-  if (-not (Py-Version @($VenvPy))) {
+  $Py = Py-Info @($VenvPy)
+  if (-not $Py) {
     Fail "The existing .venv has no working interpreter. Remove .venv and re-run with `$env:PYTHON set to Python 3.11 or newer."
   }
-  $PyCmd = @($VenvPy)
-} elseif ($env:PYTHON) {
-  $PyCmd = @($env:PYTHON)
-} elseif (Get-Command py -ErrorAction SilentlyContinue) {
-  # The py launcher picks the newest installed Python 3, and unlike a bare
-  # "python" it is never the Microsoft Store stub.
-  $PyCmd = @("py", "-3")
-} else {
-  $PyCmd = @("python")
-}
-$PyVer = Py-Version $PyCmd
-if (-not $PyVer) {
-  Fail "Python not found (tried '$($PyCmd -join ' ')'). Install Python 3.11+ from python.org, or set `$env:PYTHON to its python.exe."
-}
-if (-not (Py-AtLeastMin $PyVer)) {
-  if ($PyCmd[0] -eq $VenvPy) {
-    Fail "The existing .venv runs Python $PyVer; regin needs Python >= 3.11. Remove .venv and re-run."
+  if (-not (Py-AtLeastMin $Py.Ver)) {
+    Fail "The existing .venv runs Python $($Py.Ver); regin needs Python >= 3.11. Remove .venv and re-run."
   }
-  Fail "Python $PyVer at '$($PyCmd -join ' ')' is too old; regin needs Python >= 3.11. Set `$env:PYTHON to a newer python.exe."
+  if ($Py.Plat -eq "win-arm64") {
+    Fail "The existing .venv runs an ARM64 Python. $ArmHint, then remove .venv and re-run."
+  }
+} else {
+  if ($env:PYTHON) {
+    $candidates = @(, @($env:PYTHON))
+  } else {
+    # A bare "python" last: it may be the Microsoft Store stub.
+    $candidates = @(Launcher-Pythons) + @(, @("python"))
+  }
+  $found = @($candidates | ForEach-Object { Py-Info $_ } | Where-Object { $_ })
+  $recent = @($found | Where-Object { Py-AtLeastMin $_.Ver })
+  $usable = @($recent | Where-Object { $_.Plat -ne "win-arm64" } | Sort-Object { [version]$_.Ver } -Descending)
+  if ($usable.Count -gt 0) {
+    $Py = $usable[0]
+  } elseif ($recent.Count -gt 0) {
+    Fail "Only an ARM64 Python 3.11+ was found ($($recent[0].Cmd -join ' ')). $ArmHint, then re-run (or point `$env:PYTHON at the x64 python.exe)."
+  } elseif ($found.Count -gt 0) {
+    Fail "Python $($found[0].Ver) at '$($found[0].Cmd -join ' ')' is too old; regin needs Python >= 3.11. Install a newer one from python.org, or set `$env:PYTHON to its python.exe."
+  } else {
+    Fail "Python not found. Install Python 3.11+ from python.org, or set `$env:PYTHON to its python.exe."
+  }
 }
-Write-Host "[check] Python $PyVer"
+$PyCmd = $Py.Cmd
+Write-Host "[check] Python $($Py.Ver) ($($Py.Plat))"
 
 # vite 8 declares engines.node "^20.19.0 || >=22.12.0".
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
