@@ -149,3 +149,24 @@ def test_codebuddy_run_is_listed_without_hooks(tmp_db, native_task,
         "codebuddy", str(tmp_path), "active")
     live_rescan._provider_cache.pop(trace_id, None)
     assert live_rescan._session_provider(trace_id).provider_id == "codebuddy"
+
+
+@pytest.mark.parametrize("provider_id,mode", [
+    ("codebuddy", "bypassPermissions"), ("kimi", "yolo")])
+def test_acp_launch_sets_the_providers_unattended_mode(
+        tmp_db, tmp_path, provider_id, mode):
+    """D304/#303: codebuddy offers no `yolo`, so the hardcoded mode left its
+    session on "Always Ask" and the first tool call cancelled the run."""
+    from lib.agent_acp.launcher import launch_run
+    from lib.providers.registry import build_provider
+
+    record = tmp_path / "acp.jsonl"
+    handle = launch_run("", cwd=str(tmp_path), cmd=[sys.executable, str(FAKE)],
+                        env={"FAKE_ACP_RECORD": str(record)},
+                        provider=build_provider(provider_id))
+    try:
+        sent = [json.loads(line) for line in record.read_text().splitlines()]
+    finally:
+        handle.close()
+    assert [r["params"]["modeId"] for r in sent
+            if r.get("method") == "session/set_mode"] == [mode]

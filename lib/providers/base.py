@@ -432,6 +432,11 @@ class AgentProvider:
         when it speaks no ACP."""
         return None
 
+    # The ACP `session/set_mode` id that lets an unattended run's tools run
+    # without a prompt. Each agent names its own tier: an id the agent does
+    # not offer leaves the session asking, and every ask is cancelled.
+    acp_unattended_mode: str | None = None
+
     def hook_manager_config_path(self) -> Path:
         raise NotImplementedError
 

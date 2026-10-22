@@ -298,6 +298,8 @@ class KimiProvider(AgentProvider):
     def acp_argv(self) -> list[str]:
         from lib.agent_acp.client import binary_argv
         return binary_argv("kimi", "acp")
+
+    acp_unattended_mode = "yolo"
     transcript_format = "kimi"
 
     def __init__(self, overrides: dict | None = None):

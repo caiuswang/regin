@@ -184,6 +184,9 @@ class CodeBuddyProvider(CodeBuddyFamilyProvider):
         from lib.agent_acp.client import binary_argv
         return binary_argv("codebuddy", "--acp")
 
+    # codebuddy offers no `yolo`; its "Ask" tiers would stall on every call.
+    acp_unattended_mode = "bypassPermissions"
+
 
 class WorkBuddyProvider(CodeBuddyFamilyProvider):
     provider_id = "workbuddy"

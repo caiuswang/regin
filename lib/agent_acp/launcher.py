@@ -320,11 +320,13 @@ def _start_session(client: AcpClient, init: dict, cwd: str,
 
 
 def _open_session(client: AcpClient, cwd: str, model: str,
-                  images: list | None, resume: str | None = None) -> str:
+                  images: list | None, resume: str | None = None,
+                  mode: str | None = "yolo") -> str:
     """Handshake + session/new (or session/load) + the unattended mode tier +
     the armed model.
 
-    yolo ("Ask When Needed") is the phase-1 equivalent of an operator-armed
+    `mode` is the provider's unattended tier — kimi's yolo ("Ask When
+    Needed"), codebuddy's bypassPermissions. yolo is the phase-1 equivalent of an operator-armed
     run: routine calls never reach the wire, and what does is answered with
     the cancellation policy the client registers. An armed model or image
     the agent cannot take refuses the launch rather than running without it.
@@ -337,9 +339,11 @@ def _open_session(client: AcpClient, cwd: str, model: str,
             "images or arm a provider that accepts them")
     session_id = _start_session(client, init, cwd, resume)
     try:
-        client.session_set_mode(session_id, "yolo")
+        if mode:
+            client.session_set_mode(session_id, mode)
     except AcpError:
-        log.error("acp_set_mode_failed", trace_id=session_id, exc_info=True)
+        log.error("acp_set_mode_failed", trace_id=session_id, mode=mode,
+                  exc_info=True)
     if model:
         try:
             client.session_set_model(session_id, model)
@@ -437,7 +441,9 @@ def launch_run(prompt: str, *, cwd: str | None = None,
     if client is None:
         client = _spawn_client(env, cwd, cmd, provider)
     try:
-        session_id = _open_session(client, cwd, model, images, resume)
+        mode = (provider.acp_unattended_mode if provider is not None
+                else "yolo")
+        session_id = _open_session(client, cwd, model, images, resume, mode)
     except Exception:
         if own:
             client.close()
