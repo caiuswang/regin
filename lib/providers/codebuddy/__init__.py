@@ -47,6 +47,7 @@ WORKBUDDY = CodeBuddyFamily(
 
 class CodeBuddyFamilyProvider(AgentProvider):
     family: CodeBuddyFamily = CODEBUDDY
+    experimental = False
     capabilities = ProviderCapabilities(
         skills=True,
         hooks=True,

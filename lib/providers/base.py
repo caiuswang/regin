@@ -76,6 +76,9 @@ class AgentProvider:
     provider_id: str = "unknown"
     display_name: str = "Unknown"
     capabilities: ProviderCapabilities = ProviderCapabilities()
+    # Experimental providers stay out of the settings/hooks UI until
+    # `settings.experimental_providers` is on (or the provider is active).
+    experimental: bool = True
     # Storage format for hook_manager install/uninstall. "json" providers
     # (Claude/Codex) keep their hooks in a settings.json `hooks` map; "toml"
     # providers (Kimi) keep them in a config.toml `[[hooks]]` array. The hooks

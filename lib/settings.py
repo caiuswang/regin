@@ -278,10 +278,9 @@ class Settings(BaseSettings):
     active_provider: Literal["claude", "codex", "generic", "kimi"] = "claude"
     providers: dict[str, ProviderConfig] = Field(default_factory=dict)
 
-    # When false, only the `claude` provider (plus the active provider, if it
-    # was explicitly switched away from claude) is exposed to UI surfaces like
-    # SettingsView / /api/hooks / /api/providers. Flip to true to surface the
-    # experimental `codex` and `generic` providers.
+    # When false, only providers not marked `experimental` (plus the active
+    # provider) are exposed to UI surfaces like SettingsView / /api/hooks /
+    # /api/providers. Flip to true to surface the experimental ones too.
     experimental_providers: bool = False
 
     # The CodeBuddy-family CLIs relocate their whole config root through
@@ -545,7 +544,7 @@ SETTINGS_SCHEMA: list[tuple[str, object, str]] = [
     ("active_provider", "claude",
      "Primary agent provider (claude, codex, generic, kimi). Used as the default for single-provider operations and as the source of truth when no explicit provider is given."),
     ("experimental_providers", False,
-     "Surface experimental agent providers (codex, generic) in the Settings hook-manager UI. When off, only claude is shown."),
+     "Surface experimental agent providers (codex, generic, kimi) in the Settings hook-manager UI. When off, only claude, codebuddy, workbuddy and the active provider are shown."),
     ("experimental_dense_search", False,
      "Surface the dense (semantic) pattern search UI on the Patterns page (toggle, query input, Route button). When off, only the standard tag/category filters are shown."),
     ("dense_rerank_min_corpus", 1,

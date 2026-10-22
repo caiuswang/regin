@@ -29,6 +29,7 @@ _AUTO_ACCEPTED_EDIT_TOOLS = frozenset(
 
 class ClaudeProvider(AgentProvider):
     provider_id = "claude"
+    experimental = False
     display_name = "Claude Code"
     capabilities = ProviderCapabilities(
         skills=True,

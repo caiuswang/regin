@@ -114,14 +114,15 @@ def list_visible_provider_ids() -> list[str]:
     """Provider IDs that UI surfaces should expose.
 
     Returns the full set when `settings.experimental_providers` is true.
-    Otherwise returns just `claude` plus the active provider (so a user who
-    has switched the active provider to codex/generic via settings can still
-    manage it without flipping the experimental flag).
+    Otherwise returns every non-experimental provider plus the active one
+    (so a user who has switched the active provider to an experimental one
+    can still manage it without flipping the flag).
     """
     if settings_mod.settings.experimental_providers:
         return list_provider_ids()
-    visible = {"claude", active_provider_id()}
-    return sorted(visible & _PROVIDER_BUILDERS.keys())
+    active = active_provider_id()
+    return [pid for pid in list_provider_ids()
+            if pid == active or not _PROVIDER_BUILDERS[pid].experimental]
 
 
 def is_provider_id(provider_id: str | None) -> bool:
