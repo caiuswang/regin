@@ -197,6 +197,8 @@ def test_concurrent_add_repo_keeps_both_rows(tmp_db, tmp_path, _isolated_setting
     import threading
     from contextlib import contextmanager
 
+    import portalocker
+
     import lib.sync.repo_discovery as rd
 
     first, second = tmp_path / "first", tmp_path / "second"
@@ -258,9 +260,10 @@ def test_add_repo_waits_for_a_settings_writer_in_another_process(
     """A CLI `regin add-repo` and the server are separate processes, so an
     in-process lock cannot serialize them. The writer here holds the settings
     lock through its own file descriptor, which is what another process has."""
-    import fcntl
     import json
     import threading
+
+    import portalocker
 
     import lib.sync.repo_discovery as rd
 
@@ -269,31 +272,31 @@ def test_add_repo_waits_for_a_settings_writer_in_another_process(
     _make_git_repo(ours)
 
     reached = threading.Event()
-    real_flock = fcntl.flock
+    real_lock = portalocker.lock
     real_load = rd._load_repo_paths
 
-    def flock(fh, op):
-        if threading.current_thread().name == "ours" and op == fcntl.LOCK_EX:
+    def lock(fh, flags):
+        if threading.current_thread().name == "ours" and flags == portalocker.LOCK_EX:
             reached.set()
-        return real_flock(fh, op)
+        return real_lock(fh, flags)
 
     def load():
         if threading.current_thread().name == "ours":
             reached.set()
         return real_load()
 
-    monkeypatch.setattr(fcntl, "flock", flock)
+    monkeypatch.setattr(portalocker, "lock", lock)
     monkeypatch.setattr(rd, "_load_repo_paths", load)
 
     lock_path = str(_isolated_settings["local"]) + ".lock"
     with open(lock_path, "a") as other_process:
-        real_flock(other_process, fcntl.LOCK_EX)
+        real_lock(other_process, portalocker.LOCK_EX)
         t = threading.Thread(target=add_repo, args=(str(ours),), name="ours")
         t.start()
         reached.wait()
         _isolated_settings["local"].write_text(json.dumps(
             {"repo_paths": [os.path.realpath(theirs)]}))
-        real_flock(other_process, fcntl.LOCK_UN)
+        portalocker.unlock(other_process)
     t.join()
 
     assert sorted(os.path.basename(p) for p in real_load()) == ["ours", "theirs"]

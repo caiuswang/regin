@@ -10,7 +10,7 @@ cd regin
 ./scripts/setup.sh /path/to/your/source-repos
 ```
 
-regin runs on macOS and Linux; on Windows use WSL2 (it relies on POSIX-only `fcntl`/`pty`, and PowerShell hands `setup.sh` to whatever app `.sh` is associated with rather than running it). The setup script needs Python ≥ 3.11 (pick one with `PYTHON=/path/to/python3.12 ./scripts/setup.sh`) and Node/npm. It creates a Python venv, links `regin` into `~/.local/bin` (`REGIN_BIN_DIR` to change), builds the frontend, creates or migrates the database, discovers repos, offers to wire regin's hooks into Claude Code, and prompts you to create your user account. Then:
+regin runs on macOS and Linux; on Windows use WSL2 (setup is a bash script, hook commands point at `.venv/bin/python`, the live terminal needs tmux, and PowerShell hands `setup.sh` to whatever app `.sh` is associated with rather than running it). The setup script needs Python ≥ 3.11 (pick one with `PYTHON=/path/to/python3.12 ./scripts/setup.sh`) and Node/npm. It creates a Python venv, links `regin` into `~/.local/bin` (`REGIN_BIN_DIR` to change), builds the frontend, creates or migrates the database, discovers repos, offers to wire regin's hooks into Claude Code, and prompts you to create your user account. Then:
 
 ```bash
 .venv/bin/python cli/regin.py serve

@@ -3,12 +3,12 @@ server, the CLI and request threads: they must be serialized and atomic."""
 
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import stat
 import threading
 
+import portalocker
 import pytest
 
 from lib import settings as _cfg
@@ -44,30 +44,30 @@ def test_a_reader_during_a_write_sees_the_previous_file(paths, monkeypatch):
 def test_save_waits_for_a_lock_holder_in_another_process(paths, monkeypatch):
     """The holder's own descriptor stands in for another process."""
     reached = threading.Event()
-    real_flock = fcntl.flock
+    real_lock = portalocker.lock
     real_load = _cfg._load_json
 
-    def flock(fh, op):
-        if threading.current_thread().name == "saver" and op == fcntl.LOCK_EX:
+    def lock(fh, flags):
+        if threading.current_thread().name == "saver" and flags == portalocker.LOCK_EX:
             reached.set()
-        return real_flock(fh, op)
+        return real_lock(fh, flags)
 
     def load(path):
         if threading.current_thread().name == "saver":
             reached.set()
         return real_load(path)
 
-    monkeypatch.setattr(fcntl, "flock", flock)
+    monkeypatch.setattr(portalocker, "lock", lock)
     monkeypatch.setattr(_cfg, "_load_json", load)
 
     with open(str(paths["local"]) + ".lock", "a") as holder:
-        real_flock(holder, fcntl.LOCK_EX)
+        real_lock(holder, portalocker.LOCK_EX)
         t = threading.Thread(target=save_settings, args=({"theirs": 1},),
                              kwargs={"scope": "local"}, name="saver")
         t.start()
         reached.wait()
         paths["local"].write_text(json.dumps({"ours": 1}))
-        real_flock(holder, fcntl.LOCK_UN)
+        portalocker.unlock(holder)
     t.join()
 
     assert json.loads(paths["local"].read_text()) == {"ours": 1, "theirs": 1}

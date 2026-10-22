@@ -26,7 +26,6 @@ not a positional arg.
 
 from __future__ import annotations
 
-import fcntl
 import os
 import threading
 import time
@@ -36,6 +35,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import portalocker
 from loguru import logger as _loguru
 
 from lib.settings import settings
@@ -103,13 +103,13 @@ class _RotatingSink:
     def write(self, message: str) -> None:
         fd = os.open(str(self._lock_path), os.O_RDWR | os.O_CREAT, 0o644)
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
+            portalocker.lock(fd, portalocker.LOCK_EX)
             try:
                 self._rotate_if_needed()
                 with open(self._path, "a", encoding="utf-8") as f:
                     f.write(message)
             finally:
-                fcntl.flock(fd, fcntl.LOCK_UN)
+                portalocker.unlock(fd)
         finally:
             os.close(fd)
 

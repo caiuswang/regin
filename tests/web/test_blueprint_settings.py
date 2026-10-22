@@ -669,21 +669,22 @@ def test_post_settings_save_keeps_a_concurrent_repo_registration(
     """The save re-writes every setting it loaded, so a `repo_paths` write
     landing between its load and its save is lost unless the load is inside
     the settings lock."""
-    import fcntl
     import threading
+
+    import portalocker
 
     import web.blueprints.settings as bp
     from lib.settings import save_settings
 
     isolated_settings_files["local"].write_text(json.dumps({"repo_paths": ["/old"]}))
     reached = threading.Event()
-    real_flock, real_load = fcntl.flock, bp._load_settings
+    real_lock, real_load = portalocker.lock, bp._load_settings
     writers = []
 
-    def flock(fh, op):
-        if threading.current_thread().name == "registrar" and op == fcntl.LOCK_EX:
+    def lock(fh, flags):
+        if threading.current_thread().name == "registrar" and flags == portalocker.LOCK_EX:
             reached.set()
-        return real_flock(fh, op)
+        return real_lock(fh, flags)
 
     def register():
         save_settings({"repo_paths": ["/old", "/new"]}, scope="local")
@@ -697,7 +698,7 @@ def test_post_settings_save_keeps_a_concurrent_repo_registration(
             reached.wait()
         return loaded
 
-    monkeypatch.setattr(fcntl, "flock", flock)
+    monkeypatch.setattr(portalocker, "lock", lock)
     monkeypatch.setattr(bp, "_load_settings", load)
 
     resp = flask_client.post("/api/settings", json={"web_port": 7777},

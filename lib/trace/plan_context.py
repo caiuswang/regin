@@ -6,8 +6,9 @@ can coordinate plan session tracking.
 
 import json
 import os
-import fcntl
 import uuid
+
+import portalocker
 
 from lib.providers import get_active_provider
 from lib.activity_log import get_activity_logger as _get_activity_logger
@@ -28,11 +29,11 @@ def _read(session_id: str) -> dict | None:
     path = _path(session_id)
     try:
         with open(path, 'r') as f:
-            fcntl.flock(f, fcntl.LOCK_SH)
+            portalocker.lock(f, portalocker.LOCK_SH)
             try:
                 return json.load(f)
             finally:
-                fcntl.flock(f, fcntl.LOCK_UN)
+                portalocker.unlock(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return None
 
@@ -47,11 +48,11 @@ def _write(session_id: str, state: dict | None) -> None:
         return
     tmp = path + '.tmp'
     with open(tmp, 'w') as f:
-        fcntl.flock(f, fcntl.LOCK_EX)
+        portalocker.lock(f, portalocker.LOCK_EX)
         try:
             json.dump(state, f)
         finally:
-            fcntl.flock(f, fcntl.LOCK_UN)
+            portalocker.unlock(f)
     os.replace(tmp, path)
 
 

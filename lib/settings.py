@@ -25,7 +25,6 @@ when their consuming modules are refactored.
 
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import stat
@@ -35,6 +34,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Literal, Tuple, Type
 
+import portalocker
 from pydantic import Field
 from pydantic_settings import (
     BaseSettings,
@@ -633,13 +633,13 @@ def settings_file_lock():
     lock_path = SETTINGS_LOCAL_PATH + ".lock"
     os.makedirs(os.path.dirname(lock_path), exist_ok=True)
     with open(lock_path, "a") as fh:
-        fcntl.flock(fh, fcntl.LOCK_EX)
+        portalocker.lock(fh, portalocker.LOCK_EX)
         _lock_state.held = True
         try:
             yield
         finally:
             _lock_state.held = False
-            fcntl.flock(fh, fcntl.LOCK_UN)
+            portalocker.unlock(fh)
 
 
 def _write_json_atomic(path: str, data: dict) -> None:

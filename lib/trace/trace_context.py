@@ -39,9 +39,10 @@ Typical usage:
 import contextlib
 import json
 import os
-import fcntl
 import uuid
 from datetime import datetime
+
+import portalocker
 
 from lib.providers import get_active_provider
 
@@ -81,11 +82,11 @@ def _locked(session_id: str):
     lock_path = _lock_path(session_id)
     fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
+        portalocker.lock(fd, portalocker.LOCK_EX)
         try:
             yield
         finally:
-            fcntl.flock(fd, fcntl.LOCK_UN)
+            portalocker.unlock(fd)
     finally:
         os.close(fd)
 

@@ -29,16 +29,21 @@ itself, and silently reconfiguring someone's tmux server is the larger harm.
 
 from __future__ import annotations
 
-import fcntl
 import os
-import pty
 import secrets
 import select
 import signal
 import struct
 import subprocess
-import termios
+import sys
 import threading
+
+# tmux has no native Windows build, so this tier is POSIX-only; the guard just
+# keeps the module importable there (no pane can ever be registered to attach to).
+if sys.platform != "win32":
+    import fcntl
+    import pty
+    import termios
 
 from lib.activity_log import get_activity_logger
 from lib.agent_bridge.env import child_env

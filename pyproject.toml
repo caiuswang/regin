@@ -34,6 +34,9 @@ dependencies = [
     "wordfreq>=3.0",
     # The memory / send-to-user MCP servers import FastMCP at startup.
     "mcp>=1.2",
+    # Cross-platform flock: fcntl on POSIX, msvcrt/LockFileEx on Windows. The
+    # win32 extra (pywin32, Windows-only marker) is what shared locks need there.
+    "portalocker[win32]>=4.2",
 ]
 
 [project.optional-dependencies]
