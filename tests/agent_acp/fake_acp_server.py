@@ -17,7 +17,8 @@ hook (`--agent-type <id>`) for one Bash call at the start of each prompt turn.
 FAKE_ACP_PERMISSION=1 asks `session/request_permission` (codebuddy's option
 shape) at the start of each turn and waits for the answer, which it records;
 a `cancelled` answer ends the turn with stopReason `cancelled`, as codebuddy
-does.
+does. FAKE_ACP_QUESTION=1 makes that request kimi's AskUserQuestion shape
+instead (question in `content`, one `allow_once` per answer, a Skip).
 """
 
 from __future__ import annotations
@@ -116,20 +117,34 @@ _PERMISSION_OPTIONS = [
 ]
 
 
+_QUESTION_OPTIONS = [
+    {"optionId": "q0_opt_0", "name": "Approve and build", "kind": "allow_once"},
+    {"optionId": "q0_opt_1", "name": "Revise first", "kind": "allow_once"},
+    {"optionId": "q0_opt_2", "name": "Abandon", "kind": "allow_once"},
+    {"optionId": "q0_skip", "name": "Skip", "kind": "reject_once"},
+]
+
+
+def _permission_params(sid: str) -> dict:
+    if os.environ.get("FAKE_ACP_QUESTION") == "1":
+        return {"sessionId": sid, "options": _QUESTION_OPTIONS,
+                "toolCall": {"toolCallId": "0:call_ask_1",
+                             "title": "AskUserQuestion",
+                             "content": [{"type": "content", "content": {
+                                 "type": "text", "text": "Approve the plan?"}}]}}
+    return {"sessionId": sid, "options": _PERMISSION_OPTIONS,
+            "toolCall": {"toolCallId": "call_perm_1",
+                         "rawInput": {"command": "git worktree remove --force x"},
+                         "_meta": {"codebuddy.ai/toolName": "Bash"}}}
+
+
 def _ask_permission(sid: str) -> str:
     """Ask for one gated Bash call and block on the reply, as the agent
     does; every line read meanwhile is recorded. The chosen optionId, or
     `cancelled`."""
     print(json.dumps({"jsonrpc": "2.0", "id": "perm-1",
                       "method": "session/request_permission",
-                      "params": {"sessionId": sid,
-                                 "options": _PERMISSION_OPTIONS,
-                                 "toolCall": {
-                                     "toolCallId": "call_perm_1",
-                                     "rawInput": {"command":
-                                                  "git worktree remove --force x"},
-                                     "_meta": {"codebuddy.ai/toolName":
-                                               "Bash"}}}}), flush=True)
+                      "params": _permission_params(sid)}), flush=True)
     for line in sys.stdin:
         try:
             msg = json.loads(line)

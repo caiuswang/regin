@@ -137,3 +137,53 @@ def test_selected_outcome_picks_the_once_option(options, behavior, expected):
 def test_no_option_for_that_side_is_cancelled():
     assert selected_outcome([{"kind": "allow_once", "optionId": "a"}],
                             "deny") == CANCELLED
+
+
+# ── kimi's AskUserQuestion over the same request ─────────────────────
+
+ASK = "call_ask_1"
+
+
+@pytest.fixture
+def ask_run(tmp_path, tmp_db, spans):
+    record = tmp_path / "wire.jsonl"
+    handle = launch_run("go", cwd=str(tmp_path), cmd=[sys.executable, FAKE],
+                        env={"FAKE_ACP_PERMISSION": "1",
+                             "FAKE_ACP_QUESTION": "1",
+                             "FAKE_ACP_RECORD": str(record)})
+    _until(lambda: handle.permissions.pending())
+    yield handle, record
+    handle.close()
+
+
+def test_a_question_parks_with_its_own_options_not_allow_deny(ask_run):
+    handle, _record = ask_run
+    [card] = [c for c in blockers.live_blockers()
+              if c["trace_id"] == handle.trace_id]
+    assert card["answerable"] == "question"
+    assert card["span_id"] == ASK
+    assert card["question"] == "Approve the plan?"
+    assert [o["label"] for o in card["options"]] == [
+        "Approve and build", "Revise first", "Abandon"]
+
+
+def test_picking_an_option_selects_that_option_id(ask_run, spans):
+    handle, record = ask_run
+    assert agent_sdk.resolve_ask(
+        handle.trace_id, [{"option_index": 1, "label": "Revise first"}],
+        tool_use_id=ASK) == (True, "answer delivered")
+    assert _answer(record) == {"outcome": {"outcome": "selected",
+                                           "optionId": "q0_opt_1"}}
+    _until(lambda: handle.turns)
+    assert handle.turns[0].status == "exited"
+    assert spans[-1]["attributes"]["tool_use_id"] == ASK
+    assert spans[-1]["status_code"] == "OK"
+
+
+def test_a_question_refuses_a_decision_and_a_typed_answer(ask_run):
+    handle, _record = ask_run
+    assert agent_sdk.resolve_permission(
+        handle.trace_id, {"behavior": "allow"})[0] is False
+    assert agent_sdk.resolve_ask(
+        handle.trace_id, [{"text": "something else"}])[0] is False
+    assert handle.permissions.pending()

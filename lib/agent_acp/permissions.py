@@ -45,6 +45,9 @@ class AcpPark:
     parked_at: str
     future: Future = field(default_factory=Future)
     kind: str = "tool"
+    # A question's option ids, positionally: the index the card's answer
+    # carries is an index into this list.
+    option_ids: list = field(default_factory=list)
 
 
 def meta_tool_name(call: dict) -> str:
@@ -54,6 +57,32 @@ def meta_tool_name(call: dict) -> str:
     meta = call.get("_meta") or {}
     return next((str(v) for k, v in meta.items()
                  if k.endswith("/toolName") and v), "")
+
+
+_ASK_TOOL = "AskUserQuestion"
+
+
+def question_of(call: dict, options: list) -> dict | None:
+    """The AskUserQuestion an agent sent as a permission request, or None.
+
+    kimi has no other surface for it on a client without elicitation: the
+    question text rides in `content`, each answer is an `allow_once` option,
+    and a trailing `reject_once` is its Skip. Parked as a plain permission it
+    rendered Allow/Deny — and Allow silently picked the first answer.
+    """
+    if _ASK_TOOL not in (call.get("title"), meta_tool_name(call)):
+        return None
+    picks = [o for o in options if o.get("optionId")
+             and not str(o.get("kind") or "").startswith("reject")]
+    if not picks:
+        return None
+    text = "\n".join(
+        str((c.get("content") or {}).get("text") or "")
+        for c in call.get("content") or [] if isinstance(c, dict)).strip()
+    return {"question": text, "header": "", "multiSelect": False,
+            "options": [{"label": str(o.get("name") or o["optionId"]),
+                         "description": ""} for o in picks],
+            "option_ids": [o["optionId"] for o in picks]}
 
 
 def selected_outcome(options: list, behavior: str) -> dict:
@@ -113,13 +142,19 @@ class PermissionParks:
         the operator answers, so it must not run on the client's reader
         thread (`AcpClient.on_request(..., blocking=True)`)."""
         call = params.get("toolCall") or {}
+        options = list(params.get("options") or [])
         park = AcpPark(
             trace_id=self._trace_id,
             tool_use_id=hook_tool_use_id(str(call.get("toolCallId") or "")),
             tool_name=meta_tool_name(call) or str(call.get("title") or ""),
             tool_input=call.get("rawInput") or {},
-            options=list(params.get("options") or []),
+            options=options,
             parked_at=datetime.now().isoformat())
+        question = question_of(call, options)
+        if question is not None:
+            park.kind = "question"
+            park.option_ids = question.pop("option_ids")
+            park.tool_input = {"questions": [question]}
         with self._lock:
             if self._closed:
                 return CANCELLED
@@ -143,17 +178,42 @@ class PermissionParks:
     def resolve(self, decision: dict, tool_use_id: str = "") -> tuple[bool, str]:
         """Hand an operator's `{behavior, reason}` to the named park, or the
         oldest when none is named. Any thread."""
+        return self._deliver(lambda park: decision, ("tool",), tool_use_id,
+                             "no pending permission request",
+                             "decision delivered")
+
+    def answer(self, answers: list, tool_use_id: str = "") -> tuple[bool, str]:
+        """Hand an operator's pick to a parked question. Only a listed option
+        can travel: the wire's answer is an optionId, so a typed reply has no
+        way to reach the agent and is refused rather than dropped."""
+        def pick(park: AcpPark):
+            first = answers[0] if answers and isinstance(answers[0], dict) else {}
+            index = first.get("option_index")
+            if not isinstance(index, int) or not 0 <= index < len(park.option_ids):
+                return None
+            return {"optionId": park.option_ids[index],
+                    "label": park.tool_input["questions"][0]["options"][index]["label"]}
+        return self._deliver(pick, ("question",), tool_use_id,
+                             "no pending question", "answer delivered",
+                             refused="this agent takes only a listed option")
+
+    def _deliver(self, result_for, kinds: tuple, tool_use_id: str,
+                 missing: str, delivered: str,
+                 refused: str = "") -> tuple[bool, str]:
         with self._lock:
             park = next((p for p in self._parks.values()
-                         if not p.future.done()
+                         if not p.future.done() and p.kind in kinds
                          and (not tool_use_id or p.tool_use_id == tool_use_id)),
                         None)
             if park is None:
-                return False, "no pending permission request"
-            park.future.set_result(decision)
+                return False, missing
+            result = result_for(park)
+            if result is None:
+                return False, refused
+            park.future.set_result(result)
         log.write("acp_permission_resolved", trace_id=self._trace_id,
-                  tool_use_id=park.tool_use_id)
-        return True, "decision delivered"
+                  tool_use_id=park.tool_use_id, kind=park.kind)
+        return True, delivered
 
     def cancel_all(self, *, close: bool = False) -> None:
         """Answer every park `cancelled` — after `session/cancel`, and for
@@ -196,6 +256,11 @@ class PermissionParks:
             post_resolution(park.trace_id, park.tool_use_id, park.tool_name,
                             "cancelled", "regin ACP channel: cancelled")
             return CANCELLED
+        if park.kind == "question":
+            post_resolution(park.trace_id, park.tool_use_id, park.tool_name,
+                            "allow", decision["label"])
+            return {"outcome": {"outcome": "selected",
+                                "optionId": decision["optionId"]}}
         from lib.agent_sdk import policy
         behavior, detail = policy.decision_outcome(decision)
         post_resolution(park.trace_id, park.tool_use_id, park.tool_name,

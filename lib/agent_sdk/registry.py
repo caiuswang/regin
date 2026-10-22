@@ -936,6 +936,9 @@ def resolve_ask(trace_id: str, result, tool_use_id: str = "") -> tuple[bool, str
     `tool_use_id` names which parked question, for a session holding more than
     one; without it the oldest is answered.
     """
+    handle = _acp_handle(trace_id)
+    if handle is not None:
+        return handle.permissions.answer(result, tool_use_id)
     return _resolve(trace_id, result, _ANSWER_KINDS, "no pending question",
                     "question already answered", "answer delivered",
                     tool_use_id)
