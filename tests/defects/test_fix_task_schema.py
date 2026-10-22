@@ -87,7 +87,7 @@ def test_agent_tasks_auto_title_backfilled_for_defect_tasks(at_0036):
 
 def test_schema_sql_matches_alembic_head(tmp_path, at_0036):
     head = ScriptDirectory.from_config(db_migrate._config()).get_current_head()
-    assert head == "0042"
+    assert head == "0043"
 
     command.upgrade(db_migrate._config(), "head")
     fresh = tmp_path / "fresh.db"

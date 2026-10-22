@@ -55,3 +55,24 @@ class Branch(Base, table=True):
 
 
 __all__ = ["Repo", "Branch"]
+
+
+class Workspace(Base, table=True):
+    """A root directory grouping the registered repos beneath it.
+
+    Membership is not stored: a repo belongs to a workspace when its path is
+    the root or lies under it, so a repo registered later joins on its own.
+    """
+
+    __tablename__ = "workspaces"
+    __table_args__ = {"sqlite_autoincrement": True}
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(sa_column=Column("name", Text, nullable=False, unique=True))
+    root_path: str = Field(
+        sa_column=Column("root_path", Text, nullable=False, unique=True))
+    created_at: Optional[str] = Field(
+        default=None,
+        sa_column=Column("created_at", Text, nullable=False,
+                         server_default=text("(datetime('now'))")),
+    )

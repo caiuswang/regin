@@ -31,7 +31,7 @@ from lib.orm.models.proposals import (
 from lib.orm.models.rules import Experiment, RuleTrigger, RuleTriggerSuppression
 from lib.orm.models.stages import ProjectStage
 from lib.orm.models.features import Feature, FeatureEvent, FeatureLink
-from lib.orm.models.sync import Branch, Repo
+from lib.orm.models.sync import Branch, Repo, Workspace
 from lib.orm.models.tasks import AgentTask
 from lib.orm.models.trace import (
     BridgeAttachment, PlanSession, PromptImage, Session, SessionRepo,
@@ -56,7 +56,7 @@ __all__ = [
     "SessionFeature",
     "SessionGrade",
     "User", "AuditLog",
-    "Repo", "Branch",
+    "Repo", "Branch", "Workspace",
     "PatternDoc", "Tag", "DocTag", "PatternDeployment", "PatternEmbedding",
     "PayloadSchemaDrift",
     "ProjectStage",

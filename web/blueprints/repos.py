@@ -116,6 +116,18 @@ def api_add_repo():
     })
 
 
+@repos_bp.route("/api/repos/probe")
+@require_editor
+def api_probe_path():
+    """Classify a path before adding it: `?path=/abs/dir` →
+    `{exists, is_git, child_repos, workspace_id}`."""
+    from lib.workspaces import probe
+    path = (request.args.get("path") or "").strip()
+    if not path:
+        return jsonify({"error": "path is required", "field": "path"}), 400
+    return jsonify(probe(path))
+
+
 @repos_bp.route("/api/repos/<name>", methods=["DELETE"])
 @require_editor
 def api_remove_repo(name):

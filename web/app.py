@@ -98,6 +98,9 @@ def create_app(replica: bool = False):
     from web.blueprints.repos import repos_bp
     app.register_blueprint(repos_bp)
 
+    from web.blueprints.workspaces import workspaces_bp
+    app.register_blueprint(workspaces_bp)
+
     from web.blueprints.repo_bundles import repo_bundles_bp
     app.register_blueprint(repo_bundles_bp)
 

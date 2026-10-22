@@ -5,6 +5,7 @@
 export const COMMAND_GROUPS = [
   { group: 'regin feature', sub: 'new · spec · stage · ledger · attribute · unattribute · image · ship · reopen · abandon · refresh', desc: 'Workbench: where a feature stands in the pipeline, and what it cost.' },
   { group: 'regin task', sub: 'add · list · show · comment · finish · delete · slice-check · tail · transcribe · commands', desc: 'Workbench: capture and inspect tasks; cut a spec’s slice table into tasks; report a run finished.' },
+  { group: 'regin workspace', sub: 'add · list · remove', desc: 'Workbench: a root directory whose members are the registered repos beneath it.' },
   { group: 'regin defects', sub: 'open · list · rounds · attribute · edit · merge · fix-item · image · close · reopen', desc: 'Workbench: the defect ledger — what a feature got wrong, and what escaped.' },
   { group: 'regin messages', sub: 'list · read · stats · prune', desc: 'Runs: inspect and prune the send_to_user inbox.' },
   { group: 'regin bridge', sub: 'listen', desc: 'Runs: the agent bridge — a session’s channel for steering messages.' },

@@ -11,6 +11,15 @@ CREATE TABLE IF NOT EXISTS repos (
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- A root directory grouping the registered repos beneath it. Membership is
+-- derived from repos.path at read time; there is no member table.
+CREATE TABLE IF NOT EXISTS workspaces (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL UNIQUE,
+    root_path   TEXT NOT NULL UNIQUE,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS branches (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     repo_id             INTEGER NOT NULL REFERENCES repos(id),
