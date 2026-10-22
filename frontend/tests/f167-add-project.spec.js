@@ -14,7 +14,7 @@ import { test, expect } from './auth-fixture.js'
 import { SCRATCH_DIR, TEST_USER } from '../e2e-env.js'
 import { API_BASE } from './helpers/api-base.js'
 
-const NO_REPOS = '不是 git 仓库，其下也没有 git 仓库'
+const NO_REPOS = 'Not a git repo, and holds no git repos'
 
 function scratchDir(prefix) {
   mkdirSync(SCRATCH_DIR, { recursive: true })
@@ -89,7 +89,7 @@ test('test_overview_empty_state_invites_adding_a_project', async ({ page }) => {
   await page.goto('/overview')
 
   const panel = page.getByTestId('projects-panel')
-  await expect(panel.getByTestId('projects-first-run')).toContainText('还没有项目 — 添加一个 repo 或 workspace')
+  await expect(panel.getByTestId('projects-first-run')).toContainText('No projects yet — add a repo or a workspace')
   await expect(panel.getByTestId('projects-empty')).toHaveCount(0)
   await panel.getByTestId('projects-first-run-add').click()
   await expect(page.getByTestId('add-project-dialog')).toBeVisible()
@@ -101,7 +101,7 @@ test('test_overview_empty_state_tells_viewers_who_can_add', async ({ page }) => 
   await page.goto('/overview')
 
   const card = page.getByTestId('projects-first-run')
-  await expect(card).toHaveText('还没有项目，请 editor 在 Repos 添加')
+  await expect(card).toHaveText('No projects yet — an editor can add one under Repos')
   await expect(card.getByRole('button')).toHaveCount(0)
 })
 

@@ -83,7 +83,7 @@ test('test_refusal_lets_the_user_close_an_idle_holder', async ({ page }) => {
   await run.click()
 
   const refusal = page.getByTestId('task-refusal')
-  await expect(refusal.getByTestId('task-refusal-slots')).toHaveText('运行槽已满（2/2）')
+  await expect(refusal.getByTestId('task-refusal-slots')).toHaveText('Run slots full (2/2)')
   await expect(run).toBeDisabled()
   const idleRow = refusal.getByTestId(`run-slot-${idle.trace_id}`)
   await expect(idleRow.getByTestId('run-slot-task')).toHaveAttribute('href', `/tasks/${ids.done}`)
@@ -93,7 +93,7 @@ test('test_refusal_lets_the_user_close_an_idle_holder', async ({ page }) => {
   await idleRow.getByTestId('run-slot-close').click()
   await expect.poll(() => stops).toEqual([idle.trace_id])
   await expect(idleRow).toHaveCount(0)
-  await expect(refusal.getByTestId('task-refusal-slots')).toHaveText('运行槽已满（1/2）')
+  await expect(refusal.getByTestId('task-refusal-slots')).toHaveText('Run slots full (1/2)')
   await expect(run).toBeEnabled()
 })
 
@@ -128,7 +128,7 @@ test('test_done_task_with_open_session_shows_close_banner', async ({ page }) => 
 
   await page.goto(`/tasks/${ids.done}`)
   const banner = page.getByTestId('task-open-session')
-  await expect(banner).toContainText('会话仍开着（idle），占用 1 个运行槽')
+  await expect(banner).toContainText('Session still open (idle), holding 1 run slot')
   holders = []
   await banner.getByTestId('task-open-session-close').click()
   await expect.poll(() => stops).toEqual([open.trace_id])
@@ -151,7 +151,7 @@ test('test_overview_lists_finished_tasks_still_holding_a_slot', async ({ page })
 
   await page.goto('/overview')
   const running = page.getByTestId('running-now')
-  await expect(running.getByTestId('running-now-finished-title')).toHaveText('已完成但会话未关闭')
+  await expect(running.getByTestId('running-now-finished-title')).toHaveText('Finished, session still open')
   const row = running.getByTestId('running-now-finished').getByTestId(`run-slot-${open.trace_id}`)
   await expect(row.getByTestId('run-slot-task')).toContainText(`#${ids.done}`)
   const chip = running.getByTestId('run-slots-chip')
@@ -178,7 +178,7 @@ test('test_closing_from_the_banner_releases_the_refusal', async ({ page }) => {
   await page.goto(`/tasks/${ids.failed}`)
   const retry = page.getByTestId('task-detail-actions').getByTestId('task-action-retry')
   await retry.click()
-  await expect(page.getByTestId('task-refusal-slots')).toHaveText('运行槽已满（1/1）')
+  await expect(page.getByTestId('task-refusal-slots')).toHaveText('Run slots full (1/1)')
   await expect(retry).toBeDisabled()
 
   holders = []

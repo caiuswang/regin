@@ -203,6 +203,14 @@ html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="dialog-note"]
     color: var(--pl-text);
 }
 
+html[data-pl-theme="pixel"] [data-pl-part="dialog"] [data-pl-part="dialog-error"] {
+    font-family: var(--pl-font);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--pl-fail);
+}
+
 /* ── Keys of a choice (ChoiceField) ──────────────────────────────────── */
 html[data-pl-theme="pixel"] [data-pl-part="choice"] {
     display: flex;

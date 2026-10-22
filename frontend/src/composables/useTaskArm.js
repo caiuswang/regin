@@ -8,7 +8,7 @@ export { CUSTOM_MODEL, DEFAULT_PROVIDER, declares }
 
 const LAUNCH_MODES = ['sdk', 'tmux']
 const LAUNCH_HINTS = { sdk: 'ends if the server restarts', tmux: 'survives a server restart' }
-const NON_GIT_ROOT = 'workspace 根目录不是 git 仓库，无法使用 worktree'
+const NON_GIT_ROOT = 'the workspace root is not a git repo, so it cannot use a worktree'
 
 export function workspaceLabel(w) {
   return `workspace: ${w.name} (${w.repos} ${w.repos === 1 ? 'repo' : 'repos'})`

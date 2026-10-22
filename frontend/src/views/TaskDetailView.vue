@@ -271,7 +271,7 @@ onMounted(() => { ensureProjects(); load() })
 
     <template v-else-if="task">
       <div v-if="openSession" class="td-open-session" role="status" data-testid="task-open-session">
-        <span>会话仍开着（{{ openSession.phase }}），占用 1 个运行槽</span>
+        <span>Session still open ({{ openSession.phase }}), holding 1 run slot</span>
         <Button
           v-if="canWrite && openSession.phase === 'idle'" variant="secondary" size="sm"
           :disabled="closingSession" data-testid="task-open-session-close"

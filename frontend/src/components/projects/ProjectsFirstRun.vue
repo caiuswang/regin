@@ -14,11 +14,11 @@ const adding = ref(false)
 <template>
   <div class="pfr" data-pl-part="panel-empty" data-testid="projects-first-run">
     <template v-if="canAdd">
-      <p class="pfr-text">还没有项目 — 添加一个 repo 或 workspace</p>
-      <Button size="sm" variant="primary" data-testid="projects-first-run-add" @click="adding = true">Add project</Button>
+      <p class="pfr-text">No projects yet — add a repo or a workspace</p>
+      <Button size="sm" variant="primary" data-pl-part="key--primary" data-testid="projects-first-run-add" @click="adding = true">Add project</Button>
       <AddProjectDialog v-model:open="adding" @added="emit('added', $event)" />
     </template>
-    <p v-else class="pfr-text">还没有项目，请 editor 在 Repos 添加</p>
+    <p v-else class="pfr-text">No projects yet — an editor can add one under Repos</p>
   </div>
 </template>
 

@@ -356,7 +356,7 @@ async function submit() {
 
         <label class="live-launch-check" data-pl-part="check">
           <Checkbox v-model="draft.one_shot" data-testid="task-arm-oneshot" />
-          <span>Auto close — agent 报告完成后结束会话</span>
+          <span>Auto close — end the session once the agent reports done</span>
         </label>
       </div>
 

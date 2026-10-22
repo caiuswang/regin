@@ -21,15 +21,15 @@ function released(traceId) {
 </script>
 
 <template>
-  <div v-if="refusal.slots" class="task-refusal" role="alert" data-testid="task-refusal">
-    <span data-testid="task-refusal-slots">运行槽已满（{{ refusal.slots.used }}/{{ refusal.slots.limit }}）</span>
+  <div v-if="refusal.slots" class="task-refusal" role="alert" data-pl-part="refusal" data-testid="task-refusal">
+    <span data-pl-part="refusal-head" data-testid="task-refusal-slots">Run slots full ({{ refusal.slots.used }}/{{ refusal.slots.limit }})</span>
     <RunSlotList
       :holders="refusal.slots.holders" :can-write="canWrite"
       testid="task-refusal-holders"
       @closed="released"
     />
   </div>
-  <p v-else class="task-refusal" role="alert" data-testid="task-refusal">
+  <p v-else class="task-refusal" role="alert" data-pl-part="refusal" data-testid="task-refusal">
     {{ refusal.message }}
     <template v-if="refusal.blocking.length">
       <span class="task-refusal-links">

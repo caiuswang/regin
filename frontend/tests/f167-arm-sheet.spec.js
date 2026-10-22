@@ -85,14 +85,14 @@ test.afterEach(async ({ page }) => { await page.unrouteAll({ behavior: 'ignoreEr
 test('test_task_arm_sheet_auto_close_is_checked_by_default', async ({ page }) => {
   await openTaskArm(page)
   const box = page.getByTestId('task-arm-oneshot')
-  await expect(page.getByText('Auto close — agent 报告完成后结束会话')).toBeVisible()
+  await expect(page.getByText('Auto close — end the session once the agent reports done')).toBeVisible()
   await expect(box).toBeChecked()
 })
 
 test('test_slice_arm_sheet_exposes_the_auto_close_checkbox', async ({ page }) => {
   const bodies = await openSliceArm(page)
   const box = page.getByTestId('slice-arm-oneshot')
-  await expect(page.getByText('Auto close — agent 报告完成后结束会话')).toBeVisible()
+  await expect(page.getByText('Auto close — end the session once the agent reports done')).toBeVisible()
   await expect(box).toBeChecked()
 
   await box.click()
@@ -128,5 +128,5 @@ test('test_worktree_is_disabled_for_a_non_git_workspace_root', async ({ page }) 
 
   await expect(worktree).toBeDisabled()
   await expect(page.getByTestId('live-launch-worktree-blocked'))
-    .toHaveText('workspace 根目录不是 git 仓库，无法使用 worktree')
+    .toHaveText('the workspace root is not a git repo, so it cannot use a worktree')
 })

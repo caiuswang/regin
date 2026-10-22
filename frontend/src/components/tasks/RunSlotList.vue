@@ -43,27 +43,27 @@ const short = cwd => (cwd ? cwd.split('/').filter(Boolean).pop() : '')
 <template>
   <ul class="rsl" :data-testid="testid">
     <li
-      v-for="h in holders" :key="h.trace_id" class="rsl-row"
+      v-for="h in holders" :key="h.trace_id" class="rsl-row" data-pl-part="slot"
       :data-phase="h.phase" :data-testid="`run-slot-${h.trace_id}`"
     >
       <RouterLink
-        v-if="h.task_id" class="rsl-what" :to="`/tasks/${h.task_id}`"
+        v-if="h.task_id" class="rsl-what" data-pl-part="slot-what" :to="`/tasks/${h.task_id}`"
         data-testid="run-slot-task"
       >#{{ h.task_id }} {{ h.task_title }}</RouterLink>
-      <span v-else class="rsl-what rsl-what--live" :title="h.cwd || ''">
+      <span v-else class="rsl-what rsl-what--live" data-pl-part="slot-what" :title="h.cwd || ''">
         Live session{{ h.cwd ? ` · ${short(h.cwd)}` : '' }}
       </span>
-      <span class="rsl-phase" data-testid="run-slot-phase">{{ PHASE_LABEL[h.phase] || h.phase }}</span>
+      <span class="rsl-phase" data-pl-part="slot-phase" data-testid="run-slot-phase">{{ PHASE_LABEL[h.phase] || h.phase }}</span>
       <Button
         v-if="h.phase === 'idle' && canWrite"
-        variant="secondary" size="sm" class="rsl-close" data-tone="danger"
+        variant="secondary" size="sm" class="rsl-close" data-pl-part="key" data-tone="danger"
         :disabled="closing === h.trace_id"
         :aria-label="`${closeLabel} ${h.task_id ? `#${h.task_id}` : 'live session'}`"
         data-testid="run-slot-close"
         @click="close(h)"
       >{{ closeLabel }}</Button>
       <RouterLink
-        v-else-if="OPEN.has(h.phase)" class="rsl-open" :to="`/live/${h.trace_id}`"
+        v-else-if="OPEN.has(h.phase)" class="rsl-open" data-pl-part="key" :to="`/live/${h.trace_id}`"
         data-testid="run-slot-open"
       >Open</RouterLink>
     </li>

@@ -45,12 +45,12 @@ function watchTo(row) {
       >Run slots {{ slots.used }}/{{ slots.limit }}</Button>
       <router-link to="/live" class="pl-panel__link focus-visible:outline-2 focus-visible:outline-blue-500" data-pl-part="panel-link">Open Live →</router-link>
     </header>
-    <div v-if="slotsOpen && slots" id="rnw-slot-list" class="rnw-slotlist">
+    <div v-if="slotsOpen && slots" id="rnw-slot-list" class="rnw-slotlist" data-pl-part="slot-list">
       <RunSlotList
         :holders="slots.holders" :can-write="canWrite" testid="run-slots-holders"
         @closed="trace => emit('closed', trace)"
       />
-      <p v-if="!slots.holders.length" class="rnw-empty">No run holds a slot.</p>
+      <p v-if="!slots.holders.length" class="rnw-empty" data-pl-part="panel-empty">No run holds a slot.</p>
     </div>
     <ul class="rnw-rows" aria-labelledby="rnw-title">
       <li v-for="row in running.rows" :key="row.id" class="rnw-row" data-pl-part="row" :data-testid="`running-now-row-${row.id}`">
@@ -86,8 +86,8 @@ function watchTo(row) {
       </li>
     </ul>
     <template v-if="finished.length">
-      <h3 id="rnw-finished-title" class="rnw-group" data-testid="running-now-finished-title">已完成但会话未关闭</h3>
-      <div class="rnw-slotlist" data-testid="running-now-finished">
+      <h3 id="rnw-finished-title" class="rnw-group" data-pl-part="group-label" data-testid="running-now-finished-title">Finished, session still open</h3>
+      <div class="rnw-slotlist" data-pl-part="slot-list" data-testid="running-now-finished">
         <RunSlotList
           :holders="finished" :can-write="canWrite" close-label="Close session"
           testid="running-now-finished-list" @closed="trace => emit('closed', trace)"

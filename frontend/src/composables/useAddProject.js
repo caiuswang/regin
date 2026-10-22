@@ -7,8 +7,8 @@ export const MODE_WORKSPACE = 'workspace'
 // becoming the working directory.
 export const ADD_PROJECT_VALUE = '::add-project::'
 
-export const NOT_FOUND = '路径不存在'
-export const NO_REPOS = '不是 git 仓库，其下也没有 git 仓库'
+export const NOT_FOUND = 'Path does not exist'
+export const NO_REPOS = 'Not a git repo, and holds no git repos'
 
 /** Registering a repo or a workspace needs editor; with auth off there is no
  * stored user, and the server lets that request through. */

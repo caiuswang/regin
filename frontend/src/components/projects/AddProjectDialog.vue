@@ -7,6 +7,7 @@ import api from '../../api'
 import Button from '../ui/Button.vue'
 import Dialog from '../ui/Dialog.vue'
 import Input from '../ui/Input.vue'
+import PlGlyph from '../pipeline/PlGlyph.vue'
 import RadioGroup from '../ui/RadioGroup.vue'
 import { useProjects } from '../../composables/useProjects'
 import { MODE_REPO, MODE_WORKSPACE, probeVerdict } from '../../composables/useAddProject'
@@ -31,7 +32,7 @@ const verdict = computed(() => (probe.value ? probeVerdict(probe.value) : null))
 const blocked = computed(() => {
   const v = verdict.value
   if (!v) return ''
-  if (v.existing) return `已是 workspace ${existingName.value || `#${probe.value.workspace_id}`}`
+  if (v.existing) return `Already workspace ${existingName.value || `#${probe.value.workspace_id}`}`
   return v.error
 })
 const modeOptions = computed(() => (verdict.value?.modes || []).map(m => ({ value: m, label: MODE_LABELS[m] })))
@@ -127,10 +128,13 @@ async function submit() {
     title="Add project"
     description="Enter the absolute path of a git working tree, or of a folder holding several."
     data-testid="add-project-dialog"
+    data-pl-part="dialog"
+    kicker="New project · repo or workspace"
     @open-auto-focus="pathInput?.focus()"
   >
+    <template #mark><PlGlyph kind="project" :scale="2" /></template>
     <form class="ap-form" @submit.prevent="submit">
-      <label class="ap-lbl" for="add-project-path">Path</label>
+      <label class="ap-lbl" for="add-project-path" data-pl-part="field-label">Path</label>
       <Input
         id="add-project-path"
         ref="pathInput"
@@ -139,10 +143,11 @@ async function submit() {
         placeholder="/Users/you/code/my-service"
         aria-label="Project path"
         data-testid="add-project-path"
+        data-pl-part="input"
         :disabled="busy"
         :error="!!blocked"
       />
-      <p v-if="blocked" class="ap-error" role="alert" data-testid="add-project-blocked">{{ blocked }}</p>
+      <p v-if="blocked" class="ap-error" role="alert" data-pl-part="dialog-error" data-testid="add-project-blocked">{{ blocked }}</p>
       <template v-else-if="probe">
         <RadioGroup
           v-if="modeOptions.length > 1"
@@ -152,18 +157,19 @@ async function submit() {
           inline
           data-testid="add-project-mode"
         />
-        <p v-else class="ap-note" data-testid="add-project-kind">{{ modeOptions[0]?.label }}</p>
+        <p v-else class="ap-note" data-pl-part="field-hint" data-testid="add-project-kind">{{ modeOptions[0]?.label }}</p>
         <template v-if="mode === MODE_WORKSPACE">
-          <label class="ap-lbl" for="add-project-name">Workspace name <span class="ap-optional">(optional)</span></label>
+          <label class="ap-lbl" for="add-project-name" data-pl-part="field-label">Workspace name <span class="ap-optional">(optional)</span></label>
           <Input
             id="add-project-name"
             v-model="name"
             :placeholder="probe.path.split(/[\\/]/).filter(Boolean).pop() || ''"
             aria-label="Workspace name"
             data-testid="add-project-name"
+            data-pl-part="input"
           />
-          <p class="ap-note">Repositories it will hold:</p>
-          <ul class="ap-children" data-testid="add-project-children">
+          <p class="ap-note" data-pl-part="field-label">Repositories it will hold:</p>
+          <ul class="ap-children" data-pl-part="dialog-note" data-testid="add-project-children">
             <li v-if="probe.is_git"><code>{{ probe.path }}</code></li>
             <li v-for="c in childRepos" :key="c.path">
               <code>{{ c.name }}</code>
@@ -172,14 +178,15 @@ async function submit() {
           </ul>
         </template>
       </template>
-      <p v-if="failure" class="ap-error" role="alert" data-testid="add-project-error">{{ failure }}</p>
+      <p v-if="failure" class="ap-error" role="alert" data-pl-part="dialog-error" data-testid="add-project-error">{{ failure }}</p>
     </form>
     <template #footer>
-      <Button variant="secondary" :disabled="busy" @click="open = false">Cancel</Button>
+      <Button variant="secondary" data-pl-part="key" :disabled="busy" @click="open = false">Cancel</Button>
       <Button
         variant="primary"
         :disabled="primaryDisabled"
         data-testid="add-project-submit"
+        data-pl-part="key--primary"
         @click="submit"
       >{{ primaryLabel }}</Button>
     </template>

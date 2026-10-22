@@ -126,7 +126,7 @@ function close() {
       </template>
       <label class="sa-check">
         <Checkbox v-model="shared.one_shot" data-testid="slice-arm-oneshot" />
-        <span>Auto close — agent 报告完成后结束会话</span>
+        <span>Auto close — end the session once the agent reports done</span>
       </label>
       <fieldset
         v-for="d in drafts" :key="d.task_id" class="sa-row"
