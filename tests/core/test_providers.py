@@ -24,7 +24,7 @@ def _isolate_provider_settings(monkeypatch):
 
 def test_registry_lists_expected_ids():
     ids = list_provider_ids()
-    assert ids == ["claude", "codex", "generic", "kimi"]
+    assert ids == ["claude", "codebuddy", "codex", "generic", "kimi", "workbuddy"]
 
 
 def _assert_kimi_skill_paths(p):

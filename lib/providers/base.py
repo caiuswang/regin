@@ -419,6 +419,16 @@ class AgentProvider:
     def hook_settings_path(self) -> Path:
         raise NotImplementedError
 
+    def mcp_config_path(self) -> Path | None:
+        """The MCP server config regin registers its servers into, or None
+        when regin registers no MCP server for this provider."""
+        return None
+
+    def acp_argv(self) -> list[str] | None:
+        """The command line that starts this CLI as an ACP agent, or None
+        when it speaks no ACP."""
+        return None
+
     def hook_manager_config_path(self) -> Path:
         raise NotImplementedError
 

@@ -8,6 +8,7 @@ from dataclasses import asdict
 
 from lib.providers.base import AgentProvider
 from lib.providers.claude import ClaudeProvider
+from lib.providers.codebuddy import CodeBuddyProvider, WorkBuddyProvider
 from lib.providers.codex import CodexProvider
 from lib.providers.generic import GenericProvider
 from lib.providers.kimi import KimiProvider
@@ -21,9 +22,11 @@ from lib.settings import ProviderConfig, ProviderPathOverrides
 
 _PROVIDER_BUILDERS = {
     "claude": ClaudeProvider,
+    "codebuddy": CodeBuddyProvider,
     "codex": CodexProvider,
     "generic": GenericProvider,
     "kimi": KimiProvider,
+    "workbuddy": WorkBuddyProvider,
 }
 
 
@@ -223,7 +226,7 @@ def provider_id_from_model(model: object) -> str | None:
 
 def canonical_agent_kind(agent_type: object) -> str | None:
     """Map a stored `sessions.agent_type` string to a canonical provider id
-    for UI grouping ('claude' | 'codex' | 'kimi' | 'generic' | None).
+    for UI grouping (a registered provider id, 'generic', or None).
 
     `agent_type` is free-form vendor text persisted at SessionStart (it can
     read 'claude', 'openai', 'kimi', 'workflow-subagent', …). Centralized
@@ -233,6 +236,8 @@ def canonical_agent_kind(agent_type: object) -> str | None:
     raw = str(agent_type or "").strip().lower()
     if not raw:
         return None
+    if raw in _PROVIDER_BUILDERS:
+        return raw
     # Reuse the model→provider vendor table (claude-/gpt-/o-series/kimi) so the
     # prefix knowledge isn't copied here and can't drift from it.
     by_model = provider_id_from_model(raw)

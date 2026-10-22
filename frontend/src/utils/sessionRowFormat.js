@@ -133,6 +133,8 @@ const AGENT_KIND_LABEL = {
   claude: 'Claude Code session',
   codex: 'OpenAI Codex session',
   kimi: 'Kimi Code session',
+  codebuddy: 'CodeBuddy Code session',
+  workbuddy: 'WorkBuddy session',
 }
 
 export function agentTypeLabel(s) {

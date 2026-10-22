@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Literal, Tuple, Type
 
 import portalocker
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import (
     BaseSettings,
     JsonConfigSettingsSource,
@@ -283,6 +283,17 @@ class Settings(BaseSettings):
     # SettingsView / /api/hooks / /api/providers. Flip to true to surface the
     # experimental `codex` and `generic` providers.
     experimental_providers: bool = False
+
+    # The CodeBuddy-family CLIs relocate their whole config root through
+    # their own unprefixed env vars (WorkBuddy's desktop engine runs with
+    # CODEBUDDY_CONFIG_DIR=WORKBUDDY_CONFIG_DIR=~/.workbuddy), so regin
+    # honours the same names rather than a REGIN_-prefixed copy.
+    codebuddy_config_dir: Path | None = Field(
+        default=None,
+        validation_alias=AliasChoices("CODEBUDDY_CONFIG_DIR", "codebuddy_config_dir"))
+    workbuddy_config_dir: Path | None = Field(
+        default=None,
+        validation_alias=AliasChoices("WORKBUDDY_CONFIG_DIR", "workbuddy_config_dir"))
 
     # Gate for the dense (semantic) pattern search UI on the Patterns
     # page. When false (default), the "Dense search" toggle, query

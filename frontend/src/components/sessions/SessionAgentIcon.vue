@@ -39,6 +39,9 @@ const tone = computed(() => agentTypeTone(props.s))
     <svg v-else-if="tone === 'kimi'" viewBox="0 0 16 16" aria-hidden="true">
       <path d="M5 3v10M5 8l5-5M5 8.5l5 4.5" />
     </svg>
+    <svg v-else-if="tone === 'codebuddy' || tone === 'workbuddy'" viewBox="0 0 16 16" aria-hidden="true">
+      <path d="M6 4.5 2.5 8 6 11.5M10 4.5 13.5 8 10 11.5" />
+    </svg>
     <svg v-else viewBox="0 0 16 16" aria-hidden="true">
       <path d="M8 2.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11Zm0 2.2v3.1l2.2 2.1" />
     </svg>
@@ -68,6 +71,8 @@ const tone = computed(() => agentTypeTone(props.s))
 .agent-icon--claude { background: var(--color-orange-50); color: var(--color-orange-700); }
 .agent-icon--codex { background: var(--color-indigo-50); color: var(--color-indigo-700); }
 .agent-icon--kimi { background: var(--color-purple-50); color: var(--color-purple-700); }
+.agent-icon--codebuddy { background: var(--color-blue-50); color: var(--color-blue-700); }
+.agent-icon--workbuddy { background: var(--color-cyan-50); color: var(--color-cyan-700); }
 .agent-icon--generic { background: var(--color-surface-2); color: var(--color-fg-subtle); }
 .agent-icon--workflow { background: var(--color-emerald-50); color: var(--color-teal-700); }
 .agent-icon--llm-stage { background: var(--color-sky-50); color: var(--color-sky-700); }
