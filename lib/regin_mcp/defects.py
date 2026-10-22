@@ -171,7 +171,9 @@ def _create(ids: list[int]) -> list[dict]:
 def defect_set_fix_task(defect_ids: list[int], task_id: Optional[int] = None,
                         create: bool = False, remove: bool = False) -> dict:
     """Point defects at the task that will fix them, author that task, or
-    unpoint them. Name exactly one of task_id / create / remove.
+    unpoint them. Name exactly one of task_id / create / remove. A task
+    regin wrote re-renders its title and spec to list every defect now
+    pointed at it; one whose title or spec was hand-edited keeps that field.
 
     Args:
         defect_ids: The defects (one or more).

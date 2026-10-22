@@ -469,6 +469,7 @@ def attribute(defect_id: int, feature_id: int) -> Defect:
         _bind_blame(row)
         _touch(row)
         session.add(row)
+        refresh_fix_tasks(session, row.fix_task_id)
         session.commit()
         session.refresh(row)
         log.write("defect_attributed", defect_id=row.id,
@@ -503,6 +504,7 @@ def edit(defect_id: int, *, symptom: Optional[str] = None,
             row.suspect_paths_json = json.dumps(paths) if paths else None
         _touch(row)
         session.add(row)
+        refresh_fix_tasks(session, row.fix_task_id)
         session.commit()
         session.refresh(row)
         log.write("defect_edited", defect_id=row.id)

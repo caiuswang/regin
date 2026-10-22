@@ -268,7 +268,8 @@ def test_a_dropped_project_does_not_stop_the_launch(run):
 def test_a_fix_task_reads_its_defect_and_feature_as_they_are_now(run):
     """The fix task cites rather than copies, so a defect reworded, re-pathed
     and closed — and a feature renamed — after the task was cut is what its
-    run reads, and the task row itself is never rewritten."""
+    run reads. A reword re-renders the regin-written body to the new label;
+    the later close and rename do not touch it."""
     from lib.defects import fix_items  # noqa: PLC0415
     from lib.orm.models.tasks import AgentTask  # noqa: PLC0415
 
@@ -277,11 +278,11 @@ def test_a_fix_task_reads_its_defect_and_feature_as_they_are_now(run):
                                  session_id="t-11",
                                  suspect_paths=["lib/a.py"])
     task_id = fix_items.create_for(defect.id).fix_task_id
-    with SessionLocal() as session:
-        cut = session.get(AgentTask, task_id).body
-
     defect_store.edit(defect.id, symptom="new wording",
                       suspect_paths=["lib/b.py", "lib/c.py"])
+    with SessionLocal() as session:
+        cut = session.get(AgentTask, task_id).body
+    assert f"[D{defect.id} new wording](defect:{defect.id})" in cut
     defect_store.close(defect.id, missing_check="test_new")
     feature_store.rename(feature.id, "New name")
     stage = _stage(feature.id)

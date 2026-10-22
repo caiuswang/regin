@@ -121,3 +121,68 @@ def test_reopen_needs_a_closed_defect(call):
 def test_unknown_defect_is_a_tool_error(call, name, args):
     with pytest.raises(ToolError, match="no defect 999"):
         call(name, **args)
+
+
+def _fix_task(call, defect_ids):
+    task = call("defect_set_fix_task", defect_ids=defect_ids[:1],
+                create=True)["task_id"]
+    if defect_ids[1:]:
+        call("defect_set_fix_task", defect_ids=defect_ids[1:], task_id=task)
+    return task
+
+
+def test_linking_through_mcp_rewrites_the_task_spec(call):
+    """D317 on the MCP surface: the title and the spec both name every
+    defect pointed at the task, and lose one that leaves it."""
+    feature = call("feature_create", title="F")["id"]
+    a = call("defect_open", symptom="first", feature_id=feature)["id"]
+    b = call("defect_open", symptom="second", feature_id=feature)["id"]
+    task = _fix_task(call, [a, b])
+
+    shown = call("task_get", task_id=task)
+    assert shown["title"] == f"Fix #{a}, #{b}"
+    assert f"](defect:{a})" in shown["body"]
+    assert f"](defect:{b})" in shown["body"]
+
+    call("defect_triage", defect_id=b, action="merge", into_id=a)
+
+    shown = call("task_get", task_id=task)
+    assert shown["title"] == "first"
+    assert f"](defect:{b})" not in shown["body"]
+
+
+def test_rewording_through_mcp_rewrites_the_task_spec(call):
+    feature = call("feature_create", title="F")["id"]
+    a = call("defect_open", symptom="old wording", feature_id=feature)["id"]
+    task = _fix_task(call, [a])
+
+    call("defect_update", defect_id=a, symptom="new wording")
+
+    shown = call("task_get", task_id=task)
+    assert shown["title"] == "new wording"
+    assert f"[D{a} new wording](defect:{a})" in shown["body"]
+    assert "old wording" not in shown["body"]
+
+
+def test_re_attributing_through_mcp_rewrites_the_task_spec(call):
+    first = call("feature_create", title="First")["id"]
+    second = call("feature_create", title="Second")["id"]
+    a = call("defect_open", symptom="blamed", feature_id=first)["id"]
+    task = _fix_task(call, [a])
+
+    call("defect_attribute", defect_id=a, feature_id=second)
+
+    body = call("task_get", task_id=task)["body"]
+    assert f"](feature:{second})" in body
+    assert f"](feature:{first})" not in body
+
+
+def test_a_hand_written_spec_survives_mcp_edits(call):
+    feature = call("feature_create", title="F")["id"]
+    a = call("defect_open", symptom="a", feature_id=feature)["id"]
+    task = _fix_task(call, [a])
+    call("task_update", task_id=task, body="my own spec")
+
+    call("defect_update", defect_id=a, symptom="a, reworded")
+
+    assert call("task_get", task_id=task)["body"] == "my own spec"
