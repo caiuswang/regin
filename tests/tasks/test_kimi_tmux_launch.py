@@ -102,7 +102,7 @@ def acp(monkeypatch, pane):
     state = SimpleNamespace(cwds=[], fail=None)
 
     class _FakeAcp:
-        def __init__(self, cmd=None, env=None, cwd=None):
+        def __init__(self, cmd=None, env=None, cwd=None, provider=None):
             self.env = env
 
         def __enter__(self):

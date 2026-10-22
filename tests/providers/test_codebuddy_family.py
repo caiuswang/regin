@@ -43,13 +43,33 @@ def test_workbuddy_cannot_be_launched(flask_client):
 
     ids = {row["id"] for row in body["providers"]}
     assert "workbuddy" not in ids
-    assert build_provider("workbuddy").launch_capabilities()["launch_modes"] == []
+    workbuddy = build_provider("workbuddy")
+    assert workbuddy.launch_capabilities()["launch_modes"] == []
+    assert workbuddy.channel_launcher() is None
+    assert workbuddy.acp_argv() is None
     with pytest.raises(CaptureRejected):
         parse_arm({"provider": "workbuddy"})
 
 
-def test_codebuddy_launch_stays_closed_in_this_slice():
-    assert build_provider("codebuddy").launch_capabilities()["launch_modes"] == []
+def test_codebuddy_offers_channel_and_tmux(flask_client):
+    body = flask_client.get("/api/agent-runs/launch-options").get_json()
+
+    rows = {row["id"]: row for row in body["providers"]}
+    assert rows["codebuddy"]["launch_modes"] == ["sdk", "tmux"]
+    assert rows["codebuddy"]["labels"] == {"sdk": "ACP", "tmux": "tmux"}
+    assert rows["codebuddy"]["binary"] == "codebuddy"
+
+
+def test_codebuddy_pane_argv_and_skill_invocation(monkeypatch):
+    import shutil
+    monkeypatch.setattr(shutil, "which", lambda b: f"/bin/{b}")
+    p = build_provider("codebuddy")
+    assert p.pane_argv("sid-1", model="glm-5.1", prompt="-go") == [
+        "/bin/codebuddy", "--session-id", "sid-1",
+        "--dangerously-skip-permissions", "--model", "glm-5.1", "--", "-go"]
+    assert p.pane_argv("sid-1", resume=True)[1:3] == ["--resume", "sid-1"]
+    assert p.pane_input() is None
+    assert p.skill_invocation("tdd", "", []) == "/tdd\n\n"
 
 
 @pytest.mark.parametrize("pid,root", FAMILY.items())
@@ -152,4 +172,5 @@ def test_existing_skill_dirs_unchanged(pid, subpath):
 def test_new_seams_default_to_none(pid):
     p = build_provider(pid)
     assert p.mcp_config_path() is None
-    assert p.acp_argv() is None
+    if pid != "kimi":
+        assert p.acp_argv() is None

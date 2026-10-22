@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import itertools
 import os
-import shutil
 import threading
 import time
 from concurrent.futures import Future
@@ -290,10 +289,8 @@ class AcpRunHandle:
 
 
 def _spawn_client(env: dict | None, cwd: str | None,
-                  cmd: list[str] | None) -> AcpClient:
-    if not cmd and not shutil.which("kimi"):
-        raise LaunchRefused("kimi CLI not found on PATH")
-    client = AcpClient(cmd=cmd, env=env, cwd=cwd)
+                  cmd: list[str] | None, provider=None) -> AcpClient:
+    client = AcpClient(cmd=cmd, env=env, cwd=cwd, provider=provider)
     try:
         client.connect()
     except AcpLaunchRefused as exc:
@@ -416,7 +413,8 @@ def launch_run(prompt: str, *, cwd: str | None = None,
                one_shot: bool = False, images: list | None = None,
                client: AcpClient | None = None,
                cmd: list[str] | None = None,
-               resume: str | None = None) -> AcpRunHandle:
+               resume: str | None = None,
+               provider=None) -> AcpRunHandle:
     """Open an ACP session and schedule the prompt turn on a worker thread.
 
     Registered before the turn thread starts, so `is_owned` is true for the
@@ -428,11 +426,13 @@ def launch_run(prompt: str, *, cwd: str | None = None,
     `resume` loads that session instead of opening a new one. A blank prompt
     runs no launch turn: the session comes up and waits for its first steer,
     as a bare `kimi` does at a terminal.
+
+    The child's argv is `cmd`, else `provider.acp_argv()` (kimi by default).
     """
     cwd = os.path.abspath(cwd or settings.project_root)
     own = client is None
     if client is None:
-        client = _spawn_client(env, cwd, cmd)
+        client = _spawn_client(env, cwd, cmd, provider)
     try:
         session_id = _open_session(client, cwd, model, images, resume)
     except Exception:

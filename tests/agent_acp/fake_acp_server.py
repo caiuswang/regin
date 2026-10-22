@@ -11,7 +11,9 @@ declares no loadSession (session/load then errors), FAKE_ACP_REJECT_MODEL=1
 errors session/set_model, FAKE_ACP_TOOL=<title> announces a tool call in
 progress under that title (with a usage_update) before the stall and completes
 it after, and FAKE_ACP_RECORD=<path> appends every request received to that
-file, one JSON object per line.
+file, one JSON object per line. FAKE_ACP_REQUIRE_ARG=<flag> exits unless argv
+carries that flag; FAKE_ACP_HOOK_PROVIDER=<id> runs regin's real PostToolUse
+hook (`--agent-type <id>`) for one Bash call at the start of each prompt turn.
 """
 
 from __future__ import annotations
@@ -71,6 +73,7 @@ def _handle_prompt(params, msg_id, sessions, busy, serial, open_turns,
                {"code": "turn.agent_busy"})
         return
     open_turns.add(sid)
+    _fire_hook(sid)
     tool = os.environ.get("FAKE_ACP_TOOL")
     if tool:
         _update(sid, {"sessionUpdate": "tool_call", "toolCallId": "0:fake-1",
@@ -95,6 +98,25 @@ def _handle_prompt(params, msg_id, sessions, busy, serial, open_turns,
     open_turns.discard(sid)
     _respond(msg_id, {"stopReason": os.environ.get("FAKE_ACP_STOP_REASON")
                       or "end_turn"})
+
+
+def _fire_hook(sid: str) -> None:
+    """Run regin's real PostToolUse hook for one Bash call in session `sid`,
+    as the agent CLI would mid-turn."""
+    provider = os.environ.get("FAKE_ACP_HOOK_PROVIDER")
+    if not provider:
+        return
+    import subprocess
+    payload = {"hook_event_name": "PostToolUse", "session_id": sid,
+               "agent_type": "cli", "tool_name": "Bash",
+               "tool_use_id": "call_fake_1",
+               "tool_input": {"command": "echo hi"},
+               "tool_response": {"exitCode": 0, "interrupted": False}}
+    subprocess.run([sys.executable, "-P", "-m", "hook_manager", "PostToolUse",
+                    "--agent-type", provider],
+                   input=json.dumps(payload), text=True, timeout=60,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                   check=False)
 
 
 class _State:
@@ -170,6 +192,9 @@ _HANDLERS = {
 
 
 def main():
+    required = os.environ.get("FAKE_ACP_REQUIRE_ARG")
+    if required and required not in sys.argv[1:]:
+        sys.exit(f"fake ACP server: {required} missing from {sys.argv[1:]}")
     state = _State()
     for line in sys.stdin:
         line = line.strip()

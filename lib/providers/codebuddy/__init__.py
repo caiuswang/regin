@@ -6,13 +6,16 @@ root, so both share one implementation and differ only in `CodeBuddyFamily`.
 
 from __future__ import annotations
 
+import functools
 import os
 import re
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
 from lib import settings as settings_mod
-from lib.providers.base import AgentProvider, ProviderCapabilities
+from lib.providers.base import (AgentProvider, LaunchCapabilities,
+                                ProviderCapabilities)
 
 
 @dataclass(frozen=True)
@@ -127,6 +130,40 @@ class CodeBuddyProvider(CodeBuddyFamilyProvider):
     provider_id = "codebuddy"
     display_name = "CodeBuddy Code"
     family = CODEBUDDY
+
+    def launch_capabilities(self) -> LaunchCapabilities:
+        return {
+            "launch_modes": ["sdk", "tmux"],
+            "fields": ["model"],
+            "binary": "codebuddy",
+            # `codebuddy` is a `#!/usr/bin/env node` script.
+            "pane_commands": ["node"],
+            "labels": {"sdk": "ACP", "tmux": "tmux"},
+            "models": [],
+            "default_model": "",
+        }
+
+    def pane_argv(self, session_id: str, *, model: str = "", effort: str = "",
+                  permission_mode: str = "", prompt: str = "",
+                  resume: bool = False) -> list[str]:
+        # Absolute: the tmux server may predate this process and not carry
+        # its PATH.
+        argv = [shutil.which("codebuddy") or "codebuddy",
+                "--resume" if resume else "--session-id", session_id,
+                "--dangerously-skip-permissions"]
+        if model:
+            argv += ["--model", model]
+        if prompt:
+            argv += ["--", prompt]
+        return argv
+
+    def channel_launcher(self):
+        from lib.agent_acp.launcher import launch_run
+        return functools.partial(launch_run, provider=self)
+
+    def acp_argv(self) -> list[str]:
+        from lib.agent_acp.client import binary_argv
+        return binary_argv("codebuddy", "--acp")
 
 
 class WorkBuddyProvider(CodeBuddyFamilyProvider):
