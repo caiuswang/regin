@@ -117,7 +117,8 @@ def test_launch_options_lists_providers_with_availability(flask_client,
     body = flask_client.get("/api/agent-runs/launch-options").get_json()
 
     rows = {row["id"]: row for row in body["providers"]}
-    assert set(rows) == {"claude", "kimi"}
+    assert set(rows) == {"claude", "kimi", "codebuddy"}
+    assert rows["codebuddy"]["available"] is False
     assert rows["kimi"] == {
         "id": "kimi", "display_name": "Kimi Code", "binary": "kimi",
         "available": True, "launch_modes": ["sdk", "tmux"],
@@ -137,7 +138,8 @@ def test_doctor_reports_task_launch_providers(monkeypatch):
 
     items = {i["id"]: i for i in doctor._task_launch_provider_items()}
 
-    assert set(items) == {"launch_claude", "launch_kimi"}
+    assert set(items) == {"launch_claude", "launch_kimi", "launch_codebuddy"}
+    assert items["launch_codebuddy"]["present"] is False
     assert items["launch_kimi"]["present"] is True
     assert items["launch_kimi"]["version"] == "kimi --version 9.9"
     assert items["launch_claude"]["present"] is False

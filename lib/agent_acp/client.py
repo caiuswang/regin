@@ -39,18 +39,30 @@ class PromptResult:
     stop_reason: str
 
 
-def resolve_acp_command(cmd: list[str] | None) -> list[str]:
-    """The argv to spawn, refusing early when the binary is absent."""
+def binary_argv(binary: str, *args: str) -> list[str]:
+    """`[<binary on PATH>, *args]`, refusing when the binary is absent."""
+    path = shutil.which(binary)
+    if not path:
+        raise AcpLaunchRefused(f"{binary} CLI not found on PATH")
+    return [path, *args]
+
+
+def resolve_acp_command(cmd: list[str] | None, provider=None) -> list[str]:
+    """The argv to spawn: `cmd` verbatim, else `provider.acp_argv()` (kimi
+    when no provider is named)."""
     if cmd is not None:
         return list(cmd)
-    binary = shutil.which("kimi")
-    if not binary:
-        raise AcpLaunchRefused("kimi CLI not found on PATH")
-    return [binary, "acp"]
+    if provider is None:
+        from lib.providers.registry import build_provider  # noqa: PLC0415
+        provider = build_provider("kimi")
+    argv = provider.acp_argv()
+    if not argv:
+        raise AcpLaunchRefused(f"{provider.provider_id} speaks no ACP")
+    return argv
 
 
 class AcpClient:
-    """One `kimi acp` child process.
+    """One ACP agent child process (`kimi acp`, `codebuddy --acp`, …).
 
     `connect()` spawns; every public method after that is safe to call from
     any thread — a single reader thread owns the pipe and settles pending
@@ -61,8 +73,9 @@ class AcpClient:
 
     def __init__(self, cmd: list[str] | None = None,
                  env: dict[str, str] | None = None,
-                 cwd: str | None = None) -> None:
+                 cwd: str | None = None, provider=None) -> None:
         self._cmd = cmd
+        self._provider = provider
         self._env = env
         self._cwd = cwd
         self._proc: subprocess.Popen | None = None
@@ -83,7 +96,7 @@ class AcpClient:
     # ── lifecycle ──────────────────────────────────────────────
 
     def connect(self) -> None:
-        argv = resolve_acp_command(self._cmd)
+        argv = resolve_acp_command(self._cmd, self._provider)
         env = dict(os.environ)
         env.update(self._env or {})
         try:

@@ -24,6 +24,7 @@ provider-agnostic deployer writes the standard ``SKILL.md`` layout there.
 
 from __future__ import annotations
 
+import functools
 import glob
 import hashlib
 import json
@@ -272,7 +273,7 @@ class KimiProvider(AgentProvider):
         The empty session resumes in the pane under the same id."""
         from lib.agent_acp.client import AcpClient
 
-        with AcpClient(cwd=cwd, env=env) as client:
+        with AcpClient(cwd=cwd, env=env, provider=self) as client:
             client.initialize()
             return client.session_new(cwd)
 
@@ -292,7 +293,11 @@ class KimiProvider(AgentProvider):
 
     def channel_launcher(self):
         from lib.agent_acp.launcher import launch_run
-        return launch_run
+        return functools.partial(launch_run, provider=self)
+
+    def acp_argv(self) -> list[str]:
+        from lib.agent_acp.client import binary_argv
+        return binary_argv("kimi", "acp")
     transcript_format = "kimi"
 
     def __init__(self, overrides: dict | None = None):
