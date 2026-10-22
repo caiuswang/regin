@@ -318,7 +318,7 @@ Command groups — `regin <group> <subcommand>`:
 | `regin pattern` | Manage patterns (promote to regin-skillhub) | `promote` · `import` · `import-dir` · `embed` · `route` · `enable-rules` · `rules-doctor` |
 | `regin rules` | Manage rule engines and targeted checks | `check` · `index` · `deploy` · `list-disabled` · `disable` · `enable` · `run` · `list` · `bundles` · `trust` · `untrust` |
 | `regin schema` | Manage PostToolUse payload schemas | `list` · `bootstrap` · `validate` · `diff` |
-| `regin trace` | Session trace maintenance | `dump` · `span` · `backfill-tokens` · `backfill-skill-tokens` · `backfill-model` · `resolve-repos` · `ingest-workflows` · `backfill-costs` · `reap-pending` · `prune` · `backfill-subagents` |
+| `regin trace` | Session trace maintenance | `dump` · `span` · `backfill-tokens` · `backfill-skill-tokens` · `backfill-model` · `resolve-repos` · `ingest-workflows` · `backfill-costs` · `reap-pending` · `prune` · `backfill-subagents` · `import-transcripts` |
 | `regin wiki` | Manage the wiki-page dense index (per-topic accepted wikis) | `index` |
 | `regin logs` | View and manage the regin activity log | `list` · `tail` · `grep` · `prune` · `path` |
 | `regin memory` | Cross-session agent memory | `recall` · `read` · `index-root` · `index-expand` · `index-fetch` · `recall-for-task` · `list` · `stats` · `remember` · `backfill-titles` · `retitle` · `export-tree` · `import-tree` · `topic-feedback` · `topic-decide` · `exemplar-add` · `exemplar-rm` · `exemplar-list` · `exemplar-forget` · `reflect` · `distill` · `link-topics` · `consolidate-skills` · `approve` · `forget` · `restore` · `supersede` · `eval` · `curate-apply` |
