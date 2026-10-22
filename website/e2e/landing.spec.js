@@ -50,6 +50,8 @@ test('the hero HUD, copy and CTAs are the prototype\'s', async ({ page }) => {
   await expect(hero.getByRole('link', { name: '▶ CLONE ON GITHUB' })).toHaveAttribute('href', 'https://github.com/caiuswang/regin')
   await expect(hero.getByRole('link', { name: 'Play the loop ↓' })).toHaveAttribute('href', '/#play')
   await expect(hero.locator('.quick-start-pre')).toHaveText('$ git clone https://github.com/caiuswang/regin\n$ cd regin && ./scripts/setup.sh')
+  await hero.getByRole('button', { name: 'WINDOWS' }).click()
+  await expect(hero.locator('.quick-start-pre')).toHaveText('$ git clone https://github.com/caiuswang/regin\n$ cd regin; .\\scripts\\setup.cmd')
   await expect(hero.locator('figcaption')).toHaveText('PIPELINE OVERVIEW · THE REPO THAT BUILDS REGIN, LIVE')
   await expect(hero.locator('figure img')).toHaveAttribute('src', /overview.*\.webp$/)
 })

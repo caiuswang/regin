@@ -20,6 +20,12 @@ export const GETTING_STARTED = [
     P('The setup script creates a Python venv, builds the frontend, initializes the database, discovers repos, and prompts you to create your user account.'),
     C('git clone https://github.com/caiuswang/regin\ncd regin\n./scripts/setup.sh /path/to/your/source-repos\n\n.venv/bin/python cli/regin.py serve\n# Open http://localhost:8321 and log in'),
   ]],
+  ['Windows', [
+    P('From PowerShell or cmd, run `setup.cmd`, not `setup.sh` — in PowerShell `./scripts/setup.sh` does not run; Windows opens the file in whatever app `.sh` is associated with. Needs Python ≥ 3.11 (found through the `py` launcher; set `$env:PYTHON` to pick one), Node and Git.'),
+    C('git clone https://github.com/caiuswang/regin\ncd regin\n.\\scripts\\setup.cmd C:\\path\\to\\your\\source-repos\n\n# then, in a new terminal (setup adds regin to your user PATH)\nregin serve'),
+    N('WARN', '**Windows on ARM: install the x64 Python, not the ARM64 one.** `cryptography`, `tiktoken`, `brotli` and `claude-agent-sdk` publish no Windows ARM64 wheels, so pip would try to compile them and fail. The x64 build runs under emulation; setup picks it automatically when both are installed. If a previous attempt left an ARM64 `.venv`, delete it and re-run.'),
+    P('The live-session terminal and the agent bridge drive tmux, which has no native Windows build, so setup does not offer them. Upgrade with `git pull; .\\scripts\\setup.cmd`.'),
+  ]],
   ['Activate the hooks', [
     N('WARN', '**Serving the dashboard is not enough on its own.** Neither `setup.sh` nor `regin serve` wires regin into your agent — until you install the hooks, no traces are captured, no rules fire, no memory is injected, and `send_to_user` messages go nowhere.'),
     P('regin drives every Claude Code event through one dispatcher — `python -m hook_manager <Event>` — registered in the provider\'s settings file (`~/.claude/settings.json`). Install it once from the running dashboard, under **Settings → Hook Installers**:'),

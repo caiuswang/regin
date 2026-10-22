@@ -904,6 +904,8 @@ h1, h2, h3 { text-wrap: balance; }
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
   padding: 6px 6px 6px 14px;
   border-bottom: var(--border-w) solid var(--rule);
   font-family: var(--font-display);
@@ -923,6 +925,21 @@ h1, h2, h3 { text-wrap: balance; }
   cursor: pointer;
 }
 .copy-key:hover { border-color: var(--green); }
+.quick-start-os { display: flex; gap: 4px; margin-left: auto; }
+.quick-start-bar .os-key, .quick-start-bar .copy-key { white-space: nowrap; }
+.os-key {
+  font-family: var(--font-display);
+  font-size: 11px;
+  line-height: normal;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  background: transparent;
+  border: var(--border-w) solid transparent;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.os-key:hover { color: var(--ink); }
+.os-key.is-on { color: var(--ink); border-color: var(--edge); }
 .copy-key.is-failed { color: var(--gold); }
 .quick-start-pre {
   margin: 0;
