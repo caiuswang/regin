@@ -21,7 +21,7 @@ export const COMMAND_GROUPS = [
   { group: 'regin skills', sub: 'list · check · pull · push · undeploy', desc: 'Guidance: sync packaged skills with the active provider’s skills directory.' },
   { group: 'regin rules', sub: 'check · run · list · index · deploy · disable · enable · list-disabled · bundles · trust · untrust', desc: 'Guidance: rule-engine management and one-off rule runs.' },
   { group: 'regin hooks', sub: 'status · install · remove · adopt · repair', desc: 'Guidance: inspect, install and repair regin’s agent hook wiring.' },
-  { group: 'regin mcp', sub: 'register', desc: 'Guidance: register regin’s MCP servers (memory, send-to-user) with agent providers.' },
+  { group: 'regin mcp', sub: 'register', desc: 'Guidance: register regin’s MCP servers (memory, regin) with agent providers.' },
   { group: 'regin schema', sub: 'list · bootstrap · validate · diff', desc: 'Guidance: PostToolUse payload schemas.' },
   { group: 'regin memory', sub: 'recall · read · list · remember · supersede · forget · reflect · index-root · index-expand · index-fetch · export-tree · …', desc: 'Guidance: inspect and curate the cross-session agent memory store.' },
   { group: 'regin topics', sub: 'bootstrap · scan · list · promote · drift · evolve · propose · proposal-* · wiki-debt · route · audit · …', desc: 'Guidance: the per-repo topic graph — proposals, drift detection, wiki debt.' },

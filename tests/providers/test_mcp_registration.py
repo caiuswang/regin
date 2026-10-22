@@ -17,6 +17,8 @@ from lib.providers.base import ProviderCapabilities
 from lib.providers.codebuddy import CodeBuddyFamily, CodeBuddyProvider
 from lib.providers.mcp_registration import (
     MEMORY,
+    NO_SEND_TO_USER,
+    REGIN,
     SEND_TO_USER,
     McpConfigUnreadable,
     register_all,
@@ -65,25 +67,44 @@ def _mcp_providers():
     return [p for p in built if p.mcp_config_path() is not None]
 
 
+def _legacy_send_to_user() -> dict:
+    entry = server_entry(MEMORY)
+    entry["args"] = [entry["args"][0].replace("memory/mcp_server.py",
+                                              "agent_messages/mcp_server.py")]
+    return entry
+
+
 def test_mcp_registration_respects_hooks_capability(home):
     cfg = home / ".codebuddy" / ".mcp.json"
     _write(cfg, {"mcpServers": {"acme": USER_SERVER}, "other": 1})
     hookless = _HooklessBuddy()
-    _write(hookless.mcp_config_path(), {"mcpServers": {
-        "acme": USER_SERVER, SEND_TO_USER: server_entry(SEND_TO_USER)}})
+    _write(hookless.mcp_config_path(), {"mcpServers": {"acme": USER_SERVER}})
 
     results = {r.provider_id: r for r in register_all(_mcp_providers() + [hookless])}
 
     assert set(results) == {"codebuddy", "workbuddy", "hookless"}
     servers = _servers(cfg)
-    assert list(servers) == ["acme", MEMORY, SEND_TO_USER]
+    assert list(servers) == ["acme", MEMORY, REGIN]
     assert servers["acme"] == USER_SERVER
     assert json.loads(cfg.read_text())["other"] == 1
     assert servers[MEMORY]["args"][0].endswith("lib/memory/mcp_server.py")
-    assert servers[SEND_TO_USER]["args"][0].endswith("lib/agent_messages/mcp_server.py")
-    assert results["hookless"].removed == [SEND_TO_USER]
-    assert _servers(hookless.mcp_config_path()) == {
-        "acme": USER_SERVER, MEMORY: server_entry(MEMORY)}
+    assert servers[REGIN]["args"] == [servers[REGIN]["args"][0]]
+    assert servers[REGIN]["args"][0].endswith("lib/regin_mcp/server.py")
+    hookless_servers = _servers(hookless.mcp_config_path())
+    assert list(hookless_servers) == ["acme", MEMORY, REGIN]
+    assert hookless_servers[REGIN]["args"][1:] == [NO_SEND_TO_USER]
+
+
+def test_registration_replaces_the_separate_send_to_user_server(home):
+    cfg = home / ".codebuddy" / ".mcp.json"
+    _write(cfg, {"mcpServers": {"acme": USER_SERVER, MEMORY: server_entry(MEMORY),
+                                SEND_TO_USER: _legacy_send_to_user()}})
+
+    result = register_provider(build_provider("codebuddy"))
+
+    assert result.removed == [SEND_TO_USER]
+    assert result.changed is True
+    assert list(_servers(cfg)) == ["acme", MEMORY, REGIN]
 
 
 def test_workbuddy_mcp_registration_leaves_trust_to_the_user(home, cli_out):
@@ -98,11 +119,11 @@ def test_workbuddy_mcp_registration_leaves_trust_to_the_user(home, cli_out):
 
     assert out.exit_code == 0, out.output
     servers = _servers(cfg)
-    assert set(servers) == {"acme", MEMORY, SEND_TO_USER}
+    assert set(servers) == {"acme", MEMORY, REGIN}
     assert json.dumps(servers["acme"], indent=2) == user_entry_bytes
     assert not (root / ".mcp.json").exists()
     assert approvals.read_bytes() == APPROVALS
-    assert "需在 WorkBuddy 连接器中心信任 memory / send-to-user" in cli_out.getvalue()
+    assert "需在 WorkBuddy 连接器中心信任 memory / regin" in cli_out.getvalue()
     assert not (home / ".codebuddy").exists()
 
 
@@ -140,7 +161,7 @@ def test_hooks_status_names_the_workbuddy_trust_step(home, monkeypatch, cli_out)
     out = CliRunner().invoke(app, ["hooks", "status", "--provider", "workbuddy"])
 
     assert out.exit_code == 0, out.output
-    assert "需在 WorkBuddy 连接器中心信任 memory / send-to-user" in cli_out.getvalue()
+    assert "需在 WorkBuddy 连接器中心信任 memory / regin" in cli_out.getvalue()
 
 
 def test_unscoped_register_skips_agents_that_are_not_installed(home, cli_out):

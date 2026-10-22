@@ -88,11 +88,13 @@ def test_mcp_result_truncates_and_marks_dropped(_captured):
     assert attrs["mcp_result_truncated_bytes"] == 500
 
 
-def test_send_to_user_keeps_message_skips_generic_dump(_captured):
+@pytest.mark.parametrize("tool_name", ["mcp__send-to-user__send_to_user",
+                                       "mcp__regin__send_to_user"])
+def test_send_to_user_keeps_message_skips_generic_dump(_captured, tool_name):
     # send_to_user has its own Messages-tab affordance; it must NOT also get
     # the generic params/result dump (the body is already in `user_message`).
     payload = _mcp_payload(
-        "mcp__send-to-user__send_to_user",
+        tool_name,
         {"message": "hello world", "type": "progress"},
         {"result": "delivered"},
     )
@@ -102,3 +104,6 @@ def test_send_to_user_keeps_message_skips_generic_dump(_captured):
     assert attrs["user_message"] == "hello world"
     assert "mcp_input" not in attrs
     assert "mcp_result" not in attrs
+    from lib.agent_messages import store
+    landed = store.list_session_messages("session_mcp_1")
+    assert [m["body"] for m in landed] == ["hello world"]

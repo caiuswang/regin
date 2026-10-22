@@ -11,7 +11,7 @@ from lib.providers.mcp_registration import McpConfigUnreadable, register_provide
 
 mcp_app = typer.Typer(
     name="mcp",
-    help="Register regin's MCP servers (memory, send-to-user) with agent providers.",
+    help="Register regin's MCP servers (memory, regin) with agent providers.",
     no_args_is_help=True,
 )
 
@@ -46,7 +46,7 @@ def _report(result) -> None:
         echo(f"  {result.trust_hint}")
 
 
-@mcp_app.command("register", help="Merge memory / send-to-user into each provider's MCP config.")
+@mcp_app.command("register", help="Merge memory / regin into each provider's MCP config.")
 def cmd_register(
     provider: str = typer.Option(None, "--provider", "-p", help="Only this provider id."),
 ) -> None:

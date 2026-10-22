@@ -105,7 +105,7 @@ bridge.register(app)  # bridge listen (a session's Mod channel)
 app.add_typer(events.events_app)  # events list (notification bus catalog)
 app.add_typer(grader.grade_app)
 app.add_typer(hooks.hooks_app)  # hooks status / install / repair / remove
-mcp.register(app)  # mcp register (memory / send-to-user into provider configs)
+mcp.register(app)  # mcp register (memory / regin into provider configs)
 app.add_typer(stats.stats_app)  # stats time / sessions / daily / by
 app.add_typer(defects.defects_app)  # defects open / list / rounds / close
 app.add_typer(feature.feature_app)  # feature stage

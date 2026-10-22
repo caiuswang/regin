@@ -4,10 +4,13 @@ regin owns exactly the keys in `REGIN_SERVERS` under `mcpServers`; every other
 entry, and every other top-level key, is carried through untouched. A provider
 whose `mcp_config_path()` is None gets nothing written.
 
-`send-to-user` is only registered where hooks run: the tool merely acks, and
-the message is persisted by the PostToolUse hook, so without hooks the agent
-is told "delivered" for a message that never lands. `topics` is not offered to
-other providers.
+`regin` is the one server carrying `send_to_user` and the pipeline tools. Where
+hooks do not run it is launched with `--no-send-to-user`: that tool merely
+acks, and the message is persisted by the PostToolUse hook, so without hooks
+the agent would be told "delivered" for a message that never lands.
+`send-to-user` is the key regin wrote before the two were one server; it stays
+regin-owned so a re-register removes it. `topics` is not offered to other
+providers.
 
 WorkBuddy gates each entry on a trust approval the user grants in its
 connector center (`mcp-approvals.json`, keyed by a hash of the entry's
@@ -26,13 +29,15 @@ from lib.settings import settings
 from lib.venv_paths import venv_python
 
 MEMORY = "memory"
+REGIN = "regin"
 SEND_TO_USER = "send-to-user"
-REGIN_SERVERS = (MEMORY, SEND_TO_USER)
+REGIN_SERVERS = (MEMORY, REGIN, SEND_TO_USER)
 
 _SERVER_SCRIPTS = {
     MEMORY: ("lib", "memory", "mcp_server.py"),
-    SEND_TO_USER: ("lib", "agent_messages", "mcp_server.py"),
+    REGIN: ("lib", "regin_mcp", "server.py"),
 }
+NO_SEND_TO_USER = "--no-send-to-user"
 
 
 class McpConfigUnreadable(Exception):
@@ -53,14 +58,17 @@ def _posix(path: str) -> str:
     return path.replace(os.sep, "/")
 
 
-def server_entry(name: str) -> dict:
+def server_entry(name: str, *, hooks: bool = True) -> dict:
     """The same stdio launch regin's own Claude registration uses."""
     root = str(settings.project_root)
     script = os.path.join(root, *_SERVER_SCRIPTS[name])
+    args = [_posix(script)]
+    if name == REGIN and not hooks:
+        args.append(NO_SEND_TO_USER)
     return {
         "type": "stdio",
         "command": _posix(venv_python(root)),
-        "args": [_posix(script)],
+        "args": args,
         "env": {},
     }
 
@@ -68,9 +76,7 @@ def server_entry(name: str) -> dict:
 def wanted_servers(provider: AgentProvider) -> tuple[str, ...]:
     if provider.mcp_config_path() is None:
         return ()
-    if provider.capabilities.hooks:
-        return (MEMORY, SEND_TO_USER)
-    return (MEMORY,)
+    return (MEMORY, REGIN)
 
 
 def trust_hint(provider: AgentProvider) -> str | None:
@@ -89,11 +95,12 @@ def _read_config(path: Path) -> dict:
     return data
 
 
-def _merge(servers: dict, wanted: tuple[str, ...], result: McpRegistration) -> dict:
+def _merge(servers: dict, wanted: tuple[str, ...], hooks: bool,
+           result: McpRegistration) -> dict:
     merged = {k: v for k, v in servers.items() if k not in REGIN_SERVERS or k in wanted}
     result.removed = [k for k in REGIN_SERVERS if k in servers and k not in wanted]
     for name in wanted:
-        merged[name] = server_entry(name)
+        merged[name] = server_entry(name, hooks=hooks)
     result.registered = list(wanted)
     return merged
 
@@ -110,7 +117,8 @@ def register_provider(provider: AgentProvider) -> McpRegistration | None:
     result = McpRegistration(provider.provider_id, path, trust_hint=trust_hint(provider))
     data = _read_config(path)
     servers = data.get("mcpServers", {})
-    merged = _merge(servers, wanted_servers(provider), result)
+    merged = _merge(servers, wanted_servers(provider),
+                    provider.capabilities.hooks, result)
     if merged != servers or not path.exists():
         hooks_wiring.write_json_settings({**data, "mcpServers": merged}, str(path))
         result.changed = True

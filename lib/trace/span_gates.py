@@ -132,11 +132,15 @@ TASK_RECALL = SpanGate(
 # tool-presence proxy.
 
 # The feature pipeline (*Feature pipeline* in `ARCHITECTURE.md`) is a skill, so nothing
-# outside the agent enforces it. Both spans below come from regin CLI commands
+# outside the agent enforces it. The exact spans come from regin CLI commands
 # — `regin feature stage` and `regin defects open|close` — so a count of 0 is a
-# genuine skip rather than a missing instrument.
+# genuine skip rather than a missing instrument; the `regin` MCP server's
+# equivalents count too, for an agent that drives the pipeline through it.
 PIPELINE = SpanGate(
     key="pipeline-ran",
+    like=("tool.mcp__%regin__feature_get",
+          "tool.mcp__%regin__defect_open",
+          "tool.mcp__%regin__defect_close"),
     exact=("feature.stage", "defect.declared"),
     describe="feature pipeline consulted or a defect declared",
     capability="the regin CLI (`regin feature stage`, `regin defects open`)",

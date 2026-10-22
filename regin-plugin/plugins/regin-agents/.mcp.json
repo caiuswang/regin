@@ -6,10 +6,10 @@
       "args": ["lib/memory/mcp_server.py"],
       "env": {}
     },
-    "send-to-user": {
+    "regin": {
       "type": "stdio",
       "command": "${CLAUDE_PLUGIN_ROOT}/bin/regin-mcp.sh",
-      "args": ["lib/agent_messages/mcp_server.py"],
+      "args": ["lib/regin_mcp/server.py"],
       "env": {}
     },
     "topics": {
