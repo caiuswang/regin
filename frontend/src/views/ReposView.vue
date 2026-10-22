@@ -1,9 +1,10 @@
 <script setup>
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, onMounted } from 'vue'
 import api from '../api'
 import Card from '../components/Card.vue'
 import Badge from '../components/Badge.vue'
 import Button from '../components/ui/Button.vue'
+import AddProjectDialog from '../components/projects/AddProjectDialog.vue'
 import { useFlash } from '../composables/useFlash'
 import { useConfirm } from '../composables/useConfirm'
 
@@ -14,9 +15,6 @@ const repos = ref([])
 const loading = ref(true)
 
 const showAdd = ref(false)
-const adding = ref(false)
-const newPath = ref('')
-const pathInput = ref(null)
 
 async function refresh() {
   const data = await api.get('/repos')
@@ -28,30 +26,8 @@ onMounted(async () => {
   loading.value = false
 })
 
-async function openAdd() {
-  newPath.value = ''
-  showAdd.value = true
-  await nextTick()
-  pathInput.value?.focus()
-}
-
-function closeAdd() {
-  if (adding.value) return
-  showAdd.value = false
-}
-
-async function submitAdd() {
-  const path = newPath.value.trim()
-  if (!path) return
-  adding.value = true
-  const result = await api.post('/repos', { path })
-  adding.value = false
-  if (!result.ok) {
-    flash(result.msg || 'Add failed', 'error')
-    return
-  }
-  flash(result.msg || 'Added')
-  showAdd.value = false
+async function onAdded(added) {
+  flash(added.kind === 'workspace' ? `Workspace ${added.workspace.name} created` : `Added ${added.project?.name || added.cwd}`)
   await refresh()
 }
 
@@ -87,9 +63,10 @@ async function removeRepo(repo) {
       <div class="page-actions">
         <Button
           variant="primary"
-          @click="openAdd"
+          data-testid="repos-add"
+          @click="showAdd = true"
         >
-          Add repo
+          Add project
         </Button>
       </div>
     </header>
@@ -109,7 +86,7 @@ async function removeRepo(repo) {
         <tbody>
           <tr v-if="!repos.length">
             <td colspan="5" class="text-center text-slate-400 text-sm py-8">
-              No repos registered. Click <span class="font-medium">Add repo</span> to register one by path.
+              No repos registered. Click <span class="font-medium">Add project</span> to register one by path.
             </td>
           </tr>
           <tr v-for="r in repos" :key="r.name">
@@ -139,53 +116,7 @@ async function removeRepo(repo) {
       </div>
     </Card>
 
-    <Teleport to="body">
-      <div
-        v-if="showAdd"
-        class="fixed inset-0 bg-black/40 z-50 flex items-center justify-center cursor-pointer hover:bg-black/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-        @click.self="closeAdd"
-        @keydown.esc="closeAdd"
-      >
-        <div class="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 overflow-hidden cursor-default">
-          <div class="px-5 pt-5 pb-3">
-            <h2 class="text-base font-semibold text-gray-900 mb-1">Add repository</h2>
-            <p class="text-sm text-gray-500">
-              Enter the absolute path of a local git working tree. The repo is registered
-              immediately; run a sync afterward to import its patterns.
-            </p>
-          </div>
-          <form class="px-5 pb-2" @submit.prevent="submitAdd">
-            <label class="block text-xs font-medium text-gray-600 mb-1" for="repo-path">Path</label>
-            <input
-              id="repo-path"
-              ref="pathInput"
-              v-model="newPath"
-              type="text"
-              aria-label="Repository path"
-              placeholder="/Users/you/code/my-service"
-              class="w-full text-sm border border-gray-300 rounded-md px-2.5 py-1.5 font-mono focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-              :disabled="adding"
-            />
-          </form>
-          <div class="flex justify-end gap-2 px-5 pb-4 pt-2">
-            <Button
-              variant="secondary"
-              :disabled="adding"
-              @click="closeAdd"
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="primary"
-              :disabled="adding || !newPath.trim()"
-              @click="submitAdd"
-            >
-              {{ adding ? 'Adding…' : 'Add repo' }}
-            </Button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
+    <AddProjectDialog v-model:open="showAdd" @added="onAdded" />
   </div>
 </template>
 

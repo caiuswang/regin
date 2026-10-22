@@ -61,6 +61,11 @@ function changed() {
   invalidatePipelineCounts()
 }
 
+function projectAdded() {
+  changed()
+  load()
+}
+
 const tasksTo = computed(() => ({ path: '/tasks', query: scopeQuery(scope.value) }))
 function featuresTo(triageId, stage) {
   const query = { ...scopeQuery(scope.value) }
@@ -144,6 +149,7 @@ onActivated(() => { if (arrived) load(); arrived = true })
         :compact="!isMdUp"
         @pick="setScope"
         @all="picker()?.click()"
+        @added="projectAdded"
       />
     </template>
 

@@ -1138,7 +1138,7 @@ test('test_project_picker_keyboard_and_server_search', async ({ page }) => {
   // Server-side search: the typed text is the request's `q`.
   await page.getByTestId('project-picker-search').fill('docs')
   await expect.poll(() => asked.at(-1).q).toBe('docs')
-  await expect(page.locator('.pp-panel .pp-row:not(.pp-row--all)')).toHaveCount(1)
+  await expect(page.locator('.pp-panel .pp-row:not(.pp-row--all):not(.pp-row--add)')).toHaveCount(1)
 
   // ↓ moves off "All projects" onto the row; Enter picks it.
   await page.getByTestId('project-picker-search').press('ArrowDown')

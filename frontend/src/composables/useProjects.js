@@ -56,7 +56,14 @@ export function useProjects() {
     return items.value.find(p => p.id === id) || null
   }
 
-  return { items, loading, error, load, ensure, byId }
+  // After a write: a load already in flight may have been answered before the
+  // write landed, so wait it out and read again.
+  async function refresh() {
+    if (inflight) await inflight
+    await load()
+  }
+
+  return { items, loading, error, load, ensure, refresh, byId }
 }
 
 /**

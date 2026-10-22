@@ -21,6 +21,7 @@ import Dialog from '../ui/Dialog.vue'
 import Input from '../ui/Input.vue'
 import RefTextarea from '../refs/RefTextarea.vue'
 import Select from '../ui/Select.vue'
+import AddProjectLink from '../projects/AddProjectLink.vue'
 import PlGlyph from '../pipeline/PlGlyph.vue'
 import TaskImageStrip from '../tasks/TaskImageStrip.vue'
 import { useAttachedImages } from '../../composables/useAttachedImages.js'
@@ -231,7 +232,9 @@ async function declare() {
         />
       </template>
 
-      <span class="nf-label" data-pl-part="field-label">Project</span>
+      <span class="nf-label" data-pl-part="field-label">Project
+        <AddProjectLink v-if="!projects.length" testid="declare-add-project" @added="a => { if (a.project) projectId = String(a.project.id) }" />
+      </span>
       <Select
         v-model="projectId"
         block

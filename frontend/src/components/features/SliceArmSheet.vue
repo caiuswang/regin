@@ -6,7 +6,7 @@
 // Arming starts nothing by itself: a slice whose dependencies are already done
 // is released by its edge (`fire_if_ready`, as for a single arm), and the
 // operator starts the chain with Run on the first slice.
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import api from '../../api'
 import Button from '../ui/Button.vue'
 import Dialog from '../ui/Dialog.vue'
@@ -14,6 +14,8 @@ import Input from '../ui/Input.vue'
 import Select from '../ui/Select.vue'
 import { DEFAULT_PROVIDER, useTaskArm } from '../../composables/useTaskArm.js'
 import { useProjects } from '../../composables/useProjects.js'
+import { ADD_PROJECT_VALUE, withAddProject } from '../../composables/useAddProject.js'
+import AddProjectDialog from '../projects/AddProjectDialog.vue'
 
 const props = defineProps({
   featureId: { type: Number, required: true },
@@ -49,6 +51,22 @@ onMounted(async () => {
   await Promise.all([loadOptions(), ensureProjects()])
   shared.cwd = byId(props.projectId)?.path || ''
 })
+
+// A Select whose value is not among its options renders blank.
+const cwdChoices = computed(() => {
+  const listed = cwdOptions.value.some(o => o.value === shared.cwd)
+  const extra = listed || !shared.cwd ? [] : [{ value: shared.cwd, label: shared.cwd }]
+  return withAddProject([...cwdOptions.value, ...extra])
+})
+const addingProject = ref(false)
+const cwdModel = computed({
+  get: () => shared.cwd,
+  set: (v) => { if (v === ADD_PROJECT_VALUE) addingProject.value = true; else shared.cwd = v },
+})
+async function projectAdded(added) {
+  await loadOptions()
+  shared.cwd = added.cwd
+}
 
 function item(d) {
   const body = {
@@ -93,7 +111,7 @@ function close() {
     <div v-else class="sa-body" data-testid="slice-arm-form">
       <label class="sa-lbl" for="slice-arm-cwd">working directory (every slice)</label>
       <Select
-        id="slice-arm-cwd" v-model="shared.cwd" block :options="cwdOptions"
+        id="slice-arm-cwd" v-model="cwdModel" block :options="cwdChoices"
         aria-label="Working directory" data-testid="slice-arm-cwd"
       />
       <template v-if="providerOptions.length">
@@ -129,6 +147,7 @@ function close() {
       >{{ saving ? 'Arming…' : `Arm ${drafts.length}` }}</Button>
     </template>
   </Dialog>
+  <AddProjectDialog v-model:open="addingProject" @added="projectAdded" />
 </template>
 
 <style scoped>

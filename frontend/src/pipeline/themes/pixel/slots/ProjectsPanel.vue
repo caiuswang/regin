@@ -2,6 +2,7 @@
 // Projects as save slots (Overview): the same active rows, attention
 // sort and links as the classic panel, drawn as one card per project.
 import Button from '../../../../components/ui/Button.vue'
+import ProjectsFirstRun from '../../../../components/projects/ProjectsFirstRun.vue'
 import PixelSprite from '../PixelSprite.vue'
 import { ago } from '../../../../utils/pipelineFormat'
 
@@ -9,7 +10,7 @@ defineProps({
   panel: { type: Object, required: true },
   compact: { type: Boolean, default: false },
 })
-const emit = defineEmits(['pick', 'all'])
+const emit = defineEmits(['pick', 'all', 'added'])
 
 const to = (path, id, extra = {}) => ({ path, query: { project: String(id), ...extra } })
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`
@@ -41,7 +42,8 @@ function seen(row) {
         @click="emit('all')"
       >All {{ panel.total }} projects →</Button>
     </header>
-    <p v-if="!panel.rows.length" class="pl-panel__empty" data-pl-part="panel-empty" data-testid="projects-empty">
+    <ProjectsFirstRun v-if="!panel.total" @added="emit('added', $event)" />
+    <p v-else-if="!panel.rows.length" class="pl-panel__empty" data-pl-part="panel-empty" data-testid="projects-empty">
       All {{ panel.total }} projects quiet
     </p>
     <ul v-else class="px-pj__slots">

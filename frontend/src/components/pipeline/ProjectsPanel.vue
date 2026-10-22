@@ -3,6 +3,7 @@
 // sort — escapes, then open defects, then activity. Quiet ones are only
 // counted; finding or re-sorting projects is the chip picker's job.
 import Button from '../ui/Button.vue'
+import ProjectsFirstRun from '../projects/ProjectsFirstRun.vue'
 import SegmentBar from './SegmentBar.vue'
 import { loopBar, projectActivity } from '../../utils/pipelineFormat'
 
@@ -10,7 +11,7 @@ defineProps({
   panel: { type: Object, required: true },
   compact: { type: Boolean, default: false },
 })
-const emit = defineEmits(['pick', 'all'])
+const emit = defineEmits(['pick', 'all', 'added'])
 
 // Each count is a way to its rows: the same tab, under that project.
 const to = (path, id, extra = {}) => ({ path, query: { project: String(id), ...extra } })
@@ -26,7 +27,8 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`
         All {{ panel.total }} projects →
       </Button>
     </header>
-    <p v-if="!panel.rows.length" class="pl-panel__empty" data-pl-part="panel-empty" data-testid="projects-empty">
+    <ProjectsFirstRun v-if="!panel.total" @added="emit('added', $event)" />
+    <p v-else-if="!panel.rows.length" class="pl-panel__empty" data-pl-part="panel-empty" data-testid="projects-empty">
       All {{ panel.total }} projects quiet
     </p>
     <ul v-else>

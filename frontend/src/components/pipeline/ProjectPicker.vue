@@ -12,8 +12,10 @@ import Icon from '../ui/Icon.vue'
 import Input from '../ui/Input.vue'
 import SegmentBar from './SegmentBar.vue'
 import PlGlyph from './PlGlyph.vue'
+import AddProjectDialog from '../projects/AddProjectDialog.vue'
 import { stageParts } from '../../utils/pipelineFormat'
 import { SCOPE_ALL, SCOPE_NONE } from '../../composables/usePipelineScope'
+import { MODE_REPO, canAddProjects } from '../../composables/useAddProject'
 
 const props = defineProps({
   scope: { type: String, required: true },
@@ -117,6 +119,17 @@ function pick(scope) {
 
 const selected = row => String(row.scope) === props.scope
 const manageTo = computed(() => (/^\d+$/.test(props.scope) ? `/projects/${props.scope}` : null))
+
+const canAdd = canAddProjects()
+const adding = ref(false)
+function startAdd() {
+  open.value = false
+  adding.value = true
+}
+// A workspace has no scope of its own yet, so adding one leaves the scope be.
+function added(result) {
+  if (result.kind === MODE_REPO && result.project) emit('select', String(result.project.id))
+}
 
 defineExpose({ open: () => { open.value = true } })
 </script>
@@ -234,9 +247,21 @@ defineExpose({ open: () => { open.value = true } })
           <Icon name="settings" :size="13" />
           <span class="pp-name">Project settings…</span>
         </router-link>
+        <Button
+          v-if="canAdd"
+          variant="ghost"
+          class="pp-row pp-row--add"
+          data-pl-part="picker-row"
+          data-testid="project-picker-add"
+          @click="startAdd"
+        >
+          <span class="pp-check" />
+          <span class="pp-name">+ Add project…</span>
+        </Button>
       </PopoverContent>
     </PopoverPortal>
   </PopoverRoot>
+  <AddProjectDialog v-if="canAdd" v-model:open="adding" @added="added" />
 </template>
 
 <style scoped>
@@ -294,6 +319,8 @@ defineExpose({ open: () => { open.value = true } })
 .pp-panel .pp-row.is-selected { background: var(--color-info-soft); font-weight: 600; }
 .pp-row--all { border-bottom: 1px solid var(--color-border); }
 .pp-panel .pp-row--manage { border-top: 1px solid var(--color-border); margin-top: 0.35rem; text-decoration: none; color: var(--color-fg-muted); }
+.pp-panel .pp-row--add { border-top: 1px solid var(--color-border); color: var(--color-fg-muted); }
+.pp-panel .pp-row--manage + .pp-row--add { border-top: 0; }
 .pp-panel .pp-more { width: 100%; justify-content: flex-start; padding-left: 2.1rem; font-size: 12px; color: var(--color-fg-muted); }
 .pp-check { width: 12px; flex: none; color: var(--color-info); }
 .pp-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

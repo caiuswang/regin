@@ -20,6 +20,8 @@ import {
   projectCwd, rememberArm, seededArmDraft,
 } from '../../composables/useArmPrefs.js'
 import { useProjects } from '../../composables/useProjects.js'
+import { ADD_PROJECT_VALUE, withAddProject } from '../../composables/useAddProject.js'
+import AddProjectDialog from '../projects/AddProjectDialog.vue'
 import { useFlash } from '../../composables/useFlash.js'
 import { taskTitle } from '../../utils/taskTitle.js'
 
@@ -177,6 +179,16 @@ const cwdChoices = computed(() => {
   return [...cwdOptions.value, ...extra.map(path => ({ value: path, label: path }))]
 })
 
+const addingProject = ref(false)
+const cwdModel = computed({
+  get: () => draft.cwd,
+  set: (v) => { if (v === ADD_PROJECT_VALUE) addingProject.value = true; else draft.cwd = v },
+})
+async function projectAdded(added) {
+  await loadOptions()
+  draft.cwd = added.cwd
+}
+
 // A note, never a refusal: one run has one directory, and a step of a
 // multi-repo feature may legitimately run somewhere its filing does not say.
 const cwdMismatch = computed(() => {
@@ -228,9 +240,9 @@ async function submit() {
         <label class="live-launch-lbl" for="task-arm-cwd" data-pl-part="field-label">working directory</label>
         <Select
           id="task-arm-cwd"
-          v-model="draft.cwd"
+          v-model="cwdModel"
           block
-          :options="cwdChoices"
+          :options="withAddProject(cwdChoices)"
           data-pl-part="input"
           data-testid="task-arm-cwd"
           aria-label="Working directory"
@@ -374,6 +386,7 @@ async function submit() {
       </Button>
     </template>
   </Dialog>
+  <AddProjectDialog v-model:open="addingProject" @added="projectAdded" />
 </template>
 
 <style scoped>

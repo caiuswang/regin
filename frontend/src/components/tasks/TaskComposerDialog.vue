@@ -14,6 +14,7 @@ import Button from '../ui/Button.vue'
 import Dialog from '../ui/Dialog.vue'
 import Input from '../ui/Input.vue'
 import Select from '../ui/Select.vue'
+import AddProjectLink from '../projects/AddProjectLink.vue'
 import PlGlyph from '../pipeline/PlGlyph.vue'
 import PlSlot from '../pipeline/PlSlot.vue'
 import FeaturePicker from '../pipeline/FeaturePicker.vue'
@@ -204,7 +205,9 @@ function reset() {
           />
         </div>
         <div class="tc-col" data-pl-part="field" data-pl-field="project">
-          <span class="field-label" data-pl-part="field-label">Project</span>
+          <span class="field-label" data-pl-part="field-label">Project
+            <AddProjectLink v-if="!projects.length" testid="task-composer-add-project" @added="a => { if (a.project) draft.project_id = String(a.project.id) }" />
+          </span>
           <Select
             data-pl-part="input"
             v-model="draft.project_id"

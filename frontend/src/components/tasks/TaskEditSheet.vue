@@ -13,6 +13,7 @@ import Dialog from '../ui/Dialog.vue'
 import FeaturePicker from '../pipeline/FeaturePicker.vue'
 import Input from '../ui/Input.vue'
 import Select from '../ui/Select.vue'
+import AddProjectLink from '../projects/AddProjectLink.vue'
 import TaskImageStrip from './TaskImageStrip.vue'
 import RefTextarea from '../refs/RefTextarea.vue'
 import { PRIORITIES } from '../../utils/taskMeta.js'
@@ -143,7 +144,9 @@ async function submit() {
           />
         </div>
         <div class="task-edit-col">
-          <span class="field-label">Project</span>
+          <span class="field-label">Project
+            <AddProjectLink v-if="!projects.length" testid="task-edit-add-project" @added="a => { if (a.project) draft.project_id = String(a.project.id) }" />
+          </span>
           <Select
             v-model="draft.project_id"
             block
