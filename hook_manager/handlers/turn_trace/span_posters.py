@@ -60,6 +60,7 @@ def _build_usage_row(
         'context_used_tokens': turn.context_used,
         'request_id': turn.request_id,
         'effort_level': effort_level,
+        'reasoning_tokens': turn.reasoning_tokens,
     }
 
 

@@ -49,6 +49,7 @@ from lib.trace.merge_cross_source import (
     QUEUED_STATUS_MESSAGE,
     _collapse_shared_span_ids,
     _dedup_cross_source,
+    _drop_resolved_transcript_pendings,
 )
 from lib.trace.merge_pending import (
     INTERRUPT_SOURCE_STALE,
@@ -183,6 +184,7 @@ def merge_spans(
     # cross-writer pair earlier strips the `pending-` row `_inherit_turn_linkage`
     # reads from and leaves a slash expansion stranded on the SDK row.
     spans = _dedup_cross_source(spans)
+    spans = _drop_resolved_transcript_pendings(spans)
     spans = _drop_stale_blockers(spans, prompt_id_ceiling=prompt_id_ceiling,
                                  births=births)
     spans = _demote_stale_pending(spans, session_activity=session_activity)

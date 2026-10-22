@@ -362,8 +362,16 @@ def _jittered_backoff_ms(base_ms: int) -> int:
 _NO_PROXY_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
+# `(url, body) -> (ok, exc)` replacing the HTTP POST while set — a CLI import
+# that must land rows with no `regin serve` listening. See
+# `lib/trace/in_process_ingest.py`.
+_transport = None
+
+
 def _post_once(url: str, body: bytes, timeout_sec: float) -> tuple[bool, BaseException | None]:
     """Single POST attempt. Returns (ok, exc)."""
+    if _transport is not None:
+        return _transport(url, body)
     try:
         req = urllib.request.Request(
             url,

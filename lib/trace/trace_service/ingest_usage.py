@@ -61,8 +61,8 @@ def _insert_one_turn_row(conn, r, trace_id, turn_uuid, timestamp) -> None:
             trace_id, turn_uuid, turn_index, timestamp, model,
             input_tokens, output_tokens, cache_read_tokens,
             cache_creation_tokens, context_used_tokens, request_id,
-            cost_usd, effort_level
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            cost_usd, effort_level, reasoning_tokens
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(trace_id, turn_uuid) DO UPDATE SET
             turn_index = excluded.turn_index,
             timestamp  = excluded.timestamp,
@@ -77,7 +77,9 @@ def _insert_one_turn_row(conn, r, trace_id, turn_uuid, timestamp) -> None:
             cost_usd              = COALESCE(excluded.cost_usd,
                                             turn_usage.cost_usd),
             effort_level          = COALESCE(excluded.effort_level,
-                                            turn_usage.effort_level)
+                                            turn_usage.effort_level),
+            reasoning_tokens      = COALESCE(excluded.reasoning_tokens,
+                                            turn_usage.reasoning_tokens)
         """,
         (
             trace_id, turn_uuid,
@@ -90,6 +92,7 @@ def _insert_one_turn_row(conn, r, trace_id, turn_uuid, timestamp) -> None:
             r.get('request_id'),
             row_cost,
             r.get('effort_level'),
+            r.get('reasoning_tokens'),
         ),
     )
 

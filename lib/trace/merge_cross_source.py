@@ -398,3 +398,27 @@ def _reconcile_bucket(key: tuple, rows: list[dict]) -> list[dict]:
     # traces carry up to 31 under one id), and collapsing only the first pair
     # left the rest standing as duplicates.
     return _pair_cross_source(hooks, sdks)
+
+
+
+def _resolved_tool_use_ids(spans: list[dict]) -> set[str]:
+    return {
+        tu for s in spans
+        if (s.get('name') or '').startswith('tool.')
+        and s.get('status_code') != 'PENDING'
+        and (tu := _tool_use_id(s))
+    }
+
+
+def _drop_resolved_transcript_pendings(spans: list[dict]) -> list[dict]:
+    """Drop a transcript-borne PENDING tool row (`pending-<entry key>`) once
+    any writer has resolved its `tool_use_id`. Its own resolved row names it
+    via `pending_span_id`, but a hook that resolves the call cannot know the
+    key, so the pair is matched on the call id instead."""
+    resolved = _resolved_tool_use_ids(spans)
+    if not resolved:
+        return spans
+    return [s for s in spans
+            if not (s.get('status_code') == 'PENDING'
+                    and _attrs(s).get('transcript_source')
+                    and _tool_use_id(s) in resolved)]

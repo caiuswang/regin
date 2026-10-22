@@ -959,6 +959,40 @@ def cmd_backfill_subagents(
         raise typer.Exit(1)
 
 
+@trace_app.command(
+    "import-transcripts",
+    help="Ingest a provider's on-disk session transcripts (spans + turn "
+         "usage) without a running server. Idempotent: re-importing a "
+         "session adds no rows.",
+)
+def cmd_import_transcripts(
+    provider_id: str = typer.Option(..., "--provider",
+                                    help="Provider id, e.g. workbuddy or codebuddy"),
+    session: str = typer.Option("", "--session",
+                                help="Only this session id (default: every session)"),
+) -> None:
+    from lib.providers.registry import build_provider, is_provider_id
+    from lib.trace.transcript_import import import_transcripts, importable
+
+    if not is_provider_id(provider_id):
+        print(f"unknown provider: {provider_id}")
+        raise typer.Exit(2)
+    provider = build_provider(provider_id)
+    if not importable(provider):
+        print(f"transcript import is not supported for provider: {provider_id}")
+        raise typer.Exit(2)
+    counts = import_transcripts(provider, session or None)
+    if session and not any(counts.values()):
+        print(f"no transcript found for session {session} "
+              f"under {provider.transcript_projects_dir()}")
+        raise typer.Exit(1)
+    print(f"Done. imported={counts['imported']} empty={counts['empty']} "
+          f"failed={counts['failed']}")
+    if counts['failed']:
+        print("Rejected posts are in the activity log (transcript_import_failed).")
+        raise typer.Exit(1)
+
+
 def register_trace(app: typer.Typer) -> None:
     """Hook point called from cli/app.py to attach the `trace` subapp."""
     app.add_typer(trace_app)

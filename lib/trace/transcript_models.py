@@ -96,6 +96,9 @@ class TurnUsage:
     # assistant entry. `model` is left None (the transcript stamps
     # `<synthetic>`) so a failure never becomes the session's model.
     is_api_error: bool = False
+    # Reasoning tokens inside `output_tokens`, for formats that report them
+    # separately. None when the format does not.
+    reasoning_tokens: int | None = None
 
     @property
     def context_used(self) -> int:
@@ -301,3 +304,12 @@ class TranscriptUsage:
     # `agent.turn.ended`). None when the format records no lifecycle — Claude,
     # Kimi 1.4 — so callers cannot mistake "unknown" for "closed".
     main_turn_open: bool | None = None
+    # Finished `tool.<name>` span dicts for a format whose CLI reports tool
+    # output only in the transcript (CodeBuddy's PostToolUse carries no Bash
+    # stdout). Each: {span_id, name, status_code, start_time, end_time,
+    # duration_ms, turn_uuid, attributes}. Empty for Claude and Kimi, whose
+    # tool spans come from the live hooks.
+    tool_spans: tuple[dict, ...] = ()
+    # The session title the transcript itself records, for formats whose
+    # title has no Claude-style tail read.
+    title: str | None = None

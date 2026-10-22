@@ -6,6 +6,7 @@ root, so both share one implementation and differ only in `CodeBuddyFamily`.
 
 from __future__ import annotations
 
+import glob
 import os
 import re
 from dataclasses import dataclass
@@ -117,6 +118,24 @@ class CodeBuddyFamilyProvider(AgentProvider):
 
     def transcript_projects_dir(self) -> Path:
         return self._path("transcript_projects_dir", self.config_root() / "projects")
+
+    def find_session_transcript(self, session_id: str) -> str | None:
+        """`<projects>/<slug>/<session_id>.jsonl`. The sibling
+        `<slug>/<session_id>/` directory holds only tool-result overflow
+        files, so the one-level glob never descends into it."""
+        if not session_id:
+            return None
+        pattern = str(self.transcript_projects_dir() / "*" / f"{session_id}.jsonl")
+        matches = glob.glob(pattern)
+        return max(matches, key=os.path.getmtime) if matches else None
+
+    def resolve_transcript_path(self, payload) -> str | None:
+        return (super().resolve_transcript_path(payload)
+                or self.find_session_transcript(payload.session_id))
+
+    def parse_transcript(self, transcript_path: str, *, max_text_bytes: int | None = None):
+        from lib.trace.codebuddy_transcript import read_usage_codebuddy
+        return read_usage_codebuddy(transcript_path, max_text_bytes=max_text_bytes)
 
 
 class CodeBuddyProvider(CodeBuddyFamilyProvider):

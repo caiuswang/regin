@@ -38,6 +38,7 @@ from .span_posters import (
     _post_rewind_spans,
     _post_system_event_spans,
 )
+from .transcript_tool_spans import post_transcript_title, post_transcript_tool_spans
 
 _TAIL_BYTES = 64 * 1024  # cap the read at 64 KiB — only need the last turn
 
@@ -179,6 +180,7 @@ def _post_transcript_usage(
     capture_text: bool,
     max_text_bytes: int,
     effort_level: str | None,
+    with_tool_spans: bool = False,
 ) -> None:
     """Emit every derived span/event for rows the seen-uuid cache hasn't
     already accepted. Shared by the full (`read_usage`) and resumable
@@ -192,6 +194,13 @@ def _post_transcript_usage(
     if usage is None:
         return
     seen = _load_seen(trace_id)
+    # Tool spans from the transcript only on an explicit import: on the hook
+    # and live-rescan paths the hooks own them, and a second row per call
+    # would double every ingest-time aggregate. Posted before the turn data,
+    # whose tool_attribution event updates tool spans by tool_use_id.
+    if with_tool_spans:
+        post_transcript_tool_spans(trace_id, usage, seen, capture_text)
+    post_transcript_title(trace_id, usage.title)
     _post_live_turn_data(
         trace_id, usage.turns, usage.model or fallback_model,
         capture_text=capture_text,
