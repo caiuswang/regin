@@ -40,8 +40,14 @@ def _ensure_owned(skill_dir: str, action: str) -> bool:
 
 
 def _ledger_key(target_dir) -> tuple[str, int | None, str]:
-    """(scope, project_id, provider) for a deploy into `target_dir`."""
-    from lib.providers import build_provider, enabled_provider_ids
+    """(scope, project_id, provider) for a deploy into `target_dir`.
+
+    Enabled providers are tried first so one sharing a skills dir with
+    another keeps its attribution; the rest follow because a push may name
+    any registered provider, and an unmatched dir is booked as a project
+    deploy of the *active* provider.
+    """
+    from lib.providers import build_provider, enabled_provider_ids, list_provider_ids
     active = get_active_provider().provider_id
     if not target_dir:
         return 'global', None, active
@@ -51,7 +57,8 @@ def _ledger_key(target_dir) -> tuple[str, int | None, str]:
     from sqlmodel import select
     with SessionLocal() as session:
         repos = [(r.id, r.path) for r in session.exec(select(Repo)).all()]
-    for pid in enabled_provider_ids():
+    enabled = enabled_provider_ids()
+    for pid in enabled + [p for p in list_provider_ids() if p not in enabled]:
         provider = build_provider(pid)
         if base == os.path.abspath(str(provider.global_skills_dir())):
             return 'global', None, pid

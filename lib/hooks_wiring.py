@@ -225,7 +225,7 @@ def is_toml_provider(provider) -> bool:
 
 def read_json_settings(path: str) -> dict:
     try:
-        with open(path, 'r') as f:
+        with open(path, 'r', encoding='utf-8') as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
@@ -240,7 +240,7 @@ def json_settings_unreadable(path: str) -> bool:
     the install command out loud, so the writers have to refuse.
     """
     try:
-        with open(path, 'r') as f:
+        with open(path, 'r', encoding='utf-8') as f:
             text = f.read()
     except FileNotFoundError:
         return False
@@ -268,12 +268,16 @@ def write_json_settings(data: dict, path: str) -> None:
     Resolved through symlinks first — `os.replace` on the link itself would
     swap a dotfiles-managed settings.json for a plain file — and the target's
     permission bits carried over to the replacement.
+
+    Non-ASCII is written as-is: the user's own entries ride through this
+    rewrite, and `\\uXXXX`-escaping a Chinese hook command or env value would
+    change bytes that were never regin's to touch.
     """
     target = os.path.realpath(path)
     os.makedirs(os.path.dirname(target), exist_ok=True)
     tmp = target + '.tmp'
-    with open(tmp, 'w') as f:
-        json.dump(data, f, indent=2)
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
     if os.path.exists(target):
         os.chmod(tmp, os.stat(target).st_mode & 0o7777)
     os.replace(tmp, target)

@@ -22,7 +22,7 @@ def _scan_hook_scripts() -> list[dict]:
     """
     settings_path = str(get_active_provider().hook_settings_path())
     try:
-        with open(settings_path, 'r') as f:
+        with open(settings_path, 'r', encoding='utf-8') as f:
             settings = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return []
@@ -152,7 +152,7 @@ def _hook_settings_parseable(provider) -> dict:
     if not os.path.isfile(path):
         return {'present': False, 'path': path, 'version': 'missing'}
     try:
-        with open(path, 'r') as f:
+        with open(path, 'r', encoding='utf-8') as f:
             json.load(f)
         return {'present': True, 'path': path, 'version': ''}
     except json.JSONDecodeError as e:

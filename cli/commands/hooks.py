@@ -17,7 +17,7 @@ import typer
 
 from cli.output import echo, error, table
 from lib import hooks_wiring
-from lib.providers import build_provider, list_visible_provider_ids
+from lib.providers import build_provider, list_provider_ids, list_visible_provider_ids
 
 
 hooks_app = typer.Typer(
@@ -39,11 +39,16 @@ def _providers(provider: str | None):
 
     Providers without hook support are named rather than silently dropped —
     an empty table and exit 0 reads as "nothing to do", not "not applicable".
+
+    The visible set only scopes the unscoped fan-out; a provider named
+    explicitly is any registered one, so wiring WorkBuddy does not first
+    require flipping `experimental_providers` on.
     """
     ids = list_visible_provider_ids()
     if provider:
-        if provider not in ids:
-            error(f"Unknown provider: {provider} (known: {', '.join(ids)})")
+        known = list_provider_ids()
+        if provider not in known:
+            error(f"Unknown provider: {provider} (known: {', '.join(known)})")
             raise typer.Exit(1)
         ids = [provider]
     built = [build_provider(pid) for pid in ids]
