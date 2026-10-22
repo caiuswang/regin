@@ -6,9 +6,12 @@ as a JSONL event stream (protocol_version 1.4). Unlike Claude's transcript,
 it is event-sourced rather than message-per-line; the load-bearing records are:
 
 * ``turn.prompt``      — a user prompt (``input: [{type:text,text}]``, ``time``).
-  Protocol 1.5 adds ``promptId``/``turnId`` and an ``origin.kind``: only
-  ``user`` prompts are the operator's own words — ``skill_activation`` and
-  other kinds are harness injections and are not recorded as prompts.
+  Protocol 1.5 adds ``promptId``/``turnId`` and an ``origin.kind``: ``user``
+  prompts are the operator's own words, and so is a ``skill_activation``
+  with ``trigger=user-slash`` — the operator typed ``/skill:<name> <args>``
+  and that record opens the turn, so it is recorded as that literal command
+  (not the expanded skill body). Other kinds are harness injections and are
+  not recorded as prompts.
 * ``context.append_loop_event`` — the assistant work stream, keyed by event
   ``type``: ``step.begin`` / ``step.end`` bracket one model inference (a *step*,
   which maps to a regin *turn*), ``content.part`` carries ``think`` / ``text``
@@ -209,6 +212,23 @@ def _typed_text(parts: object) -> str:
         if not _is_image_blurb(text):
             texts.append(text)
     return ''.join(texts).strip()
+
+
+def _prompt_text(rec: dict) -> str | None:
+    """The operator's words for a ``turn.prompt``, or None when the record
+    is a harness injection rather than something the operator typed."""
+    origin = rec.get('origin')
+    origin = origin if isinstance(origin, dict) else {}
+    kind = origin.get('kind')
+    if kind in (None, 'user'):
+        return _typed_text(rec.get('input'))
+    name = origin.get('skillName')
+    if (kind == 'skill_activation' and origin.get('trigger') == 'user-slash'
+            and isinstance(name, str) and name):
+        args = origin.get('skillArgs')
+        args = args.strip() if isinstance(args, str) else ''
+        return f'/skill:{name} {args}'.rstrip()
+    return None
 
 
 def _prompt_images(parts: object, blobs_dir: str) -> list[dict]:
@@ -443,34 +463,29 @@ class _Scan:
             'timestamp': _iso(rec.get('time')),
         })
 
-    def _mid_turn_steer_text(self, rec: dict, prompt_id: object) -> str | None:
-        """The text when this turn.prompt IS a 1.5 mid-turn steer (its
-        promptId names no open turn's queueItemId), else None."""
-        if not (isinstance(prompt_id, str) and prompt_id and self.open_turns
-                and prompt_id not in self.open_turns.values()):
-            return None
-        return _typed_text(rec.get('input')) or None
+    def _is_mid_turn_steer(self, prompt_id: object) -> bool:
+        """Whether this turn.prompt IS a 1.5 mid-turn steer: its promptId
+        names no open turn's queueItemId."""
+        return bool(isinstance(prompt_id, str) and prompt_id and self.open_turns
+                    and prompt_id not in self.open_turns.values())
 
     def _on_prompt(self, rec: dict) -> None:
-        origin = rec.get('origin')
-        kind = origin.get('kind') if isinstance(origin, dict) else None
-        if kind not in (None, 'user'):
-            # 1.5 logs harness injections (slash-command skill activations,
-            # ...) as turn.prompt records. They are not the operator's
-            # words: recording one as a prompt plants a bogus anchor.
+        text = _prompt_text(rec)
+        if text is None:
+            # A harness injection logged as a turn.prompt (1.5): recording
+            # it as a prompt plants a bogus anchor.
             return
         prompt_id = rec.get('promptId')
         if isinstance(prompt_id, str) and prompt_id in self.handled_steers:
             # The turn.prompt record of an input already recorded as a
             # steer (1.5): the attachment IS its prompt representation.
             return
-        steer_text = self._mid_turn_steer_text(rec, prompt_id)
-        if steer_text is not None:
-            self._steer(steer_text, rec.get('time'), prompt_id)
+        if text and self._is_mid_turn_steer(prompt_id):
+            self._steer(text, rec.get('time'), prompt_id)
             return
         parts = rec.get('input')
         uuid = f'kprompt-{len(self.prompts)}'
-        self.prompts.append((uuid, _typed_text(parts), _iso(rec.get('time'))))
+        self.prompts.append((uuid, text, _iso(rec.get('time'))))
         self.current_prompt = uuid
         images = _prompt_images(parts, self.blobs_dir)
         if images:

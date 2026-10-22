@@ -428,11 +428,62 @@ def _prompt_15(prompt_id, turn_id, text, kind="user", time=0):
             "input": [{"type": "text", "text": text}]}
 
 
-def test_15_skill_activation_prompt_is_not_a_user_prompt(tmp_path):
-    # 1.5 logs a slash-command activation as a turn.prompt whose origin is
-    # `skill_activation` and whose body is the skill text — an injection,
-    # not something the operator typed. Recording it as a prompt plants a
-    # bogus anchor (and counts it in the session's prompt totals).
+def _skill_prompt_15(prompt_id, turn_id, name, args, trigger="user-slash"):
+    rec = _prompt_15(prompt_id, turn_id,
+                     f'User activated the skill "{name}". Follow the loaded '
+                     f'skill instructions.\n\n<skill-loaded name="{name}">'
+                     'SKILL BODY</skill-loaded>', kind="skill_activation")
+    rec["origin"].update(trigger=trigger, skillName=name, skillArgs=args)
+    return rec
+
+
+def test_15_user_slash_skill_activation_is_the_turn_prompt(tmp_path):
+    # A regin task launched as `/skill:<name> <args>` opens turn 0 with a
+    # skill_activation turn.prompt and never logs a `user` one. It is the
+    # operator's command: dropping it left a 100-span session with zero
+    # prompt anchors, and the trace view rendered nothing (D312).
+    recs = [
+        {"type": "metadata", "protocol_version": "1.5"},
+        _started(0, "msg-act"),
+        _skill_prompt_15("msg-act", 0, "goal-verified", "Fix defect 312\n"),
+        _loop({"type": "step.begin", "uuid": "s1"}),
+        _loop({"type": "step.end", "uuid": "s1", "usage": {"output": 1}}),
+        _ended(0),
+        _completed("msg-act"),
+    ]
+    u = read_usage_kimi(_wire(tmp_path / "w.jsonl", recs))
+    assert u.prompt_texts == {"kprompt-0": "/skill:goal-verified Fix defect 312"}
+    assert [t.prompt_uuid for t in u.turns] == ["kprompt-0"]
+
+
+def test_15_user_slash_skill_activation_without_args(tmp_path):
+    recs = [
+        {"type": "metadata", "protocol_version": "1.5"},
+        _started(0, "msg-act"),
+        _skill_prompt_15("msg-act", 0, "hello-trace", ""),
+    ]
+    u = read_usage_kimi(_wire(tmp_path / "w.jsonl", recs))
+    assert list(u.prompt_texts.values()) == ["/skill:hello-trace"]
+
+
+def test_15_mid_turn_slash_skill_is_a_steer_with_the_command_text(tmp_path):
+    recs = [
+        {"type": "metadata", "protocol_version": "1.5"},
+        _started(0, "msg-1"),
+        _prompt_15("msg-1", 0, "go"),
+        _loop({"type": "step.begin", "uuid": "s1"}),
+        _skill_prompt_15("msg-2", None, "gv", "do it"),
+        _loop({"type": "step.end", "uuid": "s1", "usage": {"output": 1}}),
+    ]
+    u = read_usage_kimi(_wire(tmp_path / "w.jsonl", recs))
+    assert list(u.prompt_texts.values()) == ["go"]
+    assert [a.payload.get("prompt") for a in u.attachments] == ["/skill:gv do it"]
+
+
+def test_15_non_slash_skill_activation_prompt_is_not_a_user_prompt(tmp_path):
+    # A skill_activation turn.prompt the operator did not type (no
+    # `user-slash` trigger) is a harness injection whose body is the skill
+    # text; recording it as a prompt plants a bogus anchor.
     recs = [
         {"type": "metadata", "protocol_version": "1.5"},
         _prompt_15("msg-act", 0, "User activated the skill. Follow the "
