@@ -18,6 +18,7 @@ from hook_manager.core import HookPayload
 from hook_manager.handlers import permission_events, pre_tool_trace
 from lib.agent_bridge.mod_hold import card_span
 from lib.hook_plugin import build_span
+from lib.trace.pending_spans import tool_pending_id
 from lib.trace.merge import merge_spans
 
 _SID = "sess-held-card"
@@ -81,7 +82,7 @@ def _pending_cards():
 def test_a_held_request_has_exactly_one_pending_card(ingest, tool, tool_input):
     _pre_tool_use(tool, tool_input)
     _hold_registers(ingest, tool, tool_input)
-    assert [s["span_id"] for s in _pending_cards()] == [f"pending-{_TU[:13]}"]
+    assert [s["span_id"] for s in _pending_cards()] == [tool_pending_id(_TU)]
 
     # Released: the native dialog opens and its PermissionRequest lands late.
     _permission_request(tool, tool_input)

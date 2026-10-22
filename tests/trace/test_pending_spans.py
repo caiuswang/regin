@@ -13,6 +13,7 @@ from lib.trace.pending_spans import (
     perm_pending_id,
     prompt_placeholder_id,
     tool_pending_id,
+    _tool_use_token,
 )
 
 
@@ -40,8 +41,20 @@ def test_prompt_placeholder_id_varies_by_session_and_text():
 
 def test_tool_and_perm_pending_ids():
     tu = 'toolu_0123456789abcdef'
-    assert tool_pending_id(tu) == f'{TOOL_PENDING_PREFIX}{tu[:13]}'
-    assert perm_pending_id(tu) == f'{PERM_PENDING_PREFIX}{tu[:13]}'
+    assert tool_pending_id(tu) == f'{TOOL_PENDING_PREFIX}{_tool_use_token(tu)}'
+    assert perm_pending_id(tu) == f'{PERM_PENDING_PREFIX}{_tool_use_token(tu)}'
+
+
+def test_pending_id_survives_a_shared_prefix():
+    """D305: OpenAI-style ids (`chatcmpl-tool-…`) share 13 constant chars, so a
+    `[:13]` slice made every call in a session map to `pending-chatcmpl-tool`.
+    Hashing the full id keeps parallel pendings distinct."""
+    a = 'chatcmpl-tool-0000000000aaaa'
+    b = 'chatcmpl-tool-0000000000bbbb'
+    assert a[:13] == b[:13] == 'chatcmpl-tool'
+    assert tool_pending_id(a) != tool_pending_id(b)
+    assert not tool_pending_id(a).endswith('chatcmpl-tool')
+    assert len(tool_pending_id(a)) == len(TOOL_PENDING_PREFIX) + 13
 
 
 def test_is_pending_span_id():

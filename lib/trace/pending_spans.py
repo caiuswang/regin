@@ -146,16 +146,28 @@ def gate_key(tool_name, tool_input) -> str | None:
     return digest.hexdigest()[:13]
 
 
+def _tool_use_token(tool_use_id: str) -> str:
+    """Stable, collision-resistant short token for a `tool_use_id`.
+
+    A raw ``[:13]`` slice collides whenever ids share a long fixed prefix:
+    OpenAI-style ids (``chatcmpl-tool-…``) carry exactly 13 chars of constant
+    ``chatcmpl-tool`` before the variable part, so every call in a session maps
+    to the same ``pending-chatcmpl-tool`` and parallel pendings overwrite one
+    another (D305). Hashing the FULL id keeps the 13-char length convention but
+    makes the token depend on the whole id, so distinct calls stay distinct."""
+    return hashlib.sha1((tool_use_id or "").encode("utf-8")).hexdigest()[:13]
+
+
 def tool_pending_id(tool_use_id: str) -> str:
     """Pending id for a blocking tool call, keyed on its `tool_use_id`
-    (same [:13] truncation the synthetic tool spans use)."""
-    return f'{TOOL_PENDING_PREFIX}{(tool_use_id or "")[:13]}'
+    (hashed in full so ids with a shared prefix never collide — D305)."""
+    return f'{TOOL_PENDING_PREFIX}{_tool_use_token(tool_use_id)}'
 
 
 def perm_pending_id(tool_use_id: str) -> str:
     """Pending id for a permission request, keyed on the gated call's
     `tool_use_id`."""
-    return f'{PERM_PENDING_PREFIX}{(tool_use_id or "")[:13]}'
+    return f'{PERM_PENDING_PREFIX}{_tool_use_token(tool_use_id)}'
 
 
 def pending_id_for_resolved(span: dict, attrs: dict) -> list[str]:

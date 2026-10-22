@@ -19,7 +19,7 @@ import json
 import sqlite3
 
 from lib.trace import trace_service
-from lib.trace.pending_spans import tool_pending_id
+from lib.trace.pending_spans import perm_pending_id, tool_pending_id
 from lib.trace.trace_service.queries import fetch_session_paginated
 
 TRACE = 'trace-slow-bash'
@@ -165,7 +165,7 @@ def test_permission_placeholder_does_not_reparent_tool(tmp_db):
                  attrs={'text': 'x'})
     _insert_span(tmp_db, RESP, 'assistant_response', '2026-06-04T13:00:02',
                  parent_id=PROMPT, turn_uuid=TURN, attrs={'turn_uuid': TURN})
-    permreq = f'permreq-{TU[:13]}'
+    permreq = perm_pending_id(TU)
     _insert_span(tmp_db, permreq, 'permission.request', '2026-06-04T13:00:03',
                  status='PENDING', parent_id=RESP, turn_uuid=TURN,
                  attrs={'tool_name': 'Bash', 'tool_use_id': TU})
