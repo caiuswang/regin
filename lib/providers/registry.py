@@ -189,12 +189,14 @@ def get_enabled_providers() -> list[AgentProvider]:
 
 
 def _provider_id_from_tag(payload: dict | None) -> str | None:
-    """Provider id from an explicit agent_type/provider_id tag, if registered."""
-    raw = (payload or {}).get("agent_type") or (payload or {}).get("provider_id")
-    if isinstance(raw, str) and raw.strip():
-        pid = raw.strip().lower()
-        if pid in _PROVIDER_BUILDERS:
-            return pid
+    """First registered provider id among the agent_type / provider_id tags.
+
+    An unregistered value (CodeBuddy's own ``agent_type: "cli"``) is skipped
+    rather than ending the search."""
+    for key in ("agent_type", "provider_id"):
+        raw = (payload or {}).get(key)
+        if isinstance(raw, str) and raw.strip().lower() in _PROVIDER_BUILDERS:
+            return raw.strip().lower()
     return None
 
 

@@ -93,11 +93,19 @@ def cmd_skills_pull(
 def cmd_skills_push(
     id: Optional[str] = typer.Option(None, "--id", help="Push a single skill (default: all)"),
     force: bool = typer.Option(False, "--force", help="Overwrite deployed even when drifted"),
+    provider: Optional[str] = typer.Option(
+        None, "--provider", "-p",
+        help="Deploy to this provider's global skills dir instead of the active one"),
 ) -> None:
-    _ensure_skills_supported()
+    from lib.providers import list_provider_ids
     from lib.skills import skill_sync
+    if provider and provider not in list_provider_ids():
+        print(f"unknown provider: {provider} (known: {', '.join(list_provider_ids())})")
+        raise typer.Exit(2)
+    if not provider:
+        _ensure_skills_supported()
     for skill_id in _skill_targets(id):
-        print(f"  {skill_id}: {skill_sync.push(skill_id, force=force)}")
+        print(f"  {skill_id}: {skill_sync.push(skill_id, force=force, provider_id=provider)}")
 
 
 @skills_app.command("undeploy", help="Remove a deployed skill directory")

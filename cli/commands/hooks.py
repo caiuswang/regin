@@ -17,7 +17,8 @@ import typer
 
 from cli.output import echo, error, table
 from lib import hooks_wiring
-from lib.providers import build_provider, list_visible_provider_ids
+from lib.providers import build_provider, list_provider_ids, list_visible_provider_ids
+from lib.providers.mcp_registration import trust_hint
 
 
 hooks_app = typer.Typer(
@@ -39,11 +40,16 @@ def _providers(provider: str | None):
 
     Providers without hook support are named rather than silently dropped —
     an empty table and exit 0 reads as "nothing to do", not "not applicable".
+
+    The visible set only scopes the unscoped fan-out; a provider named
+    explicitly is any registered one, so wiring WorkBuddy does not first
+    require flipping `experimental_providers` on.
     """
     ids = list_visible_provider_ids()
     if provider:
-        if provider not in ids:
-            error(f"Unknown provider: {provider} (known: {', '.join(ids)})")
+        known = list_provider_ids()
+        if provider not in known:
+            error(f"Unknown provider: {provider} (known: {', '.join(known)})")
             raise typer.Exit(1)
         ids = [provider]
     built = [build_provider(pid) for pid in ids]
@@ -125,7 +131,8 @@ def cmd_status(
     provider: str = typer.Option(None, "--provider", "-p", help="Only this provider id."),
     json: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ) -> None:
-    rows = _status_rows(_providers(provider))
+    targets = _providers(provider)
+    rows = _status_rows(targets)
     if json:
         echo(_json.dumps(rows, indent=2))
         return
@@ -139,6 +146,8 @@ def cmd_status(
     if any(r['foreign_events'] for r in rows):
         echo("\nSome events are routed to a different regin checkout — `regin hooks install` "
              "would add a second entry beside it. Run `regin hooks adopt` to take it over.")
+    for hint in filter(None, map(trust_hint, targets)):
+        echo(f"\n{hint}")
 
 
 def _apply(action, providers, kinds: tuple[str, ...]) -> int:

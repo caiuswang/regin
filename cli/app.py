@@ -19,7 +19,7 @@ import typer
 
 from lib.activity_log import configure_activity_log, get_activity_logger
 from lib.logging_setup import configure_logging
-from cli.commands import bridge, db, defects, events, feature, gate, goal, grader, hooks, logs, memory, messages, meta, patterns, repo, route, rules, schema, server, session, skills, stats, tasks, topics, trace, uninstall, usage, users, wiki
+from cli.commands import bridge, db, defects, events, feature, gate, goal, grader, hooks, logs, mcp, memory, messages, meta, patterns, repo, route, rules, schema, server, session, skills, stats, tasks, topics, trace, uninstall, usage, users, wiki
 
 
 app = typer.Typer(
@@ -105,6 +105,7 @@ bridge.register(app)  # bridge listen (a session's Mod channel)
 app.add_typer(events.events_app)  # events list (notification bus catalog)
 app.add_typer(grader.grade_app)
 app.add_typer(hooks.hooks_app)  # hooks status / install / repair / remove
+mcp.register(app)  # mcp register (memory / send-to-user into provider configs)
 app.add_typer(stats.stats_app)  # stats time / sessions / daily / by
 app.add_typer(defects.defects_app)  # defects open / list / rounds / close
 app.add_typer(feature.feature_app)  # feature stage

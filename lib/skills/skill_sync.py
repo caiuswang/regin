@@ -394,7 +394,7 @@ def _iter_extra_files(root):
 
 # ---------- push ----------------------------------------------------------
 
-def push(skill_id, force=False, target_dir=None):
+def push(skill_id, force=False, target_dir=None, provider_id=None):
     """Copy the source into a skills directory.
 
     When `target_dir` is None, deploys to the global `~/.claude/skills/`
@@ -403,9 +403,15 @@ def push(skill_id, force=False, target_dir=None):
     there instead; drift check is skipped because project deployments are
     treated as downstream copies that get overwritten on each push.
 
+    `provider_id` naming a provider other than the active one deploys into
+    that provider's global skills dir. Drift is tracked only against the
+    active provider's copy, so that push overwrites like a project push.
+
     Refuses the global push when the deployed copy differs from source,
     unless `force=True`. Source is never modified.
     """
+    if provider_id and provider_id != get_active_provider().provider_id and target_dir is None:
+        return _push_to_provider_global(skill_id, provider_id)
     ok, provider_name = _provider_supports_skills()
     if not ok:
         return f"refused: skill deployment is not supported for {provider_name}"
@@ -479,6 +485,25 @@ def _push_pattern(skill_id, target_dir):
         # enforces them (the skill copy alone doesn't enable enforcement).
         extra = _sync_pattern_grit_to_project(skill_id, target_dir)
     return f"pushed pattern {skill_id} -> {path}{extra}"
+
+
+def _push_to_provider_global(skill_id, provider_id):
+    from lib.providers import build_provider
+    from lib.skills.skill_deployer import UnrecordedSkillDirError, deploy_pattern_as_skill
+    provider = build_provider(provider_id)
+    if not provider.capabilities.skills:
+        return f"refused: skill deployment is not supported for {provider.display_name}"
+    if skill_registry.get(skill_id)['type'] != 'pattern':
+        return f"skipped: {skill_id} is an auto skill and deploys only to the active provider"
+    if not source_exists(skill_id):
+        return f"skipped: {skill_id} has no source at {source_path(skill_id)}"
+    title = _read_title(source_skill_md(skill_id)) or skill_id
+    try:
+        path = deploy_pattern_as_skill(source_path(skill_id), skill_id, title,
+                                       target_dir=str(provider.global_skills_dir()))
+    except UnrecordedSkillDirError as exc:
+        return f"refused: {exc}"
+    return f"pushed pattern {skill_id} -> {path}"
 
 
 def _sync_pattern_grit_to_project(skill_id, target_dir) -> str:
