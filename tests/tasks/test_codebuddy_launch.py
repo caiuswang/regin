@@ -124,3 +124,28 @@ def test_codebuddy_missing_binary_refuses_launch(tmp_db, native_task,
     with pytest.raises(runs.RunRefused, match="codebuddy CLI not found"):
         runs.start_run(task_id)
     assert runs.latest_attempt(task_id)["status"] == "failed"
+
+
+def test_codebuddy_run_is_listed_without_hooks(tmp_db, native_task,
+                                               fake_codebuddy, tmp_path):
+    """D304: with no hooks installed nothing ever posts `session.start`, so
+    the launch itself must leave the session row the list and the view-time
+    transcript rescan resolve the provider from."""
+    from lib.orm import SessionLocal
+    from lib.orm.models import Session as TraceSession
+    from lib.trace import live_rescan
+
+    task_id = native_task(title="codebuddy task", status=TASK_STATUS_ARMED)
+    runs.open_attempt(task_id, params={
+        "provider": "codebuddy", "cwd": str(tmp_path), "one_shot": False,
+        "env": {"FAKE_ACP_REQUIRE_ARG": "--acp", "FAKE_ACP_STALL": "30"}})
+
+    trace_id = runs.start_run(task_id)["trace_id"]
+
+    with SessionLocal() as db:
+        row = db.get(TraceSession, trace_id)
+    assert row is not None, "launched run has no sessions row"
+    assert (row.agent_type, row.cwd, row.status) == (
+        "codebuddy", str(tmp_path), "active")
+    live_rescan._provider_cache.pop(trace_id, None)
+    assert live_rescan._session_provider(trace_id).provider_id == "codebuddy"

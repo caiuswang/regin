@@ -350,8 +350,9 @@ def _open_session(client: AcpClient, cwd: str, model: str,
 
 
 def _record_run_started(handle: AcpRunHandle, cwd: str,
-                        model: str) -> None:
-    """The `agent_runs` row claiming this run while it lives.
+                        model: str, provider_id: str) -> None:
+    """The `agent_runs` row claiming this run while it lives, and the
+    `sessions` row that makes it visible before any hook reports in.
 
     The pid is what keeps `reap_orphaned_runs` honest: a `running` row with
     a dead or missing pid is condemned, and `find_run` is how the steer
@@ -366,6 +367,8 @@ def _record_run_started(handle: AcpRunHandle, cwd: str,
         sdk_store.upsert_run(handle.trace_id, status="running",
                              pid=handle._client.pid, cwd=cwd,
                              model=model or None)
+        sdk_store.open_trace_session(handle.trace_id, agent_type=provider_id,
+                                     cwd=cwd, model=model)
     except Exception:  # noqa: BLE001 — bookkeeping must not fail the launch
         log.error("acp_run_row_unwritten", trace_id=handle.trace_id,
                   exc_info=True)
@@ -444,7 +447,8 @@ def launch_run(prompt: str, *, cwd: str | None = None,
                           cwd=cwd, model=model)
     client.on_update(handle._on_update)
     acp_registry.register(handle)
-    _record_run_started(handle, cwd, model)
+    _record_run_started(handle, cwd, model,
+                        getattr(provider, "provider_id", None) or "kimi")
     threading.Thread(target=_pump, daemon=True,
                      name=f"acp-run-{session_id}",
                      args=(handle, prompt, one_shot, images)).start()

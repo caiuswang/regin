@@ -304,6 +304,8 @@ def _trace_row(trace_id: str, status: str = "active") -> None:
             "INSERT INTO sessions (trace_id, started_at, last_seen, agent_type,"
             " status) VALUES (:t, '2026-10-07 10:00:00',"
             " '2026-10-07 10:05:00', 'kimi', :s)"
+            " ON CONFLICT(trace_id) DO UPDATE SET started_at=excluded.started_at,"
+            " last_seen=excluded.last_seen, status=excluded.status"
         ).bindparams(t=trace_id, s=status))
         session.commit()
 

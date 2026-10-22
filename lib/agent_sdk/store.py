@@ -107,6 +107,38 @@ def restore_trace_session(markers: list[dict]) -> None:
         log.write("sdk_trace_session_end_restored", trace_id=trace_id)
 
 
+def open_trace_session(trace_id: str, *, agent_type: str, cwd: str,
+                       model: str | None = None) -> bool:
+    """Create the `sessions` row for a run whose id the launch already knows.
+
+    An ACP run's only other source of this row is its own `SessionStart`
+    hook, which never fires for a provider whose hooks were not installed —
+    and without the row the session is absent from every listing, and the
+    view-time rescan, finding no `agent_type`, looks for the transcript in
+    Claude's layout instead of the provider's. An existing row is left to
+    its writers; only a missing `agent_type`/`cwd` is filled, matching the
+    ingest upsert's fill-only rule for both. Returns whether it inserted.
+    """
+    from datetime import datetime
+
+    with SessionLocal() as session:
+        row = session.get(TraceSession, trace_id)
+        if row is not None:
+            row.agent_type = row.agent_type or agent_type
+            row.cwd = row.cwd or cwd
+            session.commit()
+            return False
+        now = datetime.now().isoformat()
+        session.add(TraceSession(
+            trace_id=trace_id, status="active", started_at=now,
+            last_seen=now, last_start_at=now, agent_type=agent_type,
+            model=model or None, cwd=cwd))
+        session.commit()
+    log.write("sdk_trace_session_opened", trace_id=trace_id,
+              agent_type=agent_type)
+    return True
+
+
 def end_trace_session(*trace_ids: str, reason: str) -> list[str]:
     """Settle the `sessions` rows behind a run that died without saying so.
 
