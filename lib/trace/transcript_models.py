@@ -301,8 +301,9 @@ class TranscriptUsage:
     permission_denials: tuple[dict, ...] = ()
     # Whether the main agent's latest turn is still open, read off the
     # transcript's own turn lifecycle records (Kimi 1.5 `agent.turn.started` /
-    # `agent.turn.ended`). None when the format records no lifecycle — Claude,
-    # Kimi 1.4 — so callers cannot mistake "unknown" for "closed".
+    # `agent.turn.ended`; CodeBuddy's closing assistant `message`). None when
+    # the format records no lifecycle — Claude, Kimi 1.4 — so callers cannot
+    # mistake "unknown" for "closed".
     main_turn_open: bool | None = None
     # Finished `tool.<name>` span dicts for a format whose CLI reports tool
     # output only in the transcript (CodeBuddy's PostToolUse carries no Bash

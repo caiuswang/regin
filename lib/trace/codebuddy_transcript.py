@@ -180,6 +180,7 @@ class _Scan:
         self.title: str | None = None
         self.title_ms: object = None
         self.last_ms: object = None
+        self.turn_open: bool | None = None
 
     def feed(self, rec: dict) -> None:
         if isinstance(rec.get('timestamp'), (int, float)):
@@ -187,6 +188,9 @@ class _Scan:
         handler = _HANDLERS.get(rec.get('type'))
         if handler is not None:
             handler(self, rec)
+        state = _turn_open_after(rec)
+        if state is not None:
+            self.turn_open = state
 
     def _key(self, rec: dict) -> str | None:
         rid = _str(rec.get('id'))
@@ -292,6 +296,27 @@ _HANDLERS = {
     'function_call_result': _Scan._on_function_result,
     'ai-title': _Scan._on_title,
 }
+
+
+def _turn_open_after(rec: dict) -> bool | None:
+    """Whether the main turn is still open once ``rec`` is written, or None
+    for a record that says nothing about it (title, metadata).
+
+    The format logs no turn-lifecycle record, but an assistant ``message``
+    is always the last thing a turn writes — its final answer, or the
+    ``status: incomplete`` "Interrupted by user" stub an interrupt leaves. A
+    text block that precedes a tool call is followed by its ``function_call``,
+    which reopens it. A ``skipRun`` user message (a local command's caveat)
+    starts no run, so it leaves the state where it was."""
+    kind = rec.get('type')
+    if kind == 'message':
+        pd = rec.get('providerData') if isinstance(rec.get('providerData'), dict) else {}
+        if rec.get('role') == 'user' and pd.get('skipRun'):
+            return None
+        return {'user': True, 'assistant': False}.get(rec.get('role'))
+    if kind in ('reasoning', 'function_call', 'function_call_result'):
+        return True
+    return None
 
 
 def _turn(step: _Step, max_text_bytes: int | None) -> TurnUsage:
@@ -445,4 +470,5 @@ def _build_usage(scan: _Scan, turns: list[TurnUsage]) -> TranscriptUsage:
         tool_spans=tuple(_tool_span(c) for c in calls if c.key),
         title=scan.title,
         title_timestamp=_iso(scan.title_ms) or _iso(scan.last_ms),
+        main_turn_open=scan.turn_open,
     )
