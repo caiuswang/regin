@@ -10,8 +10,8 @@ import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
 import DefectActions from './DefectActions.vue'
 import DefectImages from './DefectImages.vue'
+import DefectSymptom from './DefectSymptom.vue'
 import PlGlyph from '../pipeline/PlGlyph.vue'
-import RefInlineText from '../refs/RefInlineText.vue'
 import { shortDate } from '../../utils/ledgerFormat'
 import { utcTitle } from '../../utils/time.js'
 import { reopenedLabel } from '../../utils/pipelineFormat'
@@ -30,7 +30,7 @@ const props = defineProps({
   // The permalink and the expanded row still carry the symptom unclamped.
   collapsible: { type: Boolean, default: false },
 })
-defineEmits(['changed'])
+const emit = defineEmits(['changed'])
 
 const open = ref(!props.collapsible)
 const heldOut = computed(() => ['snoozed', 'declined'].includes(props.defect.queue_position))
@@ -99,8 +99,8 @@ const unblamed = computed(() => props.defect.status === 'open' && !props.defect.
       </Button>
     </div>
 
-    <p class="symptom" :class="{ 'symptom-clamped': !open }" data-pl-part="symptom"
-       :title="open ? undefined : defect.symptom"><RefInlineText :text="defect.symptom" /></p>
+    <DefectSymptom :defect="defect" :can-write="canWrite" :clamped="!open"
+                   @changed="(msg, info) => emit('changed', msg, info)" />
 
     <template v-if="open">
 
@@ -146,7 +146,7 @@ const unblamed = computed(() => props.defect.status === 'open' && !props.defect.
     <!-- Outside the disclosure: a collapsed row still offers its state's
          verbs, so no action waits behind a second click. -->
     <DefectActions :defect="defect" :can-write="canWrite"
-                   @changed="(msg, info) => $emit('changed', msg, info)" />
+                   @changed="(msg, info) => emit('changed', msg, info)" />
   </li>
 </template>
 
@@ -171,13 +171,6 @@ const unblamed = computed(() => props.defect.status === 'open' && !props.defect.
 .unblamed { color: var(--color-amber-800); }
 .spacer { flex: 1 1 auto; }
 .when { font-variant-numeric: tabular-nums; }
-.symptom {
-    max-width: 60rem; font-size: 13px; line-height: 1.5;
-    color: var(--color-fg); white-space: pre-wrap; overflow-wrap: anywhere;
-}
-.symptom-clamped {
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
 .card.is-collapsed { gap: 0.25rem; padding: 0.5rem 0.9rem; }
 /* Two lines at rest on any width: the head never wraps — the feature title
    truncates and, on a phone, the date gives way to the disclosure. */

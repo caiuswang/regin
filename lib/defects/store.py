@@ -606,7 +606,7 @@ def merge_many(duplicate_ids: Iterable[int], *, into: int) -> Defect:
         for dup in dups:
             session.delete(dup)
         session.add(keeper)
-        retitle(session, keeper.fix_task_id, *left)
+        refresh_fix_tasks(session, keeper.fix_task_id, *left)
         session.commit()
         session.refresh(keeper)
         for dup in dups:
@@ -639,7 +639,7 @@ def set_fix_item(defect_id: int, task_id: int) -> Defect:
         row.fix_task_id = task_id
         _touch(row)
         session.add(row)
-        retitle(session, left, task_id)
+        refresh_fix_tasks(session, left, task_id)
         session.commit()
         session.refresh(row)
         log.write("defect_fix_item_set", defect_id=row.id,
@@ -658,7 +658,7 @@ def set_fix_items(defect_ids: Iterable[int], task_id: int) -> None:
             row.fix_task_id = task_id
             _touch(row)
             session.add(row)
-        retitle(session, *left, task_id)
+        refresh_fix_tasks(session, *left, task_id)
         session.commit()
     for defect_id in defect_ids:
         log.write("defect_fix_item_set", defect_id=defect_id,
@@ -672,7 +672,7 @@ def clear_fix_item(defect_id: int) -> Defect:
         row.fix_task_id = None
         _touch(row)
         session.add(row)
-        retitle(session, left)
+        refresh_fix_tasks(session, left)
         session.commit()
         session.refresh(row)
         log.write("defect_fix_item_set", defect_id=row.id, fix_task_id=None)
@@ -692,27 +692,31 @@ def fix_task_title(rows: Iterable[Defect]) -> str:
     return f"Fix {ids}"[:TITLE_MAX]
 
 
-def retitle(session, *task_ids: Optional[int]) -> None:
-    """Recompute each task's title from the defects now pointing at it — only
-    while the title is still the one regin wrote (`title == auto_title`); a
-    hand edit breaks the equality and the title is the operator's from then.
+def refresh_fix_tasks(session, *task_ids: Optional[int]) -> None:
+    """Recompute each task's title and body from the defects now pointing at
+    it — each only while it is still the one regin wrote (`title ==
+    auto_title`, `body == auto_body`); a hand edit breaks the equality and
+    that field is the operator's from then.
 
     Takes the caller's session so the label moves in the same commit as the
     pointer: a task never shows a defect set it no longer has.
     """
+    from lib.defects.fix_items import task_body  # noqa: PLC0415
     from lib.orm.models.tasks import AgentTask  # noqa: PLC0415
 
     session.flush()
     for task_id in dict.fromkeys(t for t in task_ids if t is not None):
         task = session.get(AgentTask, task_id)
-        if task is None or task.auto_title is None \
-                or task.title != task.auto_title:
+        if task is None:
             continue
         rows = session.exec(
             select(Defect).where(Defect.fix_task_id == task_id)).all()
         if not rows:
             continue
-        task.title = task.auto_title = fix_task_title(rows)
+        if task.auto_title is not None and task.title == task.auto_title:
+            task.title = task.auto_title = fix_task_title(rows)
+        if task.auto_body is not None and task.body == task.auto_body:
+            task.body = task.auto_body = task_body(rows)
         session.add(task)
 
 

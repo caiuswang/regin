@@ -16,15 +16,15 @@ export const PRIMARY = {
   closed: 'reopen',
 }
 
-// Edit and Absorb stay on a closed defect: its wording can be corrected after
-// the fact, and a later duplicate can still be folded into it.
+// Kept short on purpose: the symptom is edited by clicking it, and folding
+// duplicates is one verb (Merge, from the duplicate's side), not two.
 export const MENU = {
-  untriaged: ['attribute', 'merge', 'decline', 'snooze', 'edit', 'paths', 'attach'],
-  snoozed: ['unsnooze', 'attribute', 'merge', 'decline', 'edit', 'paths'],
+  untriaged: ['attribute', 'merge', 'decline', 'snooze', 'attach'],
+  snoozed: ['unsnooze', 'attribute', 'merge', 'decline'],
   attributed: ['attribute', 'close', 'fix_create', 'fix_link', 'fix_clear',
-               'merge', 'absorb', 'edit', 'paths', 'attach'],
-  declined: ['restore', 'edit'],
-  closed: ['reopen', 'edit', 'paths', 'absorb'],
+               'merge', 'attach'],
+  declined: ['restore'],
+  closed: ['reopen'],
 }
 
 // The groups a separator is drawn between in the menu.
@@ -32,6 +32,6 @@ export const GROUP = {
   attribute: 0, unsnooze: 0, restore: 0, reopen: 0, close: 0,
   decline: 0, snooze: 0,
   fix_create: 1, fix_link: 1, fix_clear: 1,
-  merge: 2, absorb: 2,
-  edit: 3, paths: 3, attach: 3,
+  merge: 2,
+  attach: 3,
 }

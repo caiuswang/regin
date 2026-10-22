@@ -21,7 +21,7 @@ _TABLES = ("api_keys", "agent_tasks", "agent_task_runs", "agent_task_deps",
            "agent_task_images", "feature_images", "project_stages",
            "feature_links")
 _SCHEMA_SQL = Path(__file__).resolve().parents[2] / "db" / "schema.sql"
-_LAST_TASK_REVISION = "0040"
+_LAST_TASK_REVISION = "0044"
 #: Tables the revisions between 0021 and the last one create from scratch. They
 #: are dropped with the task tables so the replay does not collide with what
 #: `schema.sql` already built. `agent_task_links` and `issue_cache` are in the

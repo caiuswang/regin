@@ -119,19 +119,19 @@ test('test_defects_list_page_filters_and_pages', async ({ page }) => {
 test('test_defect_detail_menu_offers_verbs_by_state', async ({ page }) => {
   const cases = [
     [defect(7), 'Attribute',
-      ['Attribute', 'Merge into…', 'Decline…', 'Snooze', 'Edit symptom', 'Edit suspect paths', 'Attach image…']],
+      ['Attribute', 'Merge into…', 'Decline…', 'Snooze', 'Attach image…']],
     [defect(7, { triage_state: 'snoozed', queue_position: 'snoozed' }), 'Unsnooze',
-      ['Unsnooze', 'Attribute', 'Merge into…', 'Decline…', 'Edit symptom', 'Edit suspect paths']],
+      ['Unsnooze', 'Attribute', 'Merge into…', 'Decline…']],
     [defect(7, ATTRIBUTED), 'Close',
-      ['Re-attribute', 'Close', 'Create fix task', 'Link existing task', 'Merge into…',
-       'Absorb duplicates…', 'Edit symptom', 'Edit suspect paths', 'Attach image…']],
+      ['Re-attribute', 'Close', 'Create fix task', 'Link to a task…', 'Merge into…',
+       'Attach image…']],
     [defect(7, { ...ATTRIBUTED, fix_task_id: 300 }), 'Close',
-      ['Re-attribute', 'Close', 'Re-point fix task', 'Clear fix task', 'Merge into…',
-       'Absorb duplicates…', 'Edit symptom', 'Edit suspect paths', 'Attach image…']],
+      ['Re-attribute', 'Close', 'Move to another task…', 'Unlink task', 'Merge into…',
+       'Attach image…']],
     [defect(7, { status: 'closed', triage_state: 'declined', queue_position: 'declined' }), 'Restore',
-      ['Restore', 'Edit symptom']],
+      ['Restore']],
     [defect(7, { ...ATTRIBUTED, status: 'closed', missing_check: 'test_x' }), 'Reopen',
-      ['Reopen', 'Edit symptom', 'Edit suspect paths', 'Absorb duplicates…']],
+      ['Reopen']],
   ]
   const state = { row: cases[0][0] }
   const posts = await stubDetail(page, state)
@@ -142,17 +142,11 @@ test('test_defect_detail_menu_offers_verbs_by_state', async ({ page }) => {
     expect(await menuItems(page, 7)).toEqual(menu)
   }
 
-  // Unsnooze is one click; the edit of suspect paths sends the list.
+  // Unsnooze is one click.
   state.row = cases[1][0]
   await page.goto('/defects/7')
   await page.getByTestId('defect-primary-7').click()
   await expect.poll(() => posts.at(-1)?.path).toBe('/api/defects/7/unsnooze')
-  await page.getByTestId('defect-more-7').click()
-  await page.getByRole('menuitem', { name: 'Edit suspect paths' }).click()
-  await page.getByTestId('defect-paths-field-7').fill('lib/a.py\nweb/b.vue')
-  await page.getByTestId('defect-paths-submit-7').click()
-  await expect.poll(() => posts.at(-1)).toEqual({
-    method: 'PATCH', path: '/api/defects/7', body: { suspect_paths: ['lib/a.py', 'web/b.vue'] } })
 })
 
 test('a refusal that names merge offers it as a button', async ({ page }) => {
@@ -271,8 +265,7 @@ test('test_defect_edit_paste_attaches_image', async ({ page }) => {
 
   await page.goto('/defects/7')
   await expect(page.getByTestId('defect-image-thumb')).toHaveCount(1)
-  await page.getByTestId('defect-more-7').click()
-  await page.getByRole('menuitem', { name: 'Edit symptom' }).click()
+  await page.getByTestId('defect-symptom-7').click()
   const field = page.getByTestId('defect-edit-field-7')
   await field.fill('reworded, not saved yet')
 
@@ -292,18 +285,13 @@ test('test_defect_edit_paste_attaches_image', async ({ page }) => {
   expect(imageGets).toBe(before)
 })
 
-test('test_defect_paste_text_or_other_form_posts_nothing', async ({ page }) => {
+test('test_defect_paste_text_posts_nothing', async ({ page }) => {
   const state = { row: defect(7, ATTRIBUTED) }
   const posts = await stubDetail(page, state)
   await page.goto('/defects/7')
 
-  await page.getByTestId('defect-more-7').click()
-  await page.getByRole('menuitem', { name: 'Edit symptom' }).click()
+  await page.getByTestId('defect-symptom-7').click()
   expect(await pasteInto(page.getByTestId('defect-edit-field-7'), { text: 'plain words' })).toBe(true)
-
-  await page.getByTestId('defect-more-7').click()
-  await page.getByRole('menuitem', { name: 'Edit suspect paths' }).click()
-  expect(await pasteInto(page.getByTestId('defect-paths-field-7'), { png: PNG })).toBe(true)
   expect(posts).toEqual([])
 })
 

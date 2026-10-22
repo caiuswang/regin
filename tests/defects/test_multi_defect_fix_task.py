@@ -218,6 +218,53 @@ def test_linking_a_second_defect_retitles_an_auto_titled_task(feature_row):
     assert _task(task_id).title == "x"
 
 
+def test_linking_a_second_defect_rewrites_an_auto_written_body(feature_row):
+    """D317: the title named both defects while the spec still cited one."""
+    feature = feature_row()
+    d10, d11, d12 = _defects(feature.id, "ten symptom", "eleven", "twelve")
+    task_id = fix_items.create_for(d10.id).fix_task_id
+    assert f"](defect:{d11.id})" not in _task(task_id).body
+
+    store.set_fix_item(d11.id, task_id)
+
+    body = _task(task_id).body
+    assert f"](defect:{d10.id})" in body and f"](defect:{d11.id})" in body
+    assert body == fix_items.task_body([store.get(d10.id), store.get(d11.id)])
+
+    store.clear_fix_item(d11.id)
+
+    assert f"](defect:{d11.id})" not in _task(task_id).body
+
+    update_task(task_id, {"body": "my own spec"})
+    store.set_fix_item(d12.id, task_id)
+
+    assert _task(task_id).body == "my own spec"
+
+
+def test_a_hand_made_task_body_is_never_rewritten(feature_row, native_task):
+    feature = feature_row()
+    d10, = _defects(feature.id, "ten")
+    task_id = native_task(title="mine")
+    before = _task(task_id).body
+
+    store.set_fix_item(d10.id, task_id)
+
+    assert _task(task_id).body == before
+
+
+def test_merging_into_a_defect_on_another_task_rewrites_its_body(feature_row):
+    feature = feature_row()
+    d10, d11 = _defects(feature.id, "ten", "eleven")
+    task_id = fix_items.create_for(d10.id).fix_task_id
+    store.set_fix_item(d11.id, task_id)
+
+    store.merge(d11.id, into=d10.id)
+
+    body = _task(task_id).body
+    assert f"](defect:{d10.id})" in body
+    assert f"](defect:{d11.id})" not in body
+
+
 def test_re_pointing_a_defect_retitles_the_task_it_left(feature_row):
     feature = feature_row()
     d10, d11, d12 = _defects(feature.id, "ten", "eleven", "twelve")

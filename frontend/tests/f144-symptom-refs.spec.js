@@ -91,8 +91,7 @@ async function expectTaskChip(scope, s) {
 test('Editing a symptom takes @ references', async ({ page }) => {
   const s = seed(mark())
   await page.goto(`/defects/${s.A}`)
-  await page.getByTestId(`defect-more-${s.A}`).click()
-  await page.getByRole('menuitem', { name: 'Edit symptom' }).click()
+  await page.getByTestId(`defect-symptom-${s.A}`).click()
 
   const field = page.getByTestId(`defect-edit-field-${s.A}`)
   await field.fill('')
@@ -115,15 +114,6 @@ test('Editing a symptom takes @ references', async ({ page }) => {
 
   await chip.click()
   await expect(page).toHaveURL(new RegExp(`/features/${s.F}$`))
-})
-
-test('the other defect forms stay plain fields', async ({ page }) => {
-  const s = seed(mark())
-  await page.goto(`/defects/${s.A}`)
-  await page.getByTestId(`defect-more-${s.A}`).click()
-  await page.getByRole('menuitem', { name: 'Edit suspect paths' }).click()
-  await page.getByTestId(`defect-paths-field-${s.A}`).pressSequentially('@')
-  await expect(page.getByTestId('ref-menu')).toHaveCount(0)
 })
 
 test('Symptom references render on every symptom surface', async ({ page }) => {

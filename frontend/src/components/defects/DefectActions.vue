@@ -19,7 +19,7 @@ import api from '../../api'
 import { useConfirm } from '../../composables/useConfirm'
 import { refusalOf, runRemedy } from '../../composables/useDefectRemedy'
 import { defectState, GROUP, MENU, PRIMARY } from '../../utils/defectVerbs'
-import { imageFilesFrom, toBase64 } from '../../utils/imageFiles'
+import { toBase64 } from '../../utils/imageFiles'
 import Button from '../ui/Button.vue'
 import DropdownMenu from '../ui/DropdownMenu.vue'
 import FeaturePicker from '../pipeline/FeaturePicker.vue'
@@ -71,14 +71,10 @@ const VERB = {
   decline: () => ({ label: 'Decline…', run: () => reveal('decline') }),
   fix_create: d => ((d.fix_task_id || offered.value) ? null
     : { label: 'Create fix task', run: createFixTask, testid: `defect-fix-create-row-${d.id}` }),
-  fix_link: d => ({ label: d.fix_task_id ? 'Re-point fix task' : 'Link existing task',
+  fix_link: d => ({ label: d.fix_task_id ? 'Move to another task…' : 'Link to a task…',
                     run: () => reveal('fix-item'), testid: `defect-fix-item-reveal-${d.id}` }),
-  fix_clear: d => (d.fix_task_id ? { label: 'Clear fix task', run: clearFixTask } : null),
+  fix_clear: d => (d.fix_task_id ? { label: 'Unlink task', run: clearFixTask } : null),
   merge: () => ({ label: 'Merge into…', run: () => reveal('merge'), testid: 'defect-merge-reveal' }),
-  absorb: d => ({ label: 'Absorb duplicates…', run: () => reveal('absorb'),
-                  testid: `defect-absorb-reveal-${d.id}` }),
-  edit: d => ({ label: 'Edit symptom', run: () => reveal('edit'), testid: `defect-edit-reveal-${d.id}` }),
-  paths: () => ({ label: 'Edit suspect paths', run: () => reveal('paths') }),
   attach: () => ({ label: 'Attach image…', run: () => filePick.value?.click() }),
 }
 
@@ -106,8 +102,6 @@ const menuItems = computed(() => {
   return items
 })
 
-// Edit and paths start from what is there — they correct it — while every
-// other field starts empty.
 function reveal(which) {
   form.value = form.value === which ? '' : which
   value.value = FORMS[form.value]?.initial?.(props.defect) ?? ''
@@ -180,11 +174,11 @@ async function reopenFixTask() {
 }
 
 async function clearFixTask() {
-  const ok = await confirm('Clear fix task',
-    `Unpoint defect #${props.defect.id} from task #${props.defect.fix_task_id}? The task itself is kept.`)
+  const ok = await confirm('Unlink task',
+    `Unlink defect #${props.defect.id} from task #${props.defect.fix_task_id}? The task itself is kept.`)
   if (!ok) return
   const body = await call(() => api.del(`/defects/${props.defect.id}/fix-item`))
-  if (body) emit('changed', `#${props.defect.id} no longer points at a fix task.`)
+  if (body) emit('changed', `#${props.defect.id} unlinked from its task.`)
 }
 
 // Reopening is not undo: the round it bumps is a permanent figure on the
@@ -204,15 +198,6 @@ async function reopen() {
 async function attach(event) {
   const files = [...(event.target.files || [])]
   event.target.value = ''
-  await attachFiles(files)
-}
-
-// A screenshot pasted while correcting the wording is evidence for this
-// defect, written at once like the picker's; a text paste is left alone.
-async function onPaste(e) {
-  const files = imageFilesFrom(e.clipboardData)
-  if (!files.length) return
-  e.preventDefault()
   await attachFiles(files)
 }
 
@@ -306,9 +291,7 @@ async function onRemedy(remedy) {
       v-else-if="form"
       v-model="value"
       :form="form" :spec="FORMS[form]" :defect-id="defect.id" :busy="busy"
-      :feature="defect.feature_id"
       @submit="submit()"
-      @paste="form === 'edit' && onPaste($event)"
     />
 
     <div v-if="offered" class="offer" role="status"

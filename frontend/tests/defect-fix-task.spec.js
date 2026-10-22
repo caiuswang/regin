@@ -116,7 +116,7 @@ test('a defect can be pointed at a task that already exists', async ({ page }) =
   await page.goto('/defects/7')
   const row = page.locator('li.card', { hasText: 'the gutter folds' })
   await row.getByTestId('defect-more-7').click()
-  await page.getByRole('menuitem', { name: 'Link existing task' }).click()
+  await page.getByRole('menuitem', { name: 'Link to a task…' }).click()
   await row.getByPlaceholder('task id').fill('99')
   await row.getByTestId('defect-fix-item-submit-7').click()
 
@@ -147,7 +147,7 @@ test('an open, attributed defect files its fix task in one click',
     await expect(row.getByTestId('defect-fix-created-7')).toContainText('task #143')
     // A task is pointed at now, so the menu stops offering a second one.
     await row.getByTestId('defect-more-7').click()
-    await expect(page.getByRole('menuitem', { name: 'Re-point fix task' })).toBeVisible()
+    await expect(page.getByRole('menuitem', { name: 'Move to another task…' })).toBeVisible()
     await expect(page.getByTestId('defect-fix-create-row-7')).toHaveCount(0)
   })
 

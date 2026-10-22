@@ -174,6 +174,10 @@ class AgentTask(Base, table=True):
     # title regin's to recompute; a hand edit breaks the equality and freezes it.
     auto_title: Optional[str] = Field(
         default=None, sa_column=Column("auto_title", Text))
+    # The body regin last generated, under the same equality rule as
+    # `auto_title`: a fix task's body re-renders as defects join or leave it.
+    auto_body: Optional[str] = Field(
+        default=None, sa_column=Column("auto_body", Text))
     # The project stage this step was opened from (`project_stages.key`).
     # Orthogonal to `kind`, which carries the stage's role: the ledger reads
     # `kind`, so a custom stage never needs a new kind.

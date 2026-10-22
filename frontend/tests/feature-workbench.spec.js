@@ -325,7 +325,7 @@ test('every secondary action is still reachable from the row menu',
       items: [defect({ id: 17 })], pagination: { total: 1 } } }))
 
     await more.click()
-    await page.getByRole('menuitem', { name: 'Link existing task' }).click()
+    await page.getByRole('menuitem', { name: 'Link to a task…' }).click()
     await row.locator('#f-149').fill('12')
     await row.getByTestId('defect-fix-item-submit-149').click()
     await expect.poll(() => posted.length).toBeGreaterThan(0)
@@ -360,7 +360,7 @@ test('a defect that already has a fix task is not offered a second',
     await page.goto('/features/242')
     await page.getByTestId('defect-more-149').click()
 
-    await expect(page.getByRole('menuitem', { name: 'Re-point fix task' })).toBeVisible()
+    await expect(page.getByRole('menuitem', { name: 'Move to another task…' })).toBeVisible()
     await expect(page.getByRole('menuitem', { name: 'Create fix task' })).toHaveCount(0)
   })
 

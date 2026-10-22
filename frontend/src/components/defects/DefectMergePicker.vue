@@ -91,6 +91,10 @@ function onEscape() {
 <template>
   <div class="mp" data-testid="merge-picker">
     <template v-if="!keeper">
+      <p class="mp-note" data-testid="merge-explain">
+        Same bug reported twice? Pick the report to keep — #{{ defect.id }} is folded into it and deleted.
+        Two different bugs one task should fix: use <b>Link to a task…</b> instead.
+      </p>
       <label class="sr-only" :for="`mp-${defect.id}`">Find the defect to keep</label>
       <Input
         :id="`mp-${defect.id}`"

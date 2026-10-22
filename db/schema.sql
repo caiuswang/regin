@@ -1131,6 +1131,9 @@ CREATE TABLE IF NOT EXISTS agent_tasks (
     -- NULL for a task that is not a feature step. Orthogonal to `kind`, which
     -- carries the stage's role.
     stage_key     TEXT,
+    -- The body regin last generated; body == auto_body keeps it regin's to
+    -- re-render as defects join or leave the task.
+    auto_body     TEXT,
     CONSTRAINT uq_agent_tasks_source_external UNIQUE (source, external_id)
 );
 

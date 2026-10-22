@@ -136,7 +136,7 @@ test('test_link_existing_task_offers_dropdown', async ({ page }) => {
   await page.goto(`/features/${FEATURE}`)
   const row = card(page).getByTestId('defect-row-10')
   await row.getByTestId('defect-more-10').click()
-  await page.getByRole('menuitem', { name: 'Link existing task' }).click()
+  await page.getByRole('menuitem', { name: 'Link to a task…' }).click()
 
   await row.getByTestId('defect-fix-item-picker-10').click()
   const options = page.getByRole('option')
@@ -149,7 +149,7 @@ test('test_link_existing_task_offers_dropdown', async ({ page }) => {
 
   // Typing an id is still there for a task the dropdown does not list.
   await row.getByTestId('defect-more-10').click()
-  await page.getByRole('menuitem', { name: /Re-point fix task|Link existing task/ }).click()
+  await page.getByRole('menuitem', { name: /Move to another task…|Link to a task…/ }).click()
   await row.getByTestId('defect-fix-item-field-10').fill('303')
   await row.getByTestId('defect-fix-item-submit-10').click()
   await expect.poll(() => posted.at(-1)).toEqual({ task_id: 303 })

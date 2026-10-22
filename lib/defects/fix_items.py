@@ -8,9 +8,11 @@ verbatim exists to prevent. The wording itself is the `defect-fix-task`
 prompt surface, editable on the prompts page like every other agent prompt.
 
 Pointing at an *existing* task stays in `store.set_fix_item`: that is a
-one-column write with no second row to author. The defects a task fixes are
-read live by its runs (`run_prompt._cited_refs`), so the body is written once
-and never grows as defects are linked.
+one-column write with no second row to author. The body cites every defect
+the task fixes and is re-rendered as defects join or leave it, while it is
+still the one regin wrote (`store.refresh_fix_tasks`); a hand-written body is
+left alone, and its runs still read every linked defect live
+(`run_prompt._cited_refs`).
 """
 
 from __future__ import annotations
@@ -41,7 +43,7 @@ def create_for(defect_id: int):
     """Capture the task, attach it, and never touch it again.
 
     Title is the symptom verbatim, a shelf label regin recomputes only while
-    nobody has renamed it (`store.retitle`); the body is the `defect-fix-task`
+    nobody has renamed it (`store.refresh_fix_tasks`); the body is the `defect-fix-task`
     prompt surface. No label, assignee or priority — those are fields with
     human writers. `external_id` makes it one task per defect: a second click,
     a second tab or the CLI after the browser all resolve to the first task
@@ -108,9 +110,20 @@ def _create(rows, replacing=None) -> int:
     # Written on a replay too while still empty: a first attempt that died
     # between the insert and this line would otherwise never get a body.
     if view["body"] is None:
-        task_store.update_task(view["id"], {"body": task_body(rows)})
+        _seed_body(view["id"], task_body(rows))
     store.set_fix_items([row.id for row in rows], view["id"])
     return view["id"]
+
+
+def _seed_body(task_id: int, body: str) -> None:
+    from lib.orm import SessionLocal  # noqa: PLC0415
+    from lib.orm.models.tasks import AgentTask  # noqa: PLC0415
+
+    with SessionLocal() as session:
+        task = session.get(AgentTask, task_id)
+        task.body = task.auto_body = body
+        session.add(task)
+        session.commit()
 
 
 def _task_keyed(external_id: str):

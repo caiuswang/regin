@@ -37,8 +37,9 @@ def at_0036(tmp_db):
     defect-sourced task, one hand-captured task and one feature."""
     conn = sqlite3.connect(str(tmp_db))
     try:
-        # 0038's column first: a column re-added by a later revision lands
+        # 0044's and 0038's columns first: a column re-added by a later revision lands
         # last, so leaving it in place would reorder the replayed table.
+        conn.execute("ALTER TABLE agent_tasks DROP COLUMN auto_body")
         conn.execute("ALTER TABLE agent_tasks DROP COLUMN stage_key")
         for table, column in _NEW.items():
             conn.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
@@ -87,7 +88,7 @@ def test_agent_tasks_auto_title_backfilled_for_defect_tasks(at_0036):
 
 def test_schema_sql_matches_alembic_head(tmp_path, at_0036):
     head = ScriptDirectory.from_config(db_migrate._config()).get_current_head()
-    assert head == "0043"
+    assert head == "0044"
 
     command.upgrade(db_migrate._config(), "head")
     fresh = tmp_path / "fresh.db"
