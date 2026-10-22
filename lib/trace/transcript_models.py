@@ -313,3 +313,7 @@ class TranscriptUsage:
     # The session title the transcript itself records, for formats whose
     # title has no Claude-style tail read.
     title: str | None = None
+    # When the transcript wrote that title. Without it the title span is
+    # stamped at import time, and an import of an old session reads as
+    # activity right now.
+    title_timestamp: str | None = None

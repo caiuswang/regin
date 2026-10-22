@@ -37,7 +37,8 @@ def post_transcript_tool_spans(trace_id: str, usage, seen: set[str],
     _mark_seen(trace_id, landed)
 
 
-def post_transcript_title(trace_id: str, title: str | None) -> None:
+def post_transcript_title(trace_id: str, title: str | None,
+                          start_time: str | None = None) -> None:
     """Same `sttl-` id and `claude_ai_title` source slot as Claude's
     `ai-title` line, so the title precedence in `ingest.py` (a user rename
     still wins) applies unchanged."""
@@ -50,5 +51,6 @@ def post_transcript_title(trace_id: str, title: str | None) -> None:
     from lib.hook_plugin import post_span  # type: ignore
     if post_span(trace_id=trace_id, name='session.title',
                  span_id=f'sttl-{trace_id[:24]}',
-                 attributes={'text': title, 'source': source}):
+                 attributes={'text': title, 'source': source},
+                 start_time=start_time, end_time=start_time):
         _save_ai_title(trace_id, cache_key)

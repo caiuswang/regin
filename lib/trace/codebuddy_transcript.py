@@ -178,8 +178,12 @@ class _Scan:
         self.calls: dict[str, _Call] = {}
         self.call_order: list[str] = []
         self.title: str | None = None
+        self.title_ms: object = None
+        self.last_ms: object = None
 
     def feed(self, rec: dict) -> None:
+        if isinstance(rec.get('timestamp'), (int, float)):
+            self.last_ms = rec['timestamp']
         handler = _HANDLERS.get(rec.get('type'))
         if handler is not None:
             handler(self, rec)
@@ -278,6 +282,7 @@ class _Scan:
         title = _str(rec.get('aiTitle'))
         if title:
             self.title = title.strip()
+            self.title_ms = rec.get('timestamp')
 
 
 _HANDLERS = {
@@ -439,4 +444,5 @@ def _build_usage(scan: _Scan, turns: list[TurnUsage]) -> TranscriptUsage:
         tool_use_to_turn_uuid={c.call['id']: c.turn_uuid for c in calls},
         tool_spans=tuple(_tool_span(c) for c in calls if c.key),
         title=scan.title,
+        title_timestamp=_iso(scan.title_ms) or _iso(scan.last_ms),
     )

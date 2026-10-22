@@ -306,3 +306,16 @@ def test_import_reports_rejected_posts(workbuddy_home, monkeypatch):
 
     assert result.exit_code == 1
     assert "failed=1" in result.output
+
+
+def test_imported_history_keeps_last_seen_at_transcript_time(workbuddy_home):
+    _import(DESKTOP_SID)
+
+    from datetime import datetime
+    row = _one("SELECT status, last_seen FROM sessions WHERE trace_id = ?", DESKTOP_SID)
+    newest = datetime.fromtimestamp(1792649026100 / 1000).isoformat()
+    assert row["status"] is None
+    assert row["last_seen"] <= newest
+    title = _one("SELECT start_time FROM session_spans WHERE trace_id = ? "
+                 "AND name = 'session.title'", DESKTOP_SID)
+    assert title["start_time"] == datetime.fromtimestamp(1792649022300 / 1000).isoformat()

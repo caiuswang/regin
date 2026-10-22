@@ -200,7 +200,7 @@ def _post_transcript_usage(
     # whose tool_attribution event updates tool spans by tool_use_id.
     if with_tool_spans:
         post_transcript_tool_spans(trace_id, usage, seen, capture_text)
-    post_transcript_title(trace_id, usage.title)
+    post_transcript_title(trace_id, usage.title, usage.title_timestamp)
     _post_live_turn_data(
         trace_id, usage.turns, usage.model or fallback_model,
         capture_text=capture_text,
