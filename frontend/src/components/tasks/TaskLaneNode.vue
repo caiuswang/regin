@@ -3,9 +3,9 @@
 // (feature #119 R4a); clicking anywhere else on the box opens the task — the
 // title's link is stretched over it, with the action above.
 //
-// Hover reveals Drawio-style connection handles on each side. The right handle
-// starts an edge where this task waits for another; the left handle starts an
-// edge where another task waits for this one.
+// Hover reveals Drawio-style connection handles. Edges run left to right, so
+// the left handle reaches upstream (this task waits for another) and the right
+// handle reaches downstream (another task waits for this one).
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
 import TaskPrimaryAction from './TaskPrimaryAction.vue'
@@ -18,13 +18,14 @@ defineProps({
   busy: { type: Boolean, default: false },
   canWrite: { type: Boolean, default: true },
 })
-const emit = defineEmits(['verb', 'hover', 'connect'])
+const emit = defineEmits(['verb', 'hover', 'handle-down', 'handle-click'])
 </script>
 
 <template>
   <div
     class="tln cursor-pointer hover:shadow-md focus-visible:outline-2"
     :data-testid="`graph-node-${node.id}`"
+    :data-node-id="node.id"
     :data-column="node.column"
     data-pl-part="node"
     :data-pl-tag="tag"
@@ -50,22 +51,16 @@ const emit = defineEmits(['verb', 'hover', 'connect'])
     <router-link :to="`/tasks/${node.id}`" class="tln-title" :title="taskTitle(node)">{{ taskTitle(node) }}</router-link>
     <template v-if="canWrite">
       <Button
+        v-for="side in ['left', 'right']"
+        :key="side"
         variant="secondary"
         size="icon"
-        class="tln-handle tln-handle-left"
-        :aria-label="`Something depends on task ${node.id}`"
-        :data-testid="`graph-connect-left-${node.id}`"
-        @click="emit('connect', node, 'blocks')"
-      >
-        <Icon name="plus" :size="10" />
-      </Button>
-      <Button
-        variant="secondary"
-        size="icon"
-        class="tln-handle tln-handle-right"
-        :aria-label="`Task ${node.id} depends on something`"
-        :data-testid="`graph-connect-right-${node.id}`"
-        @click="emit('connect', node, 'depends-on')"
+        :class="`tln-handle tln-handle-${side}`"
+        :aria-label="side === 'left' ? `#${node.id} waits for…` : `Waits for #${node.id}…`"
+        :title="side === 'left' ? 'Drag to a task this one waits for' : 'Drag to a task that waits for this one'"
+        :data-testid="`graph-connect-${side}-${node.id}`"
+        @pointerdown="ev => emit('handle-down', node, side, ev)"
+        @click="ev => emit('handle-click', node, side, ev)"
       >
         <Icon name="plus" :size="10" />
       </Button>
@@ -120,6 +115,8 @@ const emit = defineEmits(['verb', 'hover', 'connect'])
     transform: translateY(-50%) scale(0.85);
     transition: opacity 120ms ease, transform 120ms ease, background-color 120ms ease;
     pointer-events: none;
+    cursor: crosshair;
+    touch-action: none;
 }
 .tln-handle-left { left: -0.625rem; }
 .tln-handle-right { right: -0.625rem; }

@@ -1,8 +1,9 @@
 <script setup>
 // The Tasks tab as a graph: one lane per feature (and one for loose tasks),
 // columns by topological depth, so every dependency runs left to right.
-// Connection handles on each node let an editor add edges in Drawio fashion;
-// clicking an existing edge removes it. Both actions save immediately.
+// Connection handles on each node let an editor add edges in Drawio fashion —
+// drag a handle onto another task, or click it for a picker; clicking an
+// existing edge removes it. Every edit saves immediately.
 //
 // Lanes, their done/total, the chain count and the hidden-lane count are the
 // server's (`/api/tasks/graph?lanes=1`); this view only places boxes.
@@ -17,6 +18,7 @@ import api from '../../api'
 import { invalidatePipelineCounts } from '../../composables/usePipelineCounts.js'
 import { GRAPH_FILTERS, useLaneGraph } from '../../composables/useTaskViews.js'
 import { useTaskVerbs } from '../../composables/useTaskVerbs.js'
+import { useEdgeDrag } from '../../composables/useEdgeDrag.js'
 import { LANE_W, NODE_H, NODE_W, layoutLanes } from '../../utils/taskLaneLayout.js'
 
 const props = defineProps({
@@ -34,6 +36,7 @@ const narrowed = computed(() => GRAPH_FILTERS.some(k => k !== 'project_id' && pr
 const graph = useLaneGraph(scope)
 const zoom = ref(1)
 const viewport = ref(null)
+const stage = ref(null)
 
 const layout = computed(() => {
   const b = graph.body.value
@@ -122,8 +125,13 @@ const picker = ref(null)
 const saving = ref(false)
 const refusal = ref(null)
 
-function openPicker(task, direction) {
-  picker.value = { task, direction }
+// The left handle reaches upstream (this task waits for the other end), the
+// right handle downstream (the other end waits for this task).
+const DIRECTION = { left: 'depends-on', right: 'blocks' }
+
+function openPicker(task, side) {
+  if (saving.value) return
+  picker.value = { task, direction: DIRECTION[side] }
 }
 
 function closePicker() {
@@ -136,16 +144,19 @@ async function onPickerSaved() {
   await afterWrite()
 }
 
-async function removeEdge(edge) {
+// Rewrites one task's dependency set; `change` returns the new set, or null
+// when there is nothing to write.
+async function writeDeps(taskId, change) {
   if (saving.value) return
   saving.value = true
   refusal.value = null
   try {
-    const data = await api.get(`/tasks/graph?root=${edge.to}&depth=1`)
-    const deps = (data.edges || [])
-      .filter(e => e.task_id === edge.to && e.depends_on_id !== edge.from)
-      .map(e => ({ id: e.depends_on_id, kind: e.kind || 'requires' }))
-    const result = await api.put(`/tasks/${edge.to}/deps`, { depends_on: deps })
+    const data = await api.get(`/tasks/graph?root=${taskId}&depth=1`)
+    const deps = change((data.edges || [])
+      .filter(e => e.task_id === taskId)
+      .map(e => ({ id: e.depends_on_id, kind: e.kind || 'requires' })))
+    if (!deps) return
+    const result = await api.put(`/tasks/${taskId}/deps`, { depends_on: deps })
     if (result.ok === false) {
       refusal.value = { message: result.msg || 'The server refused this change.', pair: result.body?.pair || [] }
       return
@@ -157,6 +168,37 @@ async function removeEdge(edge) {
     saving.value = false
   }
 }
+
+function removeEdge(edge) {
+  return writeDeps(edge.to, deps => deps.filter(d => d.id !== edge.from))
+}
+
+function addEdge(dependent, dependency) {
+  return writeDeps(dependent, deps => (deps.some(d => d.id === dependency)
+    ? null
+    : [...deps, { id: dependency, kind: 'requires' }]))
+}
+
+function connectByDrag(node, side, targetId) {
+  return side === 'left' ? addEdge(node.id, targetId) : addEdge(targetId, node.id)
+}
+
+const edgeDrag = useEdgeDrag({ stage, zoom, onClick: openPicker, onDrop: connectByDrag })
+const drag = edgeDrag.drag
+onBeforeUnmount(edgeDrag.cancel)
+
+// Drawn in the dependency → dependent direction, so the arrowhead already
+// says which end will wait.
+const dragPath = computed(() => {
+  const d = drag.value
+  if (!d?.active) return ''
+  const n = layout.value?.nodes.find(x => x.id === d.node.id)
+  if (!n) return ''
+  const anchor = { x: d.side === 'left' ? n.x : n.x + NODE_W, y: n.y + NODE_H / 2 }
+  const [a, b] = d.side === 'left' ? [d, anchor] : [anchor, d]
+  const mx = (a.x + b.x) / 2
+  return `M${a.x},${a.y} C${mx},${a.y} ${mx},${b.y} ${b.x},${b.y}`
+})
 
 const { refusals, busyId, act } = useTaskVerbs(afterWrite, {
   openSheet: (kind, task) => { sheet.value = { kind, task } },
@@ -173,7 +215,7 @@ defineExpose({ reload: graph.load })
 </script>
 
 <template>
-  <div class="tlg" data-pl-part="canvas" data-testid="task-lane-graph">
+  <div class="tlg" :class="{ 'is-dragging': drag?.active }" data-pl-part="canvas" data-testid="task-lane-graph">
     <p v-if="graph.error.value" class="tlg-note" role="alert">
       Could not read the graph — {{ graph.error.value }}
       <Button variant="link" size="sm" @click="graph.load">Retry</Button>
@@ -202,7 +244,7 @@ defineExpose({ reload: graph.load })
           <span v-if="refusal.pair.length === 2">({{ refusal.pair[0] }} → {{ refusal.pair[1] }})</span>
         </span>
         <span v-else class="tlg-hint" data-testid="graph-hint">
-          Hover a task to connect; click an edge to remove it.
+          Drag a handle onto a task to link · click a line to remove
         </span>
       </div>
       <div ref="viewport" class="tlg-viewport">
@@ -211,6 +253,7 @@ defineExpose({ reload: graph.load })
           :style="{ width: `${layout.width * zoom}px`, height: `${layout.height * zoom}px` }"
         >
           <div
+            ref="stage"
             class="tlg-stage"
             :style="{ width: `${layout.width}px`, height: `${layout.height}px`, transform: `scale(${zoom})` }"
           >
@@ -278,18 +321,26 @@ defineExpose({ reload: graph.load })
                 <circle r="7" />
                 <path d="M4,4 L-4,-4 M-4,4 L4,-4" />
               </g>
+              <path
+                v-if="dragPath"
+                :d="dragPath"
+                class="tlg-edge tlg-drag-line"
+                marker-end="url(#tlg-arrow)"
+                data-testid="graph-drag-line"
+              />
             </svg>
             <TaskLaneNode
               v-for="node in layout.nodes"
               :key="node.id"
               :node="node"
               :tag="tag(node)"
-              :class="nodeClass(node)"
+              :class="[nodeClass(node), { 'is-drop-target': drag?.active && drag.target === node.id }]"
               :data-found="matches.has(node.id) ? '' : undefined"
               :style="{ left: `${node.x}px`, top: `${node.y}px`, width: `${NODE_W}px`, height: `${NODE_H}px` }"
               :busy="busyId === node.id"
               :can-write="canWrite"
-              @connect="openPicker"
+              @handle-down="edgeDrag.start"
+              @handle-click="edgeDrag.click"
               @hover="id => (hovered = id)"
               @verb="act"
             />
@@ -450,6 +501,16 @@ defineExpose({ reload: graph.load })
     stroke-linecap: round;
 }
 .tlg-node.is-found { box-shadow: 0 0 0 3px var(--color-ring); }
+.tlg-node.is-drop-target {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 35%, transparent);
+}
+.tlg.is-dragging { cursor: crosshair; user-select: none; }
+.tlg-edge.tlg-drag-line {
+    stroke: var(--color-primary);
+    stroke-width: 2;
+    stroke-dasharray: 6 4;
+}
 .tlg-chrome {
     display: flex;
     align-items: center;

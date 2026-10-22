@@ -1,5 +1,5 @@
 <script setup>
-// Draw-io style edge creation: pick the task at the other end of a new edge.
+// Drawio-style edge creation: pick the task at the other end of a new edge.
 // Direction decides whether `task` waits for the picked tasks, or the picked
 // tasks wait for `task`. Existing edges in that direction are shown checked so
 // the same picker can also adjust or remove them.
@@ -40,13 +40,13 @@ const featureLabel = computed(() => {
 
 const titleText = computed(() =>
   props.direction === 'depends-on'
-    ? `Task #${taskId.value} depends on…`
-    : `…depends on task #${taskId.value}`)
+    ? `#${taskId.value} waits for`
+    : `Waits for #${taskId.value}`)
 
 const descriptionText = computed(() =>
   props.direction === 'depends-on'
-    ? 'Pick the tasks that must finish before this one.'
-    : 'Pick the tasks that should wait for this one.')
+    ? 'Tasks that go first.'
+    : 'Tasks that go next.')
 
 // Existing edges in the chosen direction: depends-on = task's blockers,
 // blocks = tasks that list task as a blocker.
@@ -223,7 +223,7 @@ async function submit() {
         </section>
       </div>
       <p class="tep-hint">
-        <strong>needs it</strong> waits for success; <strong>just after</strong> only waits for it to stop.
+        <strong>needs it</strong> waits for success · <strong>just after</strong> waits for it to stop
       </p>
     </div>
 

@@ -51,13 +51,13 @@ test('test_graph_edit_adds_dependency', async ({ page }) => {
 
   const node = page.getByTestId(`graph-node-${a}`)
   await node.hover()
-  const right = page.getByTestId(`graph-connect-right-${a}`)
-  await expect(right).toBeVisible()
-  await right.click()
+  const left = page.getByTestId(`graph-connect-left-${a}`)
+  await expect(left).toBeVisible()
+  await left.click()
 
   const picker = page.locator('.task-edge-picker')
   await expect(picker).toBeVisible()
-  await expect(picker).toContainText(`Task #${a} depends on`)
+  await expect(picker).toContainText(`#${a} waits for`)
   await page.getByTestId('task-edge-picker-filter').fill('B')
   await page.getByTestId(`task-edge-picker-check-${b}`).click()
 
@@ -77,11 +77,13 @@ test('test_graph_edit_adds_dependent', async ({ page }) => {
 
   const node = page.getByTestId(`graph-node-${a}`)
   await node.hover()
-  await page.getByTestId(`graph-connect-left-${a}`).click()
+  const right = page.getByTestId(`graph-connect-right-${a}`)
+  await right.focus()
+  await page.keyboard.press('Enter')
 
   const picker = page.locator('.task-edge-picker')
   await expect(picker).toBeVisible()
-  await expect(picker).toContainText(`depends on task #${a}`)
+  await expect(picker).toContainText(`Waits for #${a}`)
   await page.getByTestId('task-edge-picker-filter').fill('B')
   await page.getByTestId(`task-edge-picker-check-${b}`).click()
 
@@ -117,4 +119,65 @@ test('test_graph_edit_viewer_hidden', async ({ page }) => {
   await page.getByTestId(`graph-node-${a}`).hover()
   await expect(page.getByTestId(`graph-connect-left-${a}`)).toHaveCount(0)
   await expect(page.getByTestId(`graph-connect-right-${a}`)).toHaveCount(0)
+})
+
+/** Press a node's handle and release over another node, Drawio-style. */
+async function dragHandle(page, from, side, to) {
+  await page.getByTestId(`graph-node-${from}`).hover()
+  const handle = await page.getByTestId(`graph-connect-${side}-${from}`).boundingBox()
+  const target = await page.getByTestId(`graph-node-${to}`).boundingBox()
+  await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(target.x + target.width / 2, target.y + target.height / 2, { steps: 8 })
+  await expect(page.getByTestId('graph-drag-line')).toHaveCount(1)
+  await expect(page.getByTestId(`graph-node-${to}`)).toHaveClass(/is-drop-target/)
+  await page.mouse.up()
+}
+
+test('test_graph_drag_left_handle_adds_dependency', async ({ page }) => {
+  const headers = await authed(page)
+  const { feature, a, b } = await seed(page, headers)
+  await openGraph(page, feature, a)
+
+  const sent = page.waitForRequest(r => r.method() === 'PUT' && r.url().endsWith(`/api/tasks/${a}/deps`))
+  await dragHandle(page, a, 'left', b)
+  expect((await sent).postDataJSON().depends_on).toEqual([{ id: b, kind: 'requires' }])
+  await expect(page.getByTestId(`graph-edge-${a}-${b}`)).toHaveCount(1)
+  await expect(page.locator('.task-edge-picker')).toHaveCount(0)
+  await expect(page.getByTestId('graph-drag-line')).toHaveCount(0)
+  expect(await depsOf(page, headers, a)).toEqual([b])
+})
+
+test('test_graph_drag_right_handle_adds_dependent', async ({ page }) => {
+  const headers = await authed(page)
+  const { feature, a, b } = await seed(page, headers)
+  await openGraph(page, feature, a)
+
+  await page.getByRole('button', { name: 'Zoom out' }).click()
+  await page.getByRole('button', { name: 'Zoom out' }).click()
+  const sent = page.waitForRequest(r => r.method() === 'PUT' && r.url().endsWith(`/api/tasks/${b}/deps`))
+  await dragHandle(page, a, 'right', b)
+  expect((await sent).postDataJSON().depends_on).toEqual([{ id: a, kind: 'requires' }])
+  await expect(page.getByTestId(`graph-edge-${b}-${a}`)).toHaveCount(1)
+  expect(await depsOf(page, headers, b)).toEqual([a])
+  expect(await depsOf(page, headers, a)).toEqual([])
+})
+
+test('test_graph_drag_to_empty_canvas_is_a_noop', async ({ page }) => {
+  const headers = await authed(page)
+  const { feature, a } = await seed(page, headers)
+  await openGraph(page, feature, a)
+
+  let puts = 0
+  page.on('request', r => { if (r.method() === 'PUT') puts += 1 })
+  await page.getByTestId(`graph-node-${a}`).hover()
+  const handle = await page.getByTestId(`graph-connect-left-${a}`).boundingBox()
+  await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(handle.x - 60, handle.y + 200, { steps: 6 })
+  await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2, { steps: 6 })
+  await page.mouse.up()
+  await expect(page.getByTestId('graph-drag-line')).toHaveCount(0)
+  await expect(page.locator('.task-edge-picker')).toHaveCount(0)
+  expect(puts).toBe(0)
 })
