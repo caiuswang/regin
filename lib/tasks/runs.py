@@ -49,7 +49,8 @@ from lib.orm import SessionLocal
 from lib.orm.models.agent_runs import AgentRun
 from lib.orm.models.tasks import (
     AgentTask, AgentTaskRun, RUN_STATUS_ARMED, RUN_STATUS_DONE,
-    RUN_STATUS_FAILED, RUN_STATUS_RUNNING, RUN_STATUS_STARTING,
+    RUN_OPEN_STATUSES, RUN_STATUS_FAILED, RUN_STATUS_RUNNING,
+    RUN_STATUS_STARTING,
     TASK_STATUS_ARMED, TASK_STATUS_DONE, TASK_STATUS_FAILED,
     TASK_KIND_SPEC,
     TASK_STATUS_RUNNING,
@@ -614,6 +615,54 @@ def reap_tmux_runs_at_boot() -> dict:
     if reaped or fired:
         log.write("task_tmux_boot_reap", reaped=reaped, fired=fired)
     return {"reaped": reaped, "fired": fired}
+
+
+DEAD_SDK_REASON = "agent session ended without a report"
+
+
+def settle_dead_sdk_run(view: dict, *, in_server: bool = True) -> bool:
+    """Fail an open SDK attempt whose agent is no longer reachable.
+
+    Its completion callback lived in the process that launched it, so a run
+    that died with that process — or never registered one — has nobody left to
+    settle it. Settled as an inference (`SETTLED_BY_SESSION`), so the agent's
+    own `regin task finish` still overrides it.
+
+    No `agent_runs` row is not evidence of death: a peer server's launch
+    writes the row only once its CLI connects, and until then a sweep from
+    another process holds no reservation that would vouch for it.
+    """
+    if view.get("ended_at") or tmux_runs.is_tmux(view.get("params")):
+        return False
+    agent_run = sdk_store.get_run(view["trace_id"])
+    if agent_run is None or is_live(view):
+        return False
+    settled, _fired = _settle_and_fire(
+        view["task_id"], view["id"], RUN_STATUS_FAILED,
+        agent_run.get("detail") or DEAD_SDK_REASON, in_server=in_server)
+    return settled
+
+
+def reap_dead_sdk_runs(*, in_server: bool = True) -> list[int]:
+    """Settle every open SDK attempt no live process backs. Safe from any
+    process: liveness is a probe of the recorded pid, never pid equality."""
+    with SessionLocal() as session:
+        rows = session.exec(
+            select(AgentTaskRun)
+            .where(AgentTaskRun.status.in_(RUN_OPEN_STATUSES),
+                   AgentTaskRun.ended_at.is_(None),
+                   AgentTaskRun.trace_id.is_not(None))).all()
+        views = [_serialize(r) for r in rows]
+    reaped = []
+    for view in views:
+        try:
+            if settle_dead_sdk_run(view, in_server=in_server):
+                reaped.append(view["id"])
+        except Exception:  # noqa: BLE001 — one row cannot sink the sweep
+            log.error("task_sdk_reap_failed", run_id=view["id"], exc_info=True)
+    if reaped:
+        log.write("task_sdk_runs_reaped", reaped=reaped)
+    return reaped
 
 
 def _mark_deferred(task_id: int) -> None:

@@ -322,6 +322,7 @@ def test_stop_delegates_to_the_registry_and_leaves_the_row_open(flask_client,
                                           (True, "stopping"))[1])
     task_id = _armed(flask_client)
     flask_client.post(f"/api/tasks/{task_id}/run")
+    _back_run(launcher.handles[0].trace_id, os.getpid())
 
     resp = flask_client.post(f"/api/tasks/{task_id}/stop")
 
@@ -350,6 +351,91 @@ def test_interrupt_delegates_to_the_registry(flask_client, launcher,
 
     assert seen == [launcher.handles[0].trace_id]
     assert resp.get_json()["detail"] == "interrupt sent"
+
+
+def test_stop_settles_a_run_whose_agent_is_already_gone(flask_client,
+                                                        launcher,
+                                                        monkeypatch):
+    from lib.agent_sdk import registry
+
+    seen = []
+    monkeypatch.setattr(registry, "stop_run",
+                        lambda trace_id: (seen.append(trace_id),
+                                          (False, "no live agent session"))[1])
+    task_id = _armed(flask_client)
+    flask_client.post(f"/api/tasks/{task_id}/run")
+    trace_id = launcher.handles[0].trace_id
+    _back_run(trace_id, _dead_pid(), status="exited")
+
+    resp = flask_client.post(f"/api/tasks/{task_id}/stop")
+
+    assert resp.status_code == 200
+    assert resp.get_json()["delivered"] is True
+    assert seen == []
+    row = _run_rows(task_id)[0]
+    assert row.status == "failed" and row.ended_at is not None
+    assert row.settled_by == "session"
+    assert _task(task_id).status == "failed"
+
+
+def _boot():
+    from web.app import _reap_orphaned_agent_runs
+    _reap_orphaned_agent_runs()
+
+
+def test_boot_settles_sdk_runs_the_previous_server_took_with_it(
+        flask_client, launcher):
+    task_id = _armed(flask_client)
+    flask_client.post(f"/api/tasks/{task_id}/run")
+    trace_id = launcher.handles[0].trace_id
+    _back_run(trace_id, _dead_pid())
+
+    _boot()
+
+    row = _run_rows(task_id)[0]
+    assert row.status == "failed" and row.ended_at is not None
+    assert row.exit_reason == "server restarted"
+    assert _task(task_id).status == "failed"
+
+
+def test_boot_spares_an_sdk_run_a_live_peer_process_holds(flask_client,
+                                                         launcher):
+    peer = subprocess.Popen([sys.executable, "-c",
+                             "import sys; sys.stdin.read()"],
+                            stdin=subprocess.PIPE)
+    try:
+        task_id = _armed(flask_client)
+        flask_client.post(f"/api/tasks/{task_id}/run")
+        _back_run(launcher.handles[0].trace_id, peer.pid)
+
+        _boot()
+
+        row = _run_rows(task_id)[0]
+        assert (row.status, row.ended_at) == ("running", None)
+        assert _task(task_id).status == "running"
+    finally:
+        peer.stdin.close()
+        peer.wait()
+
+
+def test_sweep_spares_a_run_whose_agent_row_is_not_written_yet(flask_client,
+                                                              launcher):
+    task_id = _armed(flask_client)
+    flask_client.post(f"/api/tasks/{task_id}/run")
+
+    assert runs.reap_dead_sdk_runs() == []
+    assert _task(task_id).status == "running"
+
+
+def test_an_agent_report_overrides_a_reaped_run(flask_client, launcher):
+    task_id = _armed(flask_client)
+    run = flask_client.post(f"/api/tasks/{task_id}/run").get_json()["run"]
+    _back_run(launcher.handles[0].trace_id, _dead_pid())
+    assert runs.reap_dead_sdk_runs() == [run["id"]]
+
+    runs.finish_run(run["id"], status="done", reason="did the work")
+
+    assert _task(task_id).status == "done"
 
 
 def test_stopping_a_task_that_never_ran_is_a_409(flask_client):

@@ -565,8 +565,8 @@ def api_run_task(task_id: int):
 def _deliver(task_id: int, control):
     """Hand a control call to the run behind a task's latest attempt.
 
-    `control` is the registry's own function — this route neither settles the
-    attempt row nor decides that the run ended. The authority on that is the
+    `control` is the registry's own function — this route never settles a run
+    it can still reach (a dead one is `_stop`'s to settle). The authority on that is the
     run's completion callback: a stop that only closed the prompt queue would
     land between turns and silently fail on a turn that never ends.
     """
@@ -599,11 +599,14 @@ def api_interrupt_task_run(task_id: int):
 def _stop(attempt: dict) -> tuple[bool, str]:
     """A tmux run has no completion callback to settle it, so its Stop kills
     the session and settles in the same act; an SDK one is torn down by its
-    registry and settles on its own completion."""
+    registry and settles on its own completion — unless its agent is already
+    unreachable, when no completion will ever come and Stop settles it."""
     if tmux_runs.is_tmux(attempt["params"]):
         killed = runs.stop_tmux(attempt)
         return killed, ("tmux session killed" if killed
                         else "no tmux session left to kill")
+    if runs.settle_dead_sdk_run(attempt):
+        return True, "agent session already gone; run settled"
     from lib.agent_sdk import registry
 
     return registry.stop_run(attempt["trace_id"])

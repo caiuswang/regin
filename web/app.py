@@ -266,11 +266,21 @@ def _reap_orphaned_agent_runs() -> None:
         get_activity_logger("agent_bridge").error("bridge_reap_failed",
                                                   exc_info=True)
 
+    from lib.tasks import runs as task_runs
+
+    # An SDK task run's completion callback died with the previous process,
+    # so its attempt — and the task — would claim `running` forever. Before
+    # the tmux reap: that one launches deferred dependents, and a run launched
+    # a moment ago must not be the next thing this sweep reads.
+    try:
+        task_runs.reap_dead_sdk_runs()
+    except Exception:
+        get_activity_logger("tasks").error("task_sdk_reap_failed",
+                                           exc_info=True)
+
     # Task runs launched in tmux outlive the server by design, so they are
     # settled only when tmux says their session is gone — and a settle a CLI
     # made while no server was up may have left `sdk` dependents to fire here.
-    from lib.tasks import runs as task_runs
-
     try:
         task_runs.reap_tmux_runs_at_boot()
     except Exception:
