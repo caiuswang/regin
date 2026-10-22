@@ -1,0 +1,6 @@
+# Git for Windows defaults to core.autocrlf=true; a CRLF shebang line breaks
+# every bash script ("/usr/bin/env: 'bash\r': No such file").
+*.sh        text eol=lf
+.githooks/* text eol=lf
+*.cmd       text eol=crlf
+*.ps1       text eol=crlf

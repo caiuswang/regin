@@ -76,7 +76,7 @@ git clone https://github.com/caiuswang/regin && cd regin
 .venv/bin/python cli/regin.py serve      # dashboard on http://localhost:8321
 ```
 
-- **Platform** — macOS or Linux. On Windows, run it inside WSL2: setup is a bash script and the wired hooks call `.venv/bin/python`, and from PowerShell `./scripts/setup.sh` is not executed — Windows opens the `.sh` in its associated editor instead.
+- **Windows** — run `.\scripts\setup.cmd` instead (PowerShell or cmd; `./scripts/setup.sh` there only opens the file in an editor), then `regin serve` in a new terminal. Same steps, except the live-session terminal and agent bridge, which need tmux. See [docs/setup.md](docs/setup.md#windows).
 - **Hooks** — setup offers to wire them; otherwise run `regin hooks install --provider claude`. Without them no session is recorded.
 - **Upgrade** — `git pull && ./scripts/setup.sh`; it keeps your database, settings and users and runs `regin migrate`.
 - **Uninstall** — `regin uninstall` (`--dry-run` to preview, `--purge-data` to drop data too), then delete the checkout.

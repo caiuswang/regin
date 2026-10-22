@@ -9,7 +9,15 @@ import os
 import sys
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_VENV_PYTHON = os.path.join(_PROJECT_ROOT, '.venv', 'bin', 'python')
+# When invoked as `python cli/regin.py`, sys.path[0] is `cli/`, not the project
+# root — so neither `lib` nor `cli.app` resolves unless the project was
+# installed via `pip install -e .`. Put the root on the path either way.
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
+from lib.venv_paths import WINDOWS, venv_python  # noqa: E402
+
+_VENV_PYTHON = venv_python(_PROJECT_ROOT)
 
 # Re-exec under the local venv if it exists and we're not already using it.
 # This lets the CLI work when invoked directly after setup, even though the
@@ -20,18 +28,24 @@ _VENV_PYTHON = os.path.join(_PROJECT_ROOT, '.venv', 'bin', 'python')
 # sys.executable, so the equality below never holds and an unguarded execv spins
 # forever — hanging any git operation that runs a regin hook.
 _REEXEC_SENTINEL = '_REGIN_REEXEC'
-if (sys.executable != _VENV_PYTHON and os.path.exists(_VENV_PYTHON)
+_wrong_interpreter = os.path.normcase(sys.executable) != os.path.normcase(_VENV_PYTHON)
+# Windows defaults open() and stdio to the ANSI code page (cp936 on a Chinese
+# install), which cannot decode the UTF-8 regin and the agents write.
+_needs_utf8 = WINDOWS and not sys.flags.utf8_mode
+if ((_wrong_interpreter or _needs_utf8) and os.path.exists(_VENV_PYTHON)
         and not os.environ.get(_REEXEC_SENTINEL)):
     os.environ[_REEXEC_SENTINEL] = '1'
+    if WINDOWS:
+        # Windows has no exec: os.execv spawns a child and returns to the
+        # shell at once, so the prompt comes back mid-command and the exit
+        # code is lost. Wait on the child instead. The script path, not
+        # argv[0], because argv[0] may be the pip launcher `regin.exe`.
+        import subprocess
+        sys.exit(subprocess.call([_VENV_PYTHON, '-X', 'utf8', os.path.abspath(__file__)]
+                                 + sys.argv[1:]))
     os.execv(_VENV_PYTHON, [_VENV_PYTHON] + sys.argv)
 
-# When invoked as `python cli/regin.py`, sys.path[0] is `cli/`, not the project
-# root — so `cli.app` can't be resolved unless the project was installed via
-# `pip install -e .`. Put the project root on the path so this works either way.
-if _PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, _PROJECT_ROOT)
-
-from cli.app import app
+from cli.app import app  # noqa: E402
 
 
 def main() -> None:

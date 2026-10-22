@@ -10,6 +10,7 @@ like regin's but fails that test is reported for the user to handle.
 
 from __future__ import annotations
 
+import filecmp
 import os
 import shutil
 import tomllib
@@ -19,6 +20,7 @@ from typing import Callable
 
 from lib import hooks_wiring
 from lib.settings import settings
+from lib.venv_paths import WINDOWS, venv_script
 
 HOOK_KINDS = ('hook_manager', 'debug')
 TOPIC_GIT_HOOKS = ('pre-commit', 'post-commit', 'post-merge', 'post-checkout')
@@ -156,10 +158,21 @@ def _plan_skills(plan: Plan) -> None:
 
 
 def _plan_symlink(plan: Plan, bin_dir: Path) -> None:
-    link = bin_dir / 'regin'
+    ours = Path(venv_script(settings.project_root, 'regin'))
+    link = bin_dir / ours.name
     if not os.path.lexists(link):
         return
-    ours = settings.project_root / '.venv' / 'bin' / 'regin'
+    if WINDOWS:
+        # Setup copies the launcher there (symlinks need admin rights), and
+        # pip's launcher embeds its venv's interpreter path, so a byte-equal
+        # copy is this checkout's.
+        if ours.exists() and filecmp.cmp(link, ours, shallow=False):
+            plan.removals.append(Removal(
+                'regin launcher', str(link), f"copy of {ours}", lambda: os.remove(link),
+            ))
+        else:
+            plan.kept.append(Kept('regin launcher', str(link), "not this checkout's"))
+        return
     if link.is_symlink() and os.path.realpath(link) == os.path.realpath(ours):
         plan.removals.append(Removal(
             'regin launcher symlink', str(link), f"points at {ours}",

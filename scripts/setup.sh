@@ -3,6 +3,9 @@
 # Usage: ./scripts/setup.sh [scan_path]
 #        PYTHON=/path/to/python3.12 ./scripts/setup.sh   # pick the interpreter
 #
+# Windows runs scripts/setup.cmd (-> setup.ps1), which mirrors these steps;
+# change both together.
+#
 # Re-running it is safe: the database, local settings and users are kept;
 # dependencies, the web UI and the schema are brought up to date.
 #

@@ -21,6 +21,7 @@ import shlex
 
 from lib.providers import kimi_hooks
 from lib.settings import settings
+from lib.venv_paths import WINDOWS, venv_python
 
 
 DEBUG_EVENTS = ('UserPromptSubmit', 'PostToolUse', 'PreToolUse')
@@ -40,13 +41,22 @@ _DEBUG_SCRIPT_TOKEN = 'hook_payload_debug.py'
 # and replaces them; new installs no longer emit any env prefix.
 _LEADING_ENV_RE = re.compile(r'^(?:/usr/bin/)?env(?:\s+[A-Za-z_][A-Za-z0-9_]*=\S*)+\s+')
 
-_VENV_PYTHON_SUFFIX = '/.venv/bin/python'
+_VENV_PYTHON_SUFFIXES = ('/.venv/bin/python', '/.venv/Scripts/python.exe')
 
 
 # ── Command construction ──────────────────────────────────────
 
 def _venv_python() -> str:
-    return os.path.join(str(settings.project_root), '.venv/bin/python')
+    # Forward slashes on Windows: Claude Code runs hook commands through Git
+    # Bash there, which would read `C:\Users\…` backslashes as escapes, while
+    # cmd and PowerShell accept `C:/Users/…` as well.
+    return venv_python(settings.project_root).replace(os.sep, '/')
+
+
+def _interpreter() -> str:
+    # UTF-8 mode on Windows: hook payloads are UTF-8, and without it stdin and
+    # open() decode with the ANSI code page (cp936 on a Chinese install).
+    return shlex.quote(_venv_python()) + (' -X utf8' if WINDOWS else '')
 
 
 def interpreter_prefix() -> str:
@@ -70,7 +80,7 @@ def _interpreter_prefixes() -> tuple[str, ...]:
 
 def script_command(script_name: str) -> str:
     script = os.path.join(str(settings.project_root), 'scripts', script_name)
-    return f"{shlex.quote(_venv_python())} {shlex.quote(script)}"
+    return f"{_interpreter()} {shlex.quote(script)}"
 
 
 def debug_base_command() -> str:
@@ -101,7 +111,7 @@ def hook_manager_command(event_name: str, provider) -> str:
     # when Claude ran from there, sending spans to the wrong DB.
     agent_type = getattr(provider, 'provider_id', None) or 'generic'
     return (
-        f"{shlex.quote(_venv_python())} -P "
+        f"{_interpreter()} -P "
         f"-m hook_manager {shlex.quote(event_name)} "
         f"--agent-type {shlex.quote(agent_type)}"
     )
@@ -201,8 +211,9 @@ def checkout_root(command: str) -> str | None:
     except ValueError:
         tokens = (command or '').split()
     for token in tokens:
-        if token.endswith(_VENV_PYTHON_SUFFIX) and len(token) > len(_VENV_PYTHON_SUFFIX):
-            return token[:-len(_VENV_PYTHON_SUFFIX)]
+        for suffix in _VENV_PYTHON_SUFFIXES:
+            if token.endswith(suffix) and len(token) > len(suffix):
+                return token[:-len(suffix)]
     return None
 
 

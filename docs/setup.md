@@ -10,7 +10,7 @@ cd regin
 ./scripts/setup.sh /path/to/your/source-repos
 ```
 
-regin runs on macOS and Linux; on Windows use WSL2 (setup is a bash script, hook commands point at `.venv/bin/python`, the live terminal needs tmux, and PowerShell hands `setup.sh` to whatever app `.sh` is associated with rather than running it). The setup script needs Python ≥ 3.11 (pick one with `PYTHON=/path/to/python3.12 ./scripts/setup.sh`) and Node/npm. It creates a Python venv, links `regin` into `~/.local/bin` (`REGIN_BIN_DIR` to change), builds the frontend, creates or migrates the database, discovers repos, offers to wire regin's hooks into Claude Code, and prompts you to create your user account. Then:
+On Windows, see [Windows](#windows). The setup script needs Python ≥ 3.11 (pick one with `PYTHON=/path/to/python3.12 ./scripts/setup.sh`) and Node/npm. It creates a Python venv, links `regin` into `~/.local/bin` (`REGIN_BIN_DIR` to change), builds the frontend, creates or migrates the database, discovers repos, offers to wire regin's hooks into Claude Code, and prompts you to create your user account. Then:
 
 ```bash
 .venv/bin/python cli/regin.py serve
@@ -18,6 +18,24 @@ regin runs on macOS and Linux; on Windows use WSL2 (setup is a bash script, hook
 ```
 
 Re-running `./scripts/setup.sh` is safe — it is also how you [upgrade](#upgrade).
+
+### Windows
+
+```powershell
+git clone <repo-url> regin
+cd regin
+.\scripts\setup.cmd C:\path\to\your\source-repos
+```
+
+`setup.cmd` runs `scripts/setup.ps1` past the PowerShell execution policy; `./scripts/setup.sh` in PowerShell does not run, it opens the file in whatever app `.sh` is associated with. Python ≥ 3.11 is found through the `py` launcher (set `$env:PYTHON` to pick one) and Node/npm must be on `PATH`. The steps match `setup.sh`, with these differences:
+
+| Step | Windows behaviour |
+|---|---|
+| CLI on `PATH` | `regin.exe` is **copied** into `%USERPROFILE%\.local\bin` (a symlink needs admin rights), and that directory is added to the user `PATH` — open a new terminal afterwards |
+| Hook commands | `C:/…/.venv/Scripts/python.exe -X utf8 …` — forward slashes because Claude Code runs hooks through Git Bash; UTF-8 mode because the default ANSI code page (cp936 on Chinese Windows) cannot decode hook payloads |
+| Agent bridge / live terminal | Not offered: both drive tmux, which has no native Windows build |
+
+Upgrade with `git pull; .\scripts\setup.cmd`.
 
 ## Manual Setup
 
