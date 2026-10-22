@@ -113,8 +113,12 @@ def task_create(title: str, body: str = "", project: str = "",
                                  source="mcp", priority=priority, kind=kind,
                                  **extra)
     if blobs:
-        attached = images.attach_all("task", task["id"], blobs)
-        task = {**_common.task(task["id"]), "images": attached}
+        try:
+            attached = images.attach_all("task", task["id"], blobs)
+            task = {**_common.task(task["id"]), "images": attached}
+        except Exception:
+            store.delete_task(task["id"])
+            raise
     return task
 
 

@@ -156,3 +156,31 @@ def test_a_bad_image_path_refuses_the_create_and_leaves_no_row(
     assert call("feature_list")["features"] == []
     assert call("task_list", status="")["tasks"] == []
     assert call("defect_list", whole_ledger=True)["defects"] == []
+
+
+BODY_CAP = 64_000
+
+
+@pytest.mark.parametrize("name,args,list_call,list_key", [
+    ("feature_create",
+     {"title": "overflow", "spec": "x" * BODY_CAP},
+     ("feature_list",), "features"),
+    ("task_create",
+     {"title": "overflow", "body": "x" * BODY_CAP},
+     ("task_list", {"status": ""}), "tasks"),
+])
+def test_create_with_image_paths_rolls_back_when_body_is_at_cap(
+        call, png_path, name, args, list_call, list_key):
+    """A body already at its cap cannot absorb the appended ![](image:N) refs.
+
+    The image attach must roll back and the ToolError must name the body field,
+    but the new row must also disappear so a retry does not duplicate it.
+    """
+    with pytest.raises(ToolError, match="body"):
+        call(name, image_paths=[png_path], **args)
+    list_args = list_call[1] if len(list_call) > 1 else {}
+    assert call(list_call[0], **list_args)[list_key] == []
+    # A retry still fails and still leaves no duplicate behind.
+    with pytest.raises(ToolError, match="body"):
+        call(name, image_paths=[png_path], **args)
+    assert call(list_call[0], **list_args)[list_key] == []

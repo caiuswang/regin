@@ -60,6 +60,27 @@ def feature_get(feature_id: int) -> dict:
             "links": links.for_feature(row.id)}
 
 
+def _rollback_feature_create(feature_id: int) -> None:
+    """Remove a feature whose creation failed before it was fully handed back.
+
+    A feature is normally abandoned, not deleted, but a row that never made it
+    to the caller is not yet part of the ledger — keeping it would make a retry
+    duplicate it (D311).
+    """
+    from sqlalchemy import delete
+    from lib.orm import SessionLocal
+    from lib.orm.models.features import Feature, FeatureEvent, FeatureImage
+    with SessionLocal() as session:
+        session.exec(delete(FeatureImage).where(
+            FeatureImage.feature_id == feature_id))
+        session.exec(delete(FeatureEvent).where(
+            FeatureEvent.feature_id == feature_id))
+        row = session.get(Feature, feature_id)
+        if row is not None:
+            session.delete(row)
+        session.commit()
+
+
 def feature_create(title: str, spec: str = "", project: str = "",
                    session_id: str = "",
                    image_paths: Optional[list[str]] = None) -> dict:
@@ -77,7 +98,11 @@ def feature_create(title: str, spec: str = "", project: str = "",
     blobs = images.read_paths("feature", image_paths)
     row = store.create(title, body=spec or None, trace_id=session_id or None,
                        project_id=_common.project_id(project))
-    attached = images.attach_all("feature", row.id, blobs)
+    try:
+        attached = images.attach_all("feature", row.id, blobs)
+    except Exception:
+        _rollback_feature_create(row.id)
+        raise
     return {"id": row.id, "title": row.title, "stage": events.stage(row.id),
             "images": attached}
 
