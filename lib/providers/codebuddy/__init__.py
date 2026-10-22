@@ -44,6 +44,33 @@ WORKBUDDY = CodeBuddyFamily(
     mcp_needs_user_trust=True,
 )
 
+# What `codebuddy --model` names as currently supported. A menu, not a
+# whitelist: the launch routes take any string, and this list only decides
+# what is one pick away, so an id the CLI has since added still goes through
+# the sheet's own custom entry.
+MODELS = (
+    "hy4-preview",
+    "hy3",
+    "hy3-x",
+    "step-5-preview",
+    "space-bunny",
+    "glm-5.3",
+    "glm-5.3-flash",
+    "glm-5.2",
+    "glm-5.1",
+    "glm-5v-turbo",
+    "minimax-m3",
+    "minimax-m3.1-flash",
+    "minimax-m2.7",
+    "kimi-k3-1",
+    "kimi-k2.8-preview",
+    "kimi-k2.7",
+    "kimi-k2.6",
+    "deepseek-v4-pro",
+    "deepseek-v4.1-flash",
+    "mimo-v2.6-pro",
+)
+
 
 class CodeBuddyFamilyProvider(AgentProvider):
     family: CodeBuddyFamily = CODEBUDDY
@@ -154,12 +181,16 @@ class CodeBuddyProvider(CodeBuddyFamilyProvider):
     def launch_capabilities(self) -> LaunchCapabilities:
         return {
             "launch_modes": ["sdk", "tmux"],
-            "fields": ["model"],
+            # The permission tiers `--permission-mode` takes and the ones its
+            # ACP `session/set_mode` answers to are Claude's own six, so the
+            # shared vocabulary — arm's validation, the sheet's menu — fits
+            # without a second list.
+            "fields": ["model", "permission_mode"],
             "binary": "codebuddy",
             # `codebuddy` is a `#!/usr/bin/env node` script.
             "pane_commands": ["node"],
             "labels": {"sdk": "ACP", "tmux": "tmux"},
-            "models": [],
+            "models": list(MODELS),
             "default_model": "",
         }
 
@@ -169,8 +200,14 @@ class CodeBuddyProvider(CodeBuddyFamilyProvider):
         # Absolute: the tmux server may predate this process and not carry
         # its PATH.
         argv = [shutil.which("codebuddy") or "codebuddy",
-                "--resume" if resume else "--session-id", session_id,
-                "--dangerously-skip-permissions"]
+                "--resume" if resume else "--session-id", session_id]
+        # An unarmed run is regin's own, with nobody at the pane to answer a
+        # prompt, so it keeps the CLI's skip flag; an armed tier replaces it,
+        # since `plan` under the skip flag would not be plan.
+        if permission_mode:
+            argv += ["--permission-mode", permission_mode]
+        else:
+            argv += ["--dangerously-skip-permissions"]
         if model:
             argv += ["--model", model]
         if prompt:

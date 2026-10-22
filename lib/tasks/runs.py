@@ -505,7 +505,8 @@ def _start_channel(task: dict, row: dict, runner, kwargs: dict) -> dict:
     Unlike the SDK arm, `one_shot` is handed to the launch: the channel
     closes after the first turn, and an unreported attempt settles failed.
     """
-    launch_kwargs = {name: kwargs.get(name) for name in ("cwd", "env", "model")}
+    launch_kwargs = {name: kwargs.get(name)
+                     for name in ("cwd", "env", "model", "permission_mode")}
     try:
         _prepare_workspace(row, launch_kwargs["cwd"])
         handle = runner(_prompt(task, row["id"], row["params"]),

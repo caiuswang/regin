@@ -354,7 +354,8 @@ def launch(prompt: str, *, cwd: str | None = None,
 
 
 def launch_channel(runner, prompt: str, *, cwd: str | None = None,
-                   model: str = "", one_shot: bool = False,
+                   model: str = "", permission_mode: str = "",
+                   one_shot: bool = False,
                    resume: str | None = None) -> str:
     """`launch` for a provider whose session runs over its own structured
     channel (`AgentProvider.channel_launcher`, kimi's ACP).
@@ -373,7 +374,8 @@ def launch_channel(runner, prompt: str, *, cwd: str | None = None,
         raise LaunchRefused("that session is already starting")
     revived = store.revive_trace_session(resume) if resume else []
     try:
-        handle = runner(prompt, cwd=cwd, model=model, one_shot=one_shot,
+        handle = runner(prompt, cwd=cwd, model=model,
+                        permission_mode=permission_mode, one_shot=one_shot,
                         resume=resume)
     except BaseException:
         registry.release_run(resume or "", token)

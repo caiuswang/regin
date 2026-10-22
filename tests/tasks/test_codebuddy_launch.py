@@ -170,3 +170,55 @@ def test_acp_launch_sets_the_providers_unattended_mode(
         handle.close()
     assert [r["params"]["modeId"] for r in sent
             if r.get("method") == "session/set_mode"] == [mode]
+
+
+def test_codebuddy_acp_launch_sends_the_armed_mode(tmp_db, tmp_path):
+    """D308: an operator's tier beats the provider's unattended default —
+    codebuddy would otherwise run every armed run as bypassPermissions."""
+    from lib.agent_acp.launcher import launch_run
+    from lib.providers.registry import build_provider
+
+    record = tmp_path / "acp.jsonl"
+    handle = launch_run("", cwd=str(tmp_path), cmd=[sys.executable, str(FAKE)],
+                        env={"FAKE_ACP_RECORD": str(record)},
+                        permission_mode="plan",
+                        provider=build_provider("codebuddy"))
+    try:
+        sent = [json.loads(line) for line in record.read_text().splitlines()]
+    finally:
+        handle.close()
+    assert [r["params"]["modeId"] for r in sent
+            if r.get("method") == "session/set_mode"] == ["plan"]
+
+
+def test_codebuddy_task_run_carries_its_armed_mode_and_model(
+        tmp_db, native_task, fake_codebuddy, tmp_path):
+    """D308: what the sheet armed reaches the wire, through `start_run`."""
+    record = tmp_path / "acp.jsonl"
+    task_id = native_task(title="codebuddy task", status=TASK_STATUS_ARMED)
+    runs.open_attempt(task_id, params={
+        "provider": "codebuddy", "cwd": str(tmp_path), "one_shot": True,
+        "model": "hy3", "permission_mode": "plan",
+        "env": {"FAKE_ACP_REQUIRE_ARG": "--acp",
+                "FAKE_ACP_RECORD": str(record)}})
+
+    runs.start_run(task_id)
+    _wait_settled(task_id)
+
+    sent = [json.loads(line) for line in record.read_text().splitlines()]
+    assert [r["params"]["modeId"] for r in sent
+            if r.get("method") == "session/set_mode"] == ["plan"]
+    assert [r["params"]["modelId"] for r in sent
+            if r.get("method") == "session/set_model"] == ["hy3"]
+
+
+@pytest.mark.parametrize("mode, expected", [
+    ("plan", ["--permission-mode", "plan"]),
+    ("", ["--dangerously-skip-permissions"])])
+def test_codebuddy_pane_argv_carries_the_armed_mode(mode, expected):
+    """D308: a tmux run gets the tier it was armed with; an unarmed one keeps
+    the flag it has always used, since nobody is at the pane to answer."""
+    from lib.providers.registry import build_provider
+
+    argv = build_provider("codebuddy").pane_argv("sid1", permission_mode=mode)
+    assert argv[3:] == expected

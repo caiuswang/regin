@@ -420,6 +420,7 @@ def _end_trace_session(trace_id: str, reason: str) -> None:
 
 def launch_run(prompt: str, *, cwd: str | None = None,
                env: dict | None = None, model: str = "",
+               permission_mode: str = "",
                one_shot: bool = False, images: list | None = None,
                client: AcpClient | None = None,
                cmd: list[str] | None = None,
@@ -438,14 +439,17 @@ def launch_run(prompt: str, *, cwd: str | None = None,
     as a bare `kimi` does at a terminal.
 
     The child's argv is `cmd`, else `provider.acp_argv()` (kimi by default).
+
+    `permission_mode` is the operator's armed tier; an unarmed run falls back
+    to the provider's own unattended one.
     """
     cwd = os.path.abspath(cwd or settings.project_root)
     own = client is None
     if client is None:
         client = _spawn_client(env, cwd, cmd, provider)
     try:
-        mode = (provider.acp_unattended_mode if provider is not None
-                else "yolo")
+        mode = (permission_mode or getattr(provider, "acp_unattended_mode", None)
+                or "yolo")
         session_id = _open_session(client, cwd, model, images, resume, mode)
     except Exception:
         if own:

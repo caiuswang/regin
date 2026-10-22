@@ -465,6 +465,7 @@ def _launch_on_channel(provider, runner, prompt: str, params: dict,
         trace_id = supervisor.launch_channel(
             runner, prompt[:_PROMPT_MAX], cwd=params["cwd"],
             model=params["model"], one_shot=params["one_shot"],
+            permission_mode=params["permission_mode"],
             resume=params["resume"])
     except Exception as exc:  # noqa: BLE001 — each channel raises its own refusal
         return jsonify({"launched": False, "detail": str(exc), **made})

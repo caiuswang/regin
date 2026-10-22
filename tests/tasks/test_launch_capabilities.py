@@ -15,6 +15,7 @@ from lib import doctor
 from lib.agent_sdk import client
 from lib.providers import registry
 from lib.providers.base import AgentProvider
+from lib.providers.codebuddy import MODELS as CODEBUDDY_MODELS
 from lib.providers.registry import build_provider
 from lib.tasks import runs
 from lib.tasks.arm import parse_arm
@@ -52,6 +53,14 @@ def test_provider_declares_launch_capabilities():
     assert kimi["fields"] == ["model"]
     assert kimi["binary"] == "kimi"
     assert kimi["labels"]["sdk"] == "ACP"
+
+    # D308: codebuddy's own model menu and its permission tier — the
+    # `--permission-mode` choices and the ACP `session/set_mode` ids are one
+    # vocabulary, so it declares the shared `permission_mode` field.
+    codebuddy = build_provider("codebuddy").launch_capabilities()
+    assert codebuddy["fields"] == ["model", "permission_mode"]
+    assert codebuddy["models"] == list(CODEBUDDY_MODELS)
+    assert "bypassPermissions" in client.PERMISSION_MODES
 
 
 @pytest.mark.parametrize("provider_id", ["codex", "generic"])
@@ -103,6 +112,17 @@ def test_claude_arm_unchanged():
     assert str(err.value) == "unknown launch 'carrier-pigeon'"
 
 
+def test_codebuddy_arm_takes_a_model_and_a_mode():
+    """D308: both are offered for codebuddy, and both survive arm — the mode
+    in the CLI's own vocabulary, so a tier it has no word for is refused."""
+    params = parse_arm({"provider": "codebuddy", "model": "hy3",
+                        "permission_mode": "plan"})["params"]
+    assert (params["model"], params["permission_mode"]) == ("hy3", "plan")
+    with pytest.raises(CaptureRejected) as err:
+        parse_arm({"provider": "codebuddy", "permission_mode": "yolo"})
+    assert err.value.field == "permission_mode"
+
+
 def test_channel_launcher_refuses_provider_without_channel():
     with pytest.raises(runs.RunRefused):
         runs._channel_launcher("codex")
@@ -119,6 +139,8 @@ def test_launch_options_lists_providers_with_availability(flask_client,
     rows = {row["id"]: row for row in body["providers"]}
     assert set(rows) == {"claude", "kimi", "codebuddy"}
     assert rows["codebuddy"]["available"] is False
+    assert rows["codebuddy"]["fields"] == ["model", "permission_mode"]
+    assert rows["codebuddy"]["models"] == list(CODEBUDDY_MODELS)
     assert rows["kimi"] == {
         "id": "kimi", "display_name": "Kimi Code", "binary": "kimi",
         "available": True, "launch_modes": ["sdk", "tmux"],

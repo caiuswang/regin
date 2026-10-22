@@ -24,6 +24,7 @@ from lib.agent_sdk import resumable, supervisor
 from lib.orm import SessionLocal
 from lib.providers import kimi as kimi_mod
 from lib.providers.claude import ClaudeProvider
+from lib.providers.codebuddy import CodeBuddyProvider
 from lib.providers.kimi import KimiProvider
 from lib.settings import settings
 
@@ -158,6 +159,31 @@ def test_live_launch_refuses_what_the_provider_does_not_declare(
     assert res.status_code == 400
     assert needle in res.get_json()["error"]
     assert no_claude == {} and channel[2] == []
+
+
+def test_live_launch_hands_codebuddy_its_armed_mode(flask_client, enabled,
+                                                    no_claude, monkeypatch,
+                                                    tmp_path):
+    """D308: the sheet's model and tier reach the codebuddy session — the
+    launch route used to drop the mode before the channel ever saw it."""
+    record = tmp_path / "acp.jsonl"
+
+    def _runner(prompt, **kwargs):
+        return launch_run(prompt, cmd=[sys.executable, FAKE],
+                          env={"FAKE_ACP_RECORD": str(record)}, **kwargs)
+
+    monkeypatch.setattr(CodeBuddyProvider, "channel_launcher",
+                        lambda self: _runner)
+    res = flask_client.post("/api/agent-runs", json={
+        "provider": "codebuddy", "prompt": "hello", "cwd": str(tmp_path),
+        "model": "hy3", "permission_mode": "plan"})
+
+    body = res.get_json()
+    assert res.status_code == 200, body
+    assert body["provider"] == "codebuddy"
+    assert no_claude == {}
+    assert _requests(record, "session/set_mode")[0]["params"]["modeId"] == "plan"
+    assert _requests(record, "session/set_model")[0]["params"]["modelId"] == "hy3"
 
 
 @pytest.fixture
