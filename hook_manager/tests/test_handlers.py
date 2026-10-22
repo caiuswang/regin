@@ -534,11 +534,13 @@ def test_session_start_captures_provider_agent_type(captured_spans):
     assert attrs['agent_type'] == 'codex'
 
 
-def test_session_start_payload_agent_type_wins(captured_spans):
+def test_session_start_unregistered_agent_type_falls_back_to_provider(captured_spans, monkeypatch):
+    from lib.settings import settings
+    monkeypatch.setattr(settings, 'active_provider', 'claude')
     session_lifecycle.handle_start(_p('SessionStart', session_id='s1',
         agent_type='custom-agent'))
     attrs = captured_spans[0]['attributes']
-    assert attrs['agent_type'] == 'custom-agent'
+    assert attrs['agent_type'] == 'claude'
 
 
 def test_session_start_payload_agent_type_is_authoritative(captured_spans):

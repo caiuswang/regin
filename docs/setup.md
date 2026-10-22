@@ -327,6 +327,7 @@ Command groups — `regin <group> <subcommand>`:
 | `regin events` | Inspect the declared notification event bus (agent_messages). | `list` |
 | `regin grade` | Post-hoc session rubric grades | `run` · `show` · `list` · `reflect` · `pareto` |
 | `regin hooks` | Inspect, install, and repair regin's agent hook wiring. | `status` · `install` · `remove` · `adopt` · `repair` |
+| `regin mcp` | Register regin's MCP servers (memory, send-to-user) with agent providers. | `register` |
 | `regin stats` | Engineering-time analytics over real (non-test) sessions | `time` · `sessions` · `daily` · `session` · `by` |
 | `regin defects` | The defect ledger: what a feature got wrong, and what escaped | `open` · `list` · `rounds` · `attribute` · `close` · `reopen` · `edit` · `merge` · `fix-item` · `image` |
 | `regin feature` | Where a feature stands in the pipeline, and what it cost | `stage` · `attribute` · `unattribute` · `ledger` · `new` · `link` · `unlink` · `spec` · `image` · `ship` · `reopen` · `abandon` · `refresh` |

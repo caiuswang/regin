@@ -68,6 +68,10 @@ class CodeBuddyFamilyProvider(AgentProvider):
             return default
         return Path(os.path.expanduser(str(raw)))
 
+    @property
+    def mcp_needs_user_trust(self) -> bool:
+        return self.family.mcp_needs_user_trust
+
     def mcp_config_path(self) -> Path | None:
         return self.config_root() / self.family.mcp_config_file
 
