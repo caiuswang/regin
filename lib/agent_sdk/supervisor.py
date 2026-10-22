@@ -38,6 +38,10 @@ class LaunchRefused(RuntimeError):
     """Structured refusal — disabled, at capacity, or missing the SDK."""
 
 
+class AtCapacity(LaunchRefused):
+    """Every `max_concurrent_runs` slot is held."""
+
+
 def _serve(loop: asyncio.AbstractEventLoop) -> None:
     asyncio.set_event_loop(loop)
     loop.run_forever()
@@ -242,7 +246,7 @@ def _refuse_unless_launchable(prompt: str, one_shot: bool) -> None:
         raise LaunchRefused("a one-shot run needs a prompt — it ends with its "
                             "first turn")
     if registry.active_run_count() >= settings.agent_sdk.max_concurrent_runs:
-        raise LaunchRefused("max_concurrent_runs reached")
+        raise AtCapacity("max_concurrent_runs reached")
 
 
 def launch_run(prompt: str, *, cwd: str | None = None,

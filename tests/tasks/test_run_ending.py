@@ -62,7 +62,7 @@ def test_the_report_ends_a_one_shot_sdk_run(flask_client, no_sdk, ended):
 
 def test_the_report_leaves_a_steerable_sdk_run_open(flask_client, no_sdk,
                                                     ended):
-    run = _run(flask_client, _armed(flask_client))
+    run = _run(flask_client, _armed(flask_client, one_shot=False))
 
     _finish(flask_client, run["id"])
 
@@ -124,7 +124,7 @@ def test_stop_after_the_report_ends_a_one_shot_tmux_run(flask_client, tmux):
 
 
 def test_stop_leaves_a_steerable_tmux_run_alone(flask_client, tmux):
-    task_id = _armed(flask_client, launch="tmux")
+    task_id = _armed(flask_client, launch="tmux", one_shot=False)
     run = _run(flask_client, task_id)
 
     _finish(flask_client, run["id"])

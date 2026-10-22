@@ -70,8 +70,8 @@ def _choice(payload: dict, key: str, allowed) -> str:
     return value
 
 
-def _flag(payload: dict, key: str) -> bool:
-    value = payload.get(key, False)
+def _flag(payload: dict, key: str, default: bool = False) -> bool:
+    value = payload.get(key, default)
     if not isinstance(value, bool):
         raise CaptureRejected(f"{key} must be true or false", key)
     return value
@@ -219,7 +219,9 @@ def _params(payload: dict, provider: str, caps: dict) -> dict:
             payload, "permission_mode", client.PERMISSION_MODES, caps),
         "effort": _vocabulary_field(
             payload, "effort", client.EFFORT_LEVELS, caps),
-        "one_shot": _flag(payload, "one_shot"),
+        # On by default: a task run left open after `task finish` idles on a
+        # `max_concurrent_runs` slot until someone stops it by hand.
+        "one_shot": _flag(payload, "one_shot", default=True),
         "env": _env(payload),
         "worktree": _worktree(payload),
         "skill": _skill(payload),

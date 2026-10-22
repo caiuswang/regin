@@ -96,10 +96,12 @@ class RunRefused(RuntimeError):
     """
 
     def __init__(self, message: str, blocking=None,
-                 field: Optional[str] = None) -> None:
+                 field: Optional[str] = None,
+                 at_capacity: bool = False) -> None:
         super().__init__(message)
         self.blocking = list(blocking or [])
         self.field = field
+        self.at_capacity = at_capacity
 
 
 def _now() -> str:
@@ -540,7 +542,8 @@ def _refuse_launch(row: dict, exc: Exception) -> RunRefused:
     """
     complete_run(row["id"], status=RUN_STATUS_FAILED, exit_reason=str(exc))
     return RunRefused(f"launch refused: {exc}",
-                      field=getattr(exc, "field", None))
+                      field=getattr(exc, "field", None),
+                      at_capacity=isinstance(exc, supervisor.AtCapacity))
 
 
 def _mark_started(task: dict, row: dict, trace_id: str) -> dict:

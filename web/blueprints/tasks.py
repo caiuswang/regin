@@ -51,7 +51,8 @@ from lib.orm.models.api_keys import SCOPE_TASK_CAPTURE
 from lib.orm.models.tasks import AgentTask
 from lib.settings import settings
 from lib.tasks import (arm, capture, deps, feature_slices, graph_lanes,
-                       images, next_step, query, ratelimit, runs, store)
+                       images, next_step, query, ratelimit, runs, slots,
+                       store)
 from lib.tasks import rows as task_rows
 from lib.tasks import tmux_runs
 from lib.agent_bridge import delivery
@@ -551,7 +552,10 @@ def api_run_task(task_id: int):
         log.warn("task_run_refused", task_id=task_id, detail=str(exc))
         if exc.field:
             return jsonify({"error": str(exc), "field": exc.field}), 400
-        return jsonify({"error": str(exc), "blocking": exc.blocking}), 409
+        body = {"error": str(exc), "blocking": exc.blocking}
+        if exc.at_capacity:
+            body["slots"] = slots.run_slots()
+        return jsonify(body), 409
     if run is None:
         return _unknown_task()
     return jsonify({"run": run}), 201

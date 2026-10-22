@@ -577,6 +577,33 @@ def active_run_count(exclude: str = "") -> int:
         return len({*_runs, *_reserved} - {exclude})
 
 
+def slot_holders() -> list[dict]:
+    """Every id `active_run_count` counts, with its phase and cwd.
+
+    Taken from one snapshot of `_runs ∪ _reserved` so the list and the count
+    it explains cannot disagree. A reserved id has no runner yet, so it reads
+    `starting` with no cwd; the phase is otherwise `run_phase`'s own answer.
+    """
+    with _lock:
+        held = {tid: _runs.get(tid) for tid in {*_runs, *_reserved}}
+        kinds = {tid: {a.kind for a in _asks.values() if a.trace_id == tid}
+                 for tid in held}
+    return [{"trace_id": tid,
+             "phase": _held_phase(runner, kinds[tid]),
+             "cwd": getattr(runner, "cwd", None)}
+            for tid, runner in sorted(held.items())]
+
+
+def _held_phase(runner, kinds: set) -> str:
+    if runner is None:
+        return 'starting'
+    if kinds & _ANSWER_KINDS:
+        return 'waiting-input'
+    if kinds:
+        return 'waiting-permission'
+    return _runner_phase(runner)
+
+
 def register_ask(ask: PendingAsk) -> int:
     """Park `ask` and return its id — the handle for discarding this one call
     without touching the others the session may be holding."""
@@ -792,11 +819,7 @@ def run_phase(trace_id: str) -> str | None:
         kinds = {ask.kind for ask in _asks.values() if ask.trace_id == trace_id}
     if runner is None:
         return 'starting' if reserved else None
-    if kinds & _ANSWER_KINDS:
-        return 'waiting-input'
-    if kinds:
-        return 'waiting-permission'
-    return _runner_phase(runner)
+    return _held_phase(runner, kinds)
 
 
 def _runner_phase(runner) -> str:

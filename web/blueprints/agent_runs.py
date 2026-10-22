@@ -23,7 +23,7 @@ from lib.agent_sdk import client, resumable, store, supervisor, worktree
 from lib.providers import registry as provider_registry
 from lib.providers.base import provider_for_trace
 from lib.settings import settings
-from lib.tasks import skill_catalog
+from lib.tasks import skill_catalog, slots
 
 agent_runs_bp = Blueprint('agent_runs', __name__)
 
@@ -290,6 +290,14 @@ def api_launch_options():
         "detached_detail": terminal_launch.detached_unavailable_reason(),
         "providers": provider_registry.launch_provider_rows(),
     })
+
+
+@agent_runs_bp.route('/api/agent-runs/slots', methods=['GET'])
+@require_editor
+def api_run_slots():
+    """`RunSlots`: who holds each `max_concurrent_runs` slot, so a refused
+    Run can name what to close instead of only saying the pool is full."""
+    return jsonify(slots.run_slots())
 
 
 @agent_runs_bp.route('/api/agent-runs/worktree-options', methods=['GET'])
