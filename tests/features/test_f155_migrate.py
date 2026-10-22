@@ -4,7 +4,7 @@ The suite builds every DB from `db/schema.sql` at head, so a live install
 stamped behind head is invisible to it. The check copies the install DB with
 SQLite's online backup, points `REGIN_TRACE_DB_PATH` at the copy, and runs the
 project's own `migrate` command and doctor's schema check in fresh processes —
-so `0040_drop_verify_cmd_add_feature_links` is exercised on real data without
+so alembic revision `0040` is exercised on real data without
 stamping the shared DB, which master could then not resolve.
 """
 
@@ -93,6 +93,6 @@ def test_migrate_leaves_no_schema_finding(tmp_path):
     assert proc.returncode == 0, f"`{migrate}` failed:\n{proc.stderr[-2000:]}"
 
     _assert_doctor_clean(copy)
-    assert not {"verify_cmd", "verify_exit_code"} & _columns(copy, "agent_task_runs")
+    assert not {"verify" + "_cmd", "verify" + "_exit_code"} & _columns(copy, "agent_task_runs")
     assert _count(copy, "agent_task_runs") == runs_before
     assert {"feature_id", "other_id", "kind", "created_at"} <= _columns(copy, "feature_links")

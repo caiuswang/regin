@@ -29,11 +29,12 @@ def _editor_auth():
 
 
 def test_fresh_db_ships_builtin_template(tmp_db):
-    # Fresh tmp_db is built from db/schema.sql, which seeds the built-in
-    # gitnexus-usage template via INSERT OR IGNORE on the unique slug.
-    templates = list_templates()
-    assert [t["slug"] for t in templates] == ["gitnexus-usage"]
-    assert templates[0]["builtin"] is True
+    # Fresh tmp_db is built from db/schema.sql, which seeds the built-ins
+    # via INSERT OR IGNORE on the unique slug.
+    by_slug = {t["slug"]: t for t in list_templates()}
+    assert set(by_slug) == {"gitnexus-usage", "stage-global-spec",
+                            "stage-global-build"}
+    assert all(t["builtin"] is True for t in by_slug.values())
 
 
 def test_create_update_delete_cycle(tmp_db):
