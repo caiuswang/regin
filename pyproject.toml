@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "regin"
-version = "0.2.0"
+version = "0.4.0"
 description = "A workbench for building software with AI coding agents — feature pipeline, task runs on Claude and Kimi, session traces, and hook-enforced guidance"
 requires-python = ">=3.11"
 dependencies = [
