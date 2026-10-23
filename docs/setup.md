@@ -176,6 +176,7 @@ regin routes skills/hooks/session path conventions through provider adapters und
 
 - `claude` is the default and fully supported.
 - `codex` and `kimi` are functional adapters (skills/hooks/sessions/transcript capabilities enabled); `generic` is a capability-gated stub.
+- `codebuddy` (CodeBuddy Code) and `workbuddy` (WorkBuddy) share one adapter family: hooks, skills, `regin mcp register`, and transcript import (`regin trace import-transcripts`). `codebuddy` can also be armed for task runs over ACP or tmux, with a model and a permission mode; `workbuddy` cannot.
 - Provider capabilities are exposed via `GET /api/providers` and included in `regin doctor`.
 
 Provider-specific path overrides can be configured in `settings.local.json`:
@@ -208,7 +209,7 @@ Known limits:
 
 - Runs are unattended: panes start with `--yolo`, and an approval an ACP run still asks for waits on the blocker card for Allow/Deny.
 - A steer into a running turn is cancel-then-re-prompt; the ACP protocol exposes no mid-turn injection.
-- `codex` and `generic` cannot be armed — arming them is refused rather than run as Claude.
+- `codex`, `workbuddy` and `generic` cannot be armed — arming them is refused rather than run as Claude.
 - `/live` can launch and Resume Kimi sessions over ACP, but its *terminal* session type still opens only Claude.
 - A new worktree needs Kimi's workspace trust; regin writes the record before launch, so no Trust dialog should appear.
 

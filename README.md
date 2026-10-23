@@ -33,16 +33,18 @@ A **feature** is a row. Its spec lives on that row (or on its tracker issue when
 The number the pipeline is held to is **rounds-to-done**: one build plus each time a done-claim was walked back. Only declarations feed it — nothing is inferred from prose, branch names or timing.
 
 - Dashboard: `/overview` is the Pipeline — Overview, Features and Tasks behind one tab strip; defects are reached from the Overview and the Features triage rail. `/features/:id` is a feature's ledger.
-- CLI: `regin feature` (where a feature stands and what it cost), `regin task` (capture, inspect, check a slice table); runs are armed and launched from the dashboard, `regin defects` (what a feature got wrong, and what escaped).
+- **Projects and workspaces** — the Pipeline is scoped to one project (a registered repo) or to a **workspace** (a root directory whose members are the repos under it; a run armed on a workspace starts in its root). `/projects/:id` holds a project's step stages, each stage's prompt, and the language its task runs write in.
+- CLI: `regin feature` (where a feature stands and what it cost), `regin task` (capture, inspect, check a slice table, `arm` a run; runs are launched from the dashboard), `regin defects` (what a feature got wrong, and what escaped), `regin workspace` (add, list, remove).
 - Internals: [Feature pipeline](ARCHITECTURE.md#feature-pipeline-features-defects-slices), and [docs/defect-task-feature.md](docs/defect-task-feature.md) for how the three join.
 
 ## Runs — launch, steer, hear back
 
-A task is **armed** with a provider, a model and a launch mode, then started from the dashboard. Claude runs go through the Python Claude Agent SDK, so regin owns the process and keeps a typed channel to it — an `AskUserQuestion` is answered from the browser rather than by typing into a terminal. Kimi Code runs over ACP or in a tmux pane on regin's own tmux server.
+A task is **armed** with a provider, a model and a launch mode, then started from the dashboard. Claude runs go through the Python Claude Agent SDK, so regin owns the process and keeps a typed channel to it — an `AskUserQuestion` is answered from the browser rather than by typing into a terminal. Kimi Code and CodeBuddy Code runs go over ACP or into a tmux pane on regin's own tmux server.
 
 - **`/live`** follows a running session: its current state, recent steps, any question it is blocked on, with steer and Stop.
 - **Agent bridge** — a guarded channel that relays a prompt or steering message into a live session's terminal. Off by default; see [docs/setup.md](docs/setup.md#agent-bridge-steer-live-sessions-from-live).
 - **Inbox** — agents report progress, results and lessons through the `send_to_user` tool; messages land in `/inbox` and can fan out to a webhook, Telegram or Lark. CLI: `regin messages`, `regin bridge`.
+- **`regin` MCP server** — carries `send_to_user` and the pipeline's tools (features, tasks, defects), so any MCP-speaking agent can read and write the pipeline. `regin mcp register` wires it, with the memory server, into each provider's config.
 - **Mobile card — *experimental*.** `/live` renders a phone-sized card that can answer permission prompts while you are away from the desk. Rough edges and breaking changes are expected; see [docs/agent-bridge-design.md](docs/agent-bridge-design.md).
 
 Internals: [Agent SDK tier](ARCHITECTURE.md#agent-sdk-tier-regin-launched-sessions), [Provider launch capabilities](ARCHITECTURE.md#provider-launch-capabilities-task-runs-on-a-non-claude-agent), [Agent Messages](ARCHITECTURE.md#agent-messages-send_to_user-inbox).
@@ -53,7 +55,7 @@ Hooks and transcripts produce a stream of events: tool calls, model thoughts, fi
 
 - `/trace/sessions` lists sessions; each opens into a timeline and a conversation view.
 - `regin stats time` shows where build time goes (attended vs. agent vs. human); `regin stats session <trace-id>` ranks why one session was slow; `regin stats sessions` exports per-session rows.
-- `regin grade` scores finished sessions against a rubric. `/audit` is the ops history of regin itself.
+- `regin grade` scores finished sessions against a rubric; its aspects and judge are configured under Settings → Grading. `/audit` is the ops history of regin itself.
 
 Internals: [Turn & Token Tracing](ARCHITECTURE.md#turn--token-tracing), [Session Grader](ARCHITECTURE.md#session-grader-post-hoc-rubric-grades).
 
@@ -89,6 +91,8 @@ Manual setup, settings, server mode and the CLI reference: [docs/setup.md](docs/
 |---|---|
 | Claude Code | Full: hooks, rule engines, trace, memory, and task runs through the Agent SDK. |
 | Kimi Code | Task runs only (ACP or tmux), with known limits — runs are unattended and a steer is cancel-then-re-prompt. See [Run a task with Kimi](docs/setup.md#run-a-task-with-kimi). |
+| CodeBuddy Code | Hooks, skills, MCP servers and transcript capture, plus task runs over ACP or tmux with a model and permission mode. |
+| WorkBuddy | Hooks, skills, MCP servers and transcript capture; cannot be armed for task runs, and its sessions are not offered Resume. |
 | Codex, generic | Provider adapters exist; cannot be armed for task runs. See [Agent provider architecture](docs/setup.md#agent-provider-architecture). |
 
 ## What regin is not

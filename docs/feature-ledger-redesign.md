@@ -1,8 +1,8 @@
 # Feature 账本重设计
 
-规格,写在 [`docs/spec-notation.md`](spec-notation.md) 的记法里。取代
-[`docs/defect-task-feature.md`](defect-task-feature.md) 所描述的模型 —— 那份文档准确地
-记录了今天的设计,包括它为什么需要那么多守卫。本文的目标是让那些守卫失去存在的理由。
+规格,写在 [`docs/spec-notation.md`](spec-notation.md) 的记法里。取代此前以字符串
+`feature_key` 连接三者的模型;落地后的现行模型见
+[`docs/defect-task-feature.md`](defect-task-feature.md)。本文的目标是让旧模型那些守卫失去存在的理由。
 
 跟踪于 `regin:82`。
 

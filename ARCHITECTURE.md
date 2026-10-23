@@ -50,7 +50,7 @@ layers follow the loop Spec → Run → Watch → Count:
 
 | Module | Purpose |
 |--------|---------|
-| `lib/settings.py` | Typed `Settings(BaseSettings)` via pydantic-settings — env > `settings.local.json` > `settings.json` > defaults; `reload_settings()` refreshes the singleton in place. Also hosts the settings.json CRUD (+ config-file path constants) relocated from `lib/config.py` |
+| `lib/settings.py` | Typed `Settings(BaseSettings)` via pydantic-settings — env > `settings.local.json` > `settings.json` > defaults; `reload_settings()` refreshes the singleton in place. Also hosts the settings.json CRUD and the config-file path constants |
 | `lib/orm/engine.py` | SQLAlchemy `Engine` + `SessionLocal` / `AuthSessionLocal` factories; also the raw-sqlite helpers (`get_connection`, `init_db`, `db_exists`, `load_schema_sql`) + canonical `DB_PATH` for the paginated trace reads |
 | `lib/orm/base.py` | Shared SQLModel base (`Base` + `metadata`) — the single MetaData Alembic targets |
 | `lib/orm/models/` | Typed tables grouped by domain: `users.py` (accounts, audit log), `sync.py` (repos, branches), `patterns.py` (pattern docs, tags, deployments), `rules.py` (rule triggers, experiments), `trace.py` (session spans/sessions, turn usage, skill reads, plan sessions, prompt images), `proposals.py` (topic proposal runs/revisions, graph snapshots, feedback), `prompts.py`, `payload_schema_drift.py`, `agent_messages.py` (inbox messages), `grades.py` (session grades) |
@@ -539,6 +539,8 @@ One number justifies this subsystem: **rounds-to-done** per feature, meaning one
 | `lib/features/` | the `features` row (the population), the append-only `feature_events` log, attribution, cost, the ledger, remote sync |
 | `lib/defects/` | `defects` rows, escape blame, the missing-check answer on close |
 | `lib/pipeline/` | the `/pipeline` shell's reads: tab counts under one scope, and per-project rollups (status and progress derived from feature stages, nothing stored) |
+| `lib/workspaces/` | a workspace is a root directory; its members are the registered repos under it, derived from `Repo.path` and never stored. `scope.py` resolves `?project=ws:<id>`, and a run armed on a workspace starts in its root |
+| `lib/tasks/output_language.py` | the language a task run is told to write in: the project's `repos.output_language`, else `settings.tasks.output_language`, else none |
 | `lib/tasks/slicing.py`, `slice_table.py`, `tail.py`, `commands.py`, `transcribe.py`, `deps.py`, `runs.py` | spec → slice table → tasks + DAG → runs → settle |
 | `lib/trace/span_gates.py` `PIPELINE` | `regin gate pipeline-ran`: counts `feature.stage` / `defect.declared` spans |
 
@@ -626,7 +628,7 @@ Deep dives, all under `.regin/topics/wiki/`:
 | `lib/grader/combined_agentic.py` | The single deep judge: one investigation → per-dimension verdicts (axes + gradeable aspects) |
 | `lib/grader/store.py` | `session_grades` in the primary DB — append-only; readers take the latest row per (trace, axis) |
 | `lib/grader/failure_modes.py` + `aggregate.py` | Grade `detail` → stable mode keys → cross-session consolidation into agent-memory lessons |
-| `web/blueprints/grades.py` + `frontend/src/views/GradesView.vue` | `/api/grades*` + the **Grades** view |
+| `web/blueprints/grades.py` | `/api/grades*`; the only UI is Settings → Grading (aspects and judge provider) — there is no grades browsing view |
 | `cli/commands/grader.py` | `regin grade {run,show,list,pareto,reflect}` |
 
 Settings live under `settings.grader` (`enabled`, `external_agent`, `auto_escalate`, `deep_max_claims`, `distill_on_fail`, `distill_importance_bonus`, `aggregate_min_sessions`); the numeric bars are rubric data in `rubric.py`, versioned with the rubric rather than the deployment.
