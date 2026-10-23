@@ -48,7 +48,9 @@ export function taskChips(state, { mode = 'grouped', mobile = false, users = [],
     chips.push({ key: 'assignee', field: 'Assignee', value: userLabel(users, state.assignee),
                  patch: { assignee: '' } })
   }
-  if (state.unfeatured === '1') {
+  // `feature_id` wins server-side (`query._by_grain`), so the chip would name
+  // a filter the rows ignore.
+  if (state.unfeatured === '1' && !state.feature_id) {
     chips.push({ key: 'unfeatured', field: 'Show', value: 'No feature only',
                  patch: { unfeatured: '' } })
   }

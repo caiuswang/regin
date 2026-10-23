@@ -8,6 +8,7 @@
 | run_next        | armed tasks, feature steps included                | dependency-clear first, priority, id    | 6   |
 | needs_decision  | the triage queue (`defects.store.in_queue`), unscoped | newest first                         | 3   |
 | recently_done   | done tasks finished this week, feature steps included | newest finished first (Done group) | 5   |
+| loose_tasks     | open tasks under no feature                        | running, failed, runnable, idea; priority, id | 5 |
 | projects        | scope `all` only — `projects.panel`                | attention                               | 5   |
 | project_head / project_features | scope = one project                | last activity                           | 5   |
 
@@ -61,6 +62,9 @@ NEEDS_DECISION_CAP = 3
 RECENTLY_DONE_CAP = 5
 PROJECT_FEATURES_CAP = 5
 FEATURES_IN_FLIGHT_CAP = 5
+LOOSE_TASKS_CAP = 5
+_LOOSE_OPEN = (TASK_STATUS_IDEA, TASK_STATUS_ARMED, TASK_STATUS_QUEUED,
+               TASK_STATUS_RUNNING, TASK_STATUS_FAILED)
 _IN_FLIGHT = (events_module.STAGE_SPEC, events_module.STAGE_BUILDING)
 
 _TASK_PARTS = ((TASK_STATUS_IDEA, "Ideas"), (TASK_STATUS_ARMED, "Armed"),
@@ -205,6 +209,31 @@ def _running_stmt(stmt, scope):
                         scope)
 
 
+def _loose_stmt(stmt, scope):
+    # The open next-step groups' statuses, so `total` equals their sum on
+    # `/api/tasks?group=next_step&root_only=1` under the same scope.
+    return _task_scoped(stmt.where(AgentTask.feature_id.is_(None),
+                                   AgentTask.status.in_(_LOOSE_OPEN)), scope)
+
+
+def _loose_tasks(session, scope) -> dict:
+    """Open tasks filed under no feature — the only Overview route to an idea
+    nobody cut a feature for."""
+    rank = case((AgentTask.status == TASK_STATUS_RUNNING, 0),
+                (AgentTask.status == TASK_STATUS_FAILED, 1),
+                (AgentTask.status == TASK_STATUS_IDEA, 3), else_=2)
+    rows = session.exec(_loose_stmt(select(AgentTask), scope)
+                        .order_by(rank, AgentTask.priority_rank.asc(),
+                                  AgentTask.id.asc())
+                        .limit(LOOSE_TASKS_CAP)).all()
+    total = session.exec(_loose_stmt(
+        select(func.count(AgentTask.id)), scope)).one()
+    return {"total": int(total),
+            "rows": [{"id": t.id, "title": t.title, "status": t.status,
+                      "priority": t.priority, "kind": t.kind,
+                      "project_id": t.project_id} for t in rows]}
+
+
 def _session_facts(session, trace_ids: list[str]) -> dict[str, dict]:
     """`{trace_id: {turns, cost_usd}}` — what a running row's meta reads.
 
@@ -325,9 +354,10 @@ def overview(scope: int | tuple[int, ...] | str = SCOPE_ALL) -> dict:
                 "running": _running(session, scope),
                 "run_next": _run_next(session, scope),
                 "recently_done": _recently_done(session, scope),
+                "loose_tasks": _loose_tasks(session, scope),
                 "needs_decision": _needs_decision(session, scope)}
     if scope == SCOPE_ALL:
-        body["projects"] = projects_module.panel()
+        body["projects"] = projects_module.panel(with_no_project=True)
     elif isinstance(scope, tuple) and scope:
         # An empty workspace omits the panel: its zero-total state is the
         # first-run "add a project" card, which is not what an empty

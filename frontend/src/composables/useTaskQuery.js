@@ -88,6 +88,11 @@ const ARRIVAL = ['feature_id', 'assignee']
 // the list has no quarrel with them.
 const NARROWING = ['status', 'priority', 'archived', 'unfeatured']
 
+// A URL that names `unfeatured` is the Overview's "No feature · View all N"
+// link: the N is every open loose task, so it suppresses the stored narrowings
+// like an arrival does. It is not an ARRIVAL key, because Clear still clears it.
+const SUPPRESSES_STORED = [...ARRIVAL, 'unfeatured']
+
 function readAxis(query, axis) {
   const raw = String(query[axis] ?? '').trim()
   if (!raw) return DEFAULTS[axis]
@@ -228,7 +233,7 @@ export function useTaskQuery() {
    * would wait forever.
    */
   function restoreStored() {
-    const scoped = ARRIVAL.some(axis => String(route.query[axis] ?? '').trim())
+    const scoped = SUPPRESSES_STORED.some(axis => String(route.query[axis] ?? '').trim())
     const restored = {}
     for (const axis of Object.keys(STORED)) {
       if (route.query[axis] != null) continue

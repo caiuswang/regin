@@ -407,8 +407,16 @@ def _members(collected: dict, only: Optional[tuple[int, ...]]) -> dict:
     return {pid: s for pid, s in collected.items() if pid in only}
 
 
+def _no_project_row(summary: Optional[Summary]) -> Optional[dict]:
+    if summary is None or not (summary.open_tasks or summary.defects_open):
+        return None
+    return {"open_tasks": summary.open_tasks,
+            "open_defects": summary.defects_open, "scope": SCOPE_NONE}
+
+
 def panel(limit: int = PANEL_ROWS,
-          only: Optional[tuple[int, ...]] = None) -> dict:
+          only: Optional[tuple[int, ...]] = None,
+          with_no_project: bool = False) -> dict:
     """The Overview's Projects panel under the attention sort.
 
     | project                        | goes to                                      |
@@ -416,17 +424,22 @@ def panel(limit: int = PANEL_ROWS,
     | nothing open (incl. completed) | counted in `quiet`, never listed             |
     | anything else                  | counted in `active`; first `limit` in `rows` |
 
-    "No project" is a bucket, not a project, and is not counted here.
+    "No project" is a bucket, not a project, and is not counted here;
+    `with_no_project` adds it as `no_project` when it holds anything open.
     `only` narrows to a workspace's members.
     """
     collected = _members(_collect(), only)
-    collected.pop(None, None)
+    none = collected.pop(None, None)
     summaries = list(collected.values())
     active = _sorted([s for s in summaries if not _quiet(s)], "attention:desc")
     log.read("project_panel_read", total=len(summaries), active=len(active))
-    return {"sort": "attention", "total": len(summaries),
+    body = {"sort": "attention", "total": len(summaries),
             "active": len(active), "quiet": len(summaries) - len(active),
             "rows": [panel_row(s) for s in active[:limit]]}
+    no_project = _no_project_row(none) if with_no_project else None
+    if no_project:
+        body["no_project"] = no_project
+    return body
 
 
 def summary_for(scope: int | str) -> Summary:

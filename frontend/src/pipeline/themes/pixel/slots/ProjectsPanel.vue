@@ -89,6 +89,29 @@ function seen(row) {
         </p>
       </li>
     </ul>
+    <div v-if="panel.no_project" class="px-pj__slots">
+      <div class="px-slot" data-pl-part="card" data-testid="projects-row-none">
+        <div class="px-slot__head"><span>filed nowhere</span></div>
+        <Button variant="ghost" class="px-slot__pick" data-testid="projects-pick-none" @click="emit('pick', panel.no_project.scope)">
+          <PixelSprite name="tray" :scale="2" />
+          <span class="px-slot__name">No project</span>
+        </Button>
+        <p class="px-slot__figs">
+          <router-link
+            class="px-slot__link" :to="to('/tasks', panel.no_project.scope)"
+            data-testid="projects-tasks-none"
+          >◎ {{ panel.no_project.open_tasks }} tasks</router-link>
+        </p>
+        <p class="px-slot__attention" :class="{ 'is-clear': !panel.no_project.open_defects }">
+          <PixelSprite v-if="panel.no_project.open_defects" name="bug" />
+          <router-link
+            v-if="panel.no_project.open_defects" class="px-slot__link" :to="to('/defects', panel.no_project.scope, { status: 'open' })"
+            data-testid="projects-defects-none"
+          >{{ plural(panel.no_project.open_defects, 'open defect') }}</router-link>
+          <template v-else>All clear</template>
+        </p>
+      </div>
+    </div>
   </section>
 </template>
 

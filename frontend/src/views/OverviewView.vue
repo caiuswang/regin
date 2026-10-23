@@ -11,6 +11,7 @@ import PlSlot from '../components/pipeline/PlSlot.vue'
 import RunNextPanel from '../components/pipeline/RunNextPanel.vue'
 import FeaturesInFlightPanel from '../components/pipeline/FeaturesInFlightPanel.vue'
 import NeedsDecisionPanel from '../components/pipeline/NeedsDecisionPanel.vue'
+import LooseTasksPanel from '../components/pipeline/LooseTasksPanel.vue'
 import TriageSheet from '../components/pipeline/TriageSheet.vue'
 import PipelineCreateButton from '../components/pipeline/PipelineCreateButton.vue'
 import { usePipelineCreate } from '../composables/usePipelineCreate'
@@ -140,6 +141,7 @@ onActivated(() => { if (arrived) load(); arrived = true })
           class="ov-wide" :run-next="data.run_next" :running="data.running" :recently-done="data.recently_done"
           :compact="!isMdUp" :tasks-to="tasksTo" @ran="changed"
         />
+        <LooseTasksPanel v-if="data.loose_tasks?.total" class="ov-wide" :loose="data.loose_tasks" :tasks-to="tasksTo" />
       </div>
 
       <PlSlot

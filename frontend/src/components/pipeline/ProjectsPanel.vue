@@ -58,6 +58,23 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`
         </span>
       </li>
     </ul>
+    <div v-if="panel.no_project" class="pj-row" data-testid="projects-row-none">
+      <Button variant="ghost" class="pj-pick" data-testid="projects-pick-none" @click="emit('pick', panel.no_project.scope)">
+        <span class="pj-name">No project</span>
+        <span class="pj-activity">tasks and defects filed nowhere</span>
+      </Button>
+      <template v-if="!compact">
+        <span class="pj-bar" />
+        <span class="pj-fig" />
+        <router-link class="pj-fig pj-link" :to="to('/tasks', panel.no_project.scope)" data-testid="projects-tasks-none">{{ panel.no_project.open_tasks }} open tasks</router-link>
+      </template>
+      <span class="pj-attention">
+        <router-link
+          v-if="panel.no_project.open_defects" class="pj-link" :to="to('/defects', panel.no_project.scope, { status: 'open' })"
+          data-testid="projects-defects-none"
+        >{{ plural(panel.no_project.open_defects, 'open defect') }}</router-link>
+      </span>
+    </div>
   </section>
 </template>
 
