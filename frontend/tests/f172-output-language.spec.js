@@ -27,6 +27,7 @@ test('test_project_language_reaches_the_task_preview', async ({ page, playwright
   await page.goto(`/projects/${project}`)
   const input = page.getByTestId('project-output-language-input')
   await expect(input).toHaveValue('')
+  await expect(input).not.toHaveAttribute('placeholder', /[\u4e00-\u9fff]/)
   await input.fill('简体中文')
   await page.getByTestId('project-output-language-save').click()
   await expect(page.getByTestId('project-output-language-save')).toBeDisabled()
@@ -69,6 +70,7 @@ test('test_default_page_edits_the_global_language', async ({ page }) => {
 
   await page.goto('/projects/default')
   const input = page.getByTestId('project-output-language-input')
+  await expect(input).not.toHaveAttribute('placeholder', /[\u4e00-\u9fff]/)
   await input.fill('English')
   await page.getByTestId('project-output-language-save').click()
   await expect(page.getByTestId('project-output-language-save')).toBeDisabled()

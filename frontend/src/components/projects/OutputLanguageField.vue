@@ -88,7 +88,7 @@ async function save() {
         v-model="value"
         class="olf-input"
         :disabled="!canWrite || busy"
-        :placeholder="isDefault ? 'e.g. English — empty says nothing' : 'e.g. 简体中文 — empty uses the default'"
+        :placeholder="isDefault ? 'e.g. English — empty says nothing' : 'e.g. English — empty uses the default'"
         data-testid="project-output-language-input"
       />
       <Button v-if="canWrite" type="submit" size="sm" :disabled="busy || tooLong || !dirty" data-testid="project-output-language-save">
