@@ -48,7 +48,8 @@ from lib.agent_sdk import store as sdk_store, supervisor, worktree
 from lib.orm import SessionLocal
 from lib.orm.models.agent_runs import AgentRun
 from lib.orm.models.tasks import (
-    AgentTask, AgentTaskRun, RUN_STATUS_ARMED, RUN_STATUS_DONE,
+    AgentTask, AgentTaskRun, FIRE_VIA_ARM, FIRE_VIA_DEPENDENCY,
+    RUN_STATUS_ARMED, RUN_STATUS_DONE,
     RUN_OPEN_STATUSES, RUN_STATUS_FAILED, RUN_STATUS_RUNNING,
     RUN_STATUS_STARTING,
     TASK_STATUS_ARMED, TASK_STATUS_DONE, TASK_STATUS_FAILED,
@@ -56,7 +57,7 @@ from lib.orm.models.tasks import (
     TASK_STATUS_RUNNING,
 )
 from lib.settings import settings
-from lib.tasks import deps, run_ending, store, tmux_runs
+from lib.tasks import deps, run_ending, schedules, store, tmux_runs
 from lib.tasks.run_announce import (
     TASK_READY_TRACE, _announce_broken_chains, _announce_stuck)
 from lib.tasks.run_prompt import (
@@ -438,6 +439,7 @@ def _resolve_stuck(task_id: int) -> None:
     # that unbreaks the chain, so its card must retire here or a second break
     # of the same slice would never be announced.
     events.resolve(TASK_READY_TRACE, f"chain-stopped:{task_id}")
+    events.resolve(TASK_READY_TRACE, f"schedule-refused:{task_id}")
 
 
 def start_run(task_id: int) -> Optional[dict]:
@@ -714,7 +716,7 @@ def fire_deferred() -> list[int]:
     fired = []
     for task_id in _take_deferred():
         try:
-            if fire_if_ready(task_id):
+            if fire_if_ready(task_id, via=FIRE_VIA_DEPENDENCY):
                 fired.append(task_id)
         except Exception:  # noqa: BLE001 — one task cannot sink the rest
             log.error("task_deferred_fire_failed", task_id=task_id,
@@ -842,18 +844,26 @@ def handle_completion(task_id: int, run_id: int, outcome) -> None:
 # ── firing ───────────────────────────────────────────────────
 
 
-def _fire(task_id: int, *, in_server: bool = True) -> bool:
+def _fire(task_id: int, *, in_server: bool = True,
+          via: str = FIRE_VIA_DEPENDENCY) -> bool:
     """Launch one task that just became runnable. Returns whether it started.
 
     A dependency edge IS the grant: arming a task behind another one is the
     operator saying "run this when that lands", so the release needs no second
     opt-in. A refusal is reported and leaves the task armed — the operator can
     run it once the reason is gone.
+
+    An enabled `at`/`window` schedule is ANDed with that grant. While its gate
+    is shut the task stays armed and unmarked: the scheduler thread launches
+    it when the gate opens, so a deferral here would only fire it early.
     """
     task = store.get_task(task_id)
     if task is None or task["status"] != TASK_STATUS_ARMED:
         return False
     if deps.blocking(task_id):
+        return False
+    gate = schedules.active_gate(task_id)
+    if gate is not None and not schedules.gate_open(gate, schedules.now_utc()):
         return False
     if not in_server and not _launches_detached(task_id):
         # D5: an SDK child of a short-lived process dies with it. Left armed,
@@ -861,6 +871,9 @@ def _fire(task_id: int, *, in_server: bool = True) -> bool:
         _mark_deferred(task_id)
         log.write("task_fire_deferred", task_id=task_id)
         return False
+    if gate is not None:
+        from lib.tasks import scheduler  # noqa: PLC0415
+        return scheduler.launch_gated(task, gate, via)
     try:
         start_run(task_id)
     except (RunRefused, worktree.WorktreeRefused) as exc:
@@ -869,7 +882,8 @@ def _fire(task_id: int, *, in_server: bool = True) -> bool:
     return True
 
 
-def fire_if_ready(task_id: int, *, in_server: bool = True) -> bool:
+def fire_if_ready(task_id: int, *, in_server: bool = True,
+                  via: str = FIRE_VIA_ARM) -> bool:
     """Resolve one task against a write that could have made it runnable.
 
     Completion is not the only such write: arming a task whose dependencies
@@ -878,17 +892,18 @@ def fire_if_ready(task_id: int, *, in_server: bool = True) -> bool:
     fire it.
 
     A task with no dependencies is not resolved here: nothing could ever come
-    due for it, and arming one is a request to write parameters, not to run.
+    due for it, and arming one is a request to write parameters, not to run —
+    unless it carries an enabled `at`/`window` gate, which is itself the grant.
 
     The retirement runs AFTER the fire, never before: an `after` edge written
     behind a task that already settled is born satisfied, and sweeping it
     first would leave this task with no dependencies and send the guard above
     home without launching the very thing the edge was drawn to order.
     """
-    if not deps.depends_on(task_id):
+    if not deps.depends_on(task_id) and schedules.active_gate(task_id) is None:
         return False
     try:
-        return _fire(task_id, in_server=in_server)
+        return _fire(task_id, in_server=in_server, via=via)
     finally:
         deps.retire_satisfied_after(task_id)
 

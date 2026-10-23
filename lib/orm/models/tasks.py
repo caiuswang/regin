@@ -316,3 +316,94 @@ class AgentTaskImage(Base, table=True):
     created_at: str = Field(
         sa_column=Column("created_at", String, nullable=False,
                          server_default=text("(datetime('now'))")))
+
+
+SCHEDULE_KIND_AT = "at"
+SCHEDULE_KIND_WINDOW = "window"
+SCHEDULE_KIND_CRON = "cron"
+SCHEDULE_KINDS: tuple[str, ...] = (
+    SCHEDULE_KIND_AT, SCHEDULE_KIND_WINDOW, SCHEDULE_KIND_CRON,
+)
+# `at` and `window` gate when an armed attempt may start; `cron` opens one.
+SCHEDULE_GATE_KINDS: tuple[str, ...] = (SCHEDULE_KIND_AT, SCHEDULE_KIND_WINDOW)
+
+FIRE_STARTED = "started"
+FIRE_SKIPPED_LIVE = "skipped_live"
+FIRE_SKIPPED_BLOCKED = "skipped_blocked"
+FIRE_REFUSED = "refused"
+
+FIRE_VIA_SCHEDULE = "schedule"
+FIRE_VIA_DEPENDENCY = "dependency"
+FIRE_VIA_ARM = "arm"
+
+
+class AgentTaskSchedule(Base, table=True):
+    """When a task may start (`at`/`window`) or when it starts again (`cron`).
+
+    One per task. Times on this row are UTC `YYYY-MM-DDTHH:MM:SSZ`, so the
+    scheduler's "earliest `next_fire_at`" is a string MIN.
+    """
+
+    __tablename__ = "agent_task_schedules"
+    __table_args__ = ({"sqlite_autoincrement": True},)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    task_id: int = Field(
+        sa_column=Column("task_id", Integer,
+                         ForeignKey("agent_tasks.id", ondelete="CASCADE"),
+                         nullable=False, unique=True))
+    kind: str = Field(sa_column=Column("kind", String, nullable=False))
+    run_at: Optional[str] = Field(
+        default=None, sa_column=Column("run_at", String))
+    window_start: Optional[str] = Field(
+        default=None, sa_column=Column("window_start", String))
+    window_end: Optional[str] = Field(
+        default=None, sa_column=Column("window_end", String))
+    cron_expr: Optional[str] = Field(
+        default=None, sa_column=Column("cron_expr", String))
+    tz: str = Field(sa_column=Column("tz", String, nullable=False))
+    enabled: int = Field(
+        default=1,
+        sa_column=Column("enabled", Integer, nullable=False,
+                         server_default=text("1")))
+    next_fire_at: Optional[str] = Field(
+        default=None, sa_column=Column("next_fire_at", String, index=True))
+    created_by: Optional[int] = Field(
+        default=None, sa_column=Column("created_by", Integer))
+    created_at: str = Field(
+        sa_column=Column("created_at", String, nullable=False,
+                         server_default=text("(datetime('now'))")))
+    updated_at: str = Field(
+        sa_column=Column("updated_at", String, nullable=False,
+                         server_default=text("(datetime('now'))")))
+
+
+class AgentTaskScheduleFire(Base, table=True):
+    """One decision the time side made, append-only.
+
+    `UNIQUE(schedule_id, slot_at)` is the arbiter when the scheduler and the
+    dependency path both decide to launch inside the same window instance:
+    the insert that wins starts the run, the loser does nothing.
+    """
+
+    __tablename__ = "agent_task_schedule_fires"
+    __table_args__ = (UniqueConstraint("schedule_id", "slot_at",
+                                       name="uq_agent_task_schedule_fires_slot"),
+                      {"sqlite_autoincrement": True})
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    schedule_id: int = Field(
+        sa_column=Column("schedule_id", Integer,
+                         ForeignKey("agent_task_schedules.id",
+                                    ondelete="CASCADE"),
+                         nullable=False, index=True))
+    slot_at: str = Field(sa_column=Column("slot_at", String, nullable=False))
+    fired_at: str = Field(
+        sa_column=Column("fired_at", String, nullable=False,
+                         server_default=text("(datetime('now'))")))
+    outcome: str = Field(sa_column=Column("outcome", String, nullable=False))
+    via: str = Field(sa_column=Column("via", String, nullable=False))
+    run_id: Optional[int] = Field(
+        default=None, sa_column=Column("run_id", Integer))
+    reason: Optional[str] = Field(
+        default=None, sa_column=Column("reason", Text))

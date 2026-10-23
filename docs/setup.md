@@ -332,7 +332,7 @@ Command groups — `regin <group> <subcommand>`:
 | `regin stats` | Engineering-time analytics over real (non-test) sessions | `time` · `sessions` · `daily` · `session` · `by` |
 | `regin defects` | The defect ledger: what a feature got wrong, and what escaped | `open` · `list` · `rounds` · `attribute` · `close` · `reopen` · `edit` · `merge` · `fix-item` · `image` |
 | `regin feature` | Where a feature stands in the pipeline, and what it cost | `stage` · `attribute` · `unattribute` · `ledger` · `new` · `link` · `unlink` · `spec` · `image` · `ship` · `reopen` · `abandon` · `refresh` |
-| `regin task` | Capture and inspect task ideas (agent_tasks) | `add` · `list` · `show` · `delete` · `comment` · `finish` · `arm` · `commands` · `slice-check` · `transcribe` · `tail` |
+| `regin task` | Capture and inspect task ideas (agent_tasks) | `add` · `list` · `show` · `delete` · `comment` · `finish` · `arm` · `commands` · `slice-check` · `transcribe` · `tail` · `schedule` · `schedules` |
 | `regin usage` | Act on a session's usage measurements (rate-limit alerts) | `measure` |
 | `regin workspace` | Manage workspaces (a root directory whose members are the repos under it) | `add` · `list` · `remove` |
 

@@ -560,6 +560,9 @@ def api_run_task(task_id: int):
     The refusal names the blocking ids: an operator told only "blocked" has to
     go find them.
     """
+    waiting = _waiting_for_gate(task_id)
+    if waiting is not None:
+        return waiting
     try:
         run = runs.start_run(task_id)
     except runs.RunRefused as exc:
@@ -573,6 +576,22 @@ def api_run_task(task_id: int):
     if run is None:
         return _unknown_task()
     return jsonify({"run": run}), 201
+
+
+def _waiting_for_gate(task_id: int):
+    """A batch run (`respect_schedule`) skips a task whose gate is shut; a
+    single manual Run overrides the gate and never asks."""
+    body = request.get_json(silent=True)
+    if not (isinstance(body, dict) and body.get("respect_schedule")):
+        return None
+    from lib.tasks import scheduler  # noqa: PLC0415
+
+    gate = scheduler.gate_waiting(task_id)
+    if gate is None:
+        return None
+    return jsonify({"error": f"等待时间窗 {gate['next_fire_at'] or ''}".strip(),
+                    "waiting_schedule": True,
+                    "next_fire_at": gate["next_fire_at"]}), 409
 
 
 def _deliver(task_id: int, control):

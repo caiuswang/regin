@@ -59,6 +59,20 @@ def _start_pending_reaper(debug: bool) -> None:
           f"{cfg.interval_hours}h)")
 
 
+def _start_task_scheduler(debug: bool) -> None:
+    """Start the scheduled-task thread (F173). Only `regin serve` fires on
+    time, so a schedule written while no server runs waits for the next boot,
+    whose first pass handles what came due meanwhile."""
+    import os
+
+    if debug and os.environ.get("WERKZEUG_RUN_MAIN") != "true":
+        return
+    from lib.tasks import scheduler
+
+    scheduler.start_thread()
+    print("  (task scheduler running)")
+
+
 def _warn_if_schema_behind() -> None:
     """Booting never migrates, so a DB behind head only surfaces later as a
     500 on whichever page reads a changed table — say so at startup instead."""
@@ -98,6 +112,7 @@ def cmd_serve(
     else:
         _start_workflow_watcher(debug)
         _start_pending_reaper(debug)
+        _start_task_scheduler(debug)
     server.run(host=host, port=port, debug=debug)
 
 

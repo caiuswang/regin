@@ -184,10 +184,25 @@ def steps(tasks: list[dict]) -> list[dict]:
     return tasks
 
 
+def schedules(tasks: list[dict]) -> list[dict]:
+    """`schedule`: the row's schedule summary, or None.
+
+    It carries `gate_open`, so a row armed and unblocked but behind a shut
+    gate can say it waits on time rather than looking ready.
+    """
+    from lib.tasks import schedules as schedule_store  # noqa: PLC0415
+
+    by_task = schedule_store.summaries(_ids(tasks))
+    for task in tasks:
+        task["schedule"] = by_task.get(task["id"])
+    return tasks
+
+
 def next_step_facts(tasks: list[dict]) -> list[dict]:
     """Everything a next-step row renders: its feature, its step, what it
-    fixes, its attempts, what it waits on, and the one action it offers."""
+    fixes, its attempts, what it waits on, its schedule, and the one action
+    it offers."""
     for enrich in (feature_titles, fix_defects, run_counts, dependencies,
-                   live_runs, steps):
+                   live_runs, steps, schedules):
         enrich(tasks)
     return tasks

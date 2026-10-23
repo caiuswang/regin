@@ -614,3 +614,8 @@ def cmd_tail(
     tail_base = base or f"f{feature}/integration"
     tail = tail_slice_rows(rows, commands, tail_base)
     print(render_slice_table(tail, tail_base))
+
+
+from cli.commands import task_schedule as _task_schedule  # noqa: E402
+
+_task_schedule.register(tasks_app)

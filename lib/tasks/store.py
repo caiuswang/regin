@@ -29,6 +29,7 @@ from lib.orm.models.features import Feature
 from lib.orm.models.sync import Repo
 from lib.orm.models.tasks import (
     AgentTask, AgentTaskDep, AgentTaskImage, AgentTaskRun,
+    AgentTaskSchedule, AgentTaskScheduleFire,
     PRIORITY_ORDER, TASK_PRIORITY_NONE, TASK_STATUS_ARCHIVED,
     TASK_STATUS_ARMED, TASK_STATUS_DONE, TASK_STATUS_FAILED, TASK_STATUS_IDEA,
     TASK_KIND_TASK, TASK_STATUS_RUNNING, RUN_OPEN_STATUSES, RUN_STATUS_ARMED,
@@ -365,6 +366,9 @@ def _after_status(task_id: int, left: Optional[str], now: str) -> None:
     """
     from lib.tasks import runs  # noqa: PLC0415  (runs imports this module)
 
+    if left is not None and now == TASK_STATUS_ARCHIVED:
+        from lib.tasks import schedules  # noqa: PLC0415
+        schedules.set_enabled(task_id, False)
     if left is None or now != TASK_STATUS_DONE:
         return
     if left == TASK_STATUS_ARMED:
@@ -545,6 +549,12 @@ def _delete_children(session, task_id: int) -> None:
     than deleted: the bug report is still real, only the scheduled work for
     it is gone.
     """
+    session.exec(delete(AgentTaskScheduleFire).where(
+        AgentTaskScheduleFire.schedule_id.in_(
+            select(AgentTaskSchedule.id)
+            .where(AgentTaskSchedule.task_id == task_id))))
+    session.exec(delete(AgentTaskSchedule)
+                 .where(AgentTaskSchedule.task_id == task_id))
     session.exec(delete(AgentTaskRun).where(AgentTaskRun.task_id == task_id))
     session.exec(
         delete(AgentTaskImage).where(AgentTaskImage.task_id == task_id))

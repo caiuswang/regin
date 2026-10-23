@@ -197,6 +197,8 @@ def create_app(replica: bool = False):
     # ── Task capture (API-key POST → idea rows) + the keys that reach it ──
     from web.blueprints.tasks import tasks_bp
     app.register_blueprint(tasks_bp)
+    from web.blueprints.task_schedules import task_schedules_bp
+    app.register_blueprint(task_schedules_bp)
 
     from web.blueprints.features import features_bp
     app.register_blueprint(features_bp)

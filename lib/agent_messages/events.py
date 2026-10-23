@@ -69,6 +69,9 @@ _KINDS: tuple[EventKind, ...] = (
     EventKind("task.chain_stopped", "warning", True,
               "A task failed and left dependents parked behind it — the "
               "cascade stopped."),
+    EventKind("task.schedule_refused", "warning", True,
+              "A scheduled task came due but its launch was refused — it "
+              "stays armed."),
 )
 
 REGISTRY: dict[str, EventKind] = {k.kind: k for k in _KINDS}

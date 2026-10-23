@@ -1186,6 +1186,49 @@ CREATE TABLE IF NOT EXISTS agent_task_runs (
 CREATE INDEX IF NOT EXISTS idx_agent_task_runs_task ON agent_task_runs(task_id);
 CREATE INDEX IF NOT EXISTS idx_agent_task_runs_trace ON agent_task_runs(trace_id);
 
+-- When a task may start (`at`: not before `run_at`; `window`: only inside a
+-- daily local-time window) or when it starts again (`cron`). One per task.
+-- Times are UTC `YYYY-MM-DDTHH:MM:SSZ`; `next_fire_at` is when the server's
+-- scheduler thread next wakes for this row.
+CREATE TABLE IF NOT EXISTS agent_task_schedules (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id       INTEGER NOT NULL UNIQUE
+                  REFERENCES agent_tasks(id) ON DELETE CASCADE,
+    kind          TEXT NOT NULL,
+    run_at        TEXT,
+    window_start  TEXT,
+    window_end    TEXT,
+    cron_expr     TEXT,
+    tz            TEXT NOT NULL,
+    enabled       INTEGER NOT NULL DEFAULT 1,
+    next_fire_at  TEXT,
+    created_by    INTEGER,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_task_schedules_next
+    ON agent_task_schedules(next_fire_at);
+
+-- Every decision the time side made, append-only. UNIQUE(schedule_id, slot_at)
+-- lets the scheduler and the dependency path race for one window instance or
+-- cron slot with only one of them launching.
+CREATE TABLE IF NOT EXISTS agent_task_schedule_fires (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    schedule_id  INTEGER NOT NULL
+                 REFERENCES agent_task_schedules(id) ON DELETE CASCADE,
+    slot_at      TEXT NOT NULL,
+    fired_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    outcome      TEXT NOT NULL,
+    via          TEXT NOT NULL,
+    run_id       INTEGER,
+    reason       TEXT,
+    CONSTRAINT uq_agent_task_schedule_fires_slot UNIQUE (schedule_id, slot_at)
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_task_schedule_fires_schedule
+    ON agent_task_schedule_fires(schedule_id);
+
 -- The task DAG: `task_id` waits for `depends_on_id`. An edge table rather than
 -- an `after: []` column because both directions are queried, and acyclicity is
 -- enforced by the writer before the insert.
