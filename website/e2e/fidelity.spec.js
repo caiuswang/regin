@@ -8,18 +8,22 @@ import { test, expect } from '@playwright/test'
 // or class there; their pins are the first <section> under <main>, the last
 // <section>, the <footer> and the <nav> after the last docs section. The
 // prototype is not in the repo (it is a design-tool export), so its numbers
-// are pinned here; re-measure them if the design project changes.
+// are pinned here; re-measure them if the design project changes. Two pins
+// carry site additions the prototype lacks: the quick-start OS switch wraps
+// its bar to a second row (#top +24, every later landing section with it) and
+// Getting started gained a Windows section (.doc-card TOC +38, #s-windows, and
+// the shift both put on every section below).
 const PROTOTYPE = {
   '/': {
     '.site-header': [0, 58],
-    '#top': [82, 871],
-    '#play': [1009, 718],
-    '#workbench': [1783, 672],
-    '#runs': [2511, 586],
-    '#observability': [3153, 661],
-    '#guidance': [3870, 608],
-    '.continue-panel': [4534, 380],
-    '.site-footer': [4986, 60],
+    '#top': [82, 895],
+    '#play': [1033, 718],
+    '#workbench': [1807, 672],
+    '#runs': [2534, 586],
+    '#observability': [3177, 661],
+    '#guidance': [3894, 608],
+    '.continue-panel': [4558, 380],
+    '.site-footer': [5010, 60],
   },
   '/pipeline': {
     '.site-header': [0, 58],
@@ -39,14 +43,15 @@ const PROTOTYPE = {
   '/getting-started': {
     '.site-header': [0, 58],
     '.world-map': [82, 528],
-    '.doc-card': [82, 357],
-    '#s-quick-start': [471, 289],
-    '#s-activate-the-hooks': [789, 963],
-    '#s-manual-setup': [1780, 1128],
-    '#s-server-modes': [2936, 317],
-    '#s-accounts-roles': [3280, 266],
-    '#s-shared-vs-local-state': [3575, 501],
-    '.prev-next': [4107, 85],
+    '.doc-card': [82, 395],
+    '#s-quick-start': [509, 289],
+    '#s-windows': [827, 531],
+    '#s-activate-the-hooks': [1386, 963],
+    '#s-manual-setup': [2377, 1128],
+    '#s-server-modes': [3533, 317],
+    '#s-accounts-roles': [3877, 266],
+    '#s-shared-vs-local-state': [4172, 501],
+    '.prev-next': [4704, 85],
   },
 }
 
