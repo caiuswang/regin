@@ -14,6 +14,7 @@ from flask import Blueprint, jsonify, request
 
 from lib.auth import require_auth, require_editor
 from lib.features import stages
+from lib.tasks import output_language
 
 project_stages_bp = Blueprint("project_stages", __name__)
 
@@ -88,3 +89,43 @@ def api_update_stage(project: str, key: str):
 def api_remove_stage(project: str, key: str):
     body, error = _call(project, stages.remove_stage, key)
     return error or jsonify(body)
+
+
+def _numbered(raw: str) -> Optional[int]:
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
+@project_stages_bp.route("/api/projects/<project>/output-language")
+@require_auth
+def api_project_output_language(project: str):
+    """The project's own output language and what a run under it resolves to.
+    `default` answers the global setting alone."""
+    project_id = None if project == "default" else _numbered(project)
+    if project != "default":
+        try:
+            if project_id is None:
+                raise stages.StageNotFound(project)
+            stages.require_project(project_id)
+        except stages.StageError:
+            return jsonify({"error": f"unknown project: {project}"}), 404
+    language, source = output_language.resolve(project_id)
+    return jsonify({"output_language": output_language.project_language(
+                        project_id) or None,
+                    "effective": language, "source": source})
+
+
+@project_stages_bp.route("/api/projects/<int:project_id>/output-language",
+                         methods=["PATCH"])
+@require_editor
+def api_set_project_output_language(project_id: int):
+    try:
+        value = output_language.set_project_language(
+            project_id, _payload().get("output_language"))
+    except output_language.LanguageError as exc:
+        return jsonify({"error": str(exc), "field": exc.field}), exc.status
+    language, source = output_language.resolve(project_id)
+    return jsonify({"output_language": value, "effective": language,
+                    "source": source})

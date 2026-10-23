@@ -347,6 +347,19 @@ def api_get_task(task_id: int):
     return jsonify(_detail(task, task_id))
 
 
+@tasks_bp.route('/api/tasks/<int:task_id>/prompt-preview', methods=['GET'])
+@require_auth
+def api_task_prompt_preview(task_id: int):
+    """The launch prompt this task's next run would be handed, built by the
+    same `_prompt` the launch calls — and with no side effect at all."""
+    from lib.tasks import run_prompt  # noqa: PLC0415
+
+    task = store.get_task(task_id)
+    if task is None:
+        return _unknown_task()
+    return jsonify(run_prompt.preview(task))
+
+
 @tasks_bp.route('/api/tasks/<int:task_id>', methods=['PATCH'])
 @require_editor
 def api_update_task(task_id: int):

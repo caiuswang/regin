@@ -1,12 +1,13 @@
 <script setup>
-// A project's settings page — for now, the step stages a feature filed under it
-// can open, and each stage's prompt. `/projects/default` is the global list:
+// A project's settings page — the language its task runs write in, the step
+// stages a feature filed under it can open, and each stage's prompt. `/projects/default` is the global list:
 // features with no project read it, and a project copies it on its first write.
 import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import api from '../api'
 import Card from '../components/Card.vue'
 import NewStageForm from '../components/projects/NewStageForm.vue'
+import OutputLanguageField from '../components/projects/OutputLanguageField.vue'
 import StageRow from '../components/projects/StageRow.vue'
 import { useConfirm } from '../composables/useConfirm'
 import { useFlash } from '../composables/useFlash'
@@ -148,6 +149,9 @@ function onDrop(target) {
         <dd><code class="pj-path" data-testid="project-info-path">{{ project.path }}</code></dd>
       </dl>
       <p v-else-if="projectsError" class="pj-line pj-fail" role="alert">{{ projectsError }}</p>
+      <div v-if="isDefault || project" class="pj-line">
+        <OutputLanguageField :project-id="projectId" :can-write="canWrite" />
+      </div>
     </section>
 
     <section class="pl-panel pj-panel" data-pl-part="panel" data-testid="project-stages" aria-labelledby="pj-stages-title">

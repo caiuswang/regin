@@ -29,6 +29,7 @@ import RefBacklinks from '../components/refs/RefBacklinks.vue'
 import TaskPrimaryAction from '../components/tasks/TaskPrimaryAction.vue'
 import TaskVerbMenu from '../components/tasks/TaskVerbMenu.vue'
 import TaskRunHistory from '../components/tasks/TaskRunHistory.vue'
+import LaunchPromptPreview from '../components/tasks/LaunchPromptPreview.vue'
 import { priorityMeta, taskRef } from '../utils/taskMeta.js'
 import { localStamp, utcTitle } from '../utils/time.js'
 import { taskStatusColor } from '../composables/useBadgeColor.js'
@@ -113,6 +114,8 @@ const deliverable = computed(
 // the task; an attempt is what spends them, so they live on an `armed` run row
 // and this is that row.
 const armed = ref(null)
+const previewKey = computed(() => JSON.stringify([
+  task.value?.updated_at, task.value?.status, armed.value?.id, armed.value?.params]))
 
 // The same primary action and ⋯ menu every other surface offers for this
 // state (feature #119 R4a), through the same routes.
@@ -375,6 +378,8 @@ onMounted(() => { ensureProjects(); load() })
       />
 
       <TaskComments :task-id="task.id" :can-write="canWrite" />
+
+      <LaunchPromptPreview :task-id="task.id" :refresh-key="previewKey" />
 
       <!-- The pending attempt's parameters, not the task's: a rerun under
            different ones is a second run row, which is what retired

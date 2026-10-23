@@ -34,14 +34,19 @@ FINISH_ORDER_DEFECTS_SURFACE_ID = "task-run-finish-order-defects"
 FOLLOWUP_OMITTED_SURFACE_ID = "task-run-followup-omitted"
 SPEC_SURFACE_ID = "task-run-spec"
 REFERENCES_SURFACE_ID = "task-run-references"
+LANGUAGE_SURFACE_ID = "task-run-language"
 
 # NOTE: tests/prompts/test_task_run_parity.py asserts `runs._prompt` == a
 # frozen reference builder, so the port stays provable against the f-strings it
 # replaced. Edit the wording here and that reference together.
 _LAUNCH_BODY = (
     "{{invocation}}{{body}}{{tracker}}{{followup}}{{feature}}{{spec}}"
-    "{{references}}{{finish}}"
+    "{{references}}{{finish}}{{language}}"
 )
+
+_LANGUAGE_BODY = """<language>
+Write everything meant for a person in {{language}}: your replies, send_to_user messages, any spec or report you write, task comments, and the `--reason` of the finish command. Leave code, identifiers, commands, file paths and quoted output exactly as they are.
+</language>"""
 
 _REFERENCES_BODY = """<references>
 What the task and its feature's spec cite, looked up when this run was launched: a title or state below is current, where the label written into the link may be stale. These are pointers, not copies — before you rely on one, read it with the command on its line.
@@ -133,6 +138,23 @@ register_surface(
         PromptVariable("spec", "Rendered `task-run-spec` block. Present only when the task is a feature's spec step.", required=False),
         PromptVariable("references", "Rendered `task-run-references` block. Empty when neither the task body nor its feature's spec cites anything.", required=False),
         PromptVariable("finish", "Rendered `task-run-finish` block. Always present."),
+        PromptVariable("language", "Rendered `task-run-language` block. Empty when neither the project nor the global default names an output language.", required=False),
+    ),
+)
+
+register_surface(
+    LANGUAGE_SURFACE_ID,
+    label="Task run — output language block",
+    area="task-run",
+    default_body=_LANGUAGE_BODY,
+    description=(
+        "The language a run writes its human-facing text in: the project's "
+        "own output language, else `settings.tasks.output_language`. Never "
+        "rendered when neither is set."
+    ),
+    applies_to=("external-agent",),
+    variables=(
+        PromptVariable("language", "The output language as the operator typed it.", example="简体中文"),
     ),
 )
 
@@ -375,3 +397,7 @@ register_retired_default(
 register_retired_default(
     SPEC_SURFACE_ID,
     sha256="2a6908d2c096a945b4fd06107a1bc39638562101a9544f6c2202b41a85dfe0c2")
+# The envelope before it carried the output-language block.
+register_retired_default(
+    LAUNCH_SURFACE_ID,
+    sha256="1d2090dbc437fdd497ce79406810088571c182c5f01560d4fc1bb207cef120a5")

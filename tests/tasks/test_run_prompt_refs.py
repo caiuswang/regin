@@ -166,7 +166,7 @@ def test_unedited_launch_envelope_upgrades_to_carry_references():
 
     row = get_template_by_slug(LAUNCH_SURFACE_ID)
     assert "{{references}}" in row["body"]
-    assert row["body"].endswith("{{spec}}{{references}}{{finish}}")
+    assert row["body"].endswith("{{spec}}{{references}}{{finish}}{{language}}")
     assert "references" in [var["name"] for var in row["variables"]]
     assert seed_builtin_skeletons() == 0
 

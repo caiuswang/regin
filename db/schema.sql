@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS repos (
     description     TEXT,
     is_active       INTEGER NOT NULL DEFAULT 1,
     default_branch  TEXT NOT NULL DEFAULT 'production',
+    output_language TEXT,
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );

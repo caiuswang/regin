@@ -39,7 +39,10 @@ _LAUNCH_DEFAULTS: dict = {"cwd": None, "model": "", "effort": "",
                           "permission_mode": "", "env": {}}
 
 
-def _finish_command(task_id: int, run_id: int) -> str:
+RUN_ID_PLACEHOLDER = "<run id>"
+
+
+def _finish_command(task_id: int, run_id: Optional[int]) -> str:
     """The exact shell command the agent runs to report its work finished.
 
     The task id leads because it is the one the agent and operator see on the
@@ -53,8 +56,12 @@ def _finish_command(task_id: int, run_id: int) -> str:
     """
     cli = settings.project_root / "cli" / "regin.py"
     parts = [sys.executable, str(cli), "task", "finish", str(task_id),
-             "--run", str(run_id)]
-    return " ".join(shlex.quote(part) for part in parts)
+             "--run"]
+    command = " ".join(shlex.quote(part) for part in parts)
+    # A preview of an attempt not yet armed has no run row to name; the
+    # placeholder goes in unquoted so it reads as a slot, not as an argument.
+    run = RUN_ID_PLACEHOLDER if run_id is None else shlex.quote(str(run_id))
+    return f"{command} {run}"
 
 
 # Not `--file -`: printed as a ready command, it gets run with nothing piped in.
@@ -110,7 +117,7 @@ def _defects_order(task_id: Optional[int]) -> str:
                                 for i in ids)})
 
 
-def _finish_block(run_id: int, task_id: int, linked: bool = False,
+def _finish_block(run_id: Optional[int], task_id: int, linked: bool = False,
                   base: str = "") -> str:
     """The `<finish>` instruction appended to a run's launch prompt.
 
@@ -474,7 +481,23 @@ def _references_block(task: dict, feature) -> str:
                                    {"lines": "\n".join(lines)})
 
 
-def _prompt(task: dict, run_id: int, params: Optional[dict] = None) -> str:
+def _language_block(task: dict, feature) -> str:
+    """The `<language>` instruction, or "" when no output language is set —
+    so a run under neither a project nor a global language carries the prompt
+    it always did."""
+    from lib.tasks import output_language  # noqa: PLC0415
+
+    language, _ = output_language.resolve(_project_of(task, feature))
+    if not language:
+        return ""
+    from lib.prompts import render_surface  # noqa: PLC0415
+    from lib.prompts.surfaces.tasks import LANGUAGE_SURFACE_ID  # noqa: PLC0415
+
+    return "\n\n" + render_surface(LANGUAGE_SURFACE_ID, {"language": language})
+
+
+def _prompt(task: dict, run_id: Optional[int],
+            params: Optional[dict] = None) -> str:
     """The sentence a run is launched with, plus how to report it finished.
 
     A task's images are NOT named here. They travel beside this text as content
@@ -524,13 +547,37 @@ def _prompt(task: dict, run_id: int, params: Optional[dict] = None) -> str:
         "feature": _feature_block(task),
         "spec": _stage_block(task, feature),
         "references": _references_block(task, feature),
-        "finish": finish})
+        "finish": finish,
+        "language": _language_block(task, feature)})
     # An envelope edited to drop `{{finish}}` renders fine — a *missing*
     # placeholder is not a render error, so `render_surface` never falls back —
     # and produces a task that can never complete. Every other block is the
     # operator's to remove; this one is the control instruction regin needs
     # back, so it is re-appended rather than silently lost.
     return prompt if finish in prompt else prompt + finish
+
+
+def preview(task: dict) -> dict:
+    """What `_prompt` would launch this task with now, without launching.
+
+    Read-only by construction: the armed row is read, never written, and no
+    worktree is resolved — `_launch_kwargs` is what creates one, and it is not
+    called here. A task with no armed attempt has no run id yet, so the finish
+    command names a placeholder instead.
+    """
+    from lib.features import store as feature_store  # noqa: PLC0415
+    from lib.tasks import output_language  # noqa: PLC0415
+    from lib.tasks import runs  # noqa: PLC0415
+
+    armed = runs.armed_attempt(task["id"])
+    run_id = armed["id"] if armed else None
+    params = armed["params"] if armed else None
+    feature = (feature_store.get(task["feature_id"])
+               if task.get("feature_id") is not None else None)
+    language, source = output_language.resolve(_project_of(task, feature))
+    return {"prompt": _prompt(task, run_id, params),
+            "language": language, "language_source": source,
+            "run_id_placeholder": run_id is None}
 
 
 def _armed_base(params: Optional[dict]) -> str:

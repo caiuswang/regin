@@ -13,6 +13,7 @@ import Select from '../ui/Select.vue'
 import PlGlyph from '../pipeline/PlGlyph.vue'
 import PlSlot from '../pipeline/PlSlot.vue'
 import TaskArmSkills from './TaskArmSkills.vue'
+import LaunchPromptPreview from './LaunchPromptPreview.vue'
 import { CUSTOM_MODEL, declares, useTaskArm } from '../../composables/useTaskArm.js'
 import api from '../../api'
 import {
@@ -41,6 +42,9 @@ const {
 const { items: projects, ensure: ensureProjects, byId } = useProjects()
 
 const seeded = seededArmDraft(props.task)
+const armCount = ref(0)
+const previewKey = computed(() => JSON.stringify([
+  armCount.value, props.task?.armed?.id, props.task?.armed?.params]))
 const draft = reactive(seeded.draft)
 // Surfaced, never silent. Arming is the one browser write that sets execution
 // parameters, so a form filled from another task's pick has to say so — an
@@ -202,6 +206,7 @@ const { flash } = useFlash()
 
 async function submit() {
   if (!await arm(props.task, draft)) return
+  armCount.value += 1
   rememberArm(draft)
   flash(`#${props.task.id} armed`, 'success',
     { link: { to: `/tasks/${props.task.id}`, label: 'Open' } })
@@ -359,6 +364,15 @@ async function submit() {
           <span>Auto close — end the session once the agent reports done</span>
         </label>
       </div>
+
+      <!-- What the run is told under the parameters armed NOW; arming this
+           form re-reads it. -->
+      <LaunchPromptPreview
+        v-if="task.id != null"
+        :task-id="task.id"
+        :refresh-key="previewKey"
+        data-testid="task-arm-preview"
+      />
 
       <p v-if="armError" class="live-launch-warn" role="alert" data-testid="task-arm-refusal">
         {{ armError.message }}

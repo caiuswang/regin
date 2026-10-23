@@ -25,6 +25,8 @@ class Repo(Base, table=True):
         sa_column=Column("default_branch", String, nullable=False,
                          server_default=text("'main'")),
     )
+    output_language: Optional[str] = Field(
+        default=None, sa_column=Column("output_language", Text))
     created_at: Optional[str] = Field(
         default=None,
         sa_column=Column("created_at", Text, nullable=False,

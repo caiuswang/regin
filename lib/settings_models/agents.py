@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 _SEVERITY = Literal[
     "progress", "note", "lesson", "result", "summary", "warning", "blocker"
@@ -287,6 +287,12 @@ class TasksConfig(BaseModel):
 
     capture_enabled: bool = False
     capture_rate_limit_per_minute: int = 30
+    output_language: str = Field(default="", max_length=64)
+
+    @field_validator("output_language", mode="before")
+    @classmethod
+    def _trim_language(cls, value):
+        return value.strip() if isinstance(value, str) else value
 
 
 class TaskIntegrationsConfig(BaseModel):

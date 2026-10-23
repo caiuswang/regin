@@ -470,6 +470,12 @@ _TASKS_FIELDS = [
      "label": "Captures per minute",
      "description": "Per-key ceiling on accepted captures. Bounds the damage "
                     "a looping integration can do to the backlog."},
+    {"key": "output_language", "group": "Runs", "type": "string",
+     "label": "Output language",
+     "description": "The language every task run writes its human-facing "
+                    "text in (replies, messages, specs, the finish report). "
+                    "A project's own language wins over this. Empty = say "
+                    "nothing. At most 64 characters."},
 ]
 
 
