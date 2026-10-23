@@ -403,7 +403,7 @@ def test_deleting_the_schedule_keeps_run_history(flask_client, launcher,
     assert len(_fires(task_id)) == 3
 
     assert flask_client.delete(
-        f"/api/tasks/{task_id}/schedule").status_code == 204
+        f"/api/tasks/{task_id}/schedule").status_code == 200
 
     assert len(_run_rows(task_id)) == 3
     with SessionLocal() as session:

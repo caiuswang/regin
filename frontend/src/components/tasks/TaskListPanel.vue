@@ -43,7 +43,7 @@ const router = useRouter()
 const query = useTaskQuery()
 const canWrite = api.getStoredUser()?.role !== 'viewer'
 const { counts, error: countsError, load: loadCounts } = useTaskCounts(query.params)
-const { bulk, bulkRemove } = useTaskMutations()
+const { bulk, bulkSchedule, bulkRemove } = useTaskMutations()
 const { confirm } = useConfirm()
 const { items: projects, ensure: ensureProjects, byId } = useProjects()
 const { isOpen, setOpen } = useGroupCollapse()
@@ -179,6 +179,14 @@ function nameRejected(result) {
   bulkRejected.value = (result.rejected || []).map(r => ({ ...r, title: titles.get(r.id) || '' }))
 }
 
+async function scheduleBulk(schedule) {
+  const result = await bulkSchedule([...selection.ids.value], schedule)
+  if (!result) return
+  nameRejected(result)
+  selection.clear()
+  await afterWrite()
+}
+
 async function applyBulk(fields) {
   const result = await bulk([...selection.ids.value], fields)
   if (!result) return
@@ -248,6 +256,7 @@ defineExpose({ reload: afterWrite })
       @delete="deleteSelected"
       @restore="applyBulk({ status: 'idea' })"
       @priority="v => applyBulk({ priority: v })"
+      @schedule="scheduleBulk"
       @project="v => applyBulk({ project_id: v === 'none' ? null : Number(v) })"
       @feature="id => applyBulk({ feature_id: id })"
     />

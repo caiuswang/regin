@@ -11,6 +11,9 @@ import api from '../api'
  */
 export function useTaskRuns() {
   const runs = ref([])
+  // The schedule's decisions: a started one names its run, a skipped or
+  // refused one is a row of its own in the history.
+  const fires = ref([])
   const loading = ref(true)
   const error = ref('')
 
@@ -18,8 +21,11 @@ export function useTaskRuns() {
     loading.value = true
     error.value = ''
     try {
-      const data = await api.get(`/tasks/${taskId}/runs`)
+      const [data, fired] = await Promise.all([
+        api.get(`/tasks/${taskId}/runs`),
+        api.get(`/tasks/${taskId}/schedule/fires`)])
       runs.value = data.runs || []
+      fires.value = fired || []
     } catch (e) {
       error.value = e?.message || 'Failed to read this task’s attempts.'
     } finally {
@@ -27,5 +33,5 @@ export function useTaskRuns() {
     }
   }
 
-  return { runs, loading, error, load }
+  return { runs, fires, loading, error, load }
 }

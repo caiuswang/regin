@@ -11,6 +11,7 @@ import FeaturePicker from '../pipeline/FeaturePicker.vue'
 import Icon from '../ui/Icon.vue'
 import Select from '../ui/Select.vue'
 import { PRIORITIES } from '../../utils/taskMeta.js'
+import { NIGHT_WINDOW, browserTz } from '../../utils/taskSchedule.js'
 
 defineProps({
   count: { type: Number, default: 0 },
@@ -19,7 +20,18 @@ defineProps({
   restorable: { type: Boolean, default: true },
 })
 const emit = defineEmits(['clear', 'archive', 'restore', 'priority', 'project',
-                          'feature', 'delete'])
+                          'feature', 'delete', 'schedule'])
+
+// "Put these on the night shift": a schedule body, or null to clear.
+const scheduleOptions = [
+  { value: '', label: '定时…' },
+  { value: 'night', label: '设定启动时间窗 22:00–06:00' },
+  { value: 'clear', label: '清除定时' },
+]
+function applySchedule(value) {
+  if (value === 'night') emit('schedule', { ...NIGHT_WINDOW, tz: browserTz() || undefined })
+  else if (value === 'clear') emit('schedule', null)
+}
 
 // The picker is a one-shot: a pick applies, then the field empties for the
 // next selection rather than claiming the rows still share that feature.
@@ -60,6 +72,13 @@ function apply(event, value) {
       aria-label="Move the selection to a project"
       data-testid="task-bulk-project"
       @update:model-value="v => apply('project', v)"
+    />
+    <Select
+      model-value=""
+      :options="scheduleOptions"
+      aria-label="Schedule the selection"
+      data-testid="task-bulk-schedule"
+      @update:model-value="applySchedule"
     />
     <FeaturePicker
       v-model="feature"

@@ -9,6 +9,7 @@
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
 import TaskPrimaryAction from './TaskPrimaryAction.vue'
+import TaskScheduleChip from './TaskScheduleChip.vue'
 import TaskStatusIcon from './TaskStatusIcon.vue'
 import { taskTitle } from '../../utils/taskTitle.js'
 
@@ -37,6 +38,7 @@ const emit = defineEmits(['verb', 'hover', 'handle-down', 'handle-click'])
     <span class="tln-top">
       <TaskStatusIcon :status="node.status" :size="12" />
       <span class="tln-id" data-pl-part="row-id">#{{ node.id }}</span>
+      <TaskScheduleChip :task="node" compact />
       <span v-if="!node.action && node.waits_on == null" class="tlg-node-tag" data-pl-part="meta-label">{{ tag }}</span>
       <TaskPrimaryAction
         v-else

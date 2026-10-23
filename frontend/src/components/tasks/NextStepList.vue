@@ -25,6 +25,7 @@ import { useTaskVerbs } from '../../composables/useTaskVerbs.js'
 import { invalidatePipelineCounts } from '../../composables/usePipelineCounts.js'
 import { taskTitle } from '../../utils/taskTitle.js'
 import { nextStepGlyph } from '../../utils/taskMeta.js'
+import { localStamp } from '../../utils/time.js'
 
 const props = defineProps({
   params: { type: Object, required: true },
@@ -44,7 +45,7 @@ const runningAll = ref(false)
 const runAllReport = ref(null)
 const canWrite = api.getStoredUser()?.role !== 'viewer'
 const selection = useTaskSelection()
-const { bulk, bulkRemove } = useTaskMutations()
+const { bulk, bulkSchedule, bulkRemove } = useTaskMutations()
 const { items: projects, ensure: ensureProjects } = useProjects()
 const bulkRejected = ref([])
 
@@ -106,9 +107,13 @@ async function runAll(group) {
     const ids = await feed.readyRows()
     const refused = []
     for (const { id, title } of ids) {
-      const result = await api.post(`/tasks/${id}/run`)
+      // A batch honours each task's time gate; a single Run overrides it.
+      const result = await api.post(`/tasks/${id}/run`, { respect_schedule: true })
       if (result.ok === false) {
-        refused.push({ id, title, message: result.msg || 'the run was refused',
+        const gated = result.body?.waiting_schedule
+        refused.push({ id, title,
+                       message: gated ? `等待时间窗 · ${localStamp(result.body.next_fire_at)}`
+                         : (result.msg || 'the run was refused'),
                        blocking: result.body?.blocking || [] })
       }
     }
@@ -132,6 +137,14 @@ function titleOf(id) {
 
 function nameRejected(result) {
   bulkRejected.value = (result.rejected || []).map(r => ({ ...r, title: titleOf(r.id) }))
+}
+
+async function scheduleBulk(schedule) {
+  const result = await bulkSchedule([...selection.ids.value], schedule)
+  if (!result) return
+  nameRejected(result)
+  selection.clear()
+  await afterWrite()
 }
 
 async function applyBulk(fields) {
@@ -200,6 +213,7 @@ defineExpose({ reload })
       @archive="applyBulk({ status: 'archived' })"
       @delete="deleteSelected"
       @priority="v => applyBulk({ priority: v })"
+      @schedule="scheduleBulk"
       @project="v => applyBulk({ project_id: v === 'none' ? null : Number(v) })"
       @feature="id => applyBulk({ feature_id: id })"
     />

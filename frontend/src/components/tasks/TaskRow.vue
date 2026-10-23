@@ -20,6 +20,7 @@ import TaskKindChip from './TaskKindChip.vue'
 import TaskPrimaryAction from './TaskPrimaryAction.vue'
 import TaskPriorityIcon from './TaskPriorityIcon.vue'
 import TaskRefusal from './TaskRefusal.vue'
+import TaskScheduleChip from './TaskScheduleChip.vue'
 import TaskStatusIcon from './TaskStatusIcon.vue'
 import TaskVerbMenu from './TaskVerbMenu.vue'
 import { shortDate } from '../../utils/ledgerFormat'
@@ -131,6 +132,7 @@ const runCount = computed(() => props.task.run_count || 0)
       >
         {{ runCount === 1 ? '1 attempt' : `${runCount} attempts` }}
       </Button>
+      <TaskScheduleChip :task="task" />
       <Badge
         v-if="answered"
         :color="live ? 'green' : 'red'"

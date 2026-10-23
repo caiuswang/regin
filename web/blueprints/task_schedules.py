@@ -81,7 +81,7 @@ def _toggle(task_id: int, enabled: bool):
 def api_delete_schedule(task_id: int):
     if not schedules.remove(task_id):
         return _error("no schedule", 404)
-    return "", 204
+    return jsonify({"deleted": True})
 
 
 @task_schedules_bp.route('/api/tasks/schedule/preview', methods=['POST'])

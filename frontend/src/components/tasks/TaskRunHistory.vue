@@ -5,7 +5,7 @@
 // still behind it.
 //
 // Each attempt links to /trace/sessions/<trace_id> — the mounted trace route.
-import { onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
 import Badge from '../Badge.vue'
 import Dialog from '../ui/Dialog.vue'
 import { useTaskRuns } from '../../composables/useTaskRuns.js'
@@ -17,7 +17,14 @@ const props = defineProps({
 })
 const emit = defineEmits(['close'])
 
-const { runs, loading, error, load } = useTaskRuns()
+const { runs, fires, loading, error, load } = useTaskRuns()
+
+const VIA = { schedule: '调度器', dependency: '依赖完成', arm: 'arm' }
+const OUTCOME = { skipped_live: '跳过 · 上一次仍在运行', skipped_blocked: '跳过 · 依赖未完成',
+                  refused: '启动被拒绝' }
+const fireByRun = computed(() => new Map(
+  fires.value.filter(f => f.run_id).map(f => [f.run_id, f])))
+const unlaunched = computed(() => fires.value.filter(f => f.outcome !== 'started'))
 
 const OPEN = ['starting', 'running']
 const RUN_COLOR = { done: 'green', failed: 'red', running: 'purple', starting: 'yellow' }
@@ -60,6 +67,10 @@ onMounted(() => load(props.task.id))
             :label="liveLabel(run).label"
           />
         </div>
+        <div v-if="fireByRun.get(run.id)" class="task-run-sched" :data-testid="`task-run-scheduled-${run.attempt}`">
+          定时 · <span :title="utcTitle(fireByRun.get(run.id).slot_at)">{{ localStamp(fireByRun.get(run.id).slot_at) }}</span>
+          · {{ VIA[fireByRun.get(run.id).via] || fireByRun.get(run.id).via }}
+        </div>
         <div class="task-run-facts">
           <span :title="utcTitle(run.started_at)">{{ localStamp(run.started_at) }}</span>
           <span v-if="run.ended_at" :title="utcTitle(run.ended_at)">→ {{ localStamp(run.ended_at) }}</span>
@@ -74,6 +85,15 @@ onMounted(() => load(props.task.id))
         <span v-else class="task-run-notrace" :data-testid="`task-run-notrace-${run.attempt}`">
           no session was minted for this attempt
         </span>
+      </li>
+    </ul>
+    <ul v-if="!loading && unlaunched.length" class="task-runs task-fires" data-testid="task-fires">
+      <li v-for="fire in unlaunched" :key="fire.id" class="task-run">
+        <div class="task-run-head">
+          <span class="task-run-attempt">定时 · {{ localStamp(fire.slot_at) }}</span>
+          <Badge :color="fire.outcome === 'refused' ? 'red' : 'gray'" :label="OUTCOME[fire.outcome] || fire.outcome" />
+        </div>
+        <p v-if="fire.reason" class="task-run-reason">{{ fire.reason }}</p>
       </li>
     </ul>
   </Dialog>
@@ -127,6 +147,12 @@ onMounted(() => load(props.task.id))
     color: var(--color-fg-muted);
     overflow-wrap: anywhere;
 }
+.task-run-sched {
+    margin-top: 0.25rem;
+    font-size: 0.75rem;
+    color: var(--color-fg-muted);
+}
+.task-fires { margin-top: 0.75rem; }
 .task-run-link {
     display: inline-block;
     margin-top: 0.375rem;

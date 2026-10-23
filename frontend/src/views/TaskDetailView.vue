@@ -29,6 +29,7 @@ import RefBacklinks from '../components/refs/RefBacklinks.vue'
 import TaskPrimaryAction from '../components/tasks/TaskPrimaryAction.vue'
 import TaskVerbMenu from '../components/tasks/TaskVerbMenu.vue'
 import TaskRunHistory from '../components/tasks/TaskRunHistory.vue'
+import TaskScheduleCard from '../components/tasks/TaskScheduleCard.vue'
 import LaunchPromptPreview from '../components/tasks/LaunchPromptPreview.vue'
 import { priorityMeta, taskRef } from '../utils/taskMeta.js'
 import { localStamp, utcTitle } from '../utils/time.js'
@@ -384,6 +385,11 @@ onMounted(() => { ensureProjects(); load() })
       <!-- The pending attempt's parameters, not the task's: a rerun under
            different ones is a second run row, which is what retired
            "a sub-task is a rerun". -->
+      <TaskScheduleCard
+        v-if="task.status !== 'archived'" :key="task.id" :task="task"
+        :armed="armed" :can-write="canWrite" @changed="load({ quiet: true })"
+      />
+
       <Card v-if="armed">
         <h2 class="card-header">Next attempt</h2>
         <pre class="td-params">{{ JSON.stringify(

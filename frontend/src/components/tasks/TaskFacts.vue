@@ -1,9 +1,10 @@
 <script setup>
 // The small facts a task row or card carries beside its title: the defects
-// it fixes, the dependency it waits on, and its live run. Shared by the
+// it fixes, the dependency it waits on, its schedule, and its live run. Shared by the
 // grouped list and the board so the two readings of one task say the same.
 import { computed } from 'vue'
 import Icon from '../ui/Icon.vue'
+import TaskScheduleChip from './TaskScheduleChip.vue'
 import { liveFor, waitsLabel } from '../../utils/taskMeta.js'
 
 const props = defineProps({
@@ -31,6 +32,7 @@ const live = computed(() => (props.showLive && props.task.live
   <span v-if="waits" class="tf-chip tf-wait" data-pl-part="tag" data-tone="warn" data-testid="task-waits">
     <Icon name="dependency-tree" :size="11" />{{ waits }}
   </span>
+  <TaskScheduleChip :task="task" />
   <span v-if="live" class="tf-live" data-pl-part="live" data-testid="task-live">
     <span class="tf-dot" aria-hidden="true" />{{ live }}
   </span>

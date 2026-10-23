@@ -202,6 +202,24 @@ export function useTaskMutations() {
   }
 
   /**
+   * One schedule (or `null` = clear) across many tasks; refused rows come
+   * back as `rejected` in the shape the bulk-edit report already renders.
+   */
+  async function bulkSchedule(ids, schedule) {
+    const result = await api.post('/tasks/schedule/bulk', { task_ids: ids, schedule })
+    if (result.ok === false) {
+      flash(result.msg || 'Could not schedule these tasks', 'error')
+      return null
+    }
+    const applied = result.applied?.length || 0
+    const refused = result.refused || []
+    flash(refused.length
+      ? `${applied} scheduled, ${refused.length} could not be`
+      : `${applied} scheduled`, refused.length ? 'error' : 'success')
+    return { changed: result.applied, rejected: refused.map(r => ({ id: r.id, reason: r.error })) }
+  }
+
+  /**
    * Remove a task for good. Distinct from archiving, which is a PATCH the
    * same surface can undo — so the caller confirms first and this only
    * reports what the server did.
@@ -231,5 +249,5 @@ export function useTaskMutations() {
     return result
   }
 
-  return { saving, formError, create, patch, bulk, remove, bulkRemove }
+  return { saving, formError, create, patch, bulk, bulkSchedule, remove, bulkRemove }
 }
