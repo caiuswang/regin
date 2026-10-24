@@ -12,7 +12,7 @@ const props = defineProps({
   compact: { type: Boolean, default: false },
 })
 
-const chip = computed(() => scheduleChip(props.task))
+const chip = computed(() => scheduleChip(props.task, props.compact))
 </script>
 
 <template>

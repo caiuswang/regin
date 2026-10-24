@@ -63,7 +63,7 @@ const hasControls = computed(() => !!props.task.action || !!props.task.waits_on
     <span v-if="task.feature_id != null" class="tbc-feature" data-pl-part="tag">
       <Icon name="flag" :size="11" />#{{ task.feature_id }} {{ task.feature_title }}
     </span>
-    <span v-if="task.fixes_defects?.length" class="tbc-facts">
+    <span v-if="task.fixes_defects?.length || task.schedule" class="tbc-facts">
       <TaskFacts :task="task" :show-live="false" :show-waits="false" />
     </span>
     <span v-if="hasControls" class="tbc-actions">

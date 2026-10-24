@@ -34,6 +34,11 @@ const saveError = ref('')
 const busy = ref(false)
 
 const isGate = computed(() => saved.value && saved.value.kind !== 'cron')
+// An `at` gate has no window to speak of: it is either not yet that moment or
+// already past it.
+const gateState = computed(() => saved.value.kind === 'at'
+  ? (saved.value.gate_open ? '已到时间' : '未到时间')
+  : `时间窗${saved.value.gate_open ? '开启中' : '关闭中'}`)
 const pendingArm = computed(() => isGate.value && saved.value.enabled && !props.armed
   && props.task.status !== 'running')
 
@@ -48,6 +53,13 @@ async function load() {
 }
 
 async function preview() {
+  // An untouched `at` draft is not a mistake yet: asking the server about it
+  // would paint an error over a form nobody has filled in.
+  if (draft.value.kind === 'at' && !draft.value.run_at) {
+    upcoming.value = []
+    previewError.value = ''
+    return
+  }
   const result = await api.post('/tasks/schedule/preview', scheduleBody(draft.value))
   previewError.value = result.ok === false ? result.msg : ''
   upcoming.value = result.ok === false ? [] : result.upcoming
@@ -89,7 +101,7 @@ onMounted(async () => { await load(); preview() })
         · 下次 <span :title="utcTitle(saved.next_fire_at)">{{ localStamp(saved.next_fire_at) }}</span>
         ({{ untilLabel(saved.next_fire_at) }})
       </template>
-      <template v-if="isGate"> · 时间窗{{ saved.gate_open ? '开启中' : '关闭中' }}</template>
+      <template v-if="isGate"> · {{ gateState }}</template>
     </p>
     <p v-if="pendingArm" class="tsk-hint" data-testid="task-schedule-arm-hint">
       arm 后在 {{ localStamp(saved.next_fire_at || saved.run_at) }} 启动

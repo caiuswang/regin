@@ -382,14 +382,14 @@ onMounted(() => { ensureProjects(); load() })
 
       <LaunchPromptPreview :task-id="task.id" :refresh-key="previewKey" />
 
-      <!-- The pending attempt's parameters, not the task's: a rerun under
-           different ones is a second run row, which is what retired
-           "a sub-task is a rerun". -->
       <TaskScheduleCard
         v-if="task.status !== 'archived'" :key="task.id" :task="task"
         :armed="armed" :can-write="canWrite" @changed="load({ quiet: true })"
       />
 
+      <!-- The pending attempt's parameters, not the task's: a rerun under
+           different ones is a second run row, which is what retired
+           "a sub-task is a rerun". -->
       <Card v-if="armed">
         <h2 class="card-header">Next attempt</h2>
         <pre class="td-params">{{ JSON.stringify(

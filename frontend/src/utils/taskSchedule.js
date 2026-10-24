@@ -23,16 +23,21 @@ export function waitingOnGate(task) {
     && task.status === 'armed' && !(task.blocked_by || []).length)
 }
 
-/** `{ label, tone, title }` for the row chip, or null for no schedule. */
-export function scheduleChip(task) {
+/** `{ label, tone, title }` for the row chip, or null for no schedule.
+ *  `compact` is the lane node: fixed width, so the countdown rides alone —
+ *  the prefix is what has to give, never the "多久之后". */
+export function scheduleChip(task, compact = false) {
   const s = task?.schedule
   if (!s) return null
   if (!s.enabled) return { label: '定时已关', tone: 'muted', title: s.summary }
+  const countdown = untilLabel(s.next_fire_at)
   if (waitingOnGate(task)) {
-    return { label: `等待时间窗 · ${untilLabel(s.next_fire_at)}`, tone: 'warn', title: s.summary }
+    const label = compact ? countdown : `等待时间窗 · ${countdown}`
+    return { label, tone: 'warn', title: s.summary }
   }
   if (s.kind === 'cron') {
-    return { label: `周期 · ${untilLabel(s.next_fire_at) || '—'}`, tone: 'info', title: s.summary }
+    const label = compact ? (countdown || '—') : `周期 · ${countdown || '—'}`
+    return { label, tone: 'info', title: s.summary }
   }
   return { label: s.kind === 'at' ? '定时' : '时间窗', tone: 'info', title: s.summary }
 }

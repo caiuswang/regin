@@ -87,12 +87,15 @@ def api_delete_schedule(task_id: int):
 @task_schedules_bp.route('/api/tasks/schedule/preview', methods=['POST'])
 @require_auth
 def api_preview_schedule():
+    now = schedules.now_utc()
     try:
         spec = schedules.parse_spec(request.get_json(silent=True))
+        # The refusals that need no task, so a preview never offers a slot the
+        # save would turn down.
+        schedules.check_timing(spec, now)
     except schedules.ScheduleRejected as exc:
         return _error(str(exc))
-    return jsonify({"upcoming": schedules.upcoming(spec,
-                                                   schedules.now_utc())})
+    return jsonify({"upcoming": schedules.upcoming(spec, now)})
 
 
 def _bulk_ids(payload) -> list[int]:

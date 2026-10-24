@@ -446,6 +446,24 @@ def test_invalid_specs_are_refused(flask_client):
         assert _put(flask_client, task_id, body).status_code == 400, body
 
 
+def test_preview_refuses_what_a_write_refuses(flask_client, clock):
+    """A preview that lists a slot the save would turn down is a lie: the
+    operator fills the form from it."""
+    for body, error in (
+            ({"kind": "at", "run_at": "2026-10-24T06:00:00Z"},
+             "run_at 必须是将来的时间"),
+            ({"kind": "cron", "cron_expr": "* * * * *"},
+             "触发间隔不能小于 5 分钟")):
+        resp = flask_client.post("/api/tasks/schedule/preview", json=body)
+        assert resp.status_code == 400, body
+        assert resp.get_json()["error"] == error
+
+    ok = flask_client.post("/api/tasks/schedule/preview", json={
+        "kind": "at", "run_at": "2026-10-24T09:00:00Z"})
+    assert ok.status_code == 200
+    assert ok.get_json()["upcoming"] == ["2026-10-24T09:00:00Z"]
+
+
 # ── the thread ───────────────────────────────────────────────
 
 

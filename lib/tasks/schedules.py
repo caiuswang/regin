@@ -349,23 +349,29 @@ def _has_attempt(session, task_id: int) -> bool:
                         .where(AgentTaskRun.task_id == task_id)).first() is not None
 
 
+def check_timing(spec: dict, now: datetime) -> None:
+    """The refusals decidable from the spec alone, with no task to consult.
+
+    A preview and a write share them: showing an operator a slot they can
+    never save is worse than naming the reason up front.
+    """
+    if spec["kind"] == SCHEDULE_KIND_AT and parse_iso(spec["run_at"]) <= now:
+        raise ScheduleRejected("run_at 必须是将来的时间")
+    if spec["kind"] == SCHEDULE_KIND_CRON:
+        slots = cron_slots(spec, now, _CRON_GAP_PROBE)
+        if any(b - a < CRON_MIN_GAP for a, b in zip(slots, slots[1:])):
+            raise ScheduleRejected("触发间隔不能小于 5 分钟")
+
+
 def _refuse(session, task: Optional[AgentTask], spec: dict,
             now: datetime) -> None:
     if task is None:
         raise UnknownTask("unknown task")
     if task.status == TASK_STATUS_ARCHIVED:
         raise ScheduleRejected("已归档的 task 不能定时")
-    if spec["kind"] == SCHEDULE_KIND_AT and parse_iso(spec["run_at"]) <= now:
-        raise ScheduleRejected("run_at 必须是将来的时间")
-    if spec["kind"] == SCHEDULE_KIND_CRON:
-        _refuse_cron(session, task.id, spec, now)
-
-
-def _refuse_cron(session, task_id: int, spec: dict, now: datetime) -> None:
-    slots = cron_slots(spec, now, _CRON_GAP_PROBE)
-    if any(b - a < CRON_MIN_GAP for a, b in zip(slots, slots[1:])):
-        raise ScheduleRejected("触发间隔不能小于 5 分钟")
-    if not _has_attempt(session, task_id):
+    check_timing(spec, now)
+    if spec["kind"] == SCHEDULE_KIND_CRON and not _has_attempt(session,
+                                                               task.id):
         raise ScheduleRejected("先 arm 这个 task")
 
 
