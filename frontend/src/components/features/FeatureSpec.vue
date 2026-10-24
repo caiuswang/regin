@@ -6,9 +6,9 @@
 // again. A spec nobody can read is a spec nobody can check a build against,
 // which is the one job the acceptance list has.
 //
-// Source over a rendered editor, for the reason `TaskBodyEditor` states: the
-// column holds prose agents both read and write, so the editor hands back the
-// exact bytes it was given. A save appends no event — rounds count builds, and
+// Edited as source beside a live preview (`editor/MarkdownEditor` says why
+// source-first): the editor hands back the exact bytes it was given. A save
+// appends no event — rounds count builds, and
 // a reworded sentence is not one.
 //
 // Images work the way they do in a task's body, and for the same reason: a
@@ -26,7 +26,7 @@ import Button from '../ui/Button.vue'
 import Card from '../Card.vue'
 import Icon from '../ui/Icon.vue'
 import MarkdownContent from '../MarkdownContent.vue'
-import RefTextarea from '../refs/RefTextarea.vue'
+import MarkdownEditor from '../editor/MarkdownEditor.vue'
 import { caretTarget, withCaretInsert } from '../../utils/caret'
 import { imageFilesFrom } from '../../utils/imageFiles'
 import { SPEC_ANCHOR } from '../../utils/featureLinks'
@@ -55,23 +55,16 @@ const trackerLabel = computed(() => {
 })
 
 const editing = ref(false)
-// Source is the editing mode, for the reason the file header states. Preview
-// is a READ of the draft, not a second editor: an `![](image:N)` reference is
-// a number until something resolves it, and checking that the number names the
-// mockup you meant used to mean saving first.
-const previewing = ref(false)
 const draft = ref('')
 const saving = ref(false)
 const error = ref('')
 const area = ref(null)
 
 const rendered = computed(() => resolveImageRefs(props.body, props.images))
-const draftRendered = computed(() => resolveImageRefs(draft.value, props.images))
 
 function start() {
   draft.value = props.body || ''
   error.value = ''
-  previewing.value = false
   editing.value = true
 }
 
@@ -138,13 +131,6 @@ async function onDrop(e) {
       </Button>
       <div v-else-if="editing" class="fs-actions">
         <Button
-          variant="ghost" size="sm" :aria-pressed="previewing"
-          data-testid="feature-spec-preview" @click="previewing = !previewing"
-        >
-          <Icon :name="previewing ? 'pencil' : 'eye'" :size="13" />
-          <span>{{ previewing ? 'Source' : 'Preview' }}</span>
-        </Button>
-        <Button
           variant="primary" size="sm" :disabled="saving"
           data-testid="feature-spec-save" @click="save"
         >{{ saving ? 'Saving…' : 'Save' }}</Button>
@@ -156,18 +142,15 @@ async function onDrop(e) {
     </div>
 
     <template v-if="editing && !tracked">
-      <RefTextarea
-        v-show="!previewing"
+      <MarkdownEditor
         ref="area"
-        v-model="draft" :project="project" :feature="featureId" :rows="14" class="fs-area" spellcheck="false"
+        v-model="draft" :project="project" :feature="featureId" :images="images" :attach="attach"
+        preview-testid="feature-spec-preview-pane"
+        :rows="14" spellcheck="false"
         aria-label="Feature spec markdown" data-testid="feature-spec-input"
         @paste="onPaste"
         @dragover.prevent
         @drop="onDrop"
-      />
-      <MarkdownContent
-        v-if="previewing" class="fs-body" :markdown="draftRendered" refs :project="project"
-        data-testid="feature-spec-preview-pane"
       />
       <p class="fs-hint">
         Markdown. {{ IMAGE_REF_HINT }} Paste or drop an image here.
@@ -204,11 +187,6 @@ async function onDrop(e) {
 .fs-actions { display: flex; align-items: center; gap: 0.375rem; }
 .fs-tracker-link { font-size: 12px; color: var(--color-primary); text-decoration: none; }
 .fs-tracker-link:hover { text-decoration: underline; }
-.fs-area {
-    margin-top: 0.75rem;
-    font-family: var(--font-mono, ui-monospace, monospace);
-    font-size: 0.8125rem; line-height: 1.5;
-}
 .fs-hint { margin-top: 0.375rem; font-size: 0.6875rem; color: var(--color-fg-faint); }
 .fs-error {
     margin-top: 0.375rem; font-size: 0.8125rem; color: var(--color-danger);
