@@ -24,9 +24,9 @@ const emit = defineEmits(['clear', 'archive', 'restore', 'priority', 'project',
 
 // "Put these on the night shift": a schedule body, or null to clear.
 const scheduleOptions = [
-  { value: '', label: '定时…' },
-  { value: 'night', label: '设定启动时间窗 22:00–06:00' },
-  { value: 'clear', label: '清除定时' },
+  { value: '', label: 'Schedule…' },
+  { value: 'night', label: 'Only start overnight (22:00–06:00)' },
+  { value: 'clear', label: 'Remove schedule' },
 ]
 function applySchedule(value) {
   if (value === 'night') emit('schedule', { ...NIGHT_WINDOW, tz: browserTz() || undefined })

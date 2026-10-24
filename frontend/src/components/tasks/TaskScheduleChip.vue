@@ -1,5 +1,5 @@
 <script setup>
-// A task's schedule as one chip: "等待时间窗 · in 3h" when only the gate holds
+// A task's schedule as one chip: "Starts in 3h" when only the gate holds
 // an armed, unblocked task; a clock and the next slot for a cron task; grey
 // when the schedule is switched off.
 import { computed } from 'vue'

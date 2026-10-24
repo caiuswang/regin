@@ -19,9 +19,9 @@ const emit = defineEmits(['close'])
 
 const { runs, fires, loading, error, load } = useTaskRuns()
 
-const VIA = { schedule: '调度器', dependency: '依赖完成', arm: 'arm' }
-const OUTCOME = { skipped_live: '跳过 · 上一次仍在运行', skipped_blocked: '跳过 · 依赖未完成',
-                  refused: '启动被拒绝' }
+const VIA = { schedule: 'by the scheduler', dependency: 'when its dependencies finished', arm: 'when armed' }
+const OUTCOME = { skipped_live: 'Skipped · previous run still going', skipped_blocked: 'Skipped · dependencies not done',
+                  refused: 'Launch refused' }
 const fireByRun = computed(() => new Map(
   fires.value.filter(f => f.run_id).map(f => [f.run_id, f])))
 const unlaunched = computed(() => fires.value.filter(f => f.outcome !== 'started'))
@@ -68,7 +68,7 @@ onMounted(() => load(props.task.id))
           />
         </div>
         <div v-if="fireByRun.get(run.id)" class="task-run-sched" :data-testid="`task-run-scheduled-${run.attempt}`">
-          定时 · <span :title="utcTitle(fireByRun.get(run.id).slot_at)">{{ localStamp(fireByRun.get(run.id).slot_at) }}</span>
+          Scheduled · <span :title="utcTitle(fireByRun.get(run.id).slot_at)">{{ localStamp(fireByRun.get(run.id).slot_at) }}</span>
           · {{ VIA[fireByRun.get(run.id).via] || fireByRun.get(run.id).via }}
         </div>
         <div class="task-run-facts">
@@ -90,7 +90,7 @@ onMounted(() => load(props.task.id))
     <ul v-if="!loading && unlaunched.length" class="task-runs task-fires" data-testid="task-fires">
       <li v-for="fire in unlaunched" :key="fire.id" class="task-run">
         <div class="task-run-head">
-          <span class="task-run-attempt">定时 · {{ localStamp(fire.slot_at) }}</span>
+          <span class="task-run-attempt">Scheduled · {{ localStamp(fire.slot_at) }}</span>
           <Badge :color="fire.outcome === 'refused' ? 'red' : 'gray'" :label="OUTCOME[fire.outcome] || fire.outcome" />
         </div>
         <p v-if="fire.reason" class="task-run-reason">{{ fire.reason }}</p>

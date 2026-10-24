@@ -36,9 +36,9 @@ def _announce_refused(task: dict, why: str) -> None:
 
     events.emit(
         "task.schedule_refused", trace_id=TASK_READY_TRACE,
-        title=f"定时启动被拒绝: {task['title'][:80]}",
-        body=(f"task {task['id']} — **{task['title']}** — 到了定时启动的时刻，"
-              f"但启动被拒绝：{why}。它仍然是 armed。"),
+        title=f"Scheduled start refused: {task['title'][:80]}",
+        body=(f"task {task['id']} — **{task['title']}** — reached its scheduled start, "
+              f"but the launch was refused: {why}. It is still armed."),
         key=REFUSED_KEY.format(task_id=task["id"]),
         links=[{"label": "Open task", "href": f"/tasks/{task['id']}"}])
 
@@ -118,7 +118,7 @@ def _cron_outcome(task: dict) -> tuple[str, Optional[str]]:
     from lib.tasks import runs  # noqa: PLC0415
 
     if runs.live_run(task["id"]) is not None:
-        return FIRE_SKIPPED_LIVE, "上一个 attempt 仍在运行"
+        return FIRE_SKIPPED_LIVE, "the previous attempt is still running"
     blocked = deps.blocking(task["id"])
     if blocked:
         return FIRE_SKIPPED_BLOCKED, "blocked by " + ", ".join(

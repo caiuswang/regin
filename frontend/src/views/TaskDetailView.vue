@@ -385,6 +385,7 @@ onMounted(() => { ensureProjects(); load() })
       <TaskScheduleCard
         v-if="task.status !== 'archived'" :key="task.id" :task="task"
         :armed="armed" :can-write="canWrite" @changed="load({ quiet: true })"
+        @arm="sheet = 'arm'"
       />
 
       <!-- The pending attempt's parameters, not the task's: a rerun under

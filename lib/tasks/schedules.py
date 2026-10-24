@@ -109,7 +109,7 @@ def _zone_or_none(name: str) -> Optional[ZoneInfo]:
 def _zone(name) -> ZoneInfo:
     zone = _zone_or_none(name) if isinstance(name, str) and name else None
     if zone is None:
-        raise ScheduleRejected(f"未知时区 {name!r}，需要 IANA 名称（如 Asia/Shanghai）")
+        raise ScheduleRejected(f"unknown timezone {name!r}: use an IANA name such as Asia/Shanghai")
     return zone
 
 
@@ -117,7 +117,7 @@ def _hhmm(value, field: str) -> str:
     try:
         parsed = datetime.strptime(str(value or "").strip(), "%H:%M")
     except ValueError:
-        raise ScheduleRejected(f"{field} 需要 HH:MM 格式") from None
+        raise ScheduleRejected(f"{field} must be HH:MM") from None
     return parsed.strftime("%H:%M")
 
 
@@ -128,7 +128,7 @@ def _run_at(value, zone: ZoneInfo) -> str:
     try:
         moment = datetime.fromisoformat(text)
     except ValueError:
-        raise ScheduleRejected("run_at 需要 ISO8601 时间") from None
+        raise ScheduleRejected("run_at must be an ISO 8601 time") from None
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=zone)
     return iso(moment)
@@ -137,17 +137,17 @@ def _run_at(value, zone: ZoneInfo) -> str:
 def _cron(value) -> str:
     expr = " ".join(str(value or "").split())
     if len(expr.split(" ")) != 5 or not croniter.is_valid(expr):
-        raise ScheduleRejected(f"无法解析的 cron 表达式 {expr!r}（需要标准 5 段）")
+        raise ScheduleRejected(f"cannot parse cron expression {expr!r}: it needs the standard 5 fields")
     return expr
 
 
 def parse_spec(payload) -> dict:
     """The PUT body as normalised columns. Raises `ScheduleRejected`."""
     if not isinstance(payload, dict):
-        raise ScheduleRejected("需要 JSON 对象")
+        raise ScheduleRejected("expected a JSON object")
     kind = payload.get("kind")
     if kind not in SCHEDULE_KINDS:
-        raise ScheduleRejected(f"kind 必须是 {', '.join(SCHEDULE_KINDS)} 之一")
+        raise ScheduleRejected(f"kind must be one of {', '.join(SCHEDULE_KINDS)}")
     tz = payload.get("tz") or default_tz()
     zone = _zone(tz)
     spec = {"kind": kind, "tz": tz, "run_at": None, "window_start": None,
@@ -159,7 +159,7 @@ def parse_spec(payload) -> dict:
         spec["window_start"] = _hhmm(payload.get("window_start"), "window_start")
         spec["window_end"] = _hhmm(payload.get("window_end"), "window_end")
         if spec["window_start"] == spec["window_end"]:
-            raise ScheduleRejected("window_start 和 window_end 不能相同")
+            raise ScheduleRejected("window start and end must differ")
     else:
         spec["cron_expr"] = _cron(payload.get("cron_expr"))
     return spec
@@ -314,9 +314,9 @@ def detail(task_id: int, now: Optional[datetime] = None) -> Optional[dict]:
 def summary(spec: dict, now: datetime) -> dict:
     """What a list row carries about its schedule."""
     if spec["kind"] == SCHEDULE_KIND_AT:
-        text = f"不早于 {spec['run_at']}"
+        text = f"once at {spec['run_at']}"
     elif spec["kind"] == SCHEDULE_KIND_WINDOW:
-        text = f"时间窗 {spec['window_start']}–{spec['window_end']} {spec['tz']}"
+        text = f"window {spec['window_start']}–{spec['window_end']} {spec['tz']}"
     else:
         text = f"cron {spec['cron_expr']} {spec['tz']}"
     return {"kind": spec["kind"], "enabled": spec["enabled"],
@@ -356,11 +356,11 @@ def check_timing(spec: dict, now: datetime) -> None:
     never save is worse than naming the reason up front.
     """
     if spec["kind"] == SCHEDULE_KIND_AT and parse_iso(spec["run_at"]) <= now:
-        raise ScheduleRejected("run_at 必须是将来的时间")
+        raise ScheduleRejected("the start time must be in the future")
     if spec["kind"] == SCHEDULE_KIND_CRON:
         slots = cron_slots(spec, now, _CRON_GAP_PROBE)
         if any(b - a < CRON_MIN_GAP for a, b in zip(slots, slots[1:])):
-            raise ScheduleRejected("触发间隔不能小于 5 分钟")
+            raise ScheduleRejected("runs must be at least 5 minutes apart")
 
 
 def _refuse(session, task: Optional[AgentTask], spec: dict,
@@ -368,11 +368,11 @@ def _refuse(session, task: Optional[AgentTask], spec: dict,
     if task is None:
         raise UnknownTask("unknown task")
     if task.status == TASK_STATUS_ARCHIVED:
-        raise ScheduleRejected("已归档的 task 不能定时")
+        raise ScheduleRejected("an archived task cannot be scheduled")
     check_timing(spec, now)
     if spec["kind"] == SCHEDULE_KIND_CRON and not _has_attempt(session,
                                                                task.id):
-        raise ScheduleRejected("先 arm 这个 task")
+        raise ScheduleRejected("choose launch settings (arm the task) before scheduling repeats")
 
 
 def put(task_id: int, spec: dict, *, user_id: Optional[int] = None,

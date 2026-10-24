@@ -215,7 +215,7 @@ def test_at_in_the_past_is_refused(flask_client, clock):
     resp = _put(flask_client, task_id, {"kind": "at",
                                         "run_at": "2026-10-24T06:00:00Z"})
     assert resp.status_code == 400
-    assert "将来" in resp.get_json()["error"]
+    assert "future" in resp.get_json()["error"]
 
 
 def test_manual_run_overrides_a_closed_gate(flask_client, launcher, clock):
@@ -242,7 +242,7 @@ def test_run_all_skips_a_gated_task(flask_client, launcher, clock):
     assert held.status_code == 409
     body = held.get_json()
     assert body["waiting_schedule"] is True
-    assert body["error"].startswith("等待时间窗")
+    assert body["error"].startswith("waiting for schedule")
     assert _task(gated).status == "armed"
 
 
@@ -349,7 +349,7 @@ def test_too_frequent_cron_is_refused(flask_client):
     resp = _put(flask_client, task_id, {"kind": "cron",
                                         "cron_expr": "*/2 * * * *"})
     assert resp.status_code == 400
-    assert resp.get_json()["error"] == "触发间隔不能小于 5 分钟"
+    assert resp.get_json()["error"] == "runs must be at least 5 minutes apart"
 
 
 def test_cron_needs_an_armed_or_previous_attempt(flask_client):
@@ -357,7 +357,7 @@ def test_cron_needs_an_armed_or_previous_attempt(flask_client):
     resp = _put(flask_client, task_id, {"kind": "cron",
                                         "cron_expr": "0 9 * * *"})
     assert resp.status_code == 400
-    assert resp.get_json()["error"] == "先 arm 这个 task"
+    assert resp.get_json()["error"] == "choose launch settings (arm the task) before scheduling repeats"
 
 
 def test_dst_is_honoured_by_the_schedule_timezone(flask_client):
@@ -418,7 +418,7 @@ def test_archiving_disables_and_archived_cannot_be_scheduled(flask_client):
 
     resp = _put(flask_client, task_id, NIGHT)
     assert resp.status_code == 400
-    assert resp.get_json()["error"] == "已归档的 task 不能定时"
+    assert resp.get_json()["error"] == "an archived task cannot be scheduled"
 
 
 def test_get_detail_and_row_summary(flask_client, clock):
@@ -451,9 +451,9 @@ def test_preview_refuses_what_a_write_refuses(flask_client, clock):
     operator fills the form from it."""
     for body, error in (
             ({"kind": "at", "run_at": "2026-10-24T06:00:00Z"},
-             "run_at 必须是将来的时间"),
+             "the start time must be in the future"),
             ({"kind": "cron", "cron_expr": "* * * * *"},
-             "触发间隔不能小于 5 分钟")):
+             "runs must be at least 5 minutes apart")):
         resp = flask_client.post("/api/tasks/schedule/preview", json=body)
         assert resp.status_code == 400, body
         assert resp.get_json()["error"] == error

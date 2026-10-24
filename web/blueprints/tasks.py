@@ -589,7 +589,7 @@ def _waiting_for_gate(task_id: int):
     gate = scheduler.gate_waiting(task_id)
     if gate is None:
         return None
-    return jsonify({"error": f"等待时间窗 {gate['next_fire_at'] or ''}".strip(),
+    return jsonify({"error": f"waiting for schedule {gate['next_fire_at'] or ''}".strip(),
                     "waiting_schedule": True,
                     "next_fire_at": gate["next_fire_at"]}), 409
 

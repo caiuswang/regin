@@ -112,7 +112,7 @@ async function runAll(group) {
       if (result.ok === false) {
         const gated = result.body?.waiting_schedule
         refused.push({ id, title,
-                       message: gated ? `等待时间窗 · ${localStamp(result.body.next_fire_at)}`
+                       message: gated ? `Waiting for its schedule · ${localStamp(result.body.next_fire_at)}`
                          : (result.msg || 'the run was refused'),
                        blocking: result.body?.blocking || [] })
       }

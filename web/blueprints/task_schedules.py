@@ -69,7 +69,7 @@ def _toggle(task_id: int, enabled: bool):
     if task is None:
         return _error("unknown task", 404)
     if enabled and task["status"] == "archived":
-        return _error("已归档的 task 不能定时")
+        return _error("an archived task cannot be scheduled")
     if schedules.set_enabled(task_id, enabled) is None:
         return _error("no schedule", 404)
     return jsonify(schedules.detail(task_id))
@@ -102,7 +102,7 @@ def _bulk_ids(payload) -> list[int]:
     ids = payload.get("task_ids") if isinstance(payload, dict) else None
     if not isinstance(ids, list) or not ids or not all(
             isinstance(i, int) and not isinstance(i, bool) for i in ids):
-        raise schedules.ScheduleRejected("task_ids 需要是 task id 列表")
+        raise schedules.ScheduleRejected("task_ids must be a list of task ids")
     return ids[:_BULK_MAX]
 
 
