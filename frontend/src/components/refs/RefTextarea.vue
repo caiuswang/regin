@@ -34,7 +34,6 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue'])
 const field = ref(null)
 const textarea = computed(() => field.value?.$el ?? null)
-defineExpose({ textarea })
 
 const menu = useRefMentions({ project: () => props.project, feature: () => props.feature })
 const {
@@ -89,6 +88,9 @@ function syncMenu() {
 }
 
 function onInput(event) {
+  const previous = lastValue
+  lastValue = event.target.value
+  if (event.inputType === 'historyUndo') restoreOnUndo(event.target, previous)
   if (composing || event.isComposing) return
   syncMenu()
 }
@@ -126,12 +128,54 @@ function execEdit(text) {
 // v-model and the menu both listen for.
 function replaceRange(start, end, text) {
   const el = textarea.value
-  if (!el) return
+  if (!el) return false
   el.setSelectionRange(start, end)
-  if (document.activeElement === el && execEdit(text)) return
+  if (document.activeElement === el && execEdit(text)) return true
   el.setRangeText(text, start, end, 'end')
   el.dispatchEvent(new Event('input', { bubbles: true }))
+  return false
 }
+
+// The browser's undo selects the range an edit replaced. An edit from outside
+// may replace more than the writer had selected (a list mark rewrites whole
+// lines), so each one keeps the selection it was made from, keyed by the
+// value it turned into what: an undo that takes exactly that `after` back to
+// that `before` is undoing it, however much typing, redoing or other marks
+// came between.
+const UNDO_DEPTH = 50
+const undoSelections = []
+let lastValue = null
+
+function restoreOnUndo(el, previous) {
+  for (let i = undoSelections.length - 1; i >= 0; i -= 1) {
+    const entry = undoSelections[i]
+    if (entry.after === previous && entry.before === el.value) {
+      el.setSelectionRange(...entry.select)
+      return
+    }
+  }
+}
+
+// The insert only edits the focused element, so an edit made from outside
+// the field brings the focus back first.
+function editFromOutside(start, end, text, selection = null) {
+  const el = textarea.value
+  if (!el) return
+  if (document.activeElement !== el) el.focus()
+  const before = el.value
+  if (!replaceRange(start, end, text) || !selection) return
+  undoSelections.push({ before, after: el.value, select: selection })
+  if (undoSelections.length > UNDO_DEPTH) undoSelections.shift()
+}
+
+function setSelection(start, end) {
+  const el = textarea.value
+  if (!el) return
+  if (document.activeElement !== el) el.focus()
+  el.setSelectionRange(start, end)
+}
+
+defineExpose({ textarea, replaceRange: editFromOutside, setSelection })
 
 function accept(row) {
   const edit = menu.editFor(row)

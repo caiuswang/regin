@@ -9,6 +9,9 @@ defineProps({
   side: { type: String, default: 'bottom' },
   align: { type: String, default: 'center' },
 })
+// Reka hands the focus back to the trigger on close; a listener that calls
+// `preventDefault()` puts it somewhere else instead.
+defineEmits(['closeAutoFocus'])
 const plScope = usePlScope()
 </script>
 
@@ -22,6 +25,7 @@ const plScope = usePlScope()
         :side="side"
         :align="align"
         :side-offset="6"
+        @close-auto-focus="$emit('closeAutoFocus', $event)"
         class="ds-popover"
         :data-pl-part="plScope ? 'popover' : undefined"
       >

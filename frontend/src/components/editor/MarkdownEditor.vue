@@ -13,6 +13,7 @@
 // `utils/caret.js`, so a host swaps this in for a bare `RefTextarea`.
 import { computed, onBeforeUnmount, ref } from 'vue'
 import Button from '../ui/Button.vue'
+import EditorToolbar from './EditorToolbar.vue'
 import Icon from '../ui/Icon.vue'
 import MarkdownContent from '../MarkdownContent.vue'
 import RefTextarea from '../refs/RefTextarea.vue'
@@ -98,7 +99,9 @@ function fieldAttrs(all) {
   >
     <div class="me-bar">
       <div class="me-tools">
-        <slot v-if="mode !== 'preview'" name="toolbar" />
+        <slot v-if="mode !== 'preview'" name="toolbar">
+          <EditorToolbar :field="source" />
+        </slot>
       </div>
       <div class="me-modes" role="group" aria-label="Editor mode">
         <Button
