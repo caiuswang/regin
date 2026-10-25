@@ -431,6 +431,7 @@ test('test_every_body_editor_offers_references', async ({ page }) => {
   await page.getByTestId('task-body-edit').click()
   await offersReferences(page, page.getByTestId('task-body-area'), s.project)
   await page.getByTestId('task-body-cancel').click()
+  await page.getByRole('button', { name: 'Discard changes?' }).click()
   await rowAction(page.getByTestId('task-detail-actions'), 'edit')
   await offersReferences(page, page.locator('#task-edit-body'), s.project)
 })

@@ -120,6 +120,7 @@ test('cancel really cancels', async ({ page }) => {
   await page.getByTestId('task-body-edit').click()
   await page.getByTestId('task-body-area').fill('thrown away')
   await page.getByTestId('task-body-cancel').click()
+  await page.getByRole('button', { name: 'Discard changes?' }).click()
 
   await expect(page.locator('.tbe-body')).toContainText('original')
   expect(patched).toBeNull()

@@ -4,7 +4,7 @@
 // The sheets on the list are for acting; this is for reading and linking. A
 // task referenced from a commit, an inbox message or a blocking-dependency
 // list needs an address, and a modal has none.
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, provide, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { closeRun, slotsFull, useRunSlots } from '../composables/useRunSlots.js'
 import api from '../api'
@@ -57,6 +57,10 @@ const {
 
 const task = ref(null)
 const loading = ref(true)
+// The body editor's focus layout leaves the page to the body: set by the
+// editor, read here to hide every other card.
+const editorFocus = ref(false)
+provide('editorFocus', editorFocus)
 const error = ref('')
 const sheet = ref('')
 
@@ -204,7 +208,7 @@ onMounted(() => { ensureProjects(); load() })
 </script>
 
 <template>
-  <div class="space-y-4">
+  <div :class="['space-y-4 td-page', { 'is-editor-focus': editorFocus }]">
     <header class="page-header td-header">
       <div class="page-header-text">
         <div class="page-eyebrow">
@@ -430,6 +434,7 @@ onMounted(() => { ensureProjects(); load() })
 </template>
 
 <style scoped>
+.td-page.is-editor-focus > :deep(:not(:has(.md-editor.is-focus))) { display: none; }
 .td-open-session {
     display: flex;
     flex-wrap: wrap;

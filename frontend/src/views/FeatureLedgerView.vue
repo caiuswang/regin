@@ -16,7 +16,7 @@
 // reaches a tracker is the refresh on a remotely-tracked feature, and it is a
 // separate, explicit event — a native feature has no such control, because its
 // stage is derived here.
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, provide, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import api from '../api'
 import { useAttachedImages } from '../composables/useAttachedImages.js'
@@ -50,6 +50,11 @@ import FeatureSectionNav from '../components/features/FeatureSectionNav.vue'
 import FeatureStageLine from '../components/features/FeatureStageLine.vue'
 import FeatureTasks from '../components/features/FeatureTasks.vue'
 
+
+// The spec editor's focus layout leaves the page to the spec: set by the
+// editor, read here to hide every other section and the section index.
+const editorFocus = ref(false)
+provide('editorFocus', editorFocus)
 const route = useRoute()
 const featureId = computed(() => Number(route.params.id))
 // The list you opened this row from, not the default one: the back link
@@ -320,7 +325,7 @@ function onDeclared() {
 </script>
 
 <template>
-  <div class="ledger space-y-4 p-4">
+  <div :class="['ledger space-y-4 p-4', { 'is-editor-focus': editorFocus }]">
     <Teleport v-if="canWrite && ledger" defer to="#pipeline-actions">
       <PipelineCreateButton kind="defect" testid="feature-new-defect" :prefill="createPrefill" />
     </Teleport>
@@ -422,6 +427,7 @@ function onDeclared() {
         :tracker="ledger.origin"
         :external-url="ledger.external_url"
         :project="ledger.project_id"
+        :title="ledger.title"
         @saved="ledger = $event"
       />
 
@@ -521,6 +527,7 @@ function onDeclared() {
 </template>
 
 <style scoped>
+.ledger.is-editor-focus > :deep(:not(:has(.md-editor.is-focus))) { display: none; }
 /* A jump lands the section under the sticky index, not behind it. */
 .ledger :deep(:is(#feature-spec, #feature-related, #slices, #feature-images, #feature-tasks,
                   #feature-defects, #feature-sessions)) {

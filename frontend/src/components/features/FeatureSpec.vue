@@ -16,6 +16,10 @@
 // caret. The syntax is otherwise unguessable, and an attachment the prose
 // cannot name is a picture beside the spec rather than a picture in it.
 //
+// Save and Cancel ride in the editor's sticky head, so they stay in reach
+// halfway down a long spec; Cancel, or leaving the page, asks before throwing
+// an edited draft away.
+//
 // A tracked feature's spec lives in its issue, and Refresh overwrites
 // `features.body` with the issue's text — so an edit here would be lost on the
 // next refresh. The card is read-only there and points at the tracker instead;
@@ -27,6 +31,7 @@ import Card from '../Card.vue'
 import Icon from '../ui/Icon.vue'
 import MarkdownContent from '../MarkdownContent.vue'
 import MarkdownEditor from '../editor/MarkdownEditor.vue'
+import { useDiscardGuard } from '../../composables/useDiscardGuard'
 import { caretTarget, withCaretInsert } from '../../utils/caret'
 import { imageFilesFrom } from '../../utils/imageFiles'
 import { SPEC_ANCHOR } from '../../utils/featureLinks'
@@ -47,6 +52,8 @@ const props = defineProps({
   externalUrl: { type: String, default: null },
   // The feature's project: what an `@` in the spec searches first.
   project: { type: Number, default: null },
+  // The feature's title, shown over the editor in its focus layout.
+  title: { type: String, default: '' },
 })
 const emit = defineEmits(['saved'])
 
@@ -67,6 +74,14 @@ function start() {
   draft.value = props.body || ''
   error.value = ''
   editing.value = true
+}
+
+const { confirmDiscard } = useDiscardGuard(() => editing.value && draft.value !== (props.body || ''))
+
+async function cancel() {
+  if (!(await confirmDiscard())) return
+  editing.value = false
+  error.value = ''
 }
 
 async function save() {
@@ -141,30 +156,32 @@ async function onDrop(e) {
         <Icon name="pencil" :size="13" />
         <span>Edit</span>
       </Button>
-      <div v-else-if="editing" class="fs-actions">
-        <Button
-          variant="primary" size="sm" :disabled="saving"
-          data-testid="feature-spec-save" @click="save"
-        >{{ saving ? 'Saving…' : 'Save' }}</Button>
-        <Button
-          variant="secondary" size="sm" :disabled="saving"
-          data-testid="feature-spec-cancel" @click="editing = false"
-        >Cancel</Button>
-      </div>
     </div>
 
     <template v-if="editing && !tracked">
       <MarkdownEditor
         ref="area"
         v-model="draft" :project="project" :feature="featureId" :images="images" :attach="attach"
-        preview-testid="feature-spec-rich"
+        preview-testid="feature-spec-rich" :title="title"
+        class="fs-editor"
         :rows="14" spellcheck="false"
         aria-label="Feature spec markdown" data-testid="feature-spec-input"
         @paste="onPaste"
         @dragover.prevent
         @drop="onDrop"
         @submit="save"
-      />
+      >
+        <template #actions>
+          <Button
+            variant="primary" size="sm" :disabled="saving"
+            data-testid="feature-spec-save" @click="save"
+          >{{ saving ? 'Saving…' : 'Save' }}</Button>
+          <Button
+            variant="secondary" size="sm" :disabled="saving"
+            data-testid="feature-spec-cancel" @click="cancel"
+          >Cancel</Button>
+        </template>
+      </MarkdownEditor>
       <p class="fs-hint">
         Markdown. {{ IMAGE_REF_HINT }} Paste or drop an image here.
         Editing it appends no event.
@@ -200,6 +217,7 @@ async function onDrop(e) {
 .fs-actions { display: flex; align-items: center; gap: 0.375rem; }
 .fs-tracker-link { font-size: 12px; color: var(--color-primary); text-decoration: none; }
 .fs-tracker-link:hover { text-decoration: underline; }
+.fs-editor { --me-head-bleed: 1.25rem; }
 .fs-hint { margin-top: 0.375rem; font-size: 0.6875rem; color: var(--color-fg-faint); }
 .fs-error {
     margin-top: 0.375rem; font-size: 0.8125rem; color: var(--color-danger);

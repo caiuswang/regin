@@ -16,6 +16,7 @@ import RefHighlight from './RefHighlight.vue'
 import RefMenu from './RefMenu.vue'
 import Textarea from '../ui/Textarea.vue'
 import { refForUrl, useRefMentions } from '../../composables/useRefMentions.js'
+import { useAutogrow } from '../../composables/useAutogrow.js'
 import { useRefPreview } from '../../composables/useRefPreview.js'
 import { caretPoint } from '../../utils/caretPoint.js'
 import { cn } from '../../utils/cn'
@@ -30,10 +31,14 @@ const props = defineProps({
   // The feature this body belongs to, or nothing: it and its work lead the menu.
   feature: { type: [Number, String], default: null },
   error: { type: Boolean, default: false },
+  // As tall as its text, never scrolling inside itself: the page scrolls.
+  autogrow: { type: Boolean, default: false },
 })
 const emit = defineEmits(['update:modelValue'])
 const field = ref(null)
 const textarea = computed(() => field.value?.$el ?? null)
+const grown = computed(() => (props.autogrow ? textarea.value : null))
+const { fit } = useAutogrow(grown, () => props.modelValue)
 
 const menu = useRefMentions({ project: () => props.project, feature: () => props.feature })
 const {
@@ -88,6 +93,7 @@ function syncMenu() {
 }
 
 function onInput(event) {
+  if (props.autogrow) fit()
   const previous = lastValue
   lastValue = event.target.value
   if (event.inputType === 'historyUndo') restoreOnUndo(event.target, previous)
@@ -175,7 +181,7 @@ function setSelection(start, end) {
   el.setSelectionRange(start, end)
 }
 
-defineExpose({ textarea, replaceRange: editFromOutside, setSelection })
+defineExpose({ textarea, replaceRange: editFromOutside, setSelection, fit })
 
 function accept(row) {
   const edit = menu.editFor(row)
@@ -270,6 +276,7 @@ onBeforeUnmount(() => {
   <div :class="rootClass($attrs)" :style="$attrs.style">
     <Textarea
       ref="field"
+      :class="{ 'is-autogrow': autogrow }"
       @keydown="onKeydown"
       @input="onInput"
       @keyup="onCaretMove"
@@ -319,4 +326,5 @@ onBeforeUnmount(() => {
     vertical-align: baseline;
 }
 .ref-textarea.is-bare > textarea { display: block; }
+.ref-textarea > textarea.is-autogrow { resize: none; overflow-y: hidden; }
 </style>

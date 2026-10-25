@@ -12,6 +12,7 @@ import Card from '../Card.vue'
 import Icon from '../ui/Icon.vue'
 import MarkdownContent from '../MarkdownContent.vue'
 import MarkdownEditor from '../editor/MarkdownEditor.vue'
+import { useDiscardGuard } from '../../composables/useDiscardGuard'
 import { caretTarget, withCaretInsert } from '../../utils/caret'
 import { imageFilesFrom } from '../../utils/imageFiles'
 import { IMAGE_REF_HINT, imageRefBlock, resolveImageRefs } from '../../utils/taskBodyImages'
@@ -41,7 +42,10 @@ function start() {
   editing.value = true
 }
 
-function cancel() {
+const { confirmDiscard } = useDiscardGuard(() => editing.value && draft.value !== (props.task.body || ''))
+
+async function cancel() {
+  if (!(await confirmDiscard())) return
   editing.value = false
   error.value = ''
 }
@@ -94,15 +98,6 @@ async function onDrop(e) {
           <span>Edit</span>
         </Button>
       </div>
-      <div v-else-if="editing" class="tbe-actions">
-        <Button
-          variant="primary" size="sm" :disabled="saving"
-          data-testid="task-body-save" @click="save"
-        >{{ saving ? 'Saving…' : 'Save' }}</Button>
-        <Button variant="secondary" size="sm" data-testid="task-body-cancel" @click="cancel">
-          Cancel
-        </Button>
-      </div>
     </div>
 
     <template v-if="editing">
@@ -110,14 +105,25 @@ async function onDrop(e) {
         ref="area"
         v-model="draft" :project="task.project_id" :feature="task.feature_id"
         :images="images" :attach="attach"
-        preview-testid="task-body-rich"
+        preview-testid="task-body-rich" :title="task.title || ''"
+        class="tbe-editor"
         :rows="18" spellcheck="false"
         aria-label="Task details markdown" data-testid="task-body-area"
         @paste="onPaste"
         @dragover.prevent
         @drop="onDrop"
         @submit="save"
-      />
+      >
+        <template #actions>
+          <Button
+            variant="primary" size="sm" :disabled="saving"
+            data-testid="task-body-save" @click="save"
+          >{{ saving ? 'Saving…' : 'Save' }}</Button>
+          <Button variant="secondary" size="sm" data-testid="task-body-cancel" @click="cancel">
+            Cancel
+          </Button>
+        </template>
+      </MarkdownEditor>
       <p class="tbe-hint">Markdown. {{ IMAGE_REF_HINT }} Paste or drop an image here.</p>
       <p v-if="error" class="tbe-error" role="alert" data-testid="task-body-error">{{ error }}</p>
     </template>
@@ -140,7 +146,7 @@ async function onDrop(e) {
     gap: 0.75rem;
 }
 .tbe-title { margin-bottom: 0; }
-.tbe-actions { display: flex; gap: 0.375rem; }
+.tbe-editor { --me-head-bleed: 1.25rem; }
 .tbe-hint {
     margin-top: 0.375rem;
     font-size: 0.6875rem;
