@@ -25,6 +25,11 @@
 // host's Save/Cancel in the `actions` slot) sticks to the top of the page's
 // scroller while the editor is on screen. Expand (or ⌘⇧F) opens the focus
 // layout, Collapse or Esc closes it (`composables/useEditorLayout`).
+//
+// The rich face's `/` Image item opens a file picker owned here and hands the
+// chosen files to the host's `attach`, which resolves either the attached
+// `idx` list or `{ taken, error }`. What arrived is placed at the caret; a
+// failure is the host's to show, reported as `attach-error`.
 import { computed, defineAsyncComponent, ref, useSlots } from 'vue'
 import Button from '../ui/Button.vue'
 import EditorToolbar from './EditorToolbar.vue'
@@ -48,7 +53,7 @@ const props = defineProps({
   // The focus layout's title line: what is being edited.
   title: { type: String, default: '' },
 })
-const emit = defineEmits(['update:modelValue', 'submit'])
+const emit = defineEmits(['update:modelValue', 'submit', 'attach-error'])
 
 const RichEditor = defineAsyncComponent(() => import('./RichEditor.vue'))
 
@@ -108,6 +113,30 @@ function insertImages(idxs, event = null) {
     return
   }
   emit('update:modelValue', withCaretInsert(caretTarget(event, textarea.value), props.modelValue, imageRefBlock(idxs)))
+}
+
+const picker = ref(null)
+
+function pickImage() {
+  const input = picker.value
+  if (!input || !props.attach) return
+  input.value = ''
+  input.click()
+}
+
+async function onPicked() {
+  const input = picker.value
+  if (!input?.files?.length) return
+  let result
+  try {
+    result = await props.attach(input)
+  } catch (e) {
+    emit('attach-error', e?.message || 'could not attach the image')
+    return
+  }
+  const taken = Array.isArray(result) ? result : result?.taken ?? []
+  insertImages(taken)
+  if (result?.error || !taken.length) emit('attach-error', result?.error || 'could not attach the image')
 }
 
 defineExpose({ textarea, editor, insertImages, layout, setLayout })
@@ -177,11 +206,12 @@ function listeners(all) {
       ref="rich"
       v-bind="listeners($attrs)"
       :model-value="modelValue" :images="images" :project="project" :feature="feature"
-      :testid="previewTestid"
+      :testid="previewTestid" :can-attach="!!attach"
       :aria-label="$attrs['aria-label'] ?? null" :placeholder="$attrs.placeholder ?? ''"
       @update:model-value="emit('update:modelValue', $event)"
       @submit="emit('submit')"
       @link="toolbar?.openLink()"
+      @pick-image="pickImage"
     />
     <RefTextarea
       v-else
@@ -191,6 +221,11 @@ function listeners(all) {
       :model-value="modelValue" :project="project" :feature="feature"
       @update:model-value="emit('update:modelValue', $event)"
     />
+    <input
+      v-if="attach && mode === 'rich'"
+      ref="picker" type="file" accept="image/*" multiple hidden
+      data-testid="editor-image-picker" @change="onPicked"
+    >
   </div>
 </template>
 

@@ -26,6 +26,7 @@ import { Placeholder } from '@tiptap/extensions'
 import { closeHistory } from '@tiptap/pm/history'
 import { TextSelection } from '@tiptap/pm/state'
 import { TableMap, addColumn, addRow, isInTable, selectedRect } from '@tiptap/pm/tables'
+import { SLASH_HANDOFF, SLASH_MENU, SlashCommand, inCode } from './slash.js'
 
 const tight = {
   tight: {
@@ -197,15 +198,9 @@ function addAndLand(where) {
 // `@` opens the reference menu. The plugin only finds the token; what it
 // searches, lists and writes is `useRefMentions`, behind `render`. Any prefix
 // is let through so the menu's own rule (no `@` inside a word or an address)
-// decides, as it does in the source face.
+// decides, as it does in the source face. It stays shut while the `/` menu
+// is open, except for the `@` that menu's Reference item types.
 export const REF_MENTION = new PluginKey('refMention')
-
-function inCode({ state, range }) {
-  const $from = state.doc.resolve(range.from)
-  if ($from.parent.type.spec.code) return true
-  const code = state.schema.marks.code
-  return !!code && ($from.marks().some((m) => m.type === code) || state.doc.rangeHasMark(range.from, range.to, code))
-}
 
 function RefMention(render) {
   return Extension.create({
@@ -219,7 +214,9 @@ function RefMention(render) {
         pluginKey: REF_MENTION,
         char: '@',
         allowedPrefixes: null,
-        allow: (props) => !inCode(props),
+        allow: ({ state, range }) => !inCode(state, range),
+        shouldShow: ({ editor, transaction }) =>
+          !SLASH_MENU.getState(editor.state)?.active || !!transaction.getMeta(SLASH_HANDOFF),
         // Escape closes the menu until the next keystroke that edits, as in
         // the source face; moving the caret alone does not bring it back.
         shouldResetDismissed: ({ transaction }) => transaction.docChanged,
@@ -245,7 +242,7 @@ const ToolbarCommands = Extension.create({
 })
 
 export function richExtensions({
-  placeholder = '', resolveImage, refItem, images, onSubmit, onLink, views = {}, mention = null,
+  placeholder = '', resolveImage, refItem, images, onSubmit, onLink, views = {}, mention = null, slash = null,
 } = {}) {
   const options = (extension, opts) => {
     const set = Object.fromEntries(Object.entries(opts).filter(([, v]) => v))
@@ -275,5 +272,6 @@ export function richExtensions({
     Keys({ onSubmit, onLink }),
     ToolbarCommands,
     ...(mention ? [RefMention(mention)] : []),
+    ...(slash ? [SlashCommand({ ...slash, blockedBy: REF_MENTION })] : []),
   ]
 }

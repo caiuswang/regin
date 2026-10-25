@@ -169,6 +169,7 @@ async function onDrop(e) {
         @dragover.prevent
         @drop="onDrop"
         @submit="save"
+        @attach-error="error = $event"
       >
         <template #actions>
           <Button

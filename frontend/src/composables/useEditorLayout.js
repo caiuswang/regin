@@ -109,7 +109,7 @@ export function useEditorLayout({ root, head, editor, source, enabled }) {
   // parent node. While a menu, popover or dialog is open, Esc is theirs.
   function onDocumentKeydown(event) {
     if (event.key !== 'Escape' || dialog.visible) return
-    if (document.querySelector('[data-dismissable-layer], [data-ref-menu]')) return
+    if (document.querySelector('[data-dismissable-layer], [data-ref-menu], [data-slash-menu]')) return
     setLayout('inline')
   }
 

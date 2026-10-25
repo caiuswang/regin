@@ -21,6 +21,8 @@
 // `parse` that reads the body, so a reference is told apart by `parseRefs`
 // alone. A pasted or dropped image is the host's to attach and report on; the
 // host hands back what arrived and `insertImages` places it at the caret.
+// `/` opens the block menu (`editor/slash.js`); its Image item asks the host
+// for a file (`pick-image`) and its Reference item hands over to `@`.
 import { onBeforeUnmount, ref, shallowRef, useId, watch } from 'vue'
 import { Editor, EditorContent, VueNodeViewRenderer } from '@tiptap/vue-3'
 import { NodeSelection, Selection, TextSelection } from '@tiptap/pm/state'
@@ -30,8 +32,11 @@ import RefMenu from '../refs/RefMenu.vue'
 import RichImage from './nodes/RichImage.vue'
 import RichOpaque from './nodes/RichOpaque.vue'
 import RichRef from './nodes/RichRef.vue'
+import SlashMenu from './SlashMenu.vue'
 import { parse, serialize } from '../../editor/markdownDoc.js'
 import { richExtensions } from '../../editor/extensions.js'
+import { SLASH_MENU } from '../../editor/slash.js'
+import { exitSuggestion } from '@tiptap/suggestion'
 import { refForUrl, useRefMentions } from '../../composables/useRefMentions.js'
 import { useRefPreview } from '../../composables/useRefPreview.js'
 import { useRefResolve } from '../../composables/useRefResolve.js'
@@ -46,8 +51,9 @@ const props = defineProps({
   testid: { type: String, default: null },
   ariaLabel: { type: String, default: null },
   placeholder: { type: String, default: '' },
+  canAttach: { type: Boolean, default: false },
 })
-const emit = defineEmits(['update:modelValue', 'submit', 'link'])
+const emit = defineEmits(['update:modelValue', 'submit', 'link', 'pick-image'])
 
 let segments = []
 let retained = new WeakMap()
@@ -207,6 +213,62 @@ const mention = () => ({
   },
 })
 
+// The `/` menu while it is open: what it lists, the highlighted row, where it
+// is drawn, and the suggestion's own `command` that runs a picked item.
+const slash = shallowRef(null)
+const slashIndex = ref(0)
+
+function slashAnchor(clientRect, fallback = null) {
+  const rect = clientRect?.()
+  return rect ? { left: rect.left, lineTop: rect.top, lineBottom: rect.bottom } : fallback
+}
+
+function syncSlash(found) {
+  const queryChanged = slash.value?.query !== found.query
+  slash.value = {
+    query: found.query,
+    items: found.items ?? [],
+    command: found.command,
+    clientRect: found.clientRect,
+    anchor: slashAnchor(found.clientRect, slash.value?.anchor ?? null),
+  }
+  if (queryChanged || slashIndex.value >= slash.value.items.length) slashIndex.value = 0
+}
+
+function pickSlash(item) {
+  slash.value?.command(item)
+}
+
+const SLASH_STEP = { ArrowDown: 1, ArrowUp: -1 }
+
+function slashKey({ event }) {
+  const open = slash.value
+  if (!open || event.isComposing || event.keyCode === 229) return false
+  const count = open.items.length
+  if (event.key in SLASH_STEP) {
+    if (count) slashIndex.value = (slashIndex.value + SLASH_STEP[event.key] + count) % count
+    return true
+  }
+  if ((event.key === 'Enter' || event.key === 'Tab') && count) {
+    pickSlash(open.items[slashIndex.value])
+    return true
+  }
+  return false
+}
+
+const slashRender = () => ({
+  onStart: syncSlash,
+  onUpdate: syncSlash,
+  onExit: () => { slash.value = null },
+  onKeyDown: slashKey,
+})
+
+function closeOverlays() {
+  menu.close()
+  const view = editor.value?.view
+  if (view && SLASH_MENU.getState(view.state)?.active) exitSuggestion(view, SLASH_MENU)
+}
+
 const editor = shallowRef(new Editor({
   extensions: richExtensions({
     placeholder: props.placeholder,
@@ -221,9 +283,14 @@ const editor = shallowRef(new Editor({
       opaque: VueNodeViewRenderer(RichOpaque),
     },
     mention,
+    slash: {
+      render: slashRender,
+      canAttach: () => props.canAttach,
+      pickImage: () => emit('pick-image'),
+    },
   }),
   editorProps: { attributes, handlePaste, handleDrop },
-  onBlur: () => menu.close(),
+  onBlur: closeOverlays,
   onUpdate: ({ editor: ed }) => {
     collectTargets(ed.state.doc)
     const out = serialize(ed.state.doc, segments, retained)
@@ -286,9 +353,10 @@ load(props.modelValue)
 watch(() => props.modelValue, (value) => { if ((value ?? '') !== emitted) load(value) })
 
 function onViewportShift(event) {
-  if (event?.target instanceof Element && event.target.closest('[data-ref-menu]')) return
+  if (event?.target instanceof Element && event.target.closest('[data-ref-menu], [data-slash-menu]')) return
   const rect = token?.clientRect?.()
   if (open.value && rect) anchor.value = anchorFor(rect)
+  if (slash.value) slash.value = { ...slash.value, anchor: slashAnchor(slash.value.clientRect, slash.value.anchor) }
 }
 
 function track(on) {
@@ -303,9 +371,9 @@ watch(menu.armedResolved, () => {
   if (row) accept(row)
 })
 watch(open, (isOpen) => {
-  track(isOpen)
   if (!isOpen) preview.reset()
 })
+watch(() => open.value || !!slash.value, track)
 
 onBeforeUnmount(() => {
   track(false)
@@ -336,6 +404,14 @@ defineExpose({ editor, insertImages })
         @pick="accept"
         @hover="menu.setActive"
         @drill="(kind) => accept({ type: 'kind', kind })"
+      />
+      <SlashMenu
+        v-if="slash"
+        :items="slash.items"
+        :active-index="slashIndex"
+        :anchor="slash.anchor"
+        @pick="pickSlash"
+        @hover="(i) => (slashIndex = i)"
       />
     </Teleport>
   </div>
