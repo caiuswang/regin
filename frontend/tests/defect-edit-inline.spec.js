@@ -63,3 +63,20 @@ test('a blank edit cannot be sent', async ({ page }) => {
   await page.getByTestId('defect-edit-field-7').fill('   ')
   await expect(page.getByTestId('defect-edit-submit-7')).toBeDisabled()
 })
+
+test('a long symptom opens as tall as its text, with no scrolling inside the field',
+  async ({ page }) => {
+    const symptom = Array.from({ length: 30 }, (_, i) => `line ${i}`).join('\n')
+    await stubRow(page, { row: { ...ROW, symptom } }, [])
+    await page.goto('/defects/7')
+    await page.getByTestId('defect-symptom-7').click()
+    const field = page.getByTestId('defect-edit-field-7')
+    await expect(field).toHaveValue(symptom)
+
+    const size = await field.evaluate((el) => ({
+      scroll: el.scrollHeight, client: el.clientHeight,
+      line: parseFloat(getComputedStyle(el).lineHeight),
+    }))
+    expect(size.scroll).toBe(size.client)
+    expect(size.client).toBeGreaterThanOrEqual(30 * size.line)
+  })
