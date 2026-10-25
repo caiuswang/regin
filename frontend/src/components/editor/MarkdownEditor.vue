@@ -23,6 +23,8 @@ import Button from '../ui/Button.vue'
 import EditorToolbar from './EditorToolbar.vue'
 import Icon from '../ui/Icon.vue'
 import RefTextarea from '../refs/RefTextarea.vue'
+import { caretTarget, withCaretInsert } from '../../utils/caret'
+import { imageRefBlock } from '../../utils/taskBodyImages'
 
 defineOptions({ inheritAttrs: false })
 const props = defineProps({
@@ -74,7 +76,20 @@ const rich = ref(null)
 const toolbar = ref(null)
 const textarea = computed(() => source.value?.textarea ?? null)
 const editor = computed(() => rich.value?.editor ?? null)
-defineExpose({ textarea, editor })
+
+// The images a host's paste or drop attached, written where the writer is:
+// image nodes at the rich face's caret, or `![](image:N)` lines at the
+// textarea's when `event` landed in it (appended otherwise).
+function insertImages(idxs, event = null) {
+  if (!idxs?.length) return
+  if (mode.value === 'rich') {
+    rich.value?.insertImages(idxs, event)
+    return
+  }
+  emit('update:modelValue', withCaretInsert(caretTarget(event, textarea.value), props.modelValue, imageRefBlock(idxs)))
+}
+
+defineExpose({ textarea, editor, insertImages })
 
 function fieldAttrs(all) {
   const { class: _class, style: _style, ...rest } = all
@@ -115,7 +130,8 @@ function listeners(all) {
       v-if="mode === 'rich'"
       ref="rich"
       v-bind="listeners($attrs)"
-      :model-value="modelValue" :images="images" :testid="previewTestid"
+      :model-value="modelValue" :images="images" :project="project" :feature="feature"
+      :testid="previewTestid"
       :aria-label="$attrs['aria-label'] ?? null" :placeholder="$attrs.placeholder ?? ''"
       @update:model-value="emit('update:modelValue', $event)"
       @submit="emit('submit')"
