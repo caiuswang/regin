@@ -16,7 +16,10 @@ function watchConsole(page) {
 // Grouping and every filter axis persist in localStorage, so a run would
 // otherwise inherit whatever the last one left selected. These tests count and
 // address rows in the flat list, which is `group='none'`.
+// The composer's Details field is filled as a textarea: the rich face is
+// `f178-dialogs.spec.js`'s to test.
 const FLAT_VIEW = {
+  regin_editor_mode: 'source',
   'regin.tasks.group': 'none',
   'regin.tasks.status': '',
   'regin.tasks.archived': '',

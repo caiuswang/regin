@@ -19,14 +19,12 @@ import PlGlyph from '../pipeline/PlGlyph.vue'
 import PlSlot from '../pipeline/PlSlot.vue'
 import FeaturePicker from '../pipeline/FeaturePicker.vue'
 import TaskImageStrip from './TaskImageStrip.vue'
-import RefTextarea from '../refs/RefTextarea.vue'
+import MarkdownEditor from '../editor/MarkdownEditor.vue'
 import { PRIORITIES } from '../../utils/taskMeta.js'
 import { TITLE_MAX, emptyDraft, useTaskMutations }
   from '../../composables/useTasks.js'
 import { imageFilesFrom } from '../../utils/imageFiles'
 import { useAttachedImages } from '../../composables/useAttachedImages.js'
-import { caretTarget, withCaretInsert } from '../../utils/caret'
-import { imageRefBlock } from '../../utils/taskBodyImages'
 import { carriedProject, projectOptions, useProjects }
   from '../../composables/useProjects.js'
 
@@ -112,11 +110,10 @@ const bodyArea = ref(null)
 // carries is allocated in the browser and asked for at flush, so the reference
 // is writable at the moment of the paste rather than after the row exists.
 async function takeImages(source, event) {
-  const refs = imageRefBlock(await addImages(source))
-  if (!refs) return
-  draft.value.body = withCaretInsert(
-    caretTarget(event, bodyArea.value), draft.value.body, refs)
+  bodyArea.value?.insertImages(await addImages(source), event)
 }
+
+const attach = (source) => addImages(source)
 
 async function onPaste(e) {
   if (!imageFilesFrom(e.clipboardData).length) return
@@ -135,6 +132,8 @@ async function onDrop(e) {
 // images still clears the draft — the task exists, and the strip's own error
 // says which half failed.
 async function submit() {
+  // The editor's Mod-Enter reaches here without the disabled button between.
+  if (saving.value) return
   const task = await create(draft.value)
   if (!task) return
   await flushImages(task.id)
@@ -182,9 +181,16 @@ function reset() {
         <label class="field-label" for="task-body" data-pl-part="field-label">
           Details <span class="font-normal text-slate-400">(optional)</span>
         </label>
-        <RefTextarea
+        <MarkdownEditor
           id="task-body" ref="bodyArea" v-model="draft.body" data-pl-part="input"
-          :project="draft.project_id" :rows="4"
+          :project="draft.project_id ? Number(draft.project_id) : null"
+          :images="images" :attach="attach"
+          :expandable="false" :outline="false"
+          preview-testid="task-body-compose-rich"
+          class="tc-body"
+          aria-label="Task details markdown"
+          :rows="4"
+          @submit="submit"
         />
       </div>
       <div class="tc-row" data-pl-part="field-row">
@@ -278,6 +284,7 @@ function reset() {
     gap: 0.75rem;
 }
 .tc-col { flex: 1 1 10rem; min-width: 0; }
+.tc-body { margin-top: 0; }
 .tc-error {
     font-size: 0.8125rem;
     color: var(--color-danger);

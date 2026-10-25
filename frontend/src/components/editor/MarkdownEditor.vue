@@ -53,6 +53,11 @@ const props = defineProps({
   verbatim: { type: Boolean, default: false },
   // The focus layout's title line: what is being edited.
   title: { type: String, default: '' },
+  // A host whose editor sits in a box that scrolls itself (a dialog) has no
+  // page to take over and no page scroller to stick to: no Expand, no focus
+  // layout, and a head that scrolls with the text.
+  expandable: { type: Boolean, default: true },
+  outline: { type: Boolean, default: true },
 })
 const emit = defineEmits(['update:modelValue', 'submit', 'attach-error'])
 
@@ -101,7 +106,7 @@ const { layout, setLayout } = useEditorLayout({
   root, head,
   editor: () => editor.value,
   source: () => source.value,
-  enabled: () => !props.verbatim,
+  enabled: () => !props.verbatim && props.expandable,
 })
 
 // The images a host's paste or drop attached, written where the writer is:
@@ -160,7 +165,7 @@ function listeners(all) {
 <template>
   <div
     ref="root"
-    :class="['md-editor', `is-${mode}`, `is-${layout}`, $attrs.class]" :style="$attrs.style"
+    :class="['md-editor', `is-${mode}`, `is-${layout}`, { 'is-contained': !expandable }, $attrs.class]" :style="$attrs.style"
     :data-mode="mode" :data-layout="layout" data-testid="markdown-editor"
   >
     <div v-if="hasHead" ref="head" class="me-head" data-testid="editor-head">
@@ -196,7 +201,7 @@ function listeners(all) {
           </div>
           <ShortcutsPopover v-if="!verbatim" @closed="refocusFace" />
           <Button
-            v-if="!verbatim && layout === 'inline'"
+            v-if="!verbatim && expandable && layout === 'inline'"
             variant="ghost" size="sm" data-testid="editor-expand"
             aria-label="Expand" title="Expand (⌘⇧F)" @click="setLayout('focus')"
           >
@@ -254,6 +259,7 @@ function listeners(all) {
 @media (max-width: 767px) {
     .me-head { top: -1rem; }
 }
+.is-contained .me-head { position: static; }
 .me-titlebar {
     display: flex; align-items: center; justify-content: space-between;
     gap: 0.5rem; padding-bottom: 0.375rem;

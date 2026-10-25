@@ -19,7 +19,7 @@ import api from '../../api'
 import Button from '../ui/Button.vue'
 import Dialog from '../ui/Dialog.vue'
 import Input from '../ui/Input.vue'
-import RefTextarea from '../refs/RefTextarea.vue'
+import MarkdownEditor from '../editor/MarkdownEditor.vue'
 import Select from '../ui/Select.vue'
 import AddProjectLink from '../projects/AddProjectLink.vue'
 import PlGlyph from '../pipeline/PlGlyph.vue'
@@ -27,8 +27,6 @@ import TaskImageStrip from '../tasks/TaskImageStrip.vue'
 import { useAttachedImages } from '../../composables/useAttachedImages.js'
 import { carriedProject, projectOptions, useProjects }
   from '../../composables/useProjects.js'
-import { caretTarget, withCaretInsert } from '../../utils/caret'
-import { imageRefBlock } from '../../utils/taskBodyImages'
 import { imageFilesFrom } from '../../utils/imageFiles'
 
 const open = defineModel('open', { type: Boolean, default: false })
@@ -108,11 +106,10 @@ const bodyArea = ref(null)
 // asked for at flush, so the reference is writable before the feature exists.
 
 async function takeImages(source, event) {
-  const refs = imageRefBlock(await addImages(source))
-  if (!refs) return
-  body.value = withCaretInsert(
-    caretTarget(event, bodyArea.value), body.value, refs)
+  bodyArea.value?.insertImages(await addImages(source), event)
 }
+
+const attach = (source) => addImages(source)
 
 async function onPaste(e) {
   if (!imageFilesFrom(e.clipboardData).length) return
@@ -130,6 +127,8 @@ async function onDrop(e) {
 // server, and that refusal is the one this renders: a second rule in the page
 // would be a second writer of what a feature needs, and the two drift.
 async function declare() {
+  // The editor's Mod-Enter reaches here without the disabled button between.
+  if (saving.value) return
   saving.value = true
   failed.value = ''
   const payload = adopting.value
@@ -221,15 +220,22 @@ async function declare() {
         />
 
         <label class="nf-label" for="nf-body" data-pl-part="field-label">Spec</label>
-        <RefTextarea
+        <MarkdownEditor
           id="nf-body"
           ref="bodyArea"
           v-model="body"
-          :project="projectId"
+          :project="projectId ? Number(projectId) : null"
+          :images="images" :attach="attach"
+          :expandable="false" :outline="false"
+          preview-testid="declare-body-rich"
+          class="nf-body"
           data-testid="declare-body"
           data-pl-part="input"
+          aria-label="Feature spec markdown"
           :rows="8"
           placeholder="Intent, non-goals, and the acceptance items — as test names"
+          @submit="declare"
+          @attach-error="failed = $event"
         />
       </template>
 
@@ -290,6 +296,7 @@ async function declare() {
     display: flex; align-items: center; gap: 0.4rem;
     font-size: 12.5px; color: var(--color-fg-muted);
 }
+.nf-body { margin-top: 0; }
 .nf-optional { font-weight: 400; color: var(--color-fg-faint); }
 .nf-fail {
     margin-top: 0.5rem; font-size: 12px; color: var(--color-red-700);

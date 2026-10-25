@@ -1,6 +1,7 @@
 import { inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { caretPoint } from '../utils/caretPoint.js'
 import { useConfirm } from './useConfirm'
+import { EDITOR_OVERLAYS } from '../editor/overlays.js'
 
 // `MarkdownEditor`'s layout: `inline` in its host's card, or `focus`, where the
 // page drops everything but the editor. The page owns what it hides, so the
@@ -109,7 +110,7 @@ export function useEditorLayout({ root, head, editor, source, enabled }) {
   // parent node. While a menu, popover or dialog is open, Esc is theirs.
   function onDocumentKeydown(event) {
     if (event.key !== 'Escape' || dialog.visible) return
-    if (document.querySelector('[data-dismissable-layer], [data-ref-menu], [data-slash-menu], [data-bubble-menu]')) return
+    if (document.querySelector(`[data-dismissable-layer], ${EDITOR_OVERLAYS}`)) return
     setLayout('inline')
   }
 

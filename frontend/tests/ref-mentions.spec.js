@@ -537,6 +537,9 @@ test('test_references_are_tinted_where_they_sit', async ({ page }) => {
   await expect.poll(geometry).toEqual(aligned)
 
   // A click on the tint lands in the field, inside the reference.
+  // The field grows with its text and the dialog scrolls, so the tint may sit
+  // below the dialog's fold.
+  await hl.locator('.ref-hl-ref').scrollIntoViewIfNeeded()
   const tint = await hl.locator('.ref-hl-ref').boundingBox()
   await page.mouse.click(tint.x + 8, tint.y + tint.height / 2)
   await expect(spec).toBeFocused()
