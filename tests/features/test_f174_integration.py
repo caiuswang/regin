@@ -100,13 +100,13 @@ def test_no_new_runtime_dependency():
     """Invariant 7: the editor ships on what `frontend/package.json` already had."""
     if not _has_ref(INTEGRATION) or not _has_ref("master"):
         pytest.skip(f"{INTEGRATION} or master is not in this checkout")
-    fork = _git("merge-base", "master", INTEGRATION)
-    if fork.returncode != 0:
-        pytest.skip(f"no fork point between master and {INTEGRATION}")
     # The branch is shared: F176 builds on it and adds Tiptap by its own spec,
-    # so the invariant is held at F174's last commit rather than the tip.
-    last = _git("log", "--no-merges", "--format=%H", "-1", "-E",
-                "--grep", "^F174 S[0-9]+:", INTEGRATION).stdout.strip()
-    if not last:
+    # so the invariant is held at F174's last commit rather than the tip. The
+    # baseline is the parent of F174's first slice, not `merge-base master`:
+    # once the branch merges into master that merge-base is the branch tip.
+    slices = _git("log", "--no-merges", "--format=%H", "-E",
+                  "--grep", "^F174 S[0-9]+:", INTEGRATION).stdout.split()
+    if not slices:
         pytest.skip(f"no F174 slice commit on {INTEGRATION}")
-    assert _runtime_dependencies(last) == _runtime_dependencies(fork.stdout.strip())
+    last, first = slices[0], slices[-1]
+    assert _runtime_dependencies(last) == _runtime_dependencies(f"{first}^")

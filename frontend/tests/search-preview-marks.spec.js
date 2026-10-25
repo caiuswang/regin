@@ -77,6 +77,9 @@ test('marking and unmarking leaves Vue’s DOM intact', async ({ page }) => {
 
   const body = page.locator(`${PANEL} .preview-body`)
   await expect(body.locator('mark[data-search-hit]').first()).toBeVisible()
+  // The fenced block repaints itself once its highlighter chunk lands.
+  await expect(body.locator('pre code.hljs')).toBeVisible()
+  await expect(body.locator('pre mark[data-search-hit]')).toBeVisible()
   const anchorsBefore = await emptyTextNodes(body)
   const textBefore = await visibleText(body)
 

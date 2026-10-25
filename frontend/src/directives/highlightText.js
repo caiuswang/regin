@@ -56,8 +56,11 @@ export function clearMarks(root) {
 
 function matchingTextNodes(root, needle) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    // An HTML <mark> inside SVG is not rendered, so a hit in a diagram label
+    // would vanish rather than highlight.
     acceptNode: node => (
       !SKIP.has(node.parentNode?.nodeName?.toUpperCase() || '')
+      && !node.parentElement?.closest('svg')
       && node.nodeValue.toLowerCase().includes(needle)
         ? NodeFilter.FILTER_ACCEPT
         : NodeFilter.FILTER_REJECT),
@@ -97,8 +100,39 @@ export function applyMarks(root, query) {
   for (const node of matchingTextNodes(root, needle)) markNode(node, text, needle)
 }
 
+// A renderer inside the subtree may repaint its own DOM after mount without
+// this element updating — MarkdownContent rebuilds from its HTML on the next
+// tick, a code block swaps in highlighted markup when its chunk arrives — and
+// that wipes the marks. The observer re-marks on those repaints; it is off
+// while marks are written so it never sees its own mutations.
+const OBSERVED = { childList: true, subtree: true, characterData: true }
+const watchers = new WeakMap()
+
+function remark(el) {
+  const watcher = watchers.get(el)
+  if (!watcher) return
+  watcher.observer.disconnect()
+  applyMarks(el, watcher.query)
+  watcher.observer.takeRecords()
+  watcher.observer.observe(el, OBSERVED)
+}
+
 export const vHighlightText = {
-  mounted(el, binding) { applyMarks(el, binding.value) },
-  beforeUpdate(el) { clearMarks(el) },
-  updated(el, binding) { applyMarks(el, binding.value) },
+  mounted(el, binding) {
+    watchers.set(el, { query: binding.value, observer: new MutationObserver(() => remark(el)) })
+    remark(el)
+  },
+  beforeUpdate(el) {
+    watchers.get(el)?.observer.disconnect()
+    clearMarks(el)
+  },
+  updated(el, binding) {
+    const watcher = watchers.get(el)
+    if (watcher) watcher.query = binding.value
+    remark(el)
+  },
+  unmounted(el) {
+    watchers.get(el)?.observer.disconnect()
+    watchers.delete(el)
+  },
 }
