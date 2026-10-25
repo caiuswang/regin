@@ -29,6 +29,7 @@ import { NodeSelection, Selection, TextSelection } from '@tiptap/pm/state'
 import { Slice } from '@tiptap/pm/model'
 import api from '../../api'
 import RefMenu from '../refs/RefMenu.vue'
+import RichCodeBlock from './nodes/RichCodeBlock.vue'
 import RichImage from './nodes/RichImage.vue'
 import RichOpaque from './nodes/RichOpaque.vue'
 import RichRef from './nodes/RichRef.vue'
@@ -281,6 +282,7 @@ const editor = shallowRef(new Editor({
       ref: VueNodeViewRenderer(RichRef),
       image: VueNodeViewRenderer(RichImage),
       opaque: VueNodeViewRenderer(RichOpaque),
+      codeBlock: VueNodeViewRenderer(RichCodeBlock),
     },
     mention,
     slash: {

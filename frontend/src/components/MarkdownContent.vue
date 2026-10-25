@@ -3,6 +3,8 @@ import { computed, h, ref, render, watch, nextTick, onBeforeUnmount, onMounted }
 import { useRouter } from 'vue-router'
 import { marked } from 'marked'
 import RefChip from './refs/RefChip.vue'
+import CodeBlock from './markdown/CodeBlock.vue'
+import MermaidDiagram from './markdown/MermaidDiagram.vue'
 import { useRefResolve } from '../composables/useRefResolve.js'
 import { parseRefs } from '../utils/refs.js'
 import { followChip, mountPoints, slotted } from '../utils/refRender.js'
@@ -32,6 +34,7 @@ const { items } = useRefResolve(
   // without it.
   () => (found.value.some((r) => r.kind === 'file') ? props.project : null))
 let chips = []
+let blocks = []
 
 function paintChips() {
   for (const { host, at } of chips) {
@@ -50,6 +53,37 @@ function drawChips() {
   if (!props.refs || !container.value) return
   chips = mountPoints(container.value, found.value, source.value, slotTag)
   paintChips()
+}
+
+// Each fenced block becomes a component in place of the `<pre>` marked drew:
+// a diagram for `mermaid`, highlighted code for the rest. marked ends the
+// code with the fence's newline, which the block itself does not hold.
+function mountBlocks() {
+  for (const code of container.value.querySelectorAll('pre > code')) {
+    const pre = code.parentElement
+    const language = /(?:^|\s)language-(\S+)/.exec(code.className)?.[1] ?? null
+    const text = code.textContent.replace(/\n$/, '')
+    const host = document.createElement('div')
+    host.className = 'md-block'
+    pre.replaceWith(host)
+    render(blockFor(language, text), host)
+    blocks.push(host)
+  }
+}
+
+function blockFor(language, text) {
+  return language === 'mermaid' ? h(MermaidDiagram, { source: text }) : h(CodeBlock, { code: text, language })
+}
+
+function dropBlocks() {
+  for (const host of blocks) render(null, host)
+  blocks = []
+}
+
+// In document order, for the outline to jump to; numbered rather than
+// slugged because a spec repeats its headings ("Rules" under every section).
+function numberHeadings() {
+  container.value.querySelectorAll('h1, h2, h3, h4').forEach((el, n) => { el.id = `md-h-${n}` })
 }
 
 function onClick(event) {
@@ -99,18 +133,17 @@ function applyConceal() {
 }
 
 // Concealing first: it rebuilds headings from their HTML, so a chip mounted
-// before it would be left behind in the copy. A body with chips starts over
-// from its HTML every time, because the last pass already replaced the
-// placeholders the next one looks for.
+// before it would be left behind in the copy. Every pass starts over from the
+// HTML, because the last one already replaced the placeholders and the
+// `<pre>`s the next one looks for.
 function settle() {
-  if (props.refs && container.value) container.value.innerHTML = html.value
+  dropBlocks()
+  if (!container.value) return
+  container.value.innerHTML = html.value
   applyConceal()
+  numberHeadings()
   drawChips()
-}
-
-function resetAndConceal() {
-  if (container.value) container.value.innerHTML = html.value
-  nextTick(settle)
+  mountBlocks()
 }
 
 // Bound here rather than in the template: the body is no clickable surface.
@@ -122,9 +155,12 @@ onMounted(() => {
 // With chips, the text rather than the HTML: an edit to a label alone leaves
 // the placeholders, and so `html`, exactly as they were.
 watch(() => (props.refs ? source.value : html.value), () => nextTick(settle))
-watch(() => props.concealedTexts, resetAndConceal)
+watch(() => props.concealedTexts, () => nextTick(settle))
 watch(items, paintChips)
-onBeforeUnmount(dropChips)
+onBeforeUnmount(() => {
+  dropChips()
+  dropBlocks()
+})
 </script>
 
 <template>

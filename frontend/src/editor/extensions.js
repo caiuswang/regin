@@ -21,12 +21,14 @@ import { PluginKey } from '@tiptap/pm/state'
 import Suggestion from '@tiptap/suggestion'
 import StarterKit from '@tiptap/starter-kit'
 import { BulletList, OrderedList, TaskItem, TaskList } from '@tiptap/extension-list'
+import { CodeBlockLowlight } from '@tiptap/extension-code-block-lowlight'
 import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table'
 import { Placeholder } from '@tiptap/extensions'
 import { closeHistory } from '@tiptap/pm/history'
 import { TextSelection } from '@tiptap/pm/state'
 import { TableMap, addColumn, addRow, isInTable, selectedRect } from '@tiptap/pm/tables'
 import { SLASH_HANDOFF, SLASH_MENU, SlashCommand, inCode } from './slash.js'
+import { editorLowlight } from './highlight.js'
 
 const tight = {
   tight: {
@@ -254,10 +256,12 @@ export function richExtensions({
       underline: false,
       bulletList: false,
       orderedList: false,
+      codeBlock: false,
       link: { openOnClick: false, autolink: false },
     }),
     withTight(BulletList),
     withTight(OrderedList),
+    withView(CodeBlockLowlight, views.codeBlock).configure({ lowlight: editorLowlight }),
     withTight(TaskList),
     TaskItem.configure({ nested: true }),
     TaskInBullet,

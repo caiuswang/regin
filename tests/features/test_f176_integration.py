@@ -30,7 +30,10 @@ LANDED_IN_SUBJECT = re.compile(r"^F176 S(\d+):")
 
 #: The rich face's dependency tree. `markdown-it` rides in because
 #: `prosemirror-markdown` imports it at top level.
-RICH_ONLY_SOURCE = re.compile(r"node_modules/(@tiptap/|prosemirror-|markdown-it/)")
+#: `mermaid` and `lowlight` (F178) are drawn in by the first fenced block.
+#: highlight.js's grammars are not listed: `DiffBlock` statically imports
+#: `highlight.js/lib/common`, so they are on the first paint already.
+RICH_ONLY_SOURCE = re.compile(r"node_modules/(@tiptap/|prosemirror-|markdown-it/|mermaid/|lowlight/)")
 RICH_EDITOR_SRC = "src/components/editor/RichEditor.vue"
 
 
@@ -160,3 +163,29 @@ def test_rich_editor_chunk_not_in_entry(built: Path):
     rich_sources = _sources(built, manifest[RICH_EDITOR_SRC]["file"])
     assert any("node_modules/@tiptap/" in s for s in rich_sources), (
         "the RichEditor chunk carries no @tiptap source — the check above proves nothing")
+
+
+#: F178: the diagram and highlighting libraries load on the first fenced block,
+#: never with the page. The grammars ride with `HIGHLIGHT_SRC`, which is
+#: checked by module because `DiffBlock` already ships its own on first paint.
+CODE_ONLY_SOURCE = re.compile(r"node_modules/(mermaid/|lowlight/)")
+HIGHLIGHT_SRC = "src/editor/highlight.js"
+
+
+def test_mermaid_and_lowlight_not_in_entry(built: Path):
+    manifest = json.loads((built / ".vite" / "manifest.json").read_text())
+    first_paint = _static_closure(manifest, [k for k, v in manifest.items() if v.get("isEntry")])
+    leaked = {
+        manifest[k]["file"]: hits[:3]
+        for k in first_paint
+        if (hits := sorted(s for s in _sources(built, manifest[k]["file"]) if CODE_ONLY_SOURCE.search(s)))
+    }
+    assert not leaked, f"mermaid / lowlight reachable without a dynamic import: {leaked}"
+    in_entry = [manifest[k]["file"] for k in first_paint
+                if any(s.endswith(HIGHLIGHT_SRC) for s in _sources(built, manifest[k]["file"]))]
+    assert not in_entry, f"{HIGHLIGHT_SRC} is on the first paint: {in_entry}"
+
+    lazy = set(manifest) - first_paint
+    bundled = {s for k in lazy for s in _sources(built, manifest[k]["file"])}
+    for lib in ("node_modules/mermaid/", "node_modules/lowlight/", HIGHLIGHT_SRC):
+        assert any(lib in s for s in bundled), f"no lazy chunk carries {lib} — the check above proves nothing"
