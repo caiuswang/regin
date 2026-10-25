@@ -38,8 +38,9 @@ const props = defineProps({
   // The ledger view's list, shared with the Images card — never a second one.
   images: { type: Array, default: () => [] },
   canWrite: { type: Boolean, default: false },
-  // Returns the `idx` of every image it attached, which is what the reference
-  // written back into the text is made of.
+  // Resolves `{ taken, error }`: the `idx` of every image it attached — what
+  // the references written back into the text are made of — and why any
+  // other image in the same paste was refused.
   attach: { type: Function, default: null },
   tracked: { type: Boolean, default: false },
   tracker: { type: String, default: '' },
@@ -84,23 +85,21 @@ async function save() {
   emit('saved', res)
 }
 
-// A failed attach writes nothing into the draft — no placeholder for a picture
-// that never arrived — and says why under the field the paste landed in.
+// Only an image that arrived gets a reference — no placeholder for a picture
+// that never did — and any that failed say why under the field the paste
+// landed in, even when others in the same paste went through.
 async function takeImages(source, event) {
   error.value = ''
-  let taken
+  let result
   try {
-    taken = await props.attach(source)
+    result = await props.attach(source)
   } catch (e) {
     error.value = e?.message || 'could not attach the image'
     return
   }
-  const refs = imageRefBlock(taken)
-  if (!refs) {
-    error.value = 'could not attach the image'
-    return
-  }
-  draft.value = withCaretInsert(caretTarget(event, area.value), draft.value, refs)
+  const refs = imageRefBlock(result?.taken || [])
+  if (refs) draft.value = withCaretInsert(caretTarget(event, area.value), draft.value, refs)
+  if (result?.error || !refs) error.value = result?.error || 'could not attach the image'
 }
 
 async function onPaste(e) {

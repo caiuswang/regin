@@ -78,13 +78,12 @@ const {
   items: imageItems, busy: imagesBusy, error: imagesError,
   bind: bindImages, add: addImages, remove: removeImage,
 } = useAttachedImages('features')
-// `add` keeps its failure on the Images card and answers an empty list. The
-// spec editor needs the reason where the paste happened, so a paste that
-// attached nothing is turned back into the error it swallowed.
+// `add` keeps its failure on the Images card and answers only what landed. A
+// multi-image paste can do both at once, so the spec editor is handed the two
+// together: references for what landed, the reason for what did not.
 async function attachToSpec(source) {
   const taken = await addImages(source)
-  if (!taken.length && imagesError.value) throw new Error(imagesError.value)
-  return taken
+  return { taken, error: imagesError.value }
 }
 const { confirm } = useConfirm()
 

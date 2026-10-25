@@ -129,6 +129,40 @@ test('test_failed_upload_leaves_source_untouched', async ({ page }) => {
   await expect(pane(page).locator('img')).toHaveCount(0)
 })
 
+async function pasteImages(locator, names) {
+  await locator.evaluate((el, [b64, files]) => {
+    const bin = atob(b64)
+    const bytes = new Uint8Array(bin.length)
+    for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i)
+    const dt = new DataTransfer()
+    for (const name of files) dt.items.add(new File([bytes], name, { type: 'image/png' }))
+    el.dispatchEvent(new ClipboardEvent('paste', {
+      clipboardData: dt, bubbles: true, cancelable: true,
+    }))
+  }, [PNG_B64, names])
+}
+
+test('test_partial_upload_failure_shows_error_on_spec_card', async ({ page }) => {
+  let posts = 0
+  await stub(page, 'abc', {
+    upload: (route) => {
+      posts += 1
+      return posts === 1
+        ? route.fulfill({ status: 201, json: { image: summary(3) } })
+        : route.fulfill({ status: 500, json: { error: 'disk full' } })
+    },
+  })
+  await openSplit(page, 'abc')
+  await input(page).evaluate((el) => { el.focus(); el.setSelectionRange(1, 1) })
+
+  await pasteImages(input(page), ['one.png', 'two.png'])
+
+  await expect(page.getByTestId('feature-spec-error')).toHaveText('disk full')
+  await expect(input(page)).toHaveValue('a\n![](image:3)\nbc')
+  await expect(pane(page).locator('img')).toHaveCount(1)
+  expect(posts).toBe(2)
+})
+
 // Wide enough that the menu, at its full list + preview width, is not pushed
 // back from the right edge: a clamped menu sits in the same place whatever
 // the caret does, and would prove nothing about the anchor.
