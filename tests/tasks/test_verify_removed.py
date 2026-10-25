@@ -31,11 +31,13 @@ def test_verify_cmd_is_gone(flask_client):
         ["git", "grep", "-nE", "|".join(_RETIRED)], cwd=_ROOT,
         capture_output=True, text=True, check=False)
     assert found.returncode in (0, 1), found.stderr
-    # This file is the one exception besides the revisions: its acceptance
-    # name carries the identifier it proves gone.
+    # Exempt: the revisions and the changelog are history that must name what
+    # was retired, and this file's acceptance name carries the identifier it
+    # proves gone.
     own = str(Path(__file__).resolve().relative_to(_ROOT))
     hits = [line for line in found.stdout.splitlines()
-            if not line.startswith(("alembic/versions/", own + ":"))]
+            if not line.startswith(("alembic/versions/", "CHANGELOG.md:",
+                                    own + ":"))]
     assert hits == []
 
     task_id = flask_client.post("/api/tasks", json={"title": "t"}
