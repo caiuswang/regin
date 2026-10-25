@@ -10,6 +10,12 @@
  */
 import { test, expect } from './auth-fixture.js'
 
+// The declare dialog's Spec field is filled as a textarea: the rich face is
+// `f178-dialogs.spec.js`'s to test.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('regin_editor_mode', 'source'))
+})
+
 function ledger(over = {}) {
   return {
     id: 300, title: 'declared from the browser', origin: 'native',

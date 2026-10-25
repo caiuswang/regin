@@ -7,6 +7,7 @@
 import { useAttrs } from 'vue'
 import { DialogRoot, DialogTrigger, DialogPortal, DialogOverlay, DialogContent, DialogTitle, DialogDescription, DialogClose } from 'reka-ui'
 import { usePlScope } from '../../composables/usePipelineTheme'
+import { EDITOR_OVERLAYS } from '../../editor/overlays.js'
 
 // Attributes belong on the dialog box: DialogRoot renders nothing of its own.
 defineOptions({ inheritAttrs: false })
@@ -42,6 +43,19 @@ function boxAttrs() {
   return Object.fromEntries(Object.entries(attrs).filter(([k]) => !k.startsWith('data-pl-')))
 }
 
+// ProseMirror cancels every Esc pressed in a rich face (`captureKeyDown`), and
+// reka will not dismiss on a cancelled one, so a dialog holding an editor
+// closes itself — before the face sees the key, and only when no menu of the
+// face's own is open to take it. A field inside the face (a block's source
+// box) is not the face: its Esc is its own, and reka still hears it.
+function escapeFromEditor(event) {
+  if (event.key !== 'Escape' || event.isComposing) return
+  const target = event.target
+  if (!(target instanceof HTMLElement) || !target.isContentEditable) return
+  if (!target.closest('.ProseMirror') || document.querySelector(EDITOR_OVERLAYS)) return
+  open.value = false
+}
+
 function keepForRefMenu(event) {
   const target = event.detail?.originalEvent?.target ?? event.target
   if (target instanceof Element && target.closest('[data-ref-menu]')) event.preventDefault()
@@ -63,6 +77,7 @@ function keepForRefMenu(event) {
         @pointer-down-outside="keepForRefMenu"
         @focus-outside="keepForRefMenu"
         @interact-outside="keepForRefMenu"
+        @keydown.capture="escapeFromEditor"
       >
         <div v-if="title" :data-pl-part="part('dialog-head')">
           <slot name="mark" />
