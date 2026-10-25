@@ -103,4 +103,10 @@ def test_no_new_runtime_dependency():
     fork = _git("merge-base", "master", INTEGRATION)
     if fork.returncode != 0:
         pytest.skip(f"no fork point between master and {INTEGRATION}")
-    assert _runtime_dependencies(INTEGRATION) == _runtime_dependencies(fork.stdout.strip())
+    # The branch is shared: F176 builds on it and adds Tiptap by its own spec,
+    # so the invariant is held at F174's last commit rather than the tip.
+    last = _git("log", "--no-merges", "--format=%H", "-1", "-E",
+                "--grep", "^F174 S[0-9]+:", INTEGRATION).stdout.strip()
+    if not last:
+        pytest.skip(f"no F174 slice commit on {INTEGRATION}")
+    assert _runtime_dependencies(last) == _runtime_dependencies(fork.stdout.strip())

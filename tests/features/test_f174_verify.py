@@ -28,12 +28,13 @@ FRONTEND = REPO_ROOT / "frontend"
 PLAYWRIGHT = FRONTEND / "node_modules" / ".bin" / "playwright"
 PROJECT = "chromium"
 
-#: The Scenario names in feature 174's Acceptance block, in spec order.
+#: The Scenario names in feature 174's Acceptance block, in spec order, less
+#: the two whose rules feature 176 retired (split is no longer a mode, and a
+#: narrow viewport no longer forces source) — `test_rich_is_default` now holds
+#: both.
 SCENARIOS = (
-    "test_split_default_on_wide_viewport",
     "test_typing_renders_preview",
     "test_mode_is_remembered",
-    "test_narrow_viewport_falls_back_to_source",
     "test_save_is_byte_exact",
     "test_toolbar_bold_is_one_undo_step",
     "test_toolbar_line_marks_apply_per_line",

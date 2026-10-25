@@ -9,6 +9,9 @@ applyScratchEnv()
 
 export default defineConfig({
   testDir: './tests',
+  // node:test files, run by `npm run test:unit`; Playwright's default
+  // testMatch would import them too and their TAP output corrupts `--list`.
+  testIgnore: /[\\/]tests[\\/]unit[\\/]/,
   globalTeardown: './global-teardown.js',
   // Tests within a file run concurrently too, not just across files: measured
   // 3.2m -> 1.4m over the whole suite, with the same set of failures. A file

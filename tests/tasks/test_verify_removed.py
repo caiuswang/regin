@@ -32,11 +32,13 @@ def test_verify_cmd_is_gone(flask_client):
         capture_output=True, text=True, check=False)
     assert found.returncode in (0, 1), found.stderr
     # Exempt: the revisions and the changelog are history that must name what
-    # was retired, and this file's acceptance name carries the identifier it
-    # proves gone.
+    # was retired, the body corpus is a verbatim snapshot of specs written
+    # before the retirement, and this file's acceptance name carries the
+    # identifier it proves gone.
     own = str(Path(__file__).resolve().relative_to(_ROOT))
     hits = [line for line in found.stdout.splitlines()
             if not line.startswith(("alembic/versions/", "CHANGELOG.md:",
+                                    "frontend/tests/fixtures/bodies/",
                                     own + ":"))]
     assert hits == []
 
