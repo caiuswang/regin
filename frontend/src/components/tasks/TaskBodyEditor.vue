@@ -1,8 +1,8 @@
 <script setup>
 // The task body, read and written on the page that has its address.
 //
-// Edited as source beside a live preview (`editor/MarkdownEditor` says why
-// source-first): the editor hands back the exact bytes it was given.
+// Edited on its rendering, with source one click away (`editor/MarkdownEditor`
+// says how): an untouched block goes back as the exact bytes it was given.
 //
 // Shaped after `PatternContentEditor`, the same read-then-Edit toggle.
 import { computed, ref } from 'vue'
@@ -110,12 +110,13 @@ async function onDrop(e) {
         ref="area"
         v-model="draft" :project="task.project_id" :feature="task.feature_id"
         :images="images" :attach="attach"
-        preview-testid="task-body-preview-pane"
+        preview-testid="task-body-rich"
         :rows="18" spellcheck="false"
         aria-label="Task details markdown" data-testid="task-body-area"
         @paste="onPaste"
         @dragover.prevent
         @drop="onDrop"
+        @submit="save"
       />
       <p class="tbe-hint">Markdown. {{ IMAGE_REF_HINT }} Paste or drop an image here.</p>
       <p v-if="error" class="tbe-error" role="alert" data-testid="task-body-error">{{ error }}</p>

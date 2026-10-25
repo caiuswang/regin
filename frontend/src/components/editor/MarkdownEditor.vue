@@ -1,29 +1,28 @@
 <script setup>
-// A markdown body edited as source beside a live render of the same bytes.
+// A markdown body edited in one of two faces over the same source bytes.
 //
-// Source-first, not WYSIWYG: these columns are read and written by agents, and
-// a CommonMark round-trip of 544 stored bodies rewrote 89% of them (tables
-// re-aligned, list markers and emphasis normalised, comments dropped). So the
-// textarea's value is what goes up, verbatim, and the preview only reads it —
-// through the same `MarkdownContent` the saved view uses, so what the preview
-// shows is what the page shows after Save.
+// Rich (the default) edits the rendering itself; Source is the textarea, the
+// escape hatch. Either way what goes up is source: the rich face re-renders
+// only the blocks the writer touched and hands every other block back as the
+// bytes it was given (`editor/markdownDoc.js` says how), because these columns
+// are read and written by agents and a whole-document round-trip rewrote 89%
+// of 544 stored bodies. Rich parses with the same marked lexer
+// `MarkdownContent` renders with, so the face shows what the page shows after
+// Save. Tiptap is loaded with the face, not with the page.
 //
 // A host whose saved view is quoted text rather than rendered markdown (a
-// defect's symptom, drawn by `RefInlineText`) passes `verbatim`: the preview
-// draws the same component, so it still shows what Save shows, and the
-// toolbar is withheld, since a mark it wrote would display as typed.
+// defect's symptom, drawn by `RefInlineText`) passes `verbatim`: source only,
+// no mode switch and no toolbar, since a mark it wrote would display as typed.
 //
 // The host's attributes and listeners (test id, aria-label, paste, drop) land
 // on the textarea, and the textarea is exposed as `textarea` for
-// `utils/caret.js`, so a host swaps this in for a bare `RefTextarea`.
-import { computed, onBeforeUnmount, ref } from 'vue'
+// `utils/caret.js`, so a host swaps this in for a bare `RefTextarea`. On the
+// rich face only the listeners carry over, and the face takes `previewTestid`.
+import { computed, defineAsyncComponent, ref } from 'vue'
 import Button from '../ui/Button.vue'
 import EditorToolbar from './EditorToolbar.vue'
 import Icon from '../ui/Icon.vue'
-import MarkdownContent from '../MarkdownContent.vue'
-import RefInlineText from '../refs/RefInlineText.vue'
 import RefTextarea from '../refs/RefTextarea.vue'
-import { resolveImageRefs } from '../../utils/taskBodyImages'
 
 defineOptions({ inheritAttrs: false })
 const props = defineProps({
@@ -37,40 +36,31 @@ const props = defineProps({
   previewTestid: { type: String, default: null },
   verbatim: { type: Boolean, default: false },
 })
-const emit = defineEmits(['update:modelValue'])
+const emit = defineEmits(['update:modelValue', 'submit'])
+
+const RichEditor = defineAsyncComponent(() => import('./RichEditor.vue'))
 
 const MODES = [
-  { id: 'source', label: 'Source', icon: 'pencil' },
-  { id: 'split', label: 'Split', icon: 'board-columns' },
-  { id: 'preview', label: 'Preview', icon: 'eye' },
+  { id: 'rich', label: 'Rich', icon: 'eye' },
+  { id: 'source', label: 'Source', icon: 'code' },
 ]
 const STORAGE_KEY = 'regin_editor_mode'
-const NARROW = '(max-width: 767.98px)'
+// The first editor's split and preview both showed the rendering; it is what
+// the rich face now edits.
+const STORED = { rich: 'rich', split: 'rich', preview: 'rich', source: 'source' }
 
 function readStored() {
   try {
-    const value = window.localStorage.getItem(STORAGE_KEY)
-    return MODES.some((m) => m.id === value) ? value : null
+    return STORED[window.localStorage.getItem(STORAGE_KEY)] ?? null
   } catch {
     return null
   }
 }
 
-// Two halves do not fit a phone, so a narrow viewport edits source and its
-// choices stay with this edit: writing them back would replace the
-// desktop's remembered mode with one made on a screen it never applied to.
-const viewport = window.matchMedia?.(NARROW) ?? null
-const narrow = ref(viewport?.matches ?? false)
 const remembered = ref(readStored())
-const narrowMode = ref('source')
-const mode = computed(() => (narrow.value ? narrowMode.value : remembered.value ?? 'split'))
-const choices = computed(() => (narrow.value ? MODES.filter((m) => m.id !== 'split') : MODES))
+const mode = computed(() => (props.verbatim ? 'source' : remembered.value ?? 'rich'))
 
 function choose(id) {
-  if (narrow.value) {
-    narrowMode.value = id
-    return
-  }
   remembered.value = id
   try {
     window.localStorage.setItem(STORAGE_KEY, id)
@@ -79,23 +69,20 @@ function choose(id) {
   }
 }
 
-function onViewport(event) {
-  narrow.value = event.matches
-  narrowMode.value = 'source'
-}
-viewport?.addEventListener?.('change', onViewport)
-onBeforeUnmount(() => viewport?.removeEventListener?.('change', onViewport))
-
 const source = ref(null)
+const rich = ref(null)
+const toolbar = ref(null)
 const textarea = computed(() => source.value?.textarea ?? null)
-defineExpose({ textarea })
-
-const rendered = computed(() => resolveImageRefs(props.modelValue, props.images))
-const blank = computed(() => !props.modelValue?.trim())
+const editor = computed(() => rich.value?.editor ?? null)
+defineExpose({ textarea, editor })
 
 function fieldAttrs(all) {
   const { class: _class, style: _style, ...rest } = all
   return rest
+}
+
+function listeners(all) {
+  return Object.fromEntries(Object.entries(all).filter(([key]) => /^on[A-Z]/.test(key)))
 }
 </script>
 
@@ -104,15 +91,15 @@ function fieldAttrs(all) {
     :class="['md-editor', `is-${mode}`, $attrs.class]" :style="$attrs.style"
     :data-mode="mode" data-testid="markdown-editor"
   >
-    <div class="me-bar">
+    <div v-if="!verbatim" class="me-bar">
       <div class="me-tools">
-        <slot v-if="mode !== 'preview' && !verbatim" name="toolbar">
-          <EditorToolbar :field="source" />
+        <slot name="toolbar">
+          <EditorToolbar ref="toolbar" :mode="mode" :field="source" :editor="editor" />
         </slot>
       </div>
       <div class="me-modes" role="group" aria-label="Editor mode">
         <Button
-          v-for="m in choices" :key="m.id"
+          v-for="m in MODES" :key="m.id"
           variant="ghost" size="sm"
           :class="{ 'is-active': mode === m.id }"
           :aria-pressed="mode === m.id ? 'true' : 'false'"
@@ -124,21 +111,24 @@ function fieldAttrs(all) {
         </Button>
       </div>
     </div>
-    <div class="me-panes">
-      <RefTextarea
-        v-show="mode !== 'preview'"
-        ref="source"
-        v-bind="fieldAttrs($attrs)"
-        class="me-source"
-        :model-value="modelValue" :project="project" :feature="feature"
-        @update:model-value="emit('update:modelValue', $event)"
-      />
-      <div v-if="mode !== 'source'" class="me-preview" :data-testid="previewTestid">
-        <p v-if="blank" class="me-blank">Nothing to preview yet.</p>
-        <p v-else-if="verbatim" class="me-verbatim"><RefInlineText :text="modelValue" :project="project" /></p>
-        <MarkdownContent v-else :markdown="rendered" refs :project="project" />
-      </div>
-    </div>
+    <RichEditor
+      v-if="mode === 'rich'"
+      ref="rich"
+      v-bind="listeners($attrs)"
+      :model-value="modelValue" :images="images" :testid="previewTestid"
+      :aria-label="$attrs['aria-label'] ?? null" :placeholder="$attrs.placeholder ?? ''"
+      @update:model-value="emit('update:modelValue', $event)"
+      @submit="emit('submit')"
+      @link="toolbar?.openLink()"
+    />
+    <RefTextarea
+      v-else
+      ref="source"
+      v-bind="fieldAttrs($attrs)"
+      class="me-source"
+      :model-value="modelValue" :project="project" :feature="feature"
+      @update:model-value="emit('update:modelValue', $event)"
+    />
   </div>
 </template>
 
@@ -150,31 +140,13 @@ function fieldAttrs(all) {
 }
 .me-tools { display: flex; align-items: center; gap: 0.125rem; min-width: 0; }
 .me-modes {
-    display: flex; gap: 0.125rem; padding: 2px;
+    display: flex; gap: 0.125rem; padding: 2px; flex-shrink: 0;
     border-radius: var(--radius-md); background: var(--color-surface-2);
 }
 .me-modes .is-active { background: var(--color-surface); color: var(--color-fg); }
-.me-panes { display: grid; gap: 0.75rem; }
-.is-split .me-panes { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 .me-source {
     font-family: var(--font-mono, ui-monospace, monospace);
     font-size: 0.8125rem; line-height: 1.5;
 }
 .me-source :deep(textarea) { display: block; }
-.me-preview {
-    min-width: 0; font-size: 0.8125rem; color: var(--color-fg-muted);
-    overflow-wrap: anywhere;
-}
-/* Sized to nothing so the textarea alone sets the row's height; the preview
-   stretches to it and scrolls, rather than a long render growing both panes. */
-.is-split .me-preview {
-    contain: size; overflow: auto;
-    padding: 0.5rem 0.75rem;
-    border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md);
-}
-.me-preview :deep(img) {
-    max-width: 100%; height: auto; border-radius: var(--radius-md);
-}
-.me-verbatim { white-space: pre-wrap; color: var(--color-fg); }
-.me-blank { font-size: 0.75rem; color: var(--color-fg-faint); }
 </style>

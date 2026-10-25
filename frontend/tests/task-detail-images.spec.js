@@ -11,6 +11,11 @@
  */
 import { test, expect } from './auth-fixture.js'
 
+// The rich face is the default editor now; these specs drive the source one.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('regin_editor_mode', 'source'))
+})
+
 // 1x1 transparent PNG — the smallest thing that is really an image.
 const PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAE'

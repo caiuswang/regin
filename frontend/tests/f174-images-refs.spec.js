@@ -1,11 +1,16 @@
 /**
- * F174 S3 — images and `@` references through the split editor.
+ * F174 S3 — images and `@` references through the source editor.
  *
  * Stubbed the way `feature-images.spec.js` is, `/api/refs` included: every
- * assertion is about what the editor writes and what its preview draws, so
+ * assertion is about what the editor writes and what the rich face draws, so
  * the ledger and the search answer are fixtures rather than seeded data.
  */
 import { test, expect } from './auth-fixture.js'
+
+// The rich face is the default editor now; these specs drive the source one.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('regin_editor_mode', 'source'))
+})
 
 const PNG_B64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmM' +
@@ -73,7 +78,7 @@ async function pasteImage(locator) {
 }
 
 const input = (page) => page.getByTestId('feature-spec-input')
-const pane = (page) => page.getByTestId('feature-spec-preview-pane')
+const face = (page) => page.getByTestId('feature-spec-rich')
 const menu = (page) => page.getByTestId('ref-menu')
 
 async function settled(page, query) {
@@ -81,10 +86,10 @@ async function settled(page, query) {
   await expect(menu(page)).not.toHaveClass(/is-stale/)
 }
 
-async function openSplit(page, body) {
+async function openSource(page, body) {
   await page.goto('/features/242')
   await page.getByTestId('feature-spec-edit').click()
-  await expect(page.getByTestId('markdown-editor')).toHaveAttribute('data-mode', 'split')
+  await expect(page.getByTestId('markdown-editor')).toHaveAttribute('data-mode', 'source')
   await expect(input(page)).toHaveValue(body)
 }
 
@@ -92,16 +97,16 @@ test.use({ viewport: { width: 1280, height: 900 } })
 
 test('test_pasted_image_writes_reference_and_previews', async ({ page }) => {
   await stub(page, 'HEADTAIL')
-  await openSplit(page, 'HEADTAIL')
-  await expect(pane(page).locator('img')).toHaveCount(0)
+  await openSource(page, 'HEADTAIL')
   await input(page).evaluate((el) => { el.focus(); el.setSelectionRange(4, 4) })
 
   await pasteImage(input(page))
 
   await expect(input(page)).toHaveValue('HEAD\n![](image:3)\nTAIL')
-  // The preview's picture is the attachment just taken, not a re-fetch of
+  // The rendered picture is the attachment just taken, not a re-fetch of
   // something else: the same object URL the Images card shows for idx 3.
-  const img = pane(page).locator('img')
+  await page.getByTestId('editor-mode-rich').click()
+  const img = face(page).locator('img[data-idx="3"]')
   await expect(img).toHaveCount(1)
   const src = await img.getAttribute('src')
   expect(src).toMatch(/^blob:/)
@@ -115,7 +120,7 @@ test('test_failed_upload_leaves_source_untouched', async ({ page }) => {
   await stub(page, 'abc', {
     upload: (route) => route.fulfill({ status: 500, json: { error: 'disk full' } }),
   })
-  await openSplit(page, 'abc')
+  await openSource(page, 'abc')
   await input(page).evaluate((el) => { el.focus(); el.setSelectionRange(1, 1) })
 
   const posted = page.waitForResponse((res) =>
@@ -125,8 +130,6 @@ test('test_failed_upload_leaves_source_untouched', async ({ page }) => {
 
   await expect(page.getByTestId('feature-spec-error')).toHaveText('disk full')
   await expect(input(page)).toHaveValue('abc')
-  await expect(pane(page)).not.toContainText('image:')
-  await expect(pane(page).locator('img')).toHaveCount(0)
 })
 
 async function pasteImages(locator, names) {
@@ -152,14 +155,13 @@ test('test_partial_upload_failure_shows_error_on_spec_card', async ({ page }) =>
         : route.fulfill({ status: 500, json: { error: 'disk full' } })
     },
   })
-  await openSplit(page, 'abc')
+  await openSource(page, 'abc')
   await input(page).evaluate((el) => { el.focus(); el.setSelectionRange(1, 1) })
 
   await pasteImages(input(page), ['one.png', 'two.png'])
 
   await expect(page.getByTestId('feature-spec-error')).toHaveText('disk full')
   await expect(input(page)).toHaveValue('a\n![](image:3)\nbc')
-  await expect(pane(page).locator('img')).toHaveCount(1)
   expect(posts).toBe(2)
 })
 
@@ -174,47 +176,20 @@ test.describe('mentions', () => {
     // than to the caret, lands somewhere else.
     const line = `${'w'.repeat(30)} see `
     await stub(page, line)
-    await openSplit(page, line)
+    await openSource(page, line)
     const field = input(page)
-    const typeMention = async () => {
-      await field.evaluate((el) => { el.focus(); el.setSelectionRange(el.value.length, el.value.length) })
-      await field.pressSequentially('@ti')
-      await settled(page, 'ti')
-      return menu(page).boundingBox()
-    }
-
-    // Where the caret puts the menu with no preview beside the source at all.
-    await page.getByTestId('editor-mode-source').click()
-    const alone = await typeMention()
-    await field.press('Escape')
-    await field.evaluate((el) => {
-      el.value = el.value.slice(0, -3)
-      el.dispatchEvent(new Event('input', { bubbles: true }))
-    })
-    await expect(menu(page)).toHaveCount(0)
-
-    // Split: the same caret, the same anchor — not pushed across into the
-    // preview half.
-    await page.getByTestId('editor-mode-split').click()
-    const split = await typeMention()
-    const [area, preview] = await Promise.all([field.boundingBox(), pane(page).boundingBox()])
-    expect(split.x).toBeGreaterThan(area.x + 150)
-    expect(split.x).toBeLessThan(preview.x)
-    expect(Math.round(split.x)).toBe(Math.round(alone.x))
-    expect(Math.round(split.y)).toBe(Math.round(alone.y))
+    await field.evaluate((el) => { el.focus(); el.setSelectionRange(el.value.length, el.value.length) })
+    await field.pressSequentially('@ti')
+    await settled(page, 'ti')
+    // Pinned to the caret, well into the line — not to the textarea's edge.
+    const [at, area] = await Promise.all([menu(page).boundingBox(), field.boundingBox()])
+    expect(at.x).toBeGreaterThan(area.x + 150)
 
     await field.press('Enter')
     await expect(field).toHaveValue(`${line}[title](task:42) `)
     await expect(menu(page)).toHaveCount(0)
 
-    const chip = pane(page).locator('[data-testid="ref-chip"][data-ref="task:42"]')
-    await expect(chip).toBeVisible()
-    await expect(chip).toHaveAttribute('data-state', 'live')
-    // A reading surface: nothing in the preview takes typing.
-    expect(await pane(page).evaluate((el) =>
-      el.isContentEditable || !!el.querySelector('[contenteditable]'))).toBe(false)
-
-    await chip.click()
-    await expect(page).toHaveURL(/\/tasks\/42$/)
+    await page.getByTestId('editor-mode-rich').click()
+    await expect(face(page).locator('[data-ref="task:42"]')).toHaveText('title')
   })
 })

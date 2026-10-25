@@ -1,10 +1,17 @@
 /**
- * F174 S1 — the feature spec edited as source beside a live preview.
+ * F174 S1 — the feature spec edited as source. The split preview it began
+ * with is retired (F176 edits the rendering itself), so what the source
+ * renders to is read off the rich face.
  *
  * Stubbed the way `feature-images.spec.js` is: every assertion is about the
  * editor, so the ledger is a fixture rather than seeded data.
  */
 import { test, expect } from './auth-fixture.js'
+
+// The rich face is the default editor now; these specs drive the source one.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('regin_editor_mode', 'source'))
+})
 
 const PNG_B64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmM' +
@@ -47,7 +54,7 @@ async function stub(page, body, onPatch) {
 
 const editor = (page) => page.getByTestId('markdown-editor')
 const input = (page) => page.getByTestId('feature-spec-input')
-const pane = (page) => page.getByTestId('feature-spec-preview-pane')
+const face = (page) => page.getByTestId('feature-spec-rich')
 const storedMode = (page) => page.evaluate(() => localStorage.getItem('regin_editor_mode'))
 
 async function openEditor(page) {
@@ -59,53 +66,34 @@ async function openEditor(page) {
 test.describe('wide viewport', () => {
   test.use({ viewport: { width: 1280, height: 900 } })
 
-  test('test_split_default_on_wide_viewport', async ({ page }) => {
-    await stub(page, 'thin prose')
-    await openEditor(page)
-
-    expect(await storedMode(page)).toBeNull()
-    await expect(editor(page)).toHaveAttribute('data-mode', 'split')
-    await expect(page.getByTestId('editor-mode-split')).toHaveAttribute('aria-pressed', 'true')
-    await expect(page.getByTestId('editor-mode-source')).toHaveAttribute('aria-pressed', 'false')
-    await expect(page.getByTestId('editor-mode-preview')).toHaveAttribute('aria-pressed', 'false')
-    await expect(pane(page)).toBeVisible()
-
-    const source = await input(page).boundingBox()
-    const preview = await pane(page).boundingBox()
-    const bar = await editor(page).locator('.me-bar').boundingBox()
-    expect(source.x + source.width).toBeLessThanOrEqual(preview.x)
-    expect(Math.abs(source.y - preview.y)).toBeLessThan(2)
-    expect(Math.abs(source.height - preview.height)).toBeLessThan(1)
-    expect(bar.y + bar.height).toBeLessThanOrEqual(source.y)
-  })
-
   test('test_typing_renders_preview', async ({ page }) => {
     await stub(page, '')
     await openEditor(page)
-    await expect(pane(page)).toContainText('Nothing to preview yet.')
 
     await input(page).click()
     await input(page).pressSequentially('## 目标')
-
-    await expect(pane(page).locator('h2')).toHaveText('目标')
     await expect(input(page)).toHaveValue('## 目标')
+
+    await page.getByTestId('editor-mode-rich').click()
+    await expect(face(page).locator('h2')).toHaveText('目标')
   })
 
   test('test_mode_is_remembered', async ({ page }) => {
     await stub(page, 'thin prose')
     await openEditor(page)
-    await expect(editor(page)).toHaveAttribute('data-mode', 'split')
-
-    await page.getByTestId('editor-mode-source').click()
     await expect(editor(page)).toHaveAttribute('data-mode', 'source')
-    await expect(pane(page)).toHaveCount(0)
-    expect(await storedMode(page)).toBe('source')
 
+    await page.getByTestId('editor-mode-rich').click()
+    await expect(editor(page)).toHaveAttribute('data-mode', 'rich')
+    await expect(input(page)).toHaveCount(0)
+    expect(await storedMode(page)).toBe('rich')
+
+    await page.evaluate(() => localStorage.setItem('regin_editor_mode', 'source'))
     await page.reload()
     await page.getByTestId('feature-spec-edit').click()
     await expect(editor(page)).toHaveAttribute('data-mode', 'source')
     await expect(page.getByTestId('editor-mode-source')).toHaveAttribute('aria-pressed', 'true')
-    await expect(pane(page)).toHaveCount(0)
+    await expect(face(page)).toHaveCount(0)
   })
 
   test('test_save_is_byte_exact', async ({ page }) => {
@@ -130,30 +118,10 @@ test.describe('wide viewport', () => {
     await stub(page, body, (sent) => { patched = sent })
     await openEditor(page)
     await expect(input(page)).toHaveValue(body)
-    await expect(pane(page).locator('img')).toHaveAttribute('src', /^blob:/)
 
     await page.getByTestId('feature-spec-save').click()
 
     await expect.poll(() => patched?.body).toBe(body)
-  })
-})
-
-test.describe('narrow viewport', () => {
-  test.use({ viewport: { width: 600, height: 900 } })
-
-  test('test_narrow_viewport_falls_back_to_source', async ({ page }) => {
-    await page.addInitScript(() => localStorage.setItem('regin_editor_mode', 'split'))
-    await stub(page, 'thin prose')
-    await openEditor(page)
-
-    await expect(editor(page)).toHaveAttribute('data-mode', 'source')
-    await expect(pane(page)).toHaveCount(0)
-    await expect(page.getByTestId('editor-mode-split')).toHaveCount(0)
-    expect(await storedMode(page)).toBe('split')
-
-    await page.getByTestId('editor-mode-preview').click()
-    await expect(editor(page)).toHaveAttribute('data-mode', 'preview')
-    await expect(pane(page)).toBeVisible()
-    expect(await storedMode(page)).toBe('split')
+    await expect(page.getByTestId('feature-spec-body').locator('img')).toHaveAttribute('src', /^blob:/)
   })
 })

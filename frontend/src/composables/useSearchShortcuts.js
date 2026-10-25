@@ -48,7 +48,10 @@ export function useSearchShortcuts() {
     // terminal. Click out of it (or leave the tab) to get the chords back.
     if (terminalFocus.focused.value) return
     const mod = e.metaKey || e.ctrlKey
-    if (mod && (e.key === 'k' || e.key === 'K')) {
+    // A field that binds ⌘K itself (the rich editor's link) marks itself
+    // `data-owns-mod-k`; there the chord is the field's, as it is in the editors
+    // the writer knows it from.
+    if (mod && (e.key === 'k' || e.key === 'K') && !e.target?.closest?.('[data-owns-mod-k]')) {
       e.preventDefault()
       e.stopPropagation()
       search.openPalette()

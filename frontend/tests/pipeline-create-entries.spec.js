@@ -11,6 +11,11 @@ import { TEST_USER } from '../e2e-env.js'
 import { API_BASE } from './helpers/api-base.js'
 import { contentOverflow } from './helpers/overflow.js'
 
+// The rich face is the default editor now; these specs drive the source one.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('regin_editor_mode', 'source'))
+})
+
 const unique = (label) => `${label} ${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
 
 async function api(request, method, path, data) {

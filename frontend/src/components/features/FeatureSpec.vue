@@ -6,9 +6,9 @@
 // again. A spec nobody can read is a spec nobody can check a build against,
 // which is the one job the acceptance list has.
 //
-// Edited as source beside a live preview (`editor/MarkdownEditor` says why
-// source-first): the editor hands back the exact bytes it was given. A save
-// appends no event — rounds count builds, and
+// Edited on its rendering, with source one click away (`editor/MarkdownEditor`
+// says how): an untouched block goes back as the exact bytes it was given. A
+// save appends no event — rounds count builds, and
 // a reworded sentence is not one.
 //
 // Images work the way they do in a task's body, and for the same reason: a
@@ -157,12 +157,13 @@ async function onDrop(e) {
       <MarkdownEditor
         ref="area"
         v-model="draft" :project="project" :feature="featureId" :images="images" :attach="attach"
-        preview-testid="feature-spec-preview-pane"
+        preview-testid="feature-spec-rich"
         :rows="14" spellcheck="false"
         aria-label="Feature spec markdown" data-testid="feature-spec-input"
         @paste="onPaste"
         @dragover.prevent
         @drop="onDrop"
+        @submit="save"
       />
       <p class="fs-hint">
         Markdown. {{ IMAGE_REF_HINT }} Paste or drop an image here.

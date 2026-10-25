@@ -347,8 +347,9 @@ onMounted(() => { ensureProjects(); load() })
       </Card>
 
       <!-- Rendered, because a task body is an authored document a feature's
-           spec lives in; edited as source (`editor/MarkdownEditor` says why),
-           because it is also an input an agent reads back. Deliberately NOT the
+           spec lives in; edited so untouched blocks keep their exact bytes
+           (`editor/MarkdownEditor` says how), because it is also an input an
+           agent reads back. Deliberately NOT the
            rule an agent's launch brief follows (c6efe72a) — that one is input
            text full of paths and fenced source, where every `*` and `#` is a
            literal a renderer would eat. -->

@@ -1,11 +1,16 @@
 /**
- * F174 S4 — the split editor reused for a task's body and a defect's symptom.
+ * F174 S4 — the editor reused for a task's body and a defect's symptom.
  *
- * Each host keeps its own field (test id, label, keys) and names its own
- * preview pane; the preview draws what that host's saved view draws — a task
- * body renders, a symptom is quoted as typed.
+ * Each host keeps its own field (test id, label, keys). A task body has the
+ * rich face beside the source one; a symptom, quoted as typed in its saved
+ * view, is source only.
  */
 import { test, expect } from './auth-fixture.js'
+
+// The rich face is the default editor now; these specs drive the source one.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('regin_editor_mode', 'source'))
+})
 
 const BODY = '## Goal\n\nShip **it**.'
 
@@ -51,7 +56,7 @@ async function stubDefect(page) {
 
 test.use({ viewport: { width: 1280, height: 900 } })
 
-test('test_component_reused_in_task_and_defect_editors: a task body edits in split',
+test('test_component_reused_in_task_and_defect_editors: a task body edits in source',
   async ({ page }) => {
     const patches = []
     await stubTask(page, patches)
@@ -60,23 +65,19 @@ test('test_component_reused_in_task_and_defect_editors: a task body edits in spl
 
     const editor = page.getByTestId('markdown-editor')
     const input = page.getByTestId('task-body-area')
-    const pane = page.getByTestId('task-body-preview-pane')
-    await expect(editor).toHaveAttribute('data-mode', 'split')
+    await expect(editor).toHaveAttribute('data-mode', 'source')
     await expect(input).toHaveValue(BODY)
     await expect(input).toHaveAttribute('aria-label', 'Task details markdown')
     await expect(page.getByTestId('task-body-preview')).toHaveCount(0)
     await expect(editor.getByRole('toolbar')).toBeVisible()
 
-    await expect(pane.locator('h2')).toHaveText('Goal')
     await input.fill('## Next\n\n**now**')
-    await expect(pane.locator('h2')).toHaveText('Next')
-    await expect(pane.locator('strong')).toHaveText('now')
 
     await page.getByTestId('task-body-save').click()
     await expect.poll(() => patches).toEqual([{ body: '## Next\n\n**now**' }])
   })
 
-test('test_component_reused_in_task_and_defect_editors: a symptom previews as typed',
+test('test_component_reused_in_task_and_defect_editors: a symptom edits as source only',
   async ({ page }) => {
     await stubDefect(page)
     await page.goto('/defects/7')
@@ -84,23 +85,15 @@ test('test_component_reused_in_task_and_defect_editors: a symptom previews as ty
 
     const editor = page.getByTestId('markdown-editor')
     const field = page.getByTestId('defect-edit-field-7')
-    const pane = page.getByTestId('defect-symptom-preview-pane')
-    await expect(editor).toHaveAttribute('data-mode', 'split')
+    await expect(editor).toHaveAttribute('data-mode', 'source')
     await expect(field).toBeFocused()
     await expect(field).toHaveValue(SYMPTOM)
     await expect(field).toHaveAttribute('id', 'ds-7')
     // A mark the toolbar wrote would show as typed, so there is no toolbar.
     await expect(editor.getByRole('toolbar')).toHaveCount(0)
 
-    await expect(pane).toHaveText(SYMPTOM)
-    await expect(pane.locator('strong, h2')).toHaveCount(0)
-    const whiteSpace = await pane.locator('p').evaluate((el) => getComputedStyle(el).whiteSpace)
-    expect(whiteSpace).toMatch(/^pre/)
-
+    await expect(editor.locator('[data-testid^="editor-mode-"]')).toHaveCount(0)
     await field.fill('the **gutter**')
-    await expect(pane).toHaveText('the **gutter**')
-
-    await page.getByTestId('editor-mode-preview').click()
-    await expect(field).toBeHidden()
+    await expect(field).toHaveValue('the **gutter**')
     await expect(page.getByTestId('defect-edit-submit-7')).toBeVisible()
   })

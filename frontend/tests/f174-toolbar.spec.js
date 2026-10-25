@@ -6,6 +6,11 @@
  */
 import { test, expect } from './auth-fixture.js'
 
+// The rich face is the default editor now; these specs drive the source one.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('regin_editor_mode', 'source'))
+})
+
 function ledger(body) {
   return {
     id: 243, title: 'Toolbar', origin: 'native',
@@ -31,7 +36,6 @@ async function stub(page) {
 }
 
 const input = (page) => page.getByTestId('feature-spec-input')
-const pane = (page) => page.getByTestId('feature-spec-preview-pane')
 const tool = (page, kind) => page.getByTestId(`editor-tool-${kind}`)
 const selection = (page) => input(page).evaluate((el) => [el.selectionStart, el.selectionEnd])
 
@@ -53,20 +57,18 @@ test.use({ viewport: { width: 1280, height: 900 } })
 test('test_toolbar_bold_is_one_undo_step', async ({ page }) => {
   await stub(page)
   await openWith(page, '重点')
-  await expect(page.getByTestId('markdown-editor')).toHaveAttribute('data-mode', 'split')
+  await expect(page.getByTestId('markdown-editor')).toHaveAttribute('data-mode', 'source')
   await expect(tool(page, 'bold')).toHaveAttribute('aria-label', 'Bold')
   await expect(tool(page, 'bold')).toHaveAttribute('title', 'Bold')
   await select(page, 0, 2)
 
   await tool(page, 'bold').click()
   await expect(input(page)).toHaveValue('**重点**')
-  await expect(pane(page).locator('strong')).toHaveText('重点')
   await expect(input(page)).toBeFocused()
 
   await page.keyboard.press('ControlOrMeta+z')
   await expect(input(page)).toHaveValue('重点')
   expect(await selection(page)).toEqual([0, 2])
-  await expect(pane(page).locator('strong')).toHaveCount(0)
 })
 
 test('bold without a selection leaves the caret between the markers', async ({ page }) => {
@@ -224,12 +226,14 @@ test('a link with no selection leaves the caret inside the brackets', async ({ p
   expect(await selection(page)).toEqual([1, 1])
 })
 
-test('the toolbar is not shown in preview mode', async ({ page }) => {
+test('the toolbar serves both faces; the table group only the rich one', async ({ page }) => {
   await stub(page)
   await openWith(page, 'x')
   await expect(page.getByTestId('editor-toolbar')).toBeVisible()
-  await page.getByTestId('editor-mode-preview').click()
-  await expect(page.getByTestId('editor-toolbar')).toHaveCount(0)
-  await page.getByTestId('editor-mode-source').click()
+  await expect(tool(page, 'table')).toHaveCount(0)
+  await page.getByTestId('editor-mode-rich').click()
   await expect(page.getByTestId('editor-toolbar')).toBeVisible()
+  await expect(tool(page, 'table')).toBeVisible()
+  await page.getByTestId('editor-mode-source').click()
+  await expect(input(page)).toHaveValue('x')
 })

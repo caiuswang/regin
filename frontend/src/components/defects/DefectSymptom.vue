@@ -2,10 +2,9 @@
 // The symptom, edited where it is read: a click turns it into the field, so
 // correcting the wording is not a menu verb with a form of its own.
 //
-// Edited as source beside a preview (`editor/MarkdownEditor` says why
-// source-first). The preview is `verbatim`: a symptom is quoted input, shown
-// as typed (defect-symptom-verbatim), so a markdown render would preview a
-// page Save never produces.
+// Edited as source only (`verbatim`): a symptom is quoted input, shown as
+// typed (defect-symptom-verbatim), so a rich face would edit a rendering Save
+// never produces.
 import { computed, nextTick, ref } from 'vue'
 import api from '../../api'
 import { refusalOf, runRemedy } from '../../composables/useDefectRemedy'
@@ -113,7 +112,6 @@ async function onRemedy(remedy) {
       v-model="value"
       verbatim
       class="ds-field"
-      preview-testid="defect-symptom-preview-pane"
       rows="3"
       :feature="defect.feature_id"
       :disabled="busy"

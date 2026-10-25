@@ -9,6 +9,11 @@
  */
 import { test, expect } from './auth-fixture.js'
 
+// The rich face is the default editor now; these specs drive the source one.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('regin_editor_mode', 'source'))
+})
+
 const BODY = [
   '## What this is for',
   '',

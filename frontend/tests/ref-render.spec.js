@@ -14,6 +14,11 @@ import { expect, test } from './auth-fixture.js'
 import { API_BASE } from './helpers/api-base.js'
 import { BASELINE_TRACE } from './helpers/fixtures.js'
 
+// The rich face is the default editor now; these specs drive the source one.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('regin_editor_mode', 'source'))
+})
+
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const PY = resolve(ROOT, '.venv/bin/python')
 
