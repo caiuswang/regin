@@ -1,6 +1,11 @@
 <script setup>
 // The symptom, edited where it is read: a click turns it into the field, so
 // correcting the wording is not a menu verb with a form of its own.
+//
+// Edited as source beside a preview (`editor/MarkdownEditor` says why
+// source-first). The preview is `verbatim`: a symptom is quoted input, shown
+// as typed (defect-symptom-verbatim), so a markdown render would preview a
+// page Save never produces.
 import { computed, nextTick, ref } from 'vue'
 import api from '../../api'
 import { refusalOf, runRemedy } from '../../composables/useDefectRemedy'
@@ -8,7 +13,7 @@ import { useConfirm } from '../../composables/useConfirm'
 import { imageFilesFrom, toBase64 } from '../../utils/imageFiles'
 import Button from '../ui/Button.vue'
 import RefInlineText from '../refs/RefInlineText.vue'
-import RefTextarea from '../refs/RefTextarea.vue'
+import MarkdownEditor from '../editor/MarkdownEditor.vue'
 import DefectRefusal from './DefectRefusal.vue'
 
 const props = defineProps({
@@ -35,7 +40,7 @@ async function start(e) {
   refusal.value = null
   editing.value = true
   await nextTick()
-  field.value?.$el?.querySelector?.('textarea')?.focus()
+  field.value?.textarea?.focus()
 }
 
 function cancel() {
@@ -102,10 +107,13 @@ async function onRemedy(remedy) {
 <template>
   <form v-if="editing" class="ds-edit" @submit.prevent="save">
     <label class="sr-only" :for="`ds-${defect.id}`">Symptom of defect #{{ defect.id }}</label>
-    <RefTextarea
+    <MarkdownEditor
       :id="`ds-${defect.id}`"
       ref="field"
       v-model="value"
+      verbatim
+      class="ds-field"
+      preview-testid="defect-symptom-preview-pane"
       rows="3"
       :feature="defect.feature_id"
       :disabled="busy"
@@ -158,6 +166,7 @@ async function onRemedy(remedy) {
     margin: -0.15rem -0.3rem; padding: 0.15rem 0.3rem;
 }
 .ds-edit { display: flex; flex-direction: column; gap: 0.4rem; max-width: 60rem; }
+.ds-edit .ds-field { margin-top: 0; }
 .ds-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
 .ds-hint { font-size: 11px; color: var(--color-fg-faint); }
 </style>

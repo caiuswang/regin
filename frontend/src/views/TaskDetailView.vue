@@ -346,9 +346,9 @@ onMounted(() => { ensureProjects(); load() })
         </dl>
       </Card>
 
-      <!-- Source over a rendered preview, because a task body is an authored
-           document a feature's spec lives in AND an input an agent reads back:
-           the editor hands back the bytes it was given. Deliberately NOT the
+      <!-- Rendered, because a task body is an authored document a feature's
+           spec lives in; edited as source (`editor/MarkdownEditor` says why),
+           because it is also an input an agent reads back. Deliberately NOT the
            rule an agent's launch brief follows (c6efe72a) — that one is input
            text full of paths and fenced source, where every `*` and `#` is a
            literal a renderer would eat. -->

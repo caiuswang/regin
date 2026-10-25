@@ -1,10 +1,8 @@
 <script setup>
 // The task body, read and written on the page that has its address.
 //
-// Source over a rendered preview, not a rich editor. The column holds a
-// feature's whole spec and agents both read and write it, so the editor hands
-// back the exact bytes it was given — a WYSIWYG round trip was measured
-// (regin:67) at 11% of lines rewritten, and it deletes HTML comments.
+// Edited as source beside a live preview (`editor/MarkdownEditor` says why
+// source-first): the editor hands back the exact bytes it was given.
 //
 // Shaped after `PatternContentEditor`, the same read-then-Edit toggle.
 import { computed, ref } from 'vue'
@@ -13,7 +11,7 @@ import Button from '../ui/Button.vue'
 import Card from '../Card.vue'
 import Icon from '../ui/Icon.vue'
 import MarkdownContent from '../MarkdownContent.vue'
-import RefTextarea from '../refs/RefTextarea.vue'
+import MarkdownEditor from '../editor/MarkdownEditor.vue'
 import { caretTarget, withCaretInsert } from '../../utils/caret'
 import { imageFilesFrom } from '../../utils/imageFiles'
 import { IMAGE_REF_HINT, imageRefBlock, resolveImageRefs } from '../../utils/taskBodyImages'
@@ -30,23 +28,16 @@ const props = defineProps({
 const emit = defineEmits(['saved'])
 
 const editing = ref(false)
-// Source is the editing mode, for the reason the file header states. Preview
-// is a READ of the draft, not a second editor: an `![](image:N)` reference is
-// a number until something resolves it, and checking that the number names the
-// picture you meant used to mean saving first.
-const previewing = ref(false)
 const draft = ref('')
 const saving = ref(false)
 const error = ref('')
 const area = ref(null)
 
 const rendered = computed(() => resolveImageRefs(props.task.body, props.images))
-const draftRendered = computed(() => resolveImageRefs(draft.value, props.images))
 
 function start() {
   draft.value = props.task.body || ''
   error.value = ''
-  previewing.value = false
   editing.value = true
 }
 
@@ -105,13 +96,6 @@ async function onDrop(e) {
       </div>
       <div v-else-if="editing" class="tbe-actions">
         <Button
-          variant="ghost" size="sm" :aria-pressed="previewing"
-          data-testid="task-body-preview" @click="previewing = !previewing"
-        >
-          <Icon :name="previewing ? 'pencil' : 'eye'" :size="13" />
-          <span>{{ previewing ? 'Source' : 'Preview' }}</span>
-        </Button>
-        <Button
           variant="primary" size="sm" :disabled="saving"
           data-testid="task-body-save" @click="save"
         >{{ saving ? 'Saving…' : 'Save' }}</Button>
@@ -122,27 +106,16 @@ async function onDrop(e) {
     </div>
 
     <template v-if="editing">
-      <!-- v-show, not v-if: the textarea has to keep its caret and its scroll
-           position across a preview, or toggling back drops the operator at
-           the top of a spec they were editing the middle of. -->
-      <RefTextarea
-        v-show="!previewing"
+      <MarkdownEditor
         ref="area"
-        v-model="draft"
-        :project="task.project_id"
-        :feature="task.feature_id"
-        :rows="18"
-        class="tbe-area"
-        spellcheck="false"
-        aria-label="Task details markdown"
-        data-testid="task-body-area"
+        v-model="draft" :project="task.project_id" :feature="task.feature_id"
+        :images="images" :attach="attach"
+        preview-testid="task-body-preview-pane"
+        :rows="18" spellcheck="false"
+        aria-label="Task details markdown" data-testid="task-body-area"
         @paste="onPaste"
         @dragover.prevent
         @drop="onDrop"
-      />
-      <MarkdownContent
-        v-if="previewing" class="tbe-body" :markdown="draftRendered" refs
-        :project="task.project_id" data-testid="task-body-preview-pane"
       />
       <p class="tbe-hint">Markdown. {{ IMAGE_REF_HINT }} Paste or drop an image here.</p>
       <p v-if="error" class="tbe-error" role="alert" data-testid="task-body-error">{{ error }}</p>
@@ -167,14 +140,6 @@ async function onDrop(e) {
 }
 .tbe-title { margin-bottom: 0; }
 .tbe-actions { display: flex; gap: 0.375rem; }
-/* The primitive already brings the token-backed `.input` box; this adds only
-   what a markdown source view needs on top of it. */
-.tbe-area {
-    margin-top: 0.75rem;
-    font-family: var(--font-mono, ui-monospace, monospace);
-    font-size: 0.8125rem;
-    line-height: 1.5;
-}
 .tbe-hint {
     margin-top: 0.375rem;
     font-size: 0.6875rem;

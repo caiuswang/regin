@@ -8,6 +8,11 @@
 // through the same `MarkdownContent` the saved view uses, so what the preview
 // shows is what the page shows after Save.
 //
+// A host whose saved view is quoted text rather than rendered markdown (a
+// defect's symptom, drawn by `RefInlineText`) passes `verbatim`: the preview
+// draws the same component, so it still shows what Save shows, and the
+// toolbar is withheld, since a mark it wrote would display as typed.
+//
 // The host's attributes and listeners (test id, aria-label, paste, drop) land
 // on the textarea, and the textarea is exposed as `textarea` for
 // `utils/caret.js`, so a host swaps this in for a bare `RefTextarea`.
@@ -16,6 +21,7 @@ import Button from '../ui/Button.vue'
 import EditorToolbar from './EditorToolbar.vue'
 import Icon from '../ui/Icon.vue'
 import MarkdownContent from '../MarkdownContent.vue'
+import RefInlineText from '../refs/RefInlineText.vue'
 import RefTextarea from '../refs/RefTextarea.vue'
 import { resolveImageRefs } from '../../utils/taskBodyImages'
 
@@ -29,6 +35,7 @@ const props = defineProps({
   // an attribute; the host's own paste/drop handlers call it.
   attach: { type: Function, default: null },
   previewTestid: { type: String, default: null },
+  verbatim: { type: Boolean, default: false },
 })
 const emit = defineEmits(['update:modelValue'])
 
@@ -99,7 +106,7 @@ function fieldAttrs(all) {
   >
     <div class="me-bar">
       <div class="me-tools">
-        <slot v-if="mode !== 'preview'" name="toolbar">
+        <slot v-if="mode !== 'preview' && !verbatim" name="toolbar">
           <EditorToolbar :field="source" />
         </slot>
       </div>
@@ -127,8 +134,9 @@ function fieldAttrs(all) {
         @update:model-value="emit('update:modelValue', $event)"
       />
       <div v-if="mode !== 'source'" class="me-preview" :data-testid="previewTestid">
-        <MarkdownContent v-if="!blank" :markdown="rendered" refs :project="project" />
-        <p v-else class="me-blank">Nothing to preview yet.</p>
+        <p v-if="blank" class="me-blank">Nothing to preview yet.</p>
+        <p v-else-if="verbatim" class="me-verbatim"><RefInlineText :text="modelValue" :project="project" /></p>
+        <MarkdownContent v-else :markdown="rendered" refs :project="project" />
       </div>
     </div>
   </div>
@@ -167,5 +175,6 @@ function fieldAttrs(all) {
 .me-preview :deep(img) {
     max-width: 100%; height: auto; border-radius: var(--radius-md);
 }
+.me-verbatim { white-space: pre-wrap; color: var(--color-fg); }
 .me-blank { font-size: 0.75rem; color: var(--color-fg-faint); }
 </style>
