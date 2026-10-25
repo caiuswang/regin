@@ -9,6 +9,12 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { test, expect } from './auth-fixture.js'
 
+// The declare dialog's Spec field is filled as a textarea: the rich face is
+// `f178-dialogs.spec.js`'s to test.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('regin_editor_mode', 'source'))
+})
+
 const SRC = join(dirname(fileURLToPath(import.meta.url)), '..', 'src')
 
 const COUNTS = { tasks: 128, features: 24, defects: 40 }
