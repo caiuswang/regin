@@ -21,7 +21,7 @@
 //
 // A spec runs to thousands of lines, so neither face scrolls inside itself:
 // both grow with their text and the page scrolls. What the writer needs at
-// hand rides along instead — the head (toolbar, mode switch, Expand and the
+// hand rides along instead — the head (toolbar, mode switch, Shortcuts, Expand and the
 // host's Save/Cancel in the `actions` slot) sticks to the top of the page's
 // scroller while the editor is on screen. Expand (or ⌘⇧F) opens the focus
 // layout, Collapse or Esc closes it (`composables/useEditorLayout`).
@@ -35,6 +35,7 @@ import Button from '../ui/Button.vue'
 import EditorToolbar from './EditorToolbar.vue'
 import Icon from '../ui/Icon.vue'
 import RefTextarea from '../refs/RefTextarea.vue'
+import ShortcutsPopover from './ShortcutsPopover.vue'
 import { useEditorLayout } from '../../composables/useEditorLayout.js'
 import { caretTarget, withCaretInsert } from '../../utils/caret'
 import { imageRefBlock } from '../../utils/taskBodyImages'
@@ -115,6 +116,11 @@ function insertImages(idxs, event = null) {
   emit('update:modelValue', withCaretInsert(caretTarget(event, textarea.value), props.modelValue, imageRefBlock(idxs)))
 }
 
+function refocusFace() {
+  if (mode.value === 'rich') editor.value?.view.focus()
+  else textarea.value?.focus({ preventScroll: true })
+}
+
 const picker = ref(null)
 
 function pickImage() {
@@ -188,6 +194,7 @@ function listeners(all) {
               <span>{{ m.label }}</span>
             </Button>
           </div>
+          <ShortcutsPopover v-if="!verbatim" @closed="refocusFace" />
           <Button
             v-if="!verbatim && layout === 'inline'"
             variant="ghost" size="sm" data-testid="editor-expand"
