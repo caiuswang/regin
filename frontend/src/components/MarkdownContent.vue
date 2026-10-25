@@ -7,6 +7,7 @@ import CodeBlock from './markdown/CodeBlock.vue'
 import MermaidDiagram from './markdown/MermaidDiagram.vue'
 import { useRefResolve } from '../composables/useRefResolve.js'
 import { parseRefs } from '../utils/refs.js'
+import { headingId, outlineFromDom } from '../editor/outline.js'
 import { followChip, mountPoints, slotted } from '../utils/refRender.js'
 
 const props = defineProps({
@@ -19,6 +20,9 @@ const props = defineProps({
   // The project whose repo a `file:` reference is looked up in.
   project: { type: Number, default: null },
 })
+// The rendered headings (`OutlineEntry[]`), after every render: what an
+// outline lists.
+const emit = defineEmits(['outline'])
 
 const source = computed(() => props.markdown || '')
 const found = computed(() => (props.refs ? parseRefs(source.value) : []))
@@ -83,7 +87,7 @@ function dropBlocks() {
 // In document order, for the outline to jump to; numbered rather than
 // slugged because a spec repeats its headings ("Rules" under every section).
 function numberHeadings() {
-  container.value.querySelectorAll('h1, h2, h3, h4').forEach((el, n) => { el.id = `md-h-${n}` })
+  container.value.querySelectorAll('h1, h2, h3, h4').forEach((el, n) => { el.id = headingId(n) })
 }
 
 function onClick(event) {
@@ -144,6 +148,7 @@ function settle() {
   numberHeadings()
   drawChips()
   mountBlocks()
+  emit('outline', outlineFromDom(container.value))
 }
 
 // Bound here rather than in the template: the body is no clickable surface.

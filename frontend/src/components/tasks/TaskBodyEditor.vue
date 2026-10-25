@@ -103,6 +103,7 @@ async function onDrop(e) {
         v-model="draft" :project="task.project_id" :feature="task.feature_id"
         :images="images" :attach="attach"
         preview-testid="task-body-rich" :title="task.title || ''"
+        :outline="false"
         class="tbe-editor"
         :rows="18" spellcheck="false"
         aria-label="Task details markdown" data-testid="task-body-area"

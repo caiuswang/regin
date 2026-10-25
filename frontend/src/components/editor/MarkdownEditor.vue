@@ -30,13 +30,21 @@
 // chosen files to the host's `attach`, which resolves either the attached
 // `idx` list or `{ taken, error }`. What arrived is placed at the caret; a
 // failure is the host's to show, reported as `attach-error`.
-import { computed, defineAsyncComponent, ref, useSlots } from 'vue'
+//
+// A host passing `outline` gets the rich face's headings listed (`Outline`):
+// a rail in the focus layout's left margin when that margin is wide enough
+// to hold one (measured, since the sidebar's width is the page's to decide),
+// otherwise an Outline button in the head once there are enough headings to
+// need one. The rail sits beside the 84ch column, never inside it.
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, useSlots } from 'vue'
 import Button from '../ui/Button.vue'
 import EditorToolbar from './EditorToolbar.vue'
 import Icon from '../ui/Icon.vue'
+import Outline from './Outline.vue'
 import RefTextarea from '../refs/RefTextarea.vue'
 import ShortcutsPopover from './ShortcutsPopover.vue'
 import { useEditorLayout } from '../../composables/useEditorLayout.js'
+import { OUTLINE_MIN } from '../../editor/outline.js'
 import { caretTarget, withCaretInsert } from '../../utils/caret'
 import { imageRefBlock } from '../../utils/taskBodyImages'
 
@@ -53,6 +61,7 @@ const props = defineProps({
   verbatim: { type: Boolean, default: false },
   // The focus layout's title line: what is being edited.
   title: { type: String, default: '' },
+  outline: { type: Boolean, default: false },
 })
 const emit = defineEmits(['update:modelValue', 'submit', 'attach-error'])
 
@@ -103,6 +112,56 @@ const { layout, setLayout } = useEditorLayout({
   source: () => source.value,
   enabled: () => !props.verbatim,
 })
+
+// The rail is stuck just under the stuck head, whose height wraps with the
+// toolbar, and is as wide as the column's left margin allows (the pane's own
+// padding excluded). Both are measured as they change rather than guessed.
+const SCROLLER = '.content-scroll'
+const RAIL_MIN = 160
+const RAIL_MAX = 224
+const RAIL_GAP = 16
+const headHeight = ref(0)
+const railRoom = ref(0)
+const railWidth = computed(() => Math.min(RAIL_MAX, railRoom.value - RAIL_GAP))
+
+const headings = computed(() => rich.value?.headings ?? [])
+const outlineAs = computed(() => {
+  if (!props.outline || mode.value !== 'rich') return null
+  if (layout.value === 'focus' && railRoom.value >= RAIL_MIN + RAIL_GAP) return 'rail'
+  return headings.value.length >= OUTLINE_MIN ? 'dropdown' : null
+})
+const headingAt = (entry) => editor.value?.view.nodeDOM(entry.pos) ?? null
+// Where the head's bottom sits once it is stuck — where a heading lands, even
+// while the head itself is still further down the page in its flow position.
+function headEdge() {
+  const el = head.value
+  const scroller = root.value?.closest(SCROLLER)
+  if (!el || !scroller) return el?.getBoundingClientRect().bottom ?? 0
+  const pad = parseFloat(getComputedStyle(scroller).paddingTop) || 0
+  const stuck = scroller.getBoundingClientRect().top + scroller.clientTop + pad + (parseFloat(getComputedStyle(el).top) || 0)
+  return stuck + el.offsetHeight
+}
+const pickHeading = (entry) => rich.value?.placeAtHeading(entry.pos)
+
+let sizes = null
+
+function measure() {
+  headHeight.value = head.value?.offsetHeight ?? 0
+  const scroller = root.value?.closest(SCROLLER)
+  if (!scroller || layout.value !== 'focus') {
+    railRoom.value = 0
+    return
+  }
+  const pad = parseFloat(getComputedStyle(scroller).paddingLeft) || 0
+  railRoom.value = root.value.getBoundingClientRect().left - scroller.getBoundingClientRect().left - scroller.clientLeft - pad
+}
+
+onMounted(() => {
+  if (typeof ResizeObserver === 'undefined') return
+  sizes = new ResizeObserver(measure)
+  for (const el of [root.value, head.value, root.value?.closest(SCROLLER)]) if (el) sizes.observe(el)
+})
+onBeforeUnmount(() => sizes?.disconnect())
 
 // The images a host's paste or drop attached, written where the writer is:
 // image nodes at the rich face's caret, or `![](image:N)` lines at the
@@ -160,7 +219,8 @@ function listeners(all) {
 <template>
   <div
     ref="root"
-    :class="['md-editor', `is-${mode}`, `is-${layout}`, $attrs.class]" :style="$attrs.style"
+    :class="['md-editor', `is-${mode}`, `is-${layout}`, $attrs.class]"
+    :style="[$attrs.style, { '--me-head-h': `${headHeight}px`, '--me-rail-w': `${railWidth}px` }]"
     :data-mode="mode" :data-layout="layout" data-testid="markdown-editor"
   >
     <div v-if="hasHead" ref="head" class="me-head" data-testid="editor-head">
@@ -181,6 +241,11 @@ function listeners(all) {
           </slot>
         </div>
         <div class="me-end">
+          <Outline
+            v-if="outlineAs === 'dropdown'" variant="dropdown"
+            :entries="headings" :element-for="headingAt" :edge="headEdge" :edge-key="headHeight"
+            @pick="pickHeading"
+          />
           <div v-if="!verbatim" class="me-modes" role="group" aria-label="Editor mode">
             <Button
               v-for="m in MODES" :key="m.id"
@@ -207,6 +272,12 @@ function listeners(all) {
           </div>
         </div>
       </div>
+    </div>
+    <div v-if="outlineAs === 'rail'" class="me-rail">
+      <Outline
+        variant="rail" :entries="headings" :element-for="headingAt" :edge="headEdge" :edge-key="headHeight"
+        @pick="pickHeading"
+      />
     </div>
     <RichEditor
       v-if="mode === 'rich'"
@@ -238,7 +309,16 @@ function listeners(all) {
 
 <style scoped>
 .md-editor { margin-top: 0.75rem; }
-.md-editor.is-focus { max-width: 84ch; margin-inline: auto; }
+.md-editor.is-focus { position: relative; max-width: 84ch; margin-inline: auto; }
+/* In the focus column's left margin, stuck under the stuck head. */
+.me-rail {
+    position: absolute; top: var(--me-head-h, 0px); bottom: 0;
+    right: calc(100% + 16px); width: var(--me-rail-w, 0px);
+}
+.me-rail > :deep(.ol-rail) {
+    position: sticky; top: calc(var(--me-head-h, 0px) - 1.5rem + 0.5rem);
+    max-height: calc(100vh - var(--me-head-h, 0px) - 6rem); overflow-y: auto;
+}
 /* Pinned by the `.content-scroll` padding (1.5rem, 1rem on phones), like the
    feature page's section index, and drawn over that index: while the editor
    is on screen its head is what the writer needs. A host may widen the band

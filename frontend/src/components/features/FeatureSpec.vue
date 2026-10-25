@@ -24,6 +24,9 @@
 // `features.body` with the issue's text — so an edit here would be lost on the
 // next refresh. The card is read-only there and points at the tracker instead;
 // the stage line's Refresh is what pulls the issue's text back in.
+//
+// A long spec carries its own outline, in the editor and, past a handful of
+// headings, beside Edit in the read view.
 import { computed, ref } from 'vue'
 import api from '../../api'
 import Button from '../ui/Button.vue'
@@ -31,6 +34,8 @@ import Card from '../Card.vue'
 import Icon from '../ui/Icon.vue'
 import MarkdownContent from '../MarkdownContent.vue'
 import MarkdownEditor from '../editor/MarkdownEditor.vue'
+import Outline from '../editor/Outline.vue'
+import { OUTLINE_MIN } from '../../editor/outline.js'
 import { useDiscardGuard } from '../../composables/useDiscardGuard'
 import { imageFilesFrom } from '../../utils/imageFiles'
 import { SPEC_ANCHOR } from '../../utils/featureLinks'
@@ -66,6 +71,11 @@ const draft = ref('')
 const saving = ref(false)
 const error = ref('')
 const area = ref(null)
+
+// The read view's headings, as `MarkdownContent` last rendered them.
+const bodyView = ref(null)
+const readHeadings = ref([])
+const headingIn = (entry) => bodyView.value?.$el?.querySelector(`#${entry.id}`) ?? null
 
 const rendered = computed(() => resolveImageRefs(props.body, props.images))
 
@@ -139,29 +149,35 @@ async function onDrop(e) {
         <h2 class="card-header fs-title">Spec</h2>
         <p class="fs-sub">what this feature was declared to deliver</p>
       </div>
-      <div v-if="tracked" class="fs-actions" data-testid="feature-spec-tracked">
-        <a
-          v-if="externalUrl"
-          class="fs-tracker-link focus-visible:outline-2 focus-visible:outline-blue-500"
-          :href="externalUrl" target="_blank" rel="noopener"
-          data-testid="feature-spec-tracker-link"
-        >Edit in {{ trackerLabel }} →</a>
-        <span v-else class="fs-sub">read-only — edit it in {{ trackerLabel }}</span>
+      <div class="fs-actions">
+        <Outline
+          v-if="body && !editing && readHeadings.length >= OUTLINE_MIN" variant="dropdown"
+          :entries="readHeadings" :element-for="headingIn"
+        />
+        <div v-if="tracked" class="fs-actions" data-testid="feature-spec-tracked">
+          <a
+            v-if="externalUrl"
+            class="fs-tracker-link focus-visible:outline-2 focus-visible:outline-blue-500"
+            :href="externalUrl" target="_blank" rel="noopener"
+            data-testid="feature-spec-tracker-link"
+          >Edit in {{ trackerLabel }} →</a>
+          <span v-else class="fs-sub">read-only — edit it in {{ trackerLabel }}</span>
+        </div>
+        <Button
+          v-else-if="!editing && canWrite"
+          variant="ghost" size="sm" data-testid="feature-spec-edit" @click="start"
+        >
+          <Icon name="pencil" :size="13" />
+          <span>Edit</span>
+        </Button>
       </div>
-      <Button
-        v-else-if="!editing && canWrite"
-        variant="ghost" size="sm" data-testid="feature-spec-edit" @click="start"
-      >
-        <Icon name="pencil" :size="13" />
-        <span>Edit</span>
-      </Button>
     </div>
 
     <template v-if="editing && !tracked">
       <MarkdownEditor
         ref="area"
         v-model="draft" :project="project" :feature="featureId" :images="images" :attach="attach"
-        preview-testid="feature-spec-rich" :title="title"
+        preview-testid="feature-spec-rich" :title="title" outline
         class="fs-editor"
         :rows="14" spellcheck="false"
         aria-label="Feature spec markdown" data-testid="feature-spec-input"
@@ -196,8 +212,8 @@ async function onDrop(e) {
         The text of the {{ trackerLabel }} issue. Refresh on the stage line pulls it again.
       </p>
       <MarkdownContent
-        v-if="body" class="fs-body" :markdown="rendered" refs :project="project"
-        data-testid="feature-spec-body"
+        v-if="body" ref="bodyView" class="fs-body" :markdown="rendered" refs :project="project"
+        data-testid="feature-spec-body" @outline="readHeadings = $event"
       />
       <p v-else class="fs-empty" data-testid="feature-spec-empty">
         Declared with no spec. Without one there is nothing for the acceptance
@@ -227,6 +243,9 @@ async function onDrop(e) {
     margin-top: 0.75rem; font-size: 0.8125rem; color: var(--color-fg-muted);
     overflow-wrap: anywhere;
 }
+/* A jump from the outline lands the heading under the page's stuck section
+   index, as the ledger's own section jumps do. */
+.fs-body :deep(:is(h1, h2, h3, h4)) { scroll-margin-top: 3.25rem; }
 .fs-body :deep(img) {
     max-width: 100%; height: auto; border-radius: var(--radius-md);
 }

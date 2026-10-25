@@ -40,6 +40,7 @@ import SlashMenu from './SlashMenu.vue'
 import { parse, serialize } from '../../editor/markdownDoc.js'
 import { richExtensions } from '../../editor/extensions.js'
 import { SLASH_MENU } from '../../editor/slash.js'
+import { outlineFromDoc } from '../../editor/outline.js'
 import { exitSuggestion } from '@tiptap/suggestion'
 import { refForUrl, useRefMentions } from '../../composables/useRefMentions.js'
 import { useRefPreview } from '../../composables/useRefPreview.js'
@@ -275,6 +276,18 @@ function closeOverlays() {
 
 const bubble = ref(null)
 
+// The outline's entries (`editor/outline.js`), recomputed on every
+// transaction that changed the doc.
+const headings = shallowRef([])
+
+// Replaced only when a heading moved, changed or came and went, so a
+// keystroke in a paragraph below the last heading lays no new observer.
+function syncHeadings(doc) {
+  const next = outlineFromDoc(doc)
+  const key = (list) => list.map((e) => `${e.pos}:${e.level}:${e.text}`).join('\n')
+  if (key(next) !== key(headings.value)) headings.value = next
+}
+
 function handleKeyDown(view, event) {
   if (event.key !== 'Escape' || !bubble.value?.visible) return false
   const { to } = view.state.selection
@@ -305,6 +318,9 @@ const editor = shallowRef(new Editor({
   }),
   editorProps: { attributes, handlePaste, handleDrop, handleKeyDown },
   onBlur: closeOverlays,
+  onTransaction: ({ transaction }) => {
+    if (transaction.docChanged) syncHeadings(transaction.doc)
+  },
   onUpdate: ({ editor: ed }) => {
     collectTargets(ed.state.doc)
     const out = serialize(ed.state.doc, segments, retained)
@@ -395,7 +411,16 @@ onBeforeUnmount(() => {
   editor.value?.destroy()
 })
 
-defineExpose({ editor, insertImages })
+// The caret at the start of a heading the outline jumped to; the outline
+// scrolls, so this neither scrolls nor lets the browser scroll on focus.
+function placeAtHeading(pos) {
+  const view = editor.value?.view
+  if (!view) return
+  view.dispatch(view.state.tr.setSelection(TextSelection.near(view.state.doc.resolve(pos + 1))))
+  view.focus()
+}
+
+defineExpose({ editor, insertImages, headings, placeAtHeading })
 </script>
 
 <template>
