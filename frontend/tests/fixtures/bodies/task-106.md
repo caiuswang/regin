@@ -1,0 +1,1 @@
+On f73/integration these were green: 595 passed across tests/features tests/defects tests/pipeline tests/tasks tests/web/test_features_api.py, and 78 Playwright specs across pipeline-*, feature-*, defects-ledger, tasks-url-state. A merge is a new tree, so both bars are re-run there. Includes the new tests/core/test_doctor_schema_revision.py.

@@ -1,0 +1,3 @@
+Now we have defects, but it seems like when we create a new defect, then creating a fix task to fix it. Then the feature detail page will still show something like this: 0/3  on defects metrics, check to see why. And also what rounds stands what now? Because in our current implementation, how do we define a new round? Check all those pipeline related logic to  fix some bugs and redundant logic. Make the full pipeline more easy to understand.
+
+Also what trigage mean? What we could do it? Does it really help us?

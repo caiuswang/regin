@@ -1,0 +1,1 @@
+Now we already discussed the feature lecture speculation, so now it's time to synchronize all the related tasks to our current task management, so we could let it run and not let users manually synchronize on the spec.

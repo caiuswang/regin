@@ -1,0 +1,1 @@
+Now when we spawned some session, it seems like it will use the first line of prompt as title, but it's a bad way, so i want you rename this project's session title: 6e7898c6-5f11-4484-a7b1-143df150af96 . you could also add tags. Do not need to change code.

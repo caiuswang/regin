@@ -1,0 +1,1 @@
+Defect #175. The trace-payload log tests pass or fail depending on the machine's diagnostics setting: the handler writes nothing when diagnostics is off, which is the default, and the tests never turn it on. They fail on a clean checkout. The tests should pin the switch they depend on.

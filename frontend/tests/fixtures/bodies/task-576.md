@@ -1,0 +1,1 @@
+Fix Defects [D317 多个defects Task合并，merge的时候还是很难操作，比如我先新建了一个Task针对这个defects,后面我…](defect:317) , 并且Attribute一下Feature，并关联。

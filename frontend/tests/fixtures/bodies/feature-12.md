@@ -1,0 +1,1 @@
+Now when we add a linear link, it seems like it only sync from the linear, but not include the detail in the prompt to let the agent know that's a linear task. So there is no linear related change. 

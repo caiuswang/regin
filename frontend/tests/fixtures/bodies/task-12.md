@@ -1,0 +1,1 @@
+Now when develop the regin project feature, and it need to restart to let the server run the new code, it will always try to stop the server, find a way to fix it.

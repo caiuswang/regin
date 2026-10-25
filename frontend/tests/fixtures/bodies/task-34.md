@@ -1,0 +1,1 @@
+Now when add dependencies of tasks, it will show all of tasks, it's unnecessary, because already finished task do not block the new running, so removed showing those item, also support filter to let user could quickly select.

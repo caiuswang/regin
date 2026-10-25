@@ -1,0 +1,1 @@
+fix bug: when we run '/clear' command from an sdk session, then send some prompts to the new session, it seems like it will captured by the old session, fix it. old session: b7ec5f0a-dc4b-4570-92d8-516f4ccf9bf2, new session: cb43187f-f9c8-434e-8966-31cf0d6f053d

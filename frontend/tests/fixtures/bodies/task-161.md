@@ -1,0 +1,1 @@
+Now it seems like when we start a task running, it will only change the task or the feature status, and there is no spec rewrite or comment logic. It's not a good idea, and we already have prompt template management. So we should let the prompt be changed, like other agent running processes, such as the wiki proposal logic.

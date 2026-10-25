@@ -1,0 +1,1 @@
+Smoke test of regin's kimi launch path. Do no other work: immediately run the task finish command from the <finish> block below with --reason 'kimi smoke ok'.

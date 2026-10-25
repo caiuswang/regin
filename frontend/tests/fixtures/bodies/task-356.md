@@ -1,0 +1,1 @@
+enrich the spec (includes some image), 而且后续我可能要做成Pipleline是可以切换主题的，所以需要重新设计一下代码结构。现有的是一个主题，游戏像素风格是一个主题。

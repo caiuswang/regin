@@ -1,0 +1,1 @@
+Now the AskUserQuestion showing looks like all the same between single select and multiple select options, Change it to let user could know, change it in all place whenever there is such span.

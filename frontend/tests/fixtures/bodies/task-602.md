@@ -1,0 +1,1 @@
+构建Slices,并Arm，自动启动，并且用定时任务启动，都用codebuddy h4-preview这个实现

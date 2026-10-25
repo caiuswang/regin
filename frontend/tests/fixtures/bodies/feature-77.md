@@ -1,0 +1,1 @@
+Now it seems like sometimes when the regin server restarted, then it will cause the task to show finished, but actually it's not. Also it will cause the subagent's running chip show forever. You could check this session: 405b5d5f-fec9-4e8c-9534-019247c8194f

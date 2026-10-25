@@ -1,0 +1,1 @@
+Now tasks ideas is not easy to use, user must open the page, then input some idea, it may interrupt user's original workflow, give a bubble way or short-key to let user could more easily input their ideas.

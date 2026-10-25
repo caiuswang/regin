@@ -1,0 +1,1 @@
+Fix: [D318 Task任务页里有些Task的真实Session其实已经关闭了，但是还是在Task页面或者Overview页面显示正在R…](defect:318)

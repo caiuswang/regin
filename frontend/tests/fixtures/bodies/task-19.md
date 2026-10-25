@@ -1,0 +1,1 @@
+Now it seems like the subagent's view 's running span chip will not show correctly, sometimes it will show only "Bash", sometimes it will show two component: 1: "Bash" 2: "Shell xxxxx" It's not right, fix it.

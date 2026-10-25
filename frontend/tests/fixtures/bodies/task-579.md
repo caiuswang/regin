@@ -1,0 +1,1 @@
+目前有些Defect任务，用户很难找到关联的Feature,这个时候都不能直接创建Task,修复这种情况，让Ai自动Attribute.

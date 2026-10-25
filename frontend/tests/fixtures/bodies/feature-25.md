@@ -1,0 +1,11 @@
+## Question
+
+Graduated from the map's fog by [CAI-248](<https://linear.app/caiuswang/issue/CAI-248>), which ruled that defects with `feature_key IS NULL` appear on the feature index as **a count in the header, beside coverage, in gap grammar** — never as a bucket row, because unattributed is literally the *absence* of a row and rendering it as one re-creates it as a pseudo-feature. It deliberately left open whether that count is a **link**.
+
+* A counter that leads nowhere is a permanent reproach with no remedy attached — the operator is told a number and given no way to look at it. A counter that leads somewhere implies a **defect surface**, which is a second web read this map has not scoped.
+* If it leads somewhere, **what**: a filtered defect list (`store.unattributed()` already exists and returns the rows), a full defect ledger with the unattributed set as one view of it, or the declare control aimed at a defect rather than a session?
+* `Defect` **has no** `to_dict()` — any defect rendered on the web needs a serializer written, and that is the first time defect rows (not counts) reach the browser. What is the minimum row?
+* **Writing is already out of scope** for this map (close, merge, reopen, attribute-a-defect), as is fix-item state — [CAI-245](<https://linear.app/caiuswang/issue/CAI-245>) ruled no web read may call `store.fix_states()`. So a defect surface here is **read-only**, and the obvious next action from it (blame this defect on a feature) is a write that does not exist on the web. Does a read-only list that cannot act on what it shows earn its existence?
+* Measured on the live DB: **1 unattributed defect, closed**. Ten defects total, nine attributed, zero open. Does a surface get built for a population of one — or does the counter stay unlinked until the number argues for itself?
+
+Answering "nowhere" is a legitimate resolution and keeps the counter exactly as [CAI-248](https://linear.app/caiuswang/issue/CAI-248/what-a-feature-index-is-and-how-features-are-enumerated) left it.

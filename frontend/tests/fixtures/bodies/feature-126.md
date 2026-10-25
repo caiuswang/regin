@@ -1,0 +1,1 @@
+This is a feature that used to fix all kind of session conversation defects.

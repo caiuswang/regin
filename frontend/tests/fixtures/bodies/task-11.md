@@ -1,0 +1,1 @@
+Fix bug: now it seems like we could not archive some tasks, and actually it's already done. title: idea-capture-task-image-editing.

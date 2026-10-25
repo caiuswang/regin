@@ -1,0 +1,1 @@
+Now when develop a feature, it seems like we need multiple iterations to let it works right, it will always have bugs. But now we did not have such things, Find a way to let we could know it, so we could learn from it. Give me some idea

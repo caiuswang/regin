@@ -1,0 +1,13 @@
+## Question
+
+Graduated from the map's fog by [CAI-248](<https://linear.app/caiuswang/issue/CAI-248>), which settled the URL this question was waiting on: a feature page lives at `/features/:key`, reached from a `/features` index that is the nav entry.
+
+So the chip in `TaskLinkCard.vue` — today a coloured `STAGE_COLOR` badge rendered from the `stage.to_dict()` nested in `GET /api/tasks/<id>/links` — now *has* somewhere to go. Does it go there?
+
+* A task card and a feature page describe **the same Linear issue from two directions** — the task that ran it, and the ledger of everything ever attributed to it. Is a link between them an obvious affordance, or does it make the task card a navigation surface it was never meant to be?
+* The card renders a **rounds / escapes / open_defects** row already. If the chip links, does the whole block link, or only the chip? Two links in one card with different destinations is a worse card than one.
+* [CAI-248](https://linear.app/caiuswang/issue/CAI-248/what-a-feature-index-is-and-how-features-are-enumerated) ruled the index shows **cached** stage and title from the [CAI-245](https://linear.app/caiuswang/issue/CAI-245/whether-a-web-ledger-read-may-touch-the-tracker) issue cache, while `TaskLinkCard.vue` today reads `snapshot_json` off the link row — which [CAI-245](https://linear.app/caiuswang/issue/CAI-245/whether-a-web-ledger-read-may-touch-the-tracker) **backfills into the cache and drops in the same revision**. So the card's own data source is changing underneath this question. Does the card read the cache too, and if so does its refresh button become the same `POST /api/features/<key>/stage/refresh` event?
+* The reverse direction: does a feature page's row **link back** to the task that ran it? `agent_task_runs` holds the pair, and [CAI-247](https://linear.app/caiuswang/issue/CAI-247/what-a-features-ledger-page-shows-and-how-the-refusals-survive-the) already made the 8-char trace id the link into the trace view — a second link on the same row needs a reason.
+* A task may link an issue that has **no attributed session and no defect**, and a feature key may have **no task link at all** (5 of 21 measured). So the link is not symmetric. Does a chip whose target would render a near-empty ledger still link?
+
+The component half is already settled and is not reopened: [CAI-247](<https://linear.app/caiuswang/issue/CAI-247>) reused `STAGE_COLOR` unchanged and showed that one stage component with a `layout` prop carries every rendering, since the rules (no chip when null, freshness beside, failure not persisted) are identical and only placement differs.

@@ -1,0 +1,1 @@
+Now when we add a new session in sdk way, we already know the main model at that time. But it will not show until the transcript file record the model name. Fix that.

@@ -1,0 +1,1 @@
+Now we already have task management, but what if we want to build a third-party relationship between their doc system and our tasks. Such as we want to add linear support, so we could add some task details showing and other feature our tasks manager do not have. Now it maybe linear only. But later we want to support multiple different project management platform.

@@ -1,0 +1,1 @@
+Now when the span is subagent.start span with prompt, it's agent's prompt text, so it would always markdown prompt text, fix it to let it render rightly:

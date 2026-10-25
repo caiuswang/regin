@@ -1,0 +1,1 @@
+do not sending title to the prompt text when start session.

@@ -1,0 +1,4 @@
+Fix regin defect #224, reported against feature #127 (regin项目宣传视频):
+
+check_hero_frames_legible fails on scene messages (SSIM 0.874 < 0.90 at 198.33s): recorder hero() sets hero_s to the midpoint of page.screenshot(), but the frame showing the hero state (loaded message list) is delivered by the screencast at the END of the screenshot (frame 002663 @198.353s vs hero_s 198.326s → video frame at hero_s still shows 'Loading messages…'; SSIM 0.997 from 198.7s). frontend/promo/lib/recorder.mjs hero(). Anchor hero_s to the first screencast frame delivered after the hero state, not the wall-clock midpoint.
+reported in session 25aa86df-44a0-4922-b425-fe74c123456a

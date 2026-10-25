@@ -1,0 +1,1 @@
+sometimes the left popup menu tool tip will not gone until user click some element of the page, find why ,and fix it  ![](image:1)

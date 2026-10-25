@@ -1,0 +1,1 @@
+Shipping is the operator's act, not an agent's. Defect #155 is already closed, with its check green (tests/core/test_doctor_schema_revision.py::test_doctor_flags_a_db_behind_head). Once A-D are green on the merged tree: 'regin feature ship 73'. Filing the defect never walked the feature back; the escape is counted from the defect row against the event the feature's log ended on.

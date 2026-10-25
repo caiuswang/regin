@@ -1,0 +1,1 @@
+Defect #176. Editing a feature's spec overwrites it unconditionally. An agent and a human can each write the whole spec from a stale read, and the later write silently erases the other with no trace of what was lost. A spec write should carry the version it was based on and be refused when that version is no longer current.

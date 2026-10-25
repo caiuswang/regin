@@ -1,0 +1,1 @@
+Rename the recent 20 sessions that do not have a meaningful title. You could also add some tags to them.

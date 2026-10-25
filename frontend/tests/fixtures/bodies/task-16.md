@@ -1,0 +1,1 @@
+now it seems like the subagent's view have bugs, when it finished, i opened that subagent view, and i already say a agent summary, but after a while, those summary spans gone. Fix that. You could check recent subagent calling.

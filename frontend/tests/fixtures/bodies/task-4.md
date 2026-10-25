@@ -1,0 +1,1 @@
+find a way let we could support running like in prompt management, so we could and some skill invoking to the task, let it run in a agent way.

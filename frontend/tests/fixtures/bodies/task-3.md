@@ -1,0 +1,1 @@
+let current task management also support image pasting and editing again when saved.

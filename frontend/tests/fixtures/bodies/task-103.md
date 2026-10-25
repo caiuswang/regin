@@ -1,0 +1,1 @@
+Feature 73's work sits on f73/integration (3cbcc464) plus ten unmerged f73/s* branches. The main checkout runs feat/feature-run-by-click at 96bbec83, which predates all of it, so nothing the feature built is reachable from the stack the operator browses until this lands. Root of the graph: B, C, D and E all assume the merged tree.

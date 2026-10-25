@@ -1,0 +1,1 @@
+Now when there are several subagent spans, only the first subagent's prompt span will render. Other subagent spans are missing.  Fix it.

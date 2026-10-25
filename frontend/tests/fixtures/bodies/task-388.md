@@ -1,0 +1,2 @@
+目前Feature完成了一部分内容，但是还没完成所有Kimi支持的工作，继续Enrich Spec,然后构建TaskGraph,并自动Arm并启动，根据任务难易程度分配不同Arm参数，不同Skill, 但是需要记住Verify Cmd不要太长，而且不要重复，比如有些工作Task内以及跑了全量测试了，就没必要在VerifyCmd里再写了。而且最好有些用tmux启动，这样重启也能不中断session验证。
+需要得到的结果是可以交付的产物，用户能正常运行。

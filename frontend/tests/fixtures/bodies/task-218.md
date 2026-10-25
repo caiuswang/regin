@@ -1,0 +1,1 @@
+Write spec to handoff it to design system to let we could design UI/UX with some pre-knowledge.

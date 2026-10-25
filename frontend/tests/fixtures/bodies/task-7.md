@@ -1,0 +1,1 @@
+Now when we ask the user questions, there is no cancel button to let we reject to answer the user question. Also sometimes the card seems will refresh or something caused we must reselect the question when there is multiple question to be answered at one span. Also find why.

@@ -1,0 +1,1 @@
+Now when the linear task has been mark finished, but it lacks re-sync from linear, so user must manually refresh the linear task details. Change it to auto sync when the task status has been marked as finished.

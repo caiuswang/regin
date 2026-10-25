@@ -1,0 +1,1 @@
+修复 Session Conversation View 目前在手机端的展示，现在有很多问题。比如说，Session Header 头的展示，然后在 Hide detail，然后往下滑的时候，上面的固定的那个 Header 头也有问题。还有打开 Chatbox 里面也有重叠的问题，字体。找到这些所有的多端适配，在 Session Conversation View 这个页面下的问题并修复。

@@ -1,0 +1,1 @@
+Now when we resumed from an session, then there is no 'resume' button, and no chat button anymore, try to find why and fix it. session id: cb43187f-f9c8-434e-8966-31cf0d6f053d

@@ -1,0 +1,4 @@
+Fix regin defect #177, reported against feature #98 (Better image operations in pipeline):
+
+A freed high-water image index is reissued: detaching the last image and attaching another hands the new bytes the old index, so an existing ![](image:N) reference in a task body or feature spec silently resolves to a different picture. lib/attached_images.py _next_idx counts max(idx)+1 over surviving rows only; closing it needs a per-owner high-water counter none of the three image tables carry. Pinned by tests/defects/test_defect_images.py::test_removing_the_highest_image_does_reissue_its_index.
+reported in session a3345a85-6a4a-43ca-becf-e475b266dcce

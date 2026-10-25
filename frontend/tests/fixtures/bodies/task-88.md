@@ -1,0 +1,1 @@
+Let feature, tasks, defects的侧边栏统一成一个项目管理的，最上面可以有切换按钮，类似现在的Trace页面，这样入口比较好找。

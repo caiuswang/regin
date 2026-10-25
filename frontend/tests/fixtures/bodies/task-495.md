@@ -1,0 +1,1 @@
+split the slices, then build and arm the task

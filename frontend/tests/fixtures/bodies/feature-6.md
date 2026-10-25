@@ -1,0 +1,1 @@
+Now focus mode's showing still have problem, it seems like it will alwasy show some filtered spans such as 'tool failure' as the last needed focused span. But most of case it's the model's behavior, no one cares about it, find a way to better show it. You could  reference some good design from other product.
