@@ -78,6 +78,14 @@ const {
   items: imageItems, busy: imagesBusy, error: imagesError,
   bind: bindImages, add: addImages, remove: removeImage,
 } = useAttachedImages('features')
+// `add` keeps its failure on the Images card and answers an empty list. The
+// spec editor needs the reason where the paste happened, so a paste that
+// attached nothing is turned back into the error it swallowed.
+async function attachToSpec(source) {
+  const taken = await addImages(source)
+  if (!taken.length && imagesError.value) throw new Error(imagesError.value)
+  return taken
+}
 const { confirm } = useConfirm()
 
 const user = api.getStoredUser()
@@ -410,7 +418,7 @@ function onDeclared() {
         :body="ledger.body"
         :images="imageItems"
         :can-write="canWrite"
-        :attach="addImages"
+        :attach="attachToSpec"
         :tracked="!ledger.stage_live"
         :tracker="ledger.origin"
         :external-url="ledger.external_url"

@@ -84,9 +84,22 @@ async function save() {
   emit('saved', res)
 }
 
+// A failed attach writes nothing into the draft — no placeholder for a picture
+// that never arrived — and says why under the field the paste landed in.
 async function takeImages(source, event) {
-  const refs = imageRefBlock(await props.attach(source))
-  if (!refs) return
+  error.value = ''
+  let taken
+  try {
+    taken = await props.attach(source)
+  } catch (e) {
+    error.value = e?.message || 'could not attach the image'
+    return
+  }
+  const refs = imageRefBlock(taken)
+  if (!refs) {
+    error.value = 'could not attach the image'
+    return
+  }
   draft.value = withCaretInsert(caretTarget(event, area.value), draft.value, refs)
 }
 
