@@ -22,7 +22,9 @@
 // alone. A pasted or dropped image is the host's to attach and report on; the
 // host hands back what arrived and `insertImages` places it at the caret.
 // `/` opens the block menu (`editor/slash.js`); its Image item asks the host
-// for a file (`pick-image`) and its Reference item hands over to `@`.
+// for a file (`pick-image`) and its Reference item hands over to `@`. A text
+// selection raises the mark bar (`EditorBubble`); Esc while it is up drops the
+// selection to its end, so the bar goes before anything else Esc does.
 import { onBeforeUnmount, ref, shallowRef, useId, watch } from 'vue'
 import { Editor, EditorContent, VueNodeViewRenderer } from '@tiptap/vue-3'
 import { NodeSelection, Selection, TextSelection } from '@tiptap/pm/state'
@@ -33,6 +35,7 @@ import RichCodeBlock from './nodes/RichCodeBlock.vue'
 import RichImage from './nodes/RichImage.vue'
 import RichOpaque from './nodes/RichOpaque.vue'
 import RichRef from './nodes/RichRef.vue'
+import EditorBubble from './EditorBubble.vue'
 import SlashMenu from './SlashMenu.vue'
 import { parse, serialize } from '../../editor/markdownDoc.js'
 import { richExtensions } from '../../editor/extensions.js'
@@ -270,6 +273,15 @@ function closeOverlays() {
   if (view && SLASH_MENU.getState(view.state)?.active) exitSuggestion(view, SLASH_MENU)
 }
 
+const bubble = ref(null)
+
+function handleKeyDown(view, event) {
+  if (event.key !== 'Escape' || !bubble.value?.visible) return false
+  const { to } = view.state.selection
+  view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, to)))
+  return true
+}
+
 const editor = shallowRef(new Editor({
   extensions: richExtensions({
     placeholder: props.placeholder,
@@ -291,7 +303,7 @@ const editor = shallowRef(new Editor({
       pickImage: () => emit('pick-image'),
     },
   }),
-  editorProps: { attributes, handlePaste, handleDrop },
+  editorProps: { attributes, handlePaste, handleDrop, handleKeyDown },
   onBlur: closeOverlays,
   onUpdate: ({ editor: ed }) => {
     collectTargets(ed.state.doc)
@@ -389,6 +401,7 @@ defineExpose({ editor, insertImages })
 <template>
   <div class="rich-editor" data-testid="rich-editor">
     <EditorContent :editor="editor" />
+    <EditorBubble ref="bubble" :editor="editor" @link="emit('link')" />
     <Teleport to="body">
       <RefMenu
         v-if="open"
