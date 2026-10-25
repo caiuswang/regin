@@ -13,9 +13,8 @@ import Icon from '../ui/Icon.vue'
 import MarkdownContent from '../MarkdownContent.vue'
 import MarkdownEditor from '../editor/MarkdownEditor.vue'
 import { useDiscardGuard } from '../../composables/useDiscardGuard'
-import { caretTarget, withCaretInsert } from '../../utils/caret'
 import { imageFilesFrom } from '../../utils/imageFiles'
-import { IMAGE_REF_HINT, imageRefBlock, resolveImageRefs } from '../../utils/taskBodyImages'
+import { IMAGE_REF_HINT, resolveImageRefs } from '../../utils/taskBodyImages'
 
 const props = defineProps({
   task: { type: Object, required: true },
@@ -67,9 +66,7 @@ async function save() {
 // Attaching, then writing the reference: the syntax is otherwise unguessable,
 // and an attachment nobody can name is the defect this fixes.
 async function takeImages(source, event) {
-  const refs = imageRefBlock(await props.attach(source))
-  if (!refs) return
-  draft.value = withCaretInsert(caretTarget(event, area.value), draft.value, refs)
+  area.value?.insertImages(await props.attach(source), event)
 }
 
 async function onPaste(e) {

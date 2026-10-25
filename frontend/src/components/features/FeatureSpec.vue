@@ -32,10 +32,9 @@ import Icon from '../ui/Icon.vue'
 import MarkdownContent from '../MarkdownContent.vue'
 import MarkdownEditor from '../editor/MarkdownEditor.vue'
 import { useDiscardGuard } from '../../composables/useDiscardGuard'
-import { caretTarget, withCaretInsert } from '../../utils/caret'
 import { imageFilesFrom } from '../../utils/imageFiles'
 import { SPEC_ANCHOR } from '../../utils/featureLinks'
-import { IMAGE_REF_HINT, imageRefBlock, resolveImageRefs } from '../../utils/taskBodyImages'
+import { IMAGE_REF_HINT, resolveImageRefs } from '../../utils/taskBodyImages'
 
 const props = defineProps({
   featureId: { type: Number, required: true },
@@ -112,9 +111,9 @@ async function takeImages(source, event) {
     error.value = e?.message || 'could not attach the image'
     return
   }
-  const refs = imageRefBlock(result?.taken || [])
-  if (refs) draft.value = withCaretInsert(caretTarget(event, area.value), draft.value, refs)
-  if (result?.error || !refs) error.value = result?.error || 'could not attach the image'
+  const taken = result?.taken || []
+  area.value?.insertImages(taken, event)
+  if (result?.error || !taken.length) error.value = result?.error || 'could not attach the image'
 }
 
 async function onPaste(e) {

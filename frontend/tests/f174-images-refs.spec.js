@@ -190,6 +190,6 @@ test.describe('mentions', () => {
     await expect(menu(page)).toHaveCount(0)
 
     await page.getByTestId('editor-mode-rich').click()
-    await expect(face(page).locator('[data-ref="task:42"]')).toHaveText('title')
+    await expect(face(page).locator('[data-testid="ref-chip"][data-ref="task:42"]')).toContainText('title')
   })
 })

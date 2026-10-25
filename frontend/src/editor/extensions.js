@@ -13,9 +13,12 @@
 //   the lists    — replaced by versions that carry `tight`, without which an
 //                  edited list would come back loose.
 //
-// No DOM and no Vue here, so the schema can be built under `node --test`.
+// No DOM and no Vue here, so the schema can be built under `node --test`: the
+// rich face hands its Vue node views in through `views`.
 
 import { Extension, InputRule, Node, mergeAttributes } from '@tiptap/core'
+import { PluginKey } from '@tiptap/pm/state'
+import Suggestion from '@tiptap/suggestion'
 import StarterKit from '@tiptap/starter-kit'
 import { BulletList, OrderedList, TaskItem, TaskList } from '@tiptap/extension-list'
 import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table'
@@ -62,6 +65,9 @@ export const Opaque = Node.create({
   group: 'block',
   atom: true,
   selectable: true,
+  addOptions() {
+    return { images: () => [] }
+  },
   addAttributes() {
     return { raw: { default: '', parseHTML: (el) => el.getAttribute('data-raw') ?? '', rendered: false } }
   },
@@ -73,11 +79,16 @@ export const Opaque = Node.create({
   },
 })
 
+// `item(target)` is the live `RefItem` for `kind:key` (`useRefResolve`), for
+// the chip a node view draws.
 export const Ref = Node.create({
   name: 'ref',
   group: 'inline',
   inline: true,
   atom: true,
+  addOptions() {
+    return { item: () => undefined }
+  },
   addAttributes() {
     return {
       kind: { default: null, parseHTML: (el) => el.getAttribute('data-kind') },
@@ -183,6 +194,45 @@ function addAndLand(where) {
   }
 }
 
+// `@` opens the reference menu. The plugin only finds the token; what it
+// searches, lists and writes is `useRefMentions`, behind `render`. Any prefix
+// is let through so the menu's own rule (no `@` inside a word or an address)
+// decides, as it does in the source face.
+export const REF_MENTION = new PluginKey('refMention')
+
+function inCode({ state, range }) {
+  const $from = state.doc.resolve(range.from)
+  if ($from.parent.type.spec.code) return true
+  const code = state.schema.marks.code
+  return !!code && ($from.marks().some((m) => m.type === code) || state.doc.rangeHasMark(range.from, range.to, code))
+}
+
+function RefMention(render) {
+  return Extension.create({
+    name: 'refMention',
+    // Ahead of the core and list keymaps, so the menu takes Enter, Tab and
+    // the arrows while it is open.
+    priority: 101,
+    addProseMirrorPlugins() {
+      return [Suggestion({
+        editor: this.editor,
+        pluginKey: REF_MENTION,
+        char: '@',
+        allowedPrefixes: null,
+        allow: (props) => !inCode(props),
+        // Escape closes the menu until the next keystroke that edits, as in
+        // the source face; moving the caret alone does not bring it back.
+        shouldResetDismissed: ({ transaction }) => transaction.docChanged,
+        render,
+      })]
+    },
+  })
+}
+
+function withView(extension, view) {
+  return view ? extension.extend({ addNodeView: () => view }) : extension
+}
+
 const ToolbarCommands = Extension.create({
   name: 'reginToolbar',
   addCommands() {
@@ -194,7 +244,13 @@ const ToolbarCommands = Extension.create({
   },
 })
 
-export function richExtensions({ placeholder = '', resolveImage, onSubmit, onLink } = {}) {
+export function richExtensions({
+  placeholder = '', resolveImage, refItem, images, onSubmit, onLink, views = {}, mention = null,
+} = {}) {
+  const options = (extension, opts) => {
+    const set = Object.fromEntries(Object.entries(opts).filter(([, v]) => v))
+    return Object.keys(set).length ? extension.configure(set) : extension
+  }
   return [
     StarterKit.configure({
       trailingNode: false,
@@ -212,11 +268,12 @@ export function richExtensions({ placeholder = '', resolveImage, onSubmit, onLin
     TableRow,
     withAlign(TableHeader),
     withAlign(TableCell),
-    Opaque,
-    Ref,
-    resolveImage ? Image.configure({ resolve: resolveImage }) : Image,
+    options(withView(Opaque, views.opaque), { images }),
+    options(withView(Ref, views.ref), { item: refItem }),
+    options(withView(Image, views.image), { resolve: resolveImage }),
     Placeholder.configure({ placeholder }),
     Keys({ onSubmit, onLink }),
     ToolbarCommands,
+    ...(mention ? [RefMention(mention)] : []),
   ]
 }
