@@ -197,7 +197,7 @@ function relatedCount(l) {
 // dialog writes the link with the row and lands on the new feature.
 function newFollowUp() {
   const l = ledger.value
-  if (canWrite.value && l) openCreate('feature', { follows: { id: l.id, title: l.title } })
+  if (canWrite.value && l) openCreate('feature', { follows: { id: l.id, title: l.title, project_id: l.project_id ?? null } })
 }
 
 async function refreshStage() {

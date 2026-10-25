@@ -177,3 +177,73 @@ def test_task_detail_feature_block_carries_the_project(flask_client, r1):
     body = flask_client.get(f"/api/tasks/{task['id']}", headers=EDITOR).get_json()
     assert body["feature"]["project_id"] == r1.id
     assert body["feature"]["project_name"] == "r1"
+
+
+# F177 — follow-ups and the first filing of a feature.
+
+def _tasks_of(feature_id: int) -> list[AgentTask]:
+    return feature_store.tasks_of(feature_id)
+
+
+def _patch_project(client, feature_id, project_id):
+    resp = client.patch(f"/api/features/{feature_id}",
+                        json={"project_id": project_id}, headers=EDITOR)
+    assert resp.status_code == 200, resp.get_json()
+
+
+def test_follow_up_created_with_the_followed_features_project(flask_client,
+                                                              r1):
+    from lib.features import links
+    original = _filed_feature(r1.id)
+    resp = flask_client.post("/api/features",
+                             json={"title": "next", "follows": original.id,
+                                   "project_id": r1.id}, headers=EDITOR)
+    assert resp.status_code == 201, resp.get_json()
+    new_id = resp.get_json()["id"]
+    assert feature_store.require(new_id).project_id == r1.id
+    follows = [ref["id"] for ref in links.for_feature(new_id)["follows"]]
+    assert follows == [original.id]
+
+
+def test_follow_up_states_its_own_project_over_the_followed(flask_client,
+                                                            r1, r2):
+    original = _filed_feature(r1.id)
+    resp = flask_client.post("/api/features",
+                             json={"title": "next", "follows": original.id,
+                                   "project_id": r2.id}, headers=EDITOR)
+    assert resp.status_code == 201, resp.get_json()
+    assert feature_store.require(resp.get_json()["id"]).project_id == r2.id
+
+
+def test_first_filing_carries_the_project_onto_unfiled_tasks(flask_client,
+                                                              r1):
+    feature = _filed_feature(None)
+    _post_task(flask_client, feature_id=feature.id)
+    _post_task(flask_client, feature_id=feature.id)
+    _patch_project(flask_client, feature.id, r1.id)
+    assert feature_store.require(feature.id).project_id == r1.id
+    assert [t.project_id for t in _tasks_of(feature.id)] == [r1.id, r1.id]
+
+
+def test_first_filing_leaves_an_explicitly_filed_task(flask_client, r1, r2):
+    feature = _filed_feature(None)
+    _post_task(flask_client, feature_id=feature.id)
+    _post_task(flask_client, feature_id=feature.id, project_id=r2.id)
+    _patch_project(flask_client, feature.id, r1.id)
+    assert [t.project_id for t in _tasks_of(feature.id)] == [r1.id, r2.id]
+
+
+def test_refiling_a_feature_carries_nothing(flask_client, r1, r2):
+    feature = _filed_feature(r1.id)
+    _post_task(flask_client, feature_id=feature.id, project_id=None)
+    _patch_project(flask_client, feature.id, r2.id)
+    assert [t.project_id for t in _tasks_of(feature.id)] == [None]
+
+
+def test_unfiling_a_feature_keeps_its_tasks_filed(flask_client, r1):
+    feature = _filed_feature(None)
+    _post_task(flask_client, feature_id=feature.id)
+    _patch_project(flask_client, feature.id, r1.id)
+    _patch_project(flask_client, feature.id, None)
+    assert feature_store.require(feature.id).project_id is None
+    assert [t.project_id for t in _tasks_of(feature.id)] == [r1.id]

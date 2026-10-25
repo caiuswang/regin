@@ -217,14 +217,25 @@ def set_project(feature_id: int, project_id: Optional[int]) -> Feature:
 
     Appends no event. A project is where a feature lives, not a step in its
     life, and putting it in the append-only log would make `rounds` count it.
+
+    Only the first filing (none → P) carries P onto the feature's tasks that
+    have no project. A refile or an unfile leaves tasks alone: once a task
+    holds any project it cannot be told apart from one an operator set by hand.
     """
     check_project(project_id)
     with SessionLocal() as session:
         row = session.get(Feature, feature_id)
         if row is None:
             raise FeatureError(f"no feature {feature_id}")
+        first_filing = row.project_id is None and project_id is not None
         row.project_id = project_id
         session.add(row)
+        if first_filing:
+            for task in session.exec(
+                    select(AgentTask).where(AgentTask.feature_id == feature_id,
+                                            AgentTask.project_id.is_(None))):
+                task.project_id = project_id
+                session.add(task)
         session.commit()
         session.refresh(row)
     log.write("feature_project_set", feature_id=feature_id,

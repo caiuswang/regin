@@ -96,7 +96,8 @@ watch(open, async (isOpen) => {
   if (follows.value) mode.value = 'declare'
   if (!pristine.value) return
   await ensureProjects()
-  projectId.value = carriedProject(props.scope, projects.value)
+  projectId.value = carriedProject(follows.value?.project_id, projects.value)
+    || carriedProject(props.scope, projects.value)
 })
 
 const bodyArea = ref(null)
