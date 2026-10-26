@@ -20,7 +20,7 @@ LINKS = ROOT / "frontend/src/utils/featureLinks.js"
 FIGURES = ROOT / "frontend/src/components/features/FeatureFigures.vue"
 INDEX_TABLE = ROOT / "frontend/src/components/pipeline/FeatureTrackTable.vue"
 EVIDENCE = ROOT / "frontend/src/components/features/FeatureEvidence.vue"
-DEFECT_ROW = ROOT / "frontend/src/components/defects/DefectRow.vue"
+DEFECT_FIX_CELL = ROOT / "frontend/src/components/defects/DefectFixCell.vue"
 TASK_PANEL = ROOT / "frontend/src/views/TasksView.vue"
 LEDGER_VIEW = ROOT / "frontend/src/views/FeatureLedgerView.vue"
 USE_TASKS = ROOT / "frontend/src/composables/useTaskQuery.js"
@@ -265,5 +265,5 @@ def test_defect_fix_item_links_to_the_task(
                             headers=_headers()).get_json()
     assert str(body["defect"]["fix_task_id"]) == str(task_id)
 
-    assert "/tasks/${defect.fix_task_id}" in DEFECT_ROW.read_text()
+    assert "/tasks/${id}" in DEFECT_FIX_CELL.read_text()
     assert "path: '/tasks/:id'" in ROUTER.read_text()

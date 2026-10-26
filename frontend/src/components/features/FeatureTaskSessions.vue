@@ -1,7 +1,8 @@
 <script setup>
-// A task row's sessions: a summary that is always visible, and the rows behind
-// it on demand. Two roots on purpose — the toggle sits at the end of the task
-// row and the list wraps under it at full width, inside the same flex row.
+// A task row's sessions: a count that is always visible, and the rows behind
+// it on demand. Two roots on purpose — the toggle is the task row's last grid
+// cell, and the list spans the whole row under it (`grid-column: 1 / -1`), so
+// opening it moves no other row's columns.
 //
 // The title shown is the session's own unless it is only a skill line; the
 // task the row sits under already says what the session built.
@@ -29,17 +30,20 @@ function cost(r) {
 </script>
 
 <template>
-  <Button
-    v-if="rows.length"
-    variant="ghost" size="sm" class="fts-toggle"
-    :aria-expanded="open" :aria-controls="listId"
-    :aria-label="`${open ? 'Hide' : 'Show'} ${summary} of task #${taskId}`"
-    :data-testid="`feature-task-sessions-${taskId}`"
-    @click="open = !open"
-  >
-    <Icon :name="open ? 'chevron-down' : 'chevron-right'" :size="11" />
-    {{ summary }}
-  </Button>
+  <span class="ledger-cell" data-cell="sessions">
+    <Button
+      v-if="rows.length"
+      variant="ghost" size="sm" class="fts-toggle"
+      :aria-expanded="open" :aria-controls="listId"
+      :aria-label="`${open ? 'Hide' : 'Show'} ${summary} of task #${taskId}`"
+      :title="summary"
+      :data-testid="`feature-task-sessions-${taskId}`"
+      @click="open = !open"
+    >
+      <Icon :name="open ? 'chevron-down' : 'chevron-right'" :size="11" />
+      <span class="ledger-ellipsis">{{ summary }}</span>
+    </Button>
+  </span>
   <ul
     v-if="open && rows.length" :id="listId" class="fts-list"
     :data-testid="`feature-task-sessions-list-${taskId}`"
@@ -61,11 +65,11 @@ function cost(r) {
 
 <style scoped>
 .fts-toggle {
-    flex: none; gap: 0.2rem; height: 1.5rem; padding: 0 0.4rem;
+    min-width: 0; max-width: 100%; gap: 0.2rem; height: 1.5rem; padding: 0 0.4rem;
     font-size: 11px; font-weight: 400; font-variant-numeric: tabular-nums;
 }
 .fts-list {
-    flex: 1 0 100%; min-width: 0; margin: 0.25rem 0 0; padding: 0 0 0 1.4rem;
+    grid-column: 1 / -1; min-width: 0; margin: 0.25rem 0 0; padding: 0 0 0 1.4rem;
     list-style: none; display: flex; flex-direction: column; gap: 0.15rem;
 }
 .fts-row {

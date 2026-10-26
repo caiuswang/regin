@@ -51,6 +51,15 @@ async function stubLedger(page, body) {
     json: { items: [], scope: 'feature',
             pagination: { total: 0, page: 0, size: 50 } },
   }))
+  // The slices card (and its branch footer) read git and the spec; left to a
+  // live server that has no such feature they land as late error lines, which
+  // move every anchor below them after a reveal has already scrolled.
+  await page.route(/\/api\/features\/[^/?]+\/slices$/, route => route.fulfill({
+    json: { sliceable: false, refusal: null, tail_missing: false, rows: [] },
+  }))
+  await page.route(/\/api\/features\/[^/?]+\/branches$/, route => route.fulfill({
+    json: { integration: { name: '', source: null, exists: false, merged_into_default: null }, runs: [] },
+  }))
 }
 
 test('the defects tile lands on this feature, not on every defect',

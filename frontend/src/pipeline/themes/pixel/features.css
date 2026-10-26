@@ -653,3 +653,73 @@ html[data-pl-theme="pixel"] [data-pl-part="badge"] {
     color: var(--pl-warn);
     box-shadow: inset 0 0 0 1px var(--pl-warn-line);
 }
+
+/* ── Feature page column lists (Slices / Tasks / Defects / Sessions) ───────
+   The rows keep their grid tracks; the theme only re-inks them. A column
+   head is a label, so it takes the pixel face; a title or a symptom is
+   prose, so it keeps the sans (R8) even inside a pixel-faced card head. */
+html[data-pl-theme="pixel"] [data-pl-part="ledger-colhead"] {
+    border-bottom-color: var(--pl-frame);
+    font-family: var(--pl-font);
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    color: var(--pl-muted);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="ledger-row"] {
+    border-bottom-color: var(--pl-hair);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="ledger-row"] [data-pl-part="row-id"] {
+    font-family: var(--pl-font);
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    color: var(--pl-text);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="ledger-row"][data-fix-open] {
+    box-shadow: inset 3px 0 0 var(--pl-warn);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="ledger-row"] [data-pl-part="tag"] {
+    border-radius: 0;
+    background: var(--pl-paper);
+    box-shadow: inset 0 0 0 1px var(--pl-rule);
+    color: var(--pl-muted);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="ledger-row"] [data-pl-part="tag"][data-tone="warn"] {
+    box-shadow: inset 0 0 0 1px var(--pl-warn-line);
+    color: var(--pl-warn);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="ledger-row"] [data-pl-part="tag"][data-tone="ship"] {
+    box-shadow: inset 0 0 0 1px var(--pl-ship);
+    color: var(--pl-ship);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="ledger-head"] [data-pl-glyph],
+html[data-pl-theme="pixel"] [data-pl-part="card-head"] [data-pl-glyph] {
+    flex: none;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="card-head"] [data-pl-part="symptom-line"],
+html[data-pl-theme="pixel"] [data-pl-part="card-head"] [data-pl-part="fix-cell"] {
+    font-family: var(--font-sans, inherit);
+    letter-spacing: 0;
+    text-transform: none;
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="symptom-line"] {
+    color: var(--pl-text);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="fix-cell"][data-tone="warn"] [data-testid="ref-chip"] {
+    border-radius: 0;
+    border-color: var(--pl-warn-line);
+    background: var(--pl-paper);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="card-foot"] {
+    border-top-color: var(--pl-hair);
+}

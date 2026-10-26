@@ -60,10 +60,12 @@ def serialize(row) -> dict:
 
     Two reads for one row, and deliberately not the shape the list uses: this
     is a single row the caller just changed, so there is no loop for the cost
-    to multiply through. The list reads its two extra facts off the row.
+    to multiply through. The list reads its two extra facts off the row. The
+    fix task's status is always echoed here: a lone row's fix column reads a
+    missing status as a fix task that no longer exists.
     """
     state = store.fix_states([row]).get(row.id)
-    return view(row, feature_title(row), blamed_kind(row),
+    return view(row, feature_title(row), blamed_kind(row), fix_state=state,
                 fix_drift=store.is_fix_drift(row, state))
 
 

@@ -58,8 +58,8 @@ function provenanceTag(r) {
       </p>
     </div>
 
-    <ul v-else class="ledger-list ev-list">
-      <li v-for="r in rows" :key="r.trace_id" class="ledger-row ev-row">
+    <ul v-else class="ledger-list ledger-grid ev-list">
+      <li v-for="r in rows" :key="r.trace_id" class="ledger-row ev-row" data-pl-part="ledger-row">
         <span class="ev-date">{{ r.date }}</span>
         <component
           :is="canOpenTrace ? 'router-link' : 'span'"
@@ -130,7 +130,11 @@ function provenanceTag(r) {
 
 <style scoped>
 .ev-list { margin-top: 0; }
-.ev-row, .ev-ghost { display: flex; align-items: center; gap: 0.65rem; }
+.ev-row, .ev-ghost {
+    display: flex; align-items: center; gap: 0.65rem;
+    min-height: calc(1.5rem + 0.9rem + 1px); white-space: nowrap;
+}
+.ev-row > * { flex-shrink: 0; }
 .ev-ghost {
     color: var(--color-fg-faint);
     background: repeating-linear-gradient(
@@ -147,7 +151,7 @@ function provenanceTag(r) {
 }
 .ev-id-link { color: var(--color-primary); text-decoration: none; }
 .ev-id-link:hover { text-decoration: underline; }
-.ev-title {
+.ev-row > .ev-title, .ev-title {
     flex: 1 1 auto; min-width: 0; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap; color: var(--color-fg);
 }
@@ -155,7 +159,7 @@ function provenanceTag(r) {
     flex: none; font-family: var(--font-mono, monospace); font-size: 10.5px;
     color: var(--color-fg-faint);
 }
-.ev-ghost .ev-title { font-style: italic; white-space: normal; }
+.ev-ghost .ev-title { font-style: italic; }
 .ev-cost {
     width: 8.5rem; flex: none; text-align: right;
     font-family: var(--font-mono, monospace); font-size: 12px;
@@ -182,9 +186,8 @@ function provenanceTag(r) {
     margin-top: 0.5rem; font-size: 11.5px; color: var(--color-amber-800);
 }
 .ev-gaps b { font-variant-numeric: tabular-nums; }
-@media (max-width: 640px) {
-    .ev-row, .ev-ghost { flex-wrap: wrap; }
-    .ev-title { flex-basis: 100%; order: 9; }
-    .ev-cost { width: auto; margin-left: auto; }
+@container (max-width: 719.98px) {
+    .ev-date { display: none; }
+    .ev-cost { width: auto; }
 }
 </style>

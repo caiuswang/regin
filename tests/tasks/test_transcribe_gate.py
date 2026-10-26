@@ -76,3 +76,25 @@ def test_spec_write_reports_problems_without_refusing(tmp_db, tmp_path, flask_cl
                              headers=EDITOR)
     assert api.status_code == 200
     assert api.get_json()["spec_problems"]["count"] == 1
+
+
+def test_feature_slices_report_marks_fix_tasks(tmp_db, flask_client):
+    """A slice row names the defects its task fixes, read from
+    `defects.fix_task_id` the way `/api/tasks` rows are (Invariant 5)."""
+    from lib.defects import store as defect_store  # noqa: PLC0415
+
+    fid = feature_store.create("fixing", body=spec(gherkin("test_a"), row("S1", "test_a"))).id
+    mcp_features.feature_transcribe(fid)
+    rows = flask_client.get(f"/api/features/{fid}/slices").get_json()["rows"]
+    assert rows[0]["fixes_defects"] == [] and rows[0]["fixes_open_defects"] == []
+
+    task_id = rows[0]["task_id"]
+    still_open = defect_store.record("left open", feature_id=fid)
+    closed = defect_store.record("already closed", feature_id=fid)
+    defect_store.set_fix_item(still_open.id, task_id)
+    defect_store.set_fix_item(closed.id, task_id)
+    defect_store.close(closed.id, missing_check="test_a")
+
+    row0 = flask_client.get(f"/api/features/{fid}/slices").get_json()["rows"][0]
+    assert row0["fixes_defects"] == sorted([still_open.id, closed.id])
+    assert row0["fixes_open_defects"] == [still_open.id]

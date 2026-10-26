@@ -61,7 +61,7 @@ export default defineConfig({
     // the shell's behaviour suites run again with the pixel theme stored.
     {
       name: 'pixel',
-      testMatch: /(pipeline-(?!theme-)[\w-]+|tasks-[\w-]+|responsive)\.spec\.js$/,
+      testMatch: /(pipeline-(?!theme-)[\w-]+|tasks-[\w-]+|responsive|f180-feature-rows)\.spec\.js$/,
       use: { browserName: 'chromium', pipelineTheme: 'pixel' },
     },
   ],

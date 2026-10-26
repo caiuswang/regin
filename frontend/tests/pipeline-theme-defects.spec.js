@@ -234,14 +234,15 @@ test.describe('pixel theme — All defects', () => {
     await expect(row(96).locator('[data-pl-part="tag"][data-pl-dashed]')).toHaveText(/reopened/i)
     await expect(row(85).getByTestId('defect-triage-85')).toHaveAttribute('data-pl-dashed', '')
 
+    // The verbs live behind each row's one-line head.
+    for (const id of [97, 94, 85, 81, 66]) await page.getByTestId(`defect-toggle-${id}`).click()
+    await expect(row(97)).toHaveAttribute('data-expanded', '')
+    await expect(row(97).locator('[data-pl-part="facts"] dd')).toContainText('CompactionDivider.vue')
+    await expect(page.getByTestId('defect-toggle-97')).toHaveAttribute('aria-expanded', 'true')
+
     const verb = id => page.getByTestId(`defect-primary-${id}`)
     await expect(verb(97)).toHaveAttribute('data-pl-part', 'key--primary')
     for (const id of [94, 85, 81, 66]) await expect(verb(id)).toHaveAttribute('data-pl-part', 'key')
-
-    await page.getByTestId('defect-toggle-97').click()
-    await expect(row(97)).toHaveAttribute('data-expanded', '')
-    await expect(row(97).locator('[data-pl-part="facts"] dd')).toContainText('CompactionDivider.vue')
-    await expect(page.getByTestId('defect-toggle-97')).toContainText('Less')
 
     await page.getByTestId('defect-more-97').click()
     const menu = page.locator('[data-pl-part="menu"]')
@@ -259,6 +260,7 @@ test.describe('pixel theme — All defects', () => {
       await page.setViewportSize({ width: 1440, height: 900 })
       await openDefects(page)
       await page.getByTestId('defect-toggle-97').click()
+      await page.getByTestId('defect-toggle-96').click()
       await expect(page.getByTestId('defect-row-97')).toHaveAttribute('data-expanded', '')
 
       const audit = await page.evaluate(colourBudget)

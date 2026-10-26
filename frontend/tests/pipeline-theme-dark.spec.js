@@ -118,6 +118,13 @@ function harForThisPort(testInfo, baseURL) {
 
 async function replay(page, testInfo, baseURL, appearance) {
   await page.routeFromHAR(harForThisPort(testInfo, baseURL), { url: '**/api/**', notFound: 'abort' })
+  // The HAR predates the defect list asking for its fix tasks' states; the
+  // recorded answer is the same rows, so the read is replayed without it.
+  await page.route(/\/api\/defects\?.*with_fix_state=1/, (route) => {
+    const url = new URL(route.request().url())
+    url.searchParams.delete('with_fix_state')
+    return route.fallback({ url: url.toString() })
+  })
   // Registered after the HAR, so it wins for the overview read.
   await page.route(/\/api\/pipeline\/overview/, route =>
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(OVERVIEW) }))

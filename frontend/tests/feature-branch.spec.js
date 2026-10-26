@@ -64,6 +64,8 @@ test('test_feature_page_shows_branch_panel', async ({ page }) => {
 
   const card = page.getByTestId('feature-branch')
   await expect(card.getByTestId('feature-branch-name')).toHaveText('f243/integration')
+  // The Slices card's footer: one line at rest, the detail behind it.
+  await card.getByTestId('feature-branch-toggle').click()
   await expect(card.getByTestId('feature-branch-source')).toHaveText('convention')
   await expect(card.getByTestId('feature-branch-integration')).toContainText('exists')
   await expect(card.getByTestId('feature-branch-integration')).toContainText('not merged')
@@ -115,6 +117,7 @@ test('test_branch_panel_shows_git_error', async ({ page }) => {
   const card = page.getByTestId('feature-branch')
   await expect(card.getByTestId('feature-branch-error')).toContainText('repo /gone does not exist')
   await expect(card.getByTestId('feature-branch-name')).toHaveText('none')
+  await card.getByTestId('feature-branch-toggle').click()
   await expect(card.getByTestId('feature-branch-runs-empty')).toBeVisible()
   // The page around the card still draws.
   await expect(page.getByTestId('feature-slices')).toBeVisible()

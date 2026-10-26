@@ -114,7 +114,8 @@ def _assert_rows_carry_their_tasks(client) -> None:
     assert body["rows"][1] == {
         "n": "S2", "title": "runner", "depends_on": ["S1"], "tests": ["test_b"],
         "base": "f9/integration", "skill": "goal-verified-treenav",
-        "task_id": None, "task_status": None}
+        "task_id": None, "task_status": None,
+        "fixes_defects": [], "fixes_open_defects": []}
 
     client.post(f"/api/features/{fid}/transcribe", headers=EDITOR)
     ids = [t.id for t in _tasks(fid)]

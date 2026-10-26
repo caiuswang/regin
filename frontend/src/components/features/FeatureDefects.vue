@@ -19,6 +19,7 @@ import Card from '../Card.vue'
 import Checkbox from '../ui/Checkbox.vue'
 import Icon from '../ui/Icon.vue'
 import DefectRow from '../defects/DefectRow.vue'
+import { useRefResolve } from '../../composables/useRefResolve.js'
 import { DEFECTS_ANCHOR, defectListLink, defectsLink } from '../../utils/featureLinks'
 
 const props = defineProps({
@@ -47,6 +48,9 @@ const byTask = computed(() => props.fixTaskId != null)
 const scopeParam = computed(() => byTask.value
   ? `fix_item=${props.fixTaskId}` : `feature_id=${props.feature.id}`)
 const truncated = computed(() => total.value > items.value.length)
+// One resolve for every row's fix task, not one per row.
+const { items: fixItems } = useRefResolve(() => items.value
+  .filter(d => d.fix_task_id).map(d => `task:${d.fix_task_id}`))
 
 // Batching lives on this card and nowhere else: every row here is already
 // blamed on one feature, so a checkbox cannot assert a cause the way one on
@@ -102,7 +106,7 @@ async function load() {
   loading.value = true
   loadError.value = ''
   try {
-    const body = await api.get(`/defects?${want}&size=${MAX_ROWS}`)
+    const body = await api.get(`/defects?${want}&size=${MAX_ROWS}&with_fix_state=1`)
     if (want !== scopeParam.value) return
     items.value = body.items || []
     total.value = body.pagination?.total ?? items.value.length
@@ -172,24 +176,27 @@ async function onRowChanged(message) {
       {{ byTask ? 'This task is not the fix for any defect.'
         : 'No defects are blamed on this feature.' }}
     </p>
-    <ul v-else class="ledger-list" data-testid="feature-defects-list">
+    <ul v-else class="ledger-list ledger-grid" data-testid="feature-defects-list">
       <DefectRow
         v-for="defect in items"
         :key="defect.id"
         :defect="defect"
         :can-write="canWrite"
+        :fix-items="fixItems"
         hide-feature
         flat
+        collapsible
         @changed="onRowChanged"
       >
-        <template v-if="selectable(defect) || blocking.includes(defect.id)" #select>
+        <template v-if="selectable(defect)" #select>
           <Checkbox
-            v-if="selectable(defect)"
             :model-value="isSelected(defect.id)"
             :data-testid="`defect-select-${defect.id}`"
             @update:model-value="on => toggle(defect.id, on)"
           ><span class="sr-only">Select defect #{{ defect.id }} for one fix task</span></Checkbox>
-          <span v-if="blocking.includes(defect.id)" class="td-blocking"
+        </template>
+        <template v-if="blocking.includes(defect.id)" #flags>
+          <span class="td-blocking"
                 :data-testid="`defect-blocking-${defect.id}`">blocking</span>
         </template>
       </DefectRow>

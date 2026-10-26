@@ -155,3 +155,10 @@ export function reopenedLabel(round) {
   const reopens = Number(round || 1) - 1
   return reopens > 0 ? `reopened ${reopens}×` : ''
 }
+
+//: A defect's symptom as a list row reads it: the first non-empty line, with
+//: an embedded `![](image:N)` named rather than drawn.
+export function symptomFirstLine(symptom) {
+  const line = String(symptom || '').split('\n').find(l => l.trim()) || ''
+  return line.trim().replace(/!\[[^\]]*\]\(image:(\d+)\)/g, '[image $1]')
+}

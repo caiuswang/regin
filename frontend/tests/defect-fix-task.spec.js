@@ -17,7 +17,7 @@ const OPEN = {
   opened_at: '2026-09-14 12:00:00', closed_at: null,
 }
 const CLOSED = { ...OPEN, status: 'closed', missing_check: 'test_the_gutter_holds' }
-const FIXED = { ...CLOSED, fix_task_id: 142 }
+const FIXED = { ...CLOSED, fix_task_id: 142, fix_state: 'idea' }
 
 // The row is read on its own page: there is no defects list (feature #110).
 function stubList(page, state) {
@@ -61,10 +61,10 @@ test('closing a defect offers the fix task, and accepting links it',
       ['close', { missing_check: 'test_the_gutter_holds' }],
       ['fix-item', { create: true }],
     ])
-    // The row carries the link now, without a reload: a pointer the operator
-    // has to go looking for is one they cannot tell landed.
+    // The row's fix column carries the task now, without a reload: a pointer
+    // the operator has to go looking for is one they cannot tell landed.
     await expect(offer).toHaveCount(0)
-    await expect(row.locator('dl').getByRole('link', { name: 'task #142' })).toBeVisible()
+    await expect(row.locator('[data-testid="defect-fix-7"] .ref-chip[data-ref="task:142"]')).toBeVisible()
   })
 
 test('arriving at an already-closed defect raises no offer', async ({ page }) => {
@@ -109,7 +109,7 @@ test('a defect can be pointed at a task that already exists', async ({ page }) =
   await stubList(page, state)
   await page.route('**/api/defects/*/fix-item', async (route) => {
     posted.push(route.request().postDataJSON())
-    state.row = { ...OPEN, fix_task_id: 99 }
+    state.row = { ...OPEN, fix_task_id: 99, fix_state: 'idea' }
     await route.fulfill({ json: { defect: state.row } })
   })
 
@@ -123,7 +123,7 @@ test('a defect can be pointed at a task that already exists', async ({ page }) =
   // A number, not a string: the route reads `task_id` straight off the body
   // and a string there would reach the foreign key as one.
   expect(posted[0]).toEqual({ task_id: 99 })
-  await expect(row.locator('dl').getByRole('link', { name: 'task #99' })).toBeVisible()
+  await expect(row.locator('[data-testid="defect-fix-7"] .ref-chip[data-ref="task:99"]')).toBeVisible()
 })
 
 test('an open, attributed defect files its fix task in one click',
@@ -133,7 +133,7 @@ test('an open, attributed defect files its fix task in one click',
     await stubList(page, state)
     await page.route('**/api/defects/*/fix-item', async (route) => {
       posted.push(route.request().postDataJSON())
-      state.row = { ...OPEN, fix_task_id: 143 }
+      state.row = { ...OPEN, fix_task_id: 143, fix_state: 'idea' }
       await route.fulfill({ json: { defect: state.row } })
     })
 
@@ -143,7 +143,7 @@ test('an open, attributed defect files its fix task in one click',
     await page.getByTestId('defect-fix-create-row-7').click()
 
     expect(posted).toEqual([{ create: true }])
-    await expect(row.locator('dl').getByRole('link', { name: 'task #143' })).toBeVisible()
+    await expect(row.locator('[data-testid="defect-fix-7"] .ref-chip[data-ref="task:143"]')).toBeVisible()
     await expect(row.getByTestId('defect-fix-created-7')).toContainText('task #143')
     // A task is pointed at now, so the menu stops offering a second one.
     await row.getByTestId('defect-more-7').click()
@@ -172,7 +172,7 @@ test('an unattributed defect lets the agent attribute it and file the task',
     await stubList(page, state)
     await page.route('**/api/defects/*/auto-attribute', async (route) => {
       posted.push(route.request().postDataJSON())
-      state.row = { ...OPEN, fix_task_id: 142 }
+      state.row = { ...OPEN, fix_task_id: 142, fix_state: 'idea' }
       await route.fulfill({ json: { defect: state.row, reason: 'merge.py belongs to it' } })
     })
 

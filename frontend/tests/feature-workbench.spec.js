@@ -303,6 +303,9 @@ test('a defect row shows one primary action, not five', async ({ page }) => {
                                  missing_check: 'test_x', fix_task_id: 205 })],
   })
   await page.goto('/features/242')
+  // The verbs are behind each row's one-line head.
+  await page.getByTestId('defect-toggle-149').click()
+  await page.getByTestId('defect-toggle-150').click()
 
   const open = page.getByTestId('feature-defects-list').locator('li', { hasText: '#149' })
   await expect(primaries(open)).toHaveCount(1)
@@ -325,6 +328,7 @@ test('every secondary action is still reachable from the row menu',
     })
     await page.goto('/features/242')
     const row = page.getByTestId('feature-defects-list').locator('li', { hasText: '#149' })
+    await row.getByTestId('defect-toggle-149').click()
     const more = row.getByTestId('defect-more-149')
 
     await page.route(/\/api\/features\?/, route => route.fulfill({ json: {
@@ -366,6 +370,7 @@ test('a defect that already has a fix task is not offered a second',
   async ({ page }) => {
     await stub(page, { defects: [defect({ fix_task_id: 205 })] })
     await page.goto('/features/242')
+    await page.getByTestId('defect-toggle-149').click()
     await page.getByTestId('defect-more-149').click()
 
     await expect(page.getByRole('menuitem', { name: 'Move to another task…' })).toBeVisible()
@@ -425,6 +430,8 @@ test('a row\'s secondary action waits for hover; its primary does not',
     await page.goto('/features/242')
     const row = page.getByTestId('feature-defects-list').locator('li').first()
     const opacity = (loc) => loc.evaluate((el) => getComputedStyle(el).opacity)
+    await row.getByTestId('defect-toggle-149').click()
+    await page.evaluate(() => document.activeElement?.blur())
 
     await page.mouse.move(0, 0)
     await expect.poll(() => opacity(row.getByTestId('defect-more-149'))).toBe('0.35')

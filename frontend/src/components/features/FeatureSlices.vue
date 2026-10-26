@@ -10,6 +10,7 @@ import { useRoute, useRouter } from 'vue-router'
 import api from '../../api'
 import Button from '../ui/Button.vue'
 import Card from '../Card.vue'
+import FeatureBranch from './FeatureBranch.vue'
 import TaskStatusIcon from '../tasks/TaskStatusIcon.vue'
 import SliceArmSheet from './SliceArmSheet.vue'
 import { SLICES_ANCHOR } from '../../utils/featureLinks'
@@ -23,8 +24,10 @@ const props = defineProps({
   // A tracked feature's spec is the tracker's (D4), so the tail is added there.
   tracked: { type: Boolean, default: false },
   projectId: { type: Number, default: null },
+  // The feature's set integration branch, for the footer's editor.
+  branch: { type: String, default: null },
 })
-const emit = defineEmits(['changed'])
+const emit = defineEmits(['changed', 'branch-saved'])
 
 const report = ref(null)
 const loadError = ref('')
@@ -149,29 +152,58 @@ async function onArmed() {
     <p v-if="report && !rows.length" class="fs-note" data-testid="slices-empty">
       No slice table in the spec yet.
     </p>
-    <ul v-else-if="rows.length" class="ledger-list" data-testid="slices-rows">
-      <li
-        v-for="r in rows" :key="r.n" class="ledger-row fs-row"
-        :data-testid="`slice-row-${r.n}`"
-      >
-        <span class="fs-n">{{ r.n }}</span>
-        <span class="fs-name">{{ r.title }}</span>
-        <span
-          v-if="r.tests?.length" class="fs-meta" :title="r.tests.join('\n')"
-          :data-testid="`slice-tests-${r.n}`"
-        >{{ r.tests.length }} tests</span>
-        <span v-if="r.depends_on.length" class="fs-meta">after {{ r.depends_on.join(', ') }}</span>
-        <span class="fs-meta">{{ r.base }}</span>
-        <router-link
-          v-if="r.task_id" class="fs-task" :to="`/tasks/${r.task_id}`"
-          :data-testid="`slice-task-${r.n}`"
+    <div v-else-if="rows.length" class="ledger-grid fs-grid">
+      <div class="fs-row ledger-colhead" data-pl-part="ledger-colhead" data-testid="slices-header">
+        <span class="ledger-cell">#</span>
+        <span class="ledger-cell">Slice</span>
+        <span class="ledger-cell">Tests</span>
+        <span class="ledger-cell fs-wide">After</span>
+        <span class="ledger-cell fs-wide">Base</span>
+        <span class="ledger-cell">Task</span>
+      </div>
+      <ul class="ledger-list fs-list" data-testid="slices-rows">
+        <li
+          v-for="r in rows" :key="r.n" class="ledger-row fs-row" data-pl-part="ledger-row"
+          :data-testid="`slice-row-${r.n}`"
         >
-          <TaskStatusIcon :status="r.task_status" :size="12" />
-          #{{ r.task_id }} {{ r.task_status }}
-        </router-link>
-        <span v-else class="fs-meta">not transcribed</span>
-      </li>
-    </ul>
+          <span class="ledger-cell fs-n" data-cell="n">{{ r.n }}</span>
+          <span class="ledger-cell fs-name" data-cell="title" :title="r.title">
+            <span class="ledger-ellipsis" :data-testid="`slice-title-${r.n}`">{{ r.title }}</span>
+          </span>
+          <span class="ledger-cell fs-meta" data-cell="tests" :title="r.tests?.join('\n') || undefined"
+                :data-testid="`slice-tests-${r.n}`">{{ r.tests?.length ? `${r.tests.length} tests` : '' }}</span>
+          <span class="ledger-cell fs-meta fs-wide" data-cell="after"
+                :title="r.depends_on.join(', ') || undefined">
+            <span class="ledger-ellipsis">{{ r.depends_on.join(', ') }}</span>
+          </span>
+          <span class="ledger-cell fs-meta fs-wide" data-cell="base" :title="r.base || undefined">
+            <span class="ledger-ellipsis">{{ r.base }}</span>
+          </span>
+          <span class="ledger-cell" data-cell="task">
+            <router-link
+              v-if="r.task_id" class="fs-task" :to="`/tasks/${r.task_id}`"
+              :data-testid="`slice-task-${r.n}`"
+            >
+              <TaskStatusIcon :status="r.task_status" :size="12" />
+              #{{ r.task_id }} <span class="ledger-ellipsis">{{ r.task_status }}</span>
+            </router-link>
+            <span v-else class="fs-meta">not transcribed</span>
+            <router-link
+              v-for="d in r.fixes_defects || []" :key="d"
+              class="ledger-tag" :class="{ 'ledger-tag-amber': r.fixes_open_defects?.includes(d) }"
+              :to="`/defects/${d}`" data-pl-part="tag"
+              :data-tone="r.fixes_open_defects?.includes(d) ? 'warn' : undefined"
+              :data-testid="`slice-fixes-${r.n}-${d}`"
+            >fixes #{{ d }}</router-link>
+          </span>
+        </li>
+      </ul>
+    </div>
+
+    <FeatureBranch
+      :feature-id="featureId" :branch="branch" :can-write="canWrite"
+      @saved="emit('branch-saved', $event)"
+    />
 
     <SliceArmSheet
       v-if="arming"
@@ -202,12 +234,21 @@ async function onArmed() {
 .fs-coverage { font-size: 11.5px; color: var(--color-amber-800); margin-top: 0.15rem; }
 .fs-problems { list-style: none; display: flex; flex-direction: column; gap: 0.15rem; }
 .fs-line { font-family: var(--font-mono, monospace); color: var(--color-fg-subtle); margin-right: 0.35rem; }
-.fs-row { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
-.fs-n { font-family: var(--font-mono, monospace); font-size: 11.5px; color: var(--color-fg-faint); flex: none; }
-.fs-name { font-size: 0.8125rem; flex: 1 1 12rem; min-width: 0; color: var(--color-fg); }
-.fs-meta { font-size: 11px; color: var(--color-fg-subtle); flex: none; }
+.fs-row {
+    display: grid; align-items: center; column-gap: 0.5rem;
+    grid-template-columns: 3rem minmax(0, 1fr) 5rem 8rem 8rem 12rem;
+}
+.fs-list { margin-top: 0; }
+.fs-list .fs-row { grid-auto-rows: minmax(1.5rem, auto); }
+@container (max-width: 719.98px) {
+    .fs-row { grid-template-columns: 3rem minmax(0, 1fr) 5rem 12rem; }
+    .fs-wide { display: none; }
+}
+.fs-n { font-family: var(--font-mono, monospace); font-size: 11.5px; color: var(--color-fg-faint); }
+.fs-name { font-size: 0.8125rem; color: var(--color-fg); }
+.fs-meta { font-size: 11px; color: var(--color-fg-subtle); }
 .fs-task {
-    display: inline-flex; align-items: center; gap: 0.3rem; flex: none;
+    display: inline-flex; align-items: center; gap: 0.3rem; flex: 0 1 auto; min-width: 0;
     font-size: 11.5px; color: var(--color-info); text-decoration: none;
 }
 .fs-task:hover { text-decoration: underline; }

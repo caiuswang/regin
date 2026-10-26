@@ -150,26 +150,40 @@ defineExpose({ load })
       No task is placed under this feature. It can still be shipped and blamed —
       it simply has nothing for an agent to run.
     </p>
-    <ul v-else class="ledger-list" data-testid="feature-tasks-list">
-      <li v-for="task in items" :key="task.id" class="ledger-row ft-row">
-        <router-link class="ft-link" :to="`/tasks/${task.id}`">
+    <ul v-else class="ledger-list ledger-grid" data-testid="feature-tasks-list">
+      <li
+        v-for="task in items" :key="task.id" class="ledger-row ft-row"
+        data-pl-part="ledger-row"
+        :data-testid="`feature-task-row-${task.id}`"
+        :data-fix-open="task.fixes_open_defects?.length ? '' : undefined"
+      >
+        <span class="ledger-cell" data-cell="state">
           <TaskStatusIcon :status="task.status" :size="13" />
           <TaskKindChip :kind="task.kind" />
-          <span class="ledger-id">#{{ task.id }}</span>
-          <span class="ft-name">{{ taskTitle(task) }}</span>
+        </span>
+        <span class="ledger-cell ledger-id" data-cell="id" data-pl-part="row-id">#{{ task.id }}</span>
+        <router-link class="ledger-cell ft-link" :to="`/tasks/${task.id}`" data-cell="title"
+                     :title="taskTitle(task)">
+          <span class="ledger-ellipsis ft-name">{{ taskTitle(task) }}</span>
         </router-link>
-        <router-link
-          v-if="task.waits_on"
-          :to="`/tasks/${task.waits_on.id}`"
-          class="ft-waits focus-visible:outline-2 focus-visible:outline-blue-500"
-          :data-testid="`feature-task-waits-${task.id}`"
-        >waits on #{{ task.waits_on.id }}<template v-if="(task.blocked_by?.length || 0) > 1">+{{ task.blocked_by.length - 1 }}</template></router-link>
-        <router-link
-          v-for="d in task.fixes_defects || []" :key="d"
-          class="ledger-tag" :to="`/defects/${d}`"
-          :data-testid="`feature-task-fixes-${task.id}-${d}`"
-        >fixes #{{ d }}</router-link>
-        <span v-if="task.run_count" class="ft-runs">{{ task.run_count }} runs</span>
+        <span class="ledger-cell" data-cell="relations">
+          <router-link
+            v-if="task.waits_on"
+            :to="`/tasks/${task.waits_on.id}`"
+            class="ft-waits focus-visible:outline-2 focus-visible:outline-blue-500"
+            :data-testid="`feature-task-waits-${task.id}`"
+          >waits on #{{ task.waits_on.id }}<template v-if="(task.blocked_by?.length || 0) > 1">+{{ task.blocked_by.length - 1 }}</template></router-link>
+          <router-link
+            v-for="d in task.fixes_defects || []" :key="d"
+            class="ledger-tag" :class="{ 'ledger-tag-amber': task.fixes_open_defects?.includes(d) }"
+            :to="`/defects/${d}`" data-pl-part="tag"
+            :data-tone="task.fixes_open_defects?.includes(d) ? 'warn' : undefined"
+            :data-testid="`feature-task-fixes-${task.id}-${d}`"
+          >fixes #{{ d }}</router-link>
+        </span>
+        <span class="ledger-cell ft-runs" data-cell="runs">
+          <template v-if="task.run_count">{{ task.run_count }} runs</template>
+        </span>
         <FeatureTaskSessions
           :task-id="task.id" :rows="byTask.get(task.id) || []"
           :can-open-trace="canOpenTrace"
@@ -210,15 +224,18 @@ defineExpose({ load })
     background: var(--color-amber-50); border-radius: 0.4rem;
     padding: 0.25rem 0.45rem;
 }
-.ft-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
-.ft-link {
-    display: flex; align-items: center; gap: 0.5rem; min-width: 10rem; flex: 1 1 0;
-    text-decoration: none; color: var(--color-fg);
+.ft-row {
+    display: grid; align-items: center; column-gap: 0.5rem;
+    grid-template-columns: 4.5rem 4rem minmax(0, 1fr) minmax(0, 16rem) 4.5rem 6rem;
+    grid-auto-rows: minmax(1.5rem, auto);
 }
+@container (max-width: 719.98px) {
+    .ft-row { grid-template-columns: 4.5rem 4rem minmax(0, 1fr) minmax(0, 16rem) 6rem; }
+    .ft-runs { display: none; }
+}
+.ft-link { text-decoration: none; color: var(--color-fg); }
+.ft-link:hover .ft-name { text-decoration: underline; }
 .ft-link:focus-visible { outline: 2px solid var(--color-blue-500); }
-.ft-name {
-    font-size: 0.8125rem; min-width: 0; overflow: hidden;
-    text-overflow: ellipsis; white-space: nowrap;
-}
-.ft-runs { font-size: 11px; color: var(--color-fg-subtle); flex: none; }
+.ft-name { font-size: 0.8125rem; }
+.ft-runs { font-size: 11px; color: var(--color-fg-subtle); }
 </style>

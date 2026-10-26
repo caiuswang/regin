@@ -135,6 +135,7 @@ test('test_link_existing_task_offers_dropdown', async ({ page }) => {
 
   await page.goto(`/features/${FEATURE}`)
   const row = card(page).getByTestId('defect-row-10')
+  await row.getByTestId('defect-toggle-10').click()
   await row.getByTestId('defect-more-10').click()
   await page.getByRole('menuitem', { name: 'Link to a task…' }).click()
 
@@ -156,8 +157,8 @@ test('test_link_existing_task_offers_dropdown', async ({ page }) => {
 })
 
 test('test_drift_row_shows_badge_and_reopen', async ({ page }) => {
-  const drift = defect(242, { round: 2, fix_task_id: 345, fix_drift: true })
-  const state = { defects: [drift, defect(243, { fix_task_id: 346 })], tasks: [] }
+  const drift = defect(242, { round: 2, fix_task_id: 345, fix_state: 'done', fix_drift: true })
+  const state = { defects: [drift, defect(243, { fix_task_id: 346, fix_state: 'running' })], tasks: [] }
   await stubFeature(page, state)
   const writes = []
   await page.route(/\/api\/tasks\/345$/, async (route) => {
@@ -174,6 +175,7 @@ test('test_drift_row_shows_badge_and_reopen', async ({ page }) => {
 
   await page.goto(`/features/${FEATURE}`)
   const row = card(page).getByTestId('defect-row-242')
+  await row.getByTestId('defect-toggle-242').click()
   await expect(row.getByTestId('defect-fix-drift-242')).toHaveText('fix done · still open')
   await expect(card(page).getByTestId('defect-fix-drift-243')).toHaveCount(0)
   await expect(row.getByTestId('defect-fix-replace-242')).toHaveText('Create fix task')
@@ -186,7 +188,7 @@ test('test_drift_row_shows_badge_and_reopen', async ({ page }) => {
 })
 
 test('a drift row files a replacement fix task', async ({ page }) => {
-  const drift = defect(242, { round: 2, fix_task_id: 345, fix_drift: true })
+  const drift = defect(242, { round: 2, fix_task_id: 345, fix_state: 'done', fix_drift: true })
   const state = { defects: [drift], tasks: [] }
   await stubFeature(page, state)
   const posted = []
@@ -199,6 +201,7 @@ test('a drift row files a replacement fix task', async ({ page }) => {
 
   await page.goto(`/features/${FEATURE}`)
   const row = card(page).getByTestId('defect-row-242')
+  await row.getByTestId('defect-toggle-242').click()
   await row.getByTestId('defect-fix-replace-242').click()
 
   expect(posted).toEqual([{ create: true }])

@@ -26,6 +26,7 @@ from lib.orm.models.sync import Repo
 from lib.orm.models.tasks import AgentTask, TASK_STATUS_IDEA
 from lib.settings import settings
 from lib.tasks import arm as arm_module
+from lib.tasks import rows as task_rows
 from lib.tasks import runs, store
 from lib.tasks.capture import CaptureRejected
 from lib.tasks.commands import CommandsError, load_project_commands
@@ -94,17 +95,26 @@ def report(feature_id: int) -> dict:
     refusal = _refusal(body, rows)
     tasks = existing_slices(feature_id, rows) if rows else {}
     covered, total = doc.coverage()
+    fixes = _fixes(tasks.values())
     return {
         "sliceable": refusal is None,
         "refusal": refusal,
         "problems": [problem.to_dict() for problem in doc.problems],
         "scenarios": {"covered": covered, "total": total},
         "tail_missing": bool(rows) and not has_tail(rows),
-        "rows": [_row_view(row, tasks.get(row.n)) for row in rows],
+        "rows": [_row_view(row, tasks.get(row.n), fixes) for row in rows],
     }
 
 
-def _row_view(row: SliceRow, task: Optional[AgentTask]) -> dict:
+def _fixes(tasks) -> dict:
+    """`{task_id: task row}` carrying `fixes_defects` / `fixes_open_defects`,
+    derived from `defects.fix_task_id` the way `/api/tasks` rows are."""
+    marked = task_rows.fix_defects([{"id": task.id} for task in tasks])
+    return {row["id"]: row for row in marked}
+
+
+def _row_view(row: SliceRow, task: Optional[AgentTask], fixes: dict) -> dict:
+    fix = fixes.get(task.id, {}) if task is not None else {}
     return {
         "n": row.n, "title": row.title,
         "depends_on": [str(dep) for dep in row.depends_on],
@@ -112,6 +122,8 @@ def _row_view(row: SliceRow, task: Optional[AgentTask]) -> dict:
         "base": row.base, "skill": row.skill,
         "task_id": task.id if task is not None else None,
         "task_status": task.status if task is not None else None,
+        "fixes_defects": fix.get("fixes_defects", []),
+        "fixes_open_defects": fix.get("fixes_open_defects", []),
     }
 
 

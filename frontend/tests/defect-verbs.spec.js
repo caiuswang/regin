@@ -93,6 +93,7 @@ test('test_defects_list_page_filters_and_pages', async ({ page }) => {
   await expect.poll(() => asked.at(-1)?.triage).toBe('declined')
   await expect(page.getByTestId('list-count')).toHaveText('1 of 61 defects')
   await expect(page.getByTestId('defect-triage-150')).toHaveText('declined')
+  await page.getByTestId('defect-toggle-150').click()
   await expect(page.getByTestId('defect-primary-150')).toHaveText('Restore')
   await page.getByTestId('defect-primary-150').click()
   await expect.poll(() => posts.map(p => p.path)).toEqual(['/api/defects/150/restore'])

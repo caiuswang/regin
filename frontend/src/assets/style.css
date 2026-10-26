@@ -4490,6 +4490,24 @@ a.ledger-tag { color: var(--color-primary); }
 a.ledger-tag:hover { text-decoration: underline; }
 .ledger-tag-amber { background: var(--color-warning-soft); color: var(--color-warning-strong); }
 .ledger-tag-green { background: var(--color-success-soft); color: var(--color-success-strong); }
+/* Column lists (Slices / Tasks / Defects / Sessions): each row is a grid on
+   fixed tracks the list declares, so a column sits at one x on every row. The
+   list is the size container — a list squeezed by its card drops its minor
+   columns at 720px whatever the viewport is. A cell never wraps: it truncates
+   and carries its full text in `title`. */
+.ledger-grid { container-type: inline-size; }
+.ledger-cell {
+    display: flex; align-items: center; gap: 0.35rem;
+    min-width: 0; overflow: hidden; white-space: nowrap;
+}
+.ledger-ellipsis { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ledger-colhead {
+    padding: 0.2rem 0.5rem; border-bottom: 1px solid var(--color-border);
+    font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--color-fg-faint);
+}
+/* A task that still has an open defect to fix. */
+.ledger-row[data-fix-open] { box-shadow: inset 3px 0 0 var(--color-warning); }
 /* Secondary actions surface on row hover or focus, never on a device that
    cannot hover: a control a touch user must first discover is one they lose. */
 .ledger-row .ledger-reveal { opacity: 0.35; transition: opacity 150ms; }

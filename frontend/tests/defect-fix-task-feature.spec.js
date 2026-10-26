@@ -54,6 +54,8 @@ test('filing a fix task from the feature page lists it, linked both ways',
     await page.goto('/features/242')
     await expect(page.getByTestId('feature-tasks-empty')).toBeVisible()
 
+    // The verbs are behind the row's one-line head.
+    await page.getByTestId('defect-toggle-7').click()
     await page.getByTestId('defect-more-7').click()
     await page.getByTestId('defect-fix-create-row-7').click()
 

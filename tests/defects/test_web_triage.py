@@ -290,3 +290,13 @@ def test_fix_state_is_none_for_a_defect_pointing_at_nothing(flask_client):
     body = flask_client.get("/api/defects?with_fix_state=1",
                             headers=EDITOR).get_json()
     assert body["items"][0]["fix_state"] is None
+
+
+def test_a_single_defect_read_carries_its_fix_state(flask_client, native_task):
+    """The permalink's fix column reads a missing status as a deleted task,
+    so the one-row read always echoes it."""
+    task_id = native_task(status="running")
+    row = store.record("a symptom", session_id="t-1")
+    store.set_fix_item(row.id, task_id)
+    body = flask_client.get(f"/api/defects/{row.id}", headers=EDITOR).get_json()
+    assert body["defect"]["fix_state"] == "running"

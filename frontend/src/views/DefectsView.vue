@@ -26,6 +26,7 @@ import PipelineListToolbar from '../components/PipelineListToolbar.vue'
 import DefectRow from '../components/defects/DefectRow.vue'
 import PipelineCreateButton from '../components/pipeline/PipelineCreateButton.vue'
 import PlSlot from '../components/pipeline/PlSlot.vue'
+import { useRefResolve } from '../composables/useRefResolve.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -61,6 +62,7 @@ const {
     feature_id: route.query.feature_id,
     queue: route.query.queue,
     project: scopeParam(route.query.project),
+    with_fix_state: '1',
   }),
 })
 
@@ -77,6 +79,10 @@ const facets = computed(() => [
     { value: 'declined', label: 'Declined' },
   ] },
 ])
+
+// One resolve for the page's fix tasks, not one per row.
+const { items: fixItems } = useRefResolve(() => items.value
+  .filter(d => d.fix_task_id).map(d => `task:${d.fix_task_id}`))
 
 const appliedSort = computed(() => applied.value?.sort || state.value.sort)
 const sortKey = computed(() => appliedSort.value.split(':')[0])
@@ -184,12 +190,13 @@ function onChanged(message, info) {
       @first-page="list.patch({ page: '0' })"
     />
 
-    <ul v-if="status === 'rows'" class="dv-list" :class="{ 'is-busy': loading }" data-testid="defects-list">
+    <ul v-if="status === 'rows'" class="dv-list ledger-grid" :class="{ 'is-busy': loading }" data-testid="defects-list">
       <DefectRow
         v-for="d in items"
         :key="d.id"
         :defect="d"
         :can-write="canWrite"
+        :fix-items="fixItems"
         collapsible
         @changed="onChanged"
       />
