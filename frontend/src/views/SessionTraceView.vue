@@ -55,6 +55,7 @@ import { onTraceSpans, setTraceInterest } from '../composables/useTraceSpanEvent
 import { useSuccessorFollow } from '../composables/useSuccessorFollow'
 import { useQueuedPrompts } from '../composables/useQueuedPrompts.js'
 import TraceQueuedPrompts from '../components/TraceQueuedPrompts.vue'
+import { restoreToComposer, cancelComposerRestore } from '../composables/useComposerRestore.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -70,6 +71,13 @@ const queued = useQueuedPrompts(
 
 async function onQueueEdit({ id, text, done }) {
   if (await queued.edit(id, text)) done?.()
+}
+
+// Once the composer holds the text the chip is dismissed — left up, it would
+// sit beside the draft as a second copy of the same words.
+function onQueueRestore({ id, text }) {
+  if (viewMode.value !== 'conversation') setViewMode('conversation')
+  restoreToComposer(session.value?.trace_id || '', text, () => queued.remove(id))
 }
 // Detail of a failed INITIAL load. "Loading session…" is the view's only
 // loading affordance, so without an explicit failure exit a rejected first
@@ -837,6 +845,7 @@ watch(() => route.params.id, () => {
   // Queue ids are per-runner, so a pending op from the outgoing session would
   // mask or hide an unrelated row in the incoming one.
   queued.reset()
+  cancelComposerRestore()
 })
 
 // send_to_user messages (Messages tab). Null until first load so the tab
@@ -1256,6 +1265,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  cancelComposerRestore()
   // Scroll/wheel/touch listeners are detached by useTraceScroll(); the
   // sticky-header observer + compact poll are torn down by their composables.
   disposed = true
@@ -1838,7 +1848,9 @@ watch(turnsSidebarShown, (shown) => {
       :notice="queued.notice"
       :can-send-now="queued.modListener"
       :sending="queued.sending"
+      :can-restore="followUpMeta.canFollowUp && !scopeTakeover"
       @edit="onQueueEdit"
+      @restore="onQueueRestore"
       @send-now="queued.sendNow()"
       @remove="e => queued.remove(e.id)"
     />

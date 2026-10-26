@@ -30,6 +30,8 @@ import { useSlashCommands } from '../../composables/useSlashCommands'
 import { useFileMentions } from '../../composables/useFileMentions'
 import { useImagePaste, imageFilesFrom } from '../../composables/useImagePaste'
 import { useSuccessorJump } from '../../composables/useSuccessorJump'
+import { useRefusedSend } from '../../composables/useRefusedSend'
+import RefusedSendNotice from '../conversation/RefusedSendNotice.vue'
 
 const props = defineProps({
   sessionId: { type: String, required: true },
@@ -158,6 +160,7 @@ async function send() {
   } catch { res = null }
   logSend(res, text.length)
   if (res && res.delivered) {
+    refused.clear()
     phase.value = 'delivered'
     detail.value = res.detail || 'delivered'
     // No optimistic chip: a delivered steer is represented server-side from
@@ -174,7 +177,18 @@ async function send() {
     // keep the draft so the user can retry.
     phase.value = 'failed'
     detail.value = res?.detail || res?.msg || 'send failed'
+    if (refused.take(res)) detail.value = 'not sent — this task run has finished'
   }
+}
+
+const refused = useRefusedSend()
+watch(() => props.sessionId, () => refused.clear())
+
+async function postRefusedAsComment() {
+  if (!(await refused.postAsComment(draft.value.trim()))) return
+  draft.value = ''
+  images.clear()
+  phase.value = 'ready'
 }
 
 // Recovery: inject an Escape keystroke into the pane. A harness overlay
@@ -428,6 +442,7 @@ function onKeydown(e) {
       <Icon name="arrow-up" :size="15" />
     </Button>
   </div>
+  <RefusedSendNotice :refused="refused" @post="postRefusedAsComment" />
   <div class="live-bridge-row">
     <div
       class="live-bridge-meta"

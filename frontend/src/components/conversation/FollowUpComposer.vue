@@ -23,6 +23,9 @@ import { useSlashCommands } from '../../composables/useSlashCommands'
 import { useFileMentions } from '../../composables/useFileMentions'
 import { useImagePaste, imageFilesFrom } from '../../composables/useImagePaste'
 import { useSuccessorJump } from '../../composables/useSuccessorJump'
+import { useRefusedSend } from '../../composables/useRefusedSend'
+import { useComposerRestore } from '../../composables/useComposerRestore'
+import RefusedSendNotice from './RefusedSendNotice.vue'
 
 const props = defineProps({
   sessionId: { type: String, required: true },
@@ -182,6 +185,7 @@ async function send() {
     res = await api.post(`/sessions/${props.sessionId}/bridge-send`, { text })
   } catch { res = null }
   if (res && res.delivered) {
+    refused.clear()
     phase.value = 'delivered'
     detail.value = res.detail || 'delivered'
     draft.value = ''
@@ -201,7 +205,28 @@ async function send() {
   } else {
     phase.value = 'failed'
     detail.value = res?.detail || res?.msg || 'send failed'
+    if (refused.take(res)) detail.value = 'not sent — this task run has finished'
   }
+}
+
+const refused = useRefusedSend()
+watch(() => props.sessionId, () => refused.clear())
+
+async function postRefusedAsComment() {
+  if (!(await refused.postAsComment(draft.value.trim()))) return
+  draft.value = ''
+  images.clear()
+  phase.value = 'ready'
+}
+
+// Only the page's own composer takes a restored chip; a span reader's docked
+// copy of it would race it for the same session.
+if (props.bubble) {
+  useComposerRestore(() => props.sessionId, (text) => {
+    draft.value = draft.value.trim() ? `${draft.value.trimEnd()}\n${text}` : text
+    expand()
+    nextTick(syncHighlight)
+  })
 }
 
 function caret() {
@@ -417,6 +442,7 @@ onUnmounted(() => {
           @click="collapse"
         ><Icon name="x" :size="14" /></Button>
       </div>
+      <RefusedSendNotice :refused="refused" @post="postRefusedAsComment" />
       <div class="followup-field">
         <ComposerHighlight ref="hlComp" class="followup-hl" :text="draft" />
         <Textarea
