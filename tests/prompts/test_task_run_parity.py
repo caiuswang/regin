@@ -17,8 +17,25 @@ import pytest
 from lib.tasks import run_prompt, runs
 
 
+_REFUSED_WHILE_QUEUED = (
+    " While an operator message is still queued for you, the command is "
+    "refused: end your turn so the message arrives as your next one, deal "
+    "with it, then run the command again."
+)
+
+
+def _reference_session_end(one_shot: bool) -> str:
+    if one_shot:
+        return ("your session closes at the end of the turn in which this "
+                "command is accepted, so run it once the work is done and "
+                "nothing is left to say." + _REFUSED_WHILE_QUEUED)
+    return ("your session stays open after it, so run it as soon as the work "
+            "is done rather than waiting to be stopped."
+            + _REFUSED_WHILE_QUEUED)
+
+
 def _reference_finish(task_id: int, run_id: int, linked: bool = False,
-                      base: str = "") -> str:
+                      base: str = "", one_shot: bool = False) -> str:
     if linked:
         order = (
             "Before you run it: record the work on the linked issue and move "
@@ -37,8 +54,7 @@ def _reference_finish(task_id: int, run_id: int, linked: bool = False,
         "\n\n<finish>\n"
         "This work was launched from a regin task. Running the command below "
         "is the ONLY thing that marks the task complete and releases whatever "
-        "depends on it; your session stays open either way, so run it as soon "
-        "as the work is done rather than waiting to be stopped.\n"
+        "depends on it; " + _reference_session_end(one_shot) + "\n"
         + order
         + f"   {runs._finish_command(task_id, run_id)} --reason "
         "'<what you did, and why>'\n"
@@ -125,11 +141,14 @@ def _reference_feature(feature_id: int, named: str) -> str:
     )
 
 
-@pytest.mark.parametrize("linked,base", [(True, ""), (False, ""),
-                                         (False, "master")])
-def test_finish_block_parity(linked, base):
-    assert (runs._finish_block(7, 3, linked=linked, base=base)
-            == _reference_finish(3, 7, linked=linked, base=base))
+@pytest.mark.parametrize("linked,base,one_shot", [
+    (True, "", False), (False, "", False), (False, "master", False),
+    (False, "master", True)])
+def test_finish_block_parity(linked, base, one_shot):
+    assert (runs._finish_block(7, 3, linked=linked, base=base,
+                               one_shot=one_shot)
+            == _reference_finish(3, 7, linked=linked, base=base,
+                                 one_shot=one_shot))
 
 
 def test_tracker_block_parity():
@@ -196,7 +215,7 @@ def test_launch_envelope_parity(monkeypatch):
     monkeypatch.setattr(run_prompt, "_references_block",
                         lambda task, feature: "<R>")
     monkeypatch.setattr(run_prompt, "_finish_block",
-                        lambda run_id, task_id, linked=False, base="": "<D>")
+                        lambda run_id, task_id, linked=False, base="", one_shot=False: "<D>")
     task = {"id": 1, "title": "t", "body": "the idea", "feature_id": None}
     params = {"skill": {"name": "goal-verified", "args": "go"}}
     assert (runs._prompt(task, 7, params)
@@ -209,7 +228,7 @@ def test_launch_envelope_parity_empty_blocks(monkeypatch):
     monkeypatch.setattr(run_prompt, "_followup_block", lambda task_id: "")
     monkeypatch.setattr(run_prompt, "_feature_block", lambda task: "")
     monkeypatch.setattr(run_prompt, "_finish_block",
-                        lambda run_id, task_id, linked=False, base="": "<D>")
+                        lambda run_id, task_id, linked=False, base="", one_shot=False: "<D>")
     task = {"id": 1, "title": "shelf label", "body": "", "feature_id": None}
     assert runs._prompt(task, 7, None) == "shelf label<D>"
 
@@ -221,7 +240,7 @@ def test_task_body_braces_are_not_re_rendered(monkeypatch):
     monkeypatch.setattr(run_prompt, "_followup_block", lambda task_id: "")
     monkeypatch.setattr(run_prompt, "_feature_block", lambda task: "")
     monkeypatch.setattr(run_prompt, "_finish_block",
-                        lambda run_id, task_id, linked=False, base="": "")
+                        lambda run_id, task_id, linked=False, base="", one_shot=False: "")
     task = {"id": 1, "title": "t", "body": "use {{finish}} and {literal}",
             "feature_id": None}
     assert runs._prompt(task, 7, None) == "use {{finish}} and {literal}"

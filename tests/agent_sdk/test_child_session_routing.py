@@ -122,6 +122,12 @@ class _LiveRun:
     def enqueue(self, text: str, *, images=None, row_id=None) -> None:
         self.queued.append(text)
 
+    def admit(self, text: str, *, images=None, row_id=None):
+        return text
+
+    def deliver_admitted(self, item) -> None:
+        self.queued.append(item)
+
     def wait_for_queued(self, timeout: float = 5.0) -> list[str]:
         """Let the loop run the scheduled callback before reading the queue."""
         asyncio.run_coroutine_threadsafe(

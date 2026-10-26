@@ -79,6 +79,17 @@ def _reported_tmux_attempt(trace_id: str) -> Optional[dict]:
     return None
 
 
+def _typed_into_pane(trace_id: str) -> int:
+    from lib.trace.queued_prompts import current_queued_prompts  # noqa: PLC0415
+
+    try:
+        return len(current_queued_prompts(trace_id))
+    except Exception:  # noqa: BLE001 — an unreadable transcript queues nothing
+        log.error("task_tmux_queue_unreadable", trace_id=trace_id,
+                  exc_info=True)
+        return 0
+
+
 def end_reported_tmux(trace_id: str) -> bool:
     """At a turn's end, close the tmux session of a one-shot attempt whose
     agent has reported. Called from the pane's own `Stop` hook, so it hangs
@@ -87,6 +98,14 @@ def end_reported_tmux(trace_id: str) -> bool:
         return False
     view = _reported_tmux_attempt(trace_id)
     if view is None:
+        return False
+    queued = _typed_into_pane(trace_id)
+    if queued:
+        # Typed straight into the pane, past regin's sealed send: killing the
+        # pane now would lose it. It runs as the next turn, and that turn's
+        # Stop asks again.
+        log.warn("task_tmux_run_end_deferred", run_id=view["id"],
+                 trace_id=trace_id, queued=queued)
         return False
     log.write("task_tmux_run_ended_after_report", run_id=view["id"],
               task_id=view["task_id"], trace_id=trace_id)

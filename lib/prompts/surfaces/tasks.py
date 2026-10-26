@@ -30,6 +30,8 @@ FINISH_SURFACE_ID = "task-run-finish"
 FINISH_ORDER_LINKED_SURFACE_ID = "task-run-finish-order-linked"
 FINISH_ORDER_NATIVE_SURFACE_ID = "task-run-finish-order-native"
 FINISH_BASE_UNNAMED_SURFACE_ID = "task-run-finish-base-unnamed"
+FINISH_SESSION_CLOSES_SURFACE_ID = "task-run-finish-session-closes"
+FINISH_SESSION_STAYS_SURFACE_ID = "task-run-finish-session-stays"
 FINISH_ORDER_DEFECTS_SURFACE_ID = "task-run-finish-order-defects"
 FOLLOWUP_OMITTED_SURFACE_ID = "task-run-followup-omitted"
 SPEC_SURFACE_ID = "task-run-spec"
@@ -90,7 +92,7 @@ _FEATURE_IMAGES_BODY = """The spec cites the feature's images as `![](image:N)` 
   {{image_cmd}}"""
 
 _FINISH_BODY = """<finish>
-This work was launched from a regin task. Running the command below is the ONLY thing that marks the task complete and releases whatever depends on it; your session stays open either way, so run it as soon as the work is done rather than waiting to be stopped.
+This work was launched from a regin task. Running the command below is the ONLY thing that marks the task complete and releases whatever depends on it; {{session_end}}
 {{order}}
    {{finish_cmd}} --reason '<what you did, and why>'
 The reason is not bookkeeping: regin posts it on the task as your report, and it is the only account of this run anybody gets without reading the whole session. Say what you actually did, what you decided, and anything you deliberately left — a few sentences, not a transcript.
@@ -98,6 +100,23 @@ If you could not finish, run the same command with `--status failed --reason '<w
 </finish>"""
 
 _FINISH_BASE_UNNAMED_BODY = "the branch this run was based on"
+
+_FINISH_REFUSED_WHILE_QUEUED = (
+    " While an operator message is still queued for you, the command is "
+    "refused: end your turn so the message arrives as your next one, deal "
+    "with it, then run the command again."
+)
+
+_FINISH_SESSION_CLOSES_BODY = (
+    "your session closes at the end of the turn in which this command is "
+    "accepted, so run it once the work is done and nothing is left to say."
+    + _FINISH_REFUSED_WHILE_QUEUED
+)
+
+_FINISH_SESSION_STAYS_BODY = (
+    "your session stays open after it, so run it as soon as the work is done "
+    "rather than waiting to be stopped." + _FINISH_REFUSED_WHILE_QUEUED
+)
 
 _FOLLOWUP_OMITTED_BODY = (
     "({{dropped}} earlier comment{{plural}} omitted to fit; the most recent "
@@ -280,9 +299,36 @@ register_surface(
     ),
     applies_to=("external-agent",),
     variables=(
+        PromptVariable("session_end", "What happens to the session once the report is accepted — the Auto close or the stays-open variant."),
         PromptVariable("order", "What must happen before finishing — the linked or the native variant."),
         PromptVariable("finish_cmd", "The literal `regin task finish <task id> --run <run id>` command."),
     ),
+)
+
+register_surface(
+    FINISH_SESSION_CLOSES_SURFACE_ID,
+    label="Task run — finish: session closes (Auto close)",
+    area="task-run",
+    default_body=_FINISH_SESSION_CLOSES_BODY,
+    description=(
+        "The `{{session_end}}` sentence of the finish block for a run armed "
+        "with Auto close: the session ends after the turn that reports, and "
+        "a report is refused while an operator message is still queued."
+    ),
+    applies_to=("external-agent",),
+)
+
+register_surface(
+    FINISH_SESSION_STAYS_SURFACE_ID,
+    label="Task run — finish: session stays open",
+    area="task-run",
+    default_body=_FINISH_SESSION_STAYS_BODY,
+    description=(
+        "The `{{session_end}}` sentence of the finish block for a run without "
+        "Auto close: the session stays open after the report, which is still "
+        "refused while an operator message is queued."
+    ),
+    applies_to=("external-agent",),
 )
 
 register_surface(
@@ -381,6 +427,11 @@ register_retired_default(
 register_retired_default(
     FINISH_SURFACE_ID,
     sha256="2b4848c1013bcebd4d7d731c4d83989c08996f39515faa4da90762b9c223b2fa")
+# The finish block before it said what Auto close does to the session: it
+# claimed the session stayed open either way.
+register_retired_default(
+    FINISH_SURFACE_ID,
+    sha256="c412bf4ed14a6feec6b71e05997418cb6e49af79e1106c6fe99f48c65a38f8d4")
 # The envelope before it carried the spec step's block.
 register_retired_default(
     LAUNCH_SURFACE_ID,

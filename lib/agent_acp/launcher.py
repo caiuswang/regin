@@ -73,6 +73,7 @@ class _QueuedPrompt(NamedTuple):
 
     id: str
     text: str
+    row_id: int | None = None
 
 
 class AcpRunHandle:
@@ -99,6 +100,7 @@ class AcpRunHandle:
         self._prompt_ids = itertools.count(1)
         self._closed = False
         self._ending = False
+        self._sealed = False
         self._settled = False
         self._in_flight = False
         self._close_callbacks: list = []
@@ -145,16 +147,36 @@ class AcpRunHandle:
 
     # ── steer queue ──────────────────────────────────────────────
 
-    def enqueue(self, text: str) -> bool:
+    def enqueue(self, text: str, row_id: int | None = None) -> bool:
         """Queue a follow-up prompt behind the current turn. False once the
-        handle is closed — the prompt has nowhere to run."""
+        handle is closed or sealed — the prompt has nowhere to run. `row_id`
+        is the `bridge_messages` row the send recorded, so a drop can be
+        written back onto it."""
         with self._cond:
-            if self._closed or self._ending:
+            if self._closed or self._ending or self._sealed:
                 return False
             self._queue.append(_QueuedPrompt(f"acp-{next(self._prompt_ids)}",
-                                             text))
+                                             text, row_id))
             self._cond.notify()
             return True
+
+    @property
+    def sealed(self) -> bool:
+        with self._cond:
+            return self._sealed
+
+    def seal_if_idle(self) -> list[dict]:
+        """Refuse further steers when the queue is empty; otherwise return
+        what waits in it. Serialized with `enqueue` by the handle's lock."""
+        with self._cond:
+            if self._queue:
+                return [{"id": q.id, "text": q.text} for q in self._queue]
+            self._sealed = True
+        return []
+
+    def unseal(self) -> None:
+        with self._cond:
+            self._sealed = False
 
     def queued_prompts(self) -> list[dict]:
         """`{id, text}` for each prompt waiting behind the current turn."""
@@ -173,7 +195,7 @@ class AcpRunHandle:
         with self._cond:
             for i, q in enumerate(self._queue):
                 if q.id == prompt_id:
-                    self._queue[i] = _QueuedPrompt(q.id, text)
+                    self._queue[i] = q._replace(text=text)
                     return True, ""
         return False, "that prompt is no longer queued"
 
@@ -233,18 +255,40 @@ class AcpRunHandle:
         return True, "cancelled"
 
     def end_after_turn(self) -> tuple[bool, str]:
-        """Close the run once the turn now running has finished; queued
-        steers are dropped. An idle run closes at once — its pump is parked
-        on the queue and wakes to close."""
+        """Close the run once the turn now running has finished. An idle run
+        closes at once — its pump is parked on the queue and wakes to close.
+
+        The finish guard seals an empty queue before this is called, so a
+        steer still queued here got past it; each is recorded as dropped
+        rather than cleared silently."""
         with self._cond:
             if self._closed:
                 return False, "agent session is no longer running"
             if self._ending:
                 return True, "already ending"
             self._ending = True
-            self._queue.clear()
+            stranded = self._take_all()
             self._cond.notify_all()
+        self._report_drops(stranded, "session ended after the report")
         return True, "ending after this turn"
+
+    def _take_all(self) -> list[_QueuedPrompt]:
+        """Empty the queue and return what it held. Caller holds the lock."""
+        stranded, self._queue = list(self._queue), []
+        return stranded
+
+    def _report_drops(self, stranded: list[_QueuedPrompt], reason: str) -> None:
+        for entry in stranded:
+            log.error("acp_prompt_dropped", trace_id=self.trace_id,
+                      prompt_id=entry.id, row_id=entry.row_id, reason=reason)
+            if entry.row_id is None:
+                continue
+            try:
+                from lib.agent_bridge import store as bridge_store
+                bridge_store.mark_dropped(entry.row_id, reason)
+            except Exception:  # noqa: BLE001 — the drop is already logged
+                log.error("acp_prompt_drop_unrecorded", trace_id=self.trace_id,
+                          row_id=entry.row_id, exc_info=True)
 
     def close(self, reason: str = "closed") -> None:
         """Idempotent teardown: drop the queue, close the wire, unregister,
@@ -255,8 +299,9 @@ class AcpRunHandle:
             if self._closed:
                 return
             self._closed = True
-            self._queue.clear()
+            stranded = self._take_all()
             self._cond.notify_all()
+        self._report_drops(stranded, reason)
         self.permissions.cancel_all(close=True)
         acp_registry.unregister(self.trace_id)
         # Taken only once unregistered, so a callback added mid-close still

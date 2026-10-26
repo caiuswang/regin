@@ -28,7 +28,7 @@ def _clean():
 
 
 class _FakeRunner:
-    """Just the surface `_release_parked` touches: a loop and `enqueue`."""
+    """Just the surface the registry touches: a loop, `enqueue` and `admit`."""
 
     def __init__(self, loop):
         self.loop = loop
@@ -36,6 +36,12 @@ class _FakeRunner:
 
     def enqueue(self, text, *, waiting=True, images=None, row_id=None):
         self.taken.append((text, tuple(images or ()), row_id, waiting))
+
+    def admit(self, text, *, images=None, row_id=None):
+        return (text, tuple(images or ()), row_id, True)
+
+    def deliver_admitted(self, item):
+        self.taken.append(item)
 
 
 def _row(text):

@@ -148,10 +148,15 @@ INSERT INTO bridge_messages (trace_id, body, sender, is_test, kind, state)
 VALUES (?, ?, ?, ?, ?, ?)
 """
 
+# A row not yet stamped by `mark_delivered` (born `delivered = 0` with no
+# detail) counts: the send has committed to typing it, and a `task finish`
+# seal that skipped it would accept the report while the text is still on its
+# way to the pane. A failed or dropped delivery always carries a detail.
 _PENDING_STEERS_SQL = """
 SELECT id, body, created_at, delivered_at
 FROM bridge_messages
-WHERE trace_id = ? AND kind = 'steer' AND state = 'pending' AND delivered = 1
+WHERE trace_id = ? AND kind = 'steer' AND state = 'pending'
+  AND (delivered = 1 OR delivery_detail IS NULL)
 ORDER BY created_at ASC, id ASC
 """
 
@@ -184,6 +189,13 @@ WHERE id = ? AND COALESCE(delivery_detail, '') NOT LIKE '{_DROPPED_PREFIX}%'
 # `state` stays `pending` so the existing dismiss route can retire the chip
 # this row now earns; `delivered = 0` is what keeps it out of the delivered-only
 # `_PENDING_STEERS_SQL` feed, so the two never serve the same row twice.
+_REFUSE_MESSAGE_SQL = """
+UPDATE bridge_messages
+SET delivered = 0, delivery_detail = ?, state = 'closed',
+    state_at = datetime('now')
+WHERE id = ?
+"""
+
 _MARK_DROPPED_SQL = """
 UPDATE bridge_messages
 SET delivered = 0, delivery_detail = ?, state = 'pending',
@@ -440,19 +452,34 @@ def record_bridge_message(trace_id: str, body: str, sender: str | None,
     is displayed from the runner's own queue, so all of those are born
     `closed` and can never linger as chips.
     """
-    is_test = 1 if _env_truthy("REGIN_TRACE_TEST") else 0
-    state = "pending" if pending and kind == "steer" else "closed"
     conn = get_connection()
     try:
-        cursor = conn.execute(_INSERT_MESSAGE_SQL,
-                              (trace_id, body, sender, is_test, kind, state))
+        row_id = insert_bridge_message(conn, trace_id, body, sender, kind,
+                                       pending)
         conn.commit()
-        row_id = cursor.lastrowid
     finally:
         conn.close()
     log.write("bridge_message_recorded", trace_id=trace_id, row_id=row_id,
               kind=kind)
     return row_id
+
+
+def insert_bridge_message(conn, trace_id: str, body: str, sender: str | None,
+                          kind: str = "steer", pending: bool = False) -> int:
+    """`record_bridge_message` on the caller's connection, uncommitted — for a
+    caller that must decide the row's fate inside the same transaction."""
+    is_test = 1 if _env_truthy("REGIN_TRACE_TEST") else 0
+    state = "pending" if pending and kind == "steer" else "closed"
+    cursor = conn.execute(_INSERT_MESSAGE_SQL,
+                          (trace_id, body, sender, is_test, kind, state))
+    return cursor.lastrowid
+
+
+def refuse_bridge_message(conn, row_id: int, detail: str) -> None:
+    """Close a row whose send was refused before delivery, on the caller's
+    connection: never delivered, never a chip, and not a drop — the composer
+    still holds the draft."""
+    conn.execute(_REFUSE_MESSAGE_SQL, (detail, row_id))
 
 
 def mark_delivered(row_id: int, delivered: bool, detail: str) -> None:
@@ -516,12 +543,20 @@ def list_dropped_steers(trace_id: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def list_pending_steers(trace_id: str) -> list[dict]:
+def list_pending_steers(trace_id: str, conn=None) -> list[dict]:
     """Delivered steer rows still in chip state `pending`, oldest first —
     the /live card's bridge-tier queue. [] on a pre-migration DB (columns
-    absent), same fail-closed contract as the other reads."""
+    absent), same fail-closed contract as the other reads.
+
+    With `conn`, read inside the caller's transaction and raise instead of
+    answering []: a caller holding the write lock cannot open a second
+    connection reliably, and an empty answer there would read as "nothing
+    pending" rather than "could not tell"."""
     if not trace_id:
         return []
+    if conn is not None:
+        return [dict(r) for r in
+                conn.execute(_PENDING_STEERS_SQL, (trace_id,)).fetchall()]
     conn = get_connection()
     try:
         rows = conn.execute(_PENDING_STEERS_SQL, (trace_id,)).fetchall()
