@@ -301,7 +301,8 @@ def _render_diagnosis(d) -> None:
     output.echo(f"WASTE — {d.attributed_ms / 60_000:.0f} of {total_m:.0f} min "
                 f"({d.attributed_share * 100:.0f}%):")
     for f in d.findings:
-        output.echo(f"  {f.minutes:5.0f}m  {f.headline}")
+        cost = f"${f.usd:5.2f}" if f.usd is not None else f"{f.minutes:5.0f}m"
+        output.echo(f"  {cost}  {f.headline}")
         for line in f.detail:
             output.echo(f"          · {line}")
     output.echo(f"\nFORWARD WORK — {d.remainder_ms / 60_000:.0f} min "

@@ -4,7 +4,8 @@
   "type": "object",
   "additionalProperties": true,
   "x-claude-versions": [
-    "2.1.158"
+    "2.1.158",
+    "2.1.251"
   ],
   "properties": {
     "source": {
@@ -15,6 +16,18 @@
     },
     "agent_type": {
       "type": "string"
+    },
+    "seconds_since_last_response": {
+      "type": "number"
+    },
+    "context_tokens": {
+      "type": "integer"
+    },
+    "prompt_cache_likely_expired": {
+      "type": "boolean"
+    },
+    "estimated_cache_write_usd": {
+      "type": "number"
     }
   },
   "required": []

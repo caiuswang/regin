@@ -65,6 +65,7 @@ class Finding:
     minutes: float
     headline: str
     detail: list = field(default_factory=list)
+    usd: Optional[float] = None
 
     def as_row(self) -> dict:
         return asdict(self)
@@ -455,11 +456,58 @@ def remainder_groups(tl: Timeline, owner: list) -> list:
     return sorted(rows, key=lambda r: -r['ms'])
 
 
+def _resume_rewrites(tl: Timeline) -> list:
+    """Resumes that Claude Code itself flagged as rewriting a cold cache."""
+    return [e['attrs'] for e in tl.events
+            if e['name'] == 'session.start'
+            and e['attrs'].get('prompt_cache_likely_expired') is True
+            and _positive_number(e['attrs'].get('estimated_cache_write_usd'))]
+
+
+def _positive_number(value) -> bool:
+    return (isinstance(value, (int, float)) and not isinstance(value, bool)
+            and value > 0)
+
+
+def _finding_resume_cache(tl: Timeline) -> Optional[Finding]:
+    """Dollar cost of re-writing the prompt cache on resume.
+
+    The figure is Claude Code's own estimate from the SessionStart payload,
+    not a regin reconstruction. It is a money finding, not a time one, so it
+    claims no gaps and the findings + remainder partition of attended time
+    is untouched.
+    """
+    starts = _resume_rewrites(tl)
+    if not starts:
+        return None
+    usd = sum(float(a['estimated_cache_write_usd']) for a in starts)
+    detail = []
+    for a in starts:
+        idle = a.get('seconds_since_last_response')
+        idle_txt = (f'{float(idle) / 60:.0f} min after the last response '
+                    f'(seconds_since_last_response={idle})'
+                    if idle is not None else 'idle time not reported')
+        ctx = a.get('context_tokens')
+        ctx_txt = f', {int(ctx):,} context tokens' if ctx is not None else ''
+        detail.append(f'{a.get("source") or "resume"} '
+                      f'{idle_txt}{ctx_txt}: '
+                      f'${float(a["estimated_cache_write_usd"]):.2f}')
+    return Finding(
+        kind='resume-cache-rewrite', minutes=0.0, usd=usd,
+        headline=(f'Resume re-wrote an expired prompt cache: ${usd:.2f} '
+                  f'across {len(starts)} resume(s)'),
+        detail=detail,
+    )
+
+
 def analyse(trace_id: str) -> tuple:
     """(timeline, findings, remainder) for one session."""
     tl = build_timeline(_fetch_timeline(trace_id))
     claims = [claim(tl) for claim in _CLAIMERS]
     findings, owner = _resolve_claims(tl, claims)
+    resume = _finding_resume_cache(tl)
+    if resume is not None:
+        findings.append(resume)
     return tl, findings, remainder_groups(tl, owner)
 
 
@@ -558,7 +606,8 @@ def diagnose_session(trace_id: str) -> Optional[Diagnosis]:
     return Diagnosis(
         stat=stats[0], findings=findings, remainder=remainder,
         delegation=delegation(tl),
-        verdict=_verdict(stats[0], findings, blind),
+        verdict=_verdict(stats[0], [f for f in findings if f.usd is None],
+                         blind),
         attributed_ms=sum(tl.gaps) - remainder_ms,
         remainder_ms=remainder_ms, attended_ms=sum(tl.gaps),
         blind_spots=blind,

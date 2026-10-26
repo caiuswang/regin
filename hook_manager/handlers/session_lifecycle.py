@@ -18,7 +18,7 @@ from ..core import HookPayload, HookResponse
 
 def handle_start(payload: HookPayload) -> HookResponse | None:
     try:
-        # SessionStart's spec field is `source` (startup | resume | clear | compact).
+        # SessionStart's spec field is `source` (startup | resume | fork | clear | compact).
         # `model` is also on the payload — capture it so the Sessions UI can
         # show which model each session used (and what a /model switch
         # mid-session produced on resume).
@@ -30,6 +30,7 @@ def handle_start(payload: HookPayload) -> HookResponse | None:
         llm_surface = os.environ.get('REGIN_LLM_SURFACE')
         if llm_surface:
             extra['llm_surface'] = llm_surface
+        extra.update(_resume_fields(payload))
         _emit_span(payload, 'session.start',
                    key_aliases=(('source', 'source'), ('model', 'model')),
                    default_key='source', default_value='startup',
@@ -41,6 +42,21 @@ def handle_start(payload: HookPayload) -> HookResponse | None:
     except Exception:
         pass
     return HookResponse(suppress_output=True)
+
+
+RESUME_FIELDS = (
+    'seconds_since_last_response',
+    'context_tokens',
+    'prompt_cache_likely_expired',
+    'estimated_cache_write_usd',
+)
+
+
+def _resume_fields(payload: HookPayload) -> dict:
+    # Presence, not truthiness: `prompt_cache_likely_expired=false` and a
+    # zero-second gap are answers, and dropping them would read as "unknown".
+    return {k: payload.raw[k] for k in RESUME_FIELDS
+            if payload.raw.get(k) is not None}
 
 
 # Mirror of claude-code's MAX_STATUS_CHARS (src/context.ts): the harness
