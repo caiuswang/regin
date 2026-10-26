@@ -383,7 +383,10 @@ onMounted(() => { ensureProjects(); load() })
         @report="reporting = true"
       />
 
-      <TaskComments :task-id="task.id" :can-write="canWrite" />
+      <TaskComments
+        :task-id="task.id" :can-write="canWrite"
+        :project="task.project_id ?? null" :feature="task.feature_id ?? null"
+      />
 
       <LaunchPromptPreview :task-id="task.id" :refresh-key="previewKey" />
 
