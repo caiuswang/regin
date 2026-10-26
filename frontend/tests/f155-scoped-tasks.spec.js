@@ -15,6 +15,13 @@ import { API_BASE } from './helpers/api-base.js'
 const unique = (label) => `${label} ${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
 
 const SLICED_SPEC = [
+  '## Acceptance', '',
+  '```gherkin',
+  'Scenario: a',
+  '  Given a feature',
+  '  When it is sliced',
+  '  Then one slice is armable',
+  '```', '',
   '## Spec', '',
   '| # | Slice | Delivers | Spec refs | Tests | Schema | Depends on | Base | Skill |',
   '|---|---|---|---|---|---|---|---|---|',

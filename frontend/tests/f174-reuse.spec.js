@@ -66,8 +66,8 @@ test('test_component_reused_in_task_and_defect_editors: a task body edits in sou
     await page.goto('/tasks/80')
     await page.getByTestId('task-body-edit').click()
 
-    const editor = page.getByTestId('markdown-editor')
     const input = page.getByTestId('task-body-area')
+    const editor = page.getByTestId('markdown-editor').filter({ has: input })
     await expect(editor).toHaveAttribute('data-mode', 'source')
     await expect(input).toHaveValue(BODY)
     await expect(input).toHaveAttribute('aria-label', 'Task details markdown')

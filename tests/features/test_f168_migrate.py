@@ -11,14 +11,9 @@ from __future__ import annotations
 import json
 import os
 import shlex
-import sqlite3
 import subprocess
 import sys
 from pathlib import Path
-
-import pytest
-
-from lib.settings import settings
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -43,22 +38,8 @@ def _run(cmd: str | list[str], db: Path) -> subprocess.CompletedProcess:
                           timeout=600)
 
 
-def _backup(src: Path, dst: Path) -> None:
-    source = sqlite3.connect(f"file:{src}?mode=ro", uri=True)
-    target = sqlite3.connect(dst)
-    try:
-        source.backup(target)
-    finally:
-        target.close()
-        source.close()
-
-
-def test_migrate_leaves_no_schema_finding(tmp_path):
-    install_db = Path(settings.main_worktree) / "db" / "regin.db"
-    if not install_db.is_file():
-        pytest.skip(f"no install DB at {install_db} — `regin init` makes one")
-    copy = tmp_path / "regin.db"
-    _backup(install_db, copy)
+def test_migrate_leaves_no_schema_finding(install_db_copy):
+    copy = install_db_copy
 
     migrate = json.loads((REPO_ROOT / ".regin" / "commands.json").read_text())["migrate"]
     # A worktree has no .venv of its own; the interpreter running this suite is

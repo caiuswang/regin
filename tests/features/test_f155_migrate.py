@@ -17,10 +17,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
-from lib.settings import settings
-
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 DOCTOR_SCHEMA = (
@@ -42,16 +38,6 @@ def _run(cmd: str | list[str], db: Path) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, shell=isinstance(cmd, str), cwd=REPO_ROOT,
                           env=_env(db), capture_output=True, text=True,
                           timeout=600)
-
-
-def _backup(src: Path, dst: Path) -> None:
-    source = sqlite3.connect(f"file:{src}?mode=ro", uri=True)
-    target = sqlite3.connect(dst)
-    try:
-        source.backup(target)
-    finally:
-        target.close()
-        source.close()
 
 
 def _columns(db: Path, table: str) -> set[str]:
@@ -80,12 +66,8 @@ def _assert_doctor_clean(copy: Path) -> None:
     assert not findings, f"{copy} is behind after migrate: {findings}"
 
 
-def test_migrate_leaves_no_schema_finding(tmp_path):
-    install_db = Path(settings.main_worktree) / "db" / "regin.db"
-    if not install_db.is_file():
-        pytest.skip(f"no install DB at {install_db} — `regin init` makes one")
-    copy = tmp_path / "regin.db"
-    _backup(install_db, copy)
+def test_migrate_leaves_no_schema_finding(install_db_copy):
+    copy = install_db_copy
     runs_before = _count(copy, "agent_task_runs")
 
     migrate = json.loads((REPO_ROOT / ".regin" / "commands.json").read_text())["migrate"]

@@ -220,29 +220,33 @@ test('test_defects_page_uses_the_one_line_head', async ({ page }) => {
   expect((await box(row(page, 41))).height).toBeLessThanOrEqual(48)
 })
 
-for (const width of [1440, 1024]) {
-  test(`test_slices_rows_align_in_columns @${width}`, async ({ page }) => {
-    await openFeature(page, width)
-    const rows = page.locator('[data-testid^="slice-row-"]')
-    await expect(rows).toHaveCount(4)
-    // clientHeight: the last row drops its bottom rule, which is not a taller row.
-    const heights = await rows.evaluateAll(els => els.map(e => e.clientHeight))
-    expect(Math.max(...heights) - Math.min(...heights)).toBeLessThanOrEqual(0.5)
-    expect(Math.max(...heights)).toBeLessThanOrEqual(40)
-    const taskX = await page.locator('[data-testid^="slice-row-"] [data-cell="task"]')
-      .evaluateAll(els => els.map(e => e.getBoundingClientRect().left))
-    expect(Math.max(...taskX) - Math.min(...taskX)).toBeLessThanOrEqual(1)
+// One test, not one per width: the acceptance name must be a literal title
+// for the spec's test index to find it.
+test('test_slices_rows_align_in_columns', async ({ page }) => {
+  for (const width of [1440, 1024]) {
+    await test.step(`@${width}`, async () => {
+      await openFeature(page, width)
+      const rows = page.locator('[data-testid^="slice-row-"]')
+      await expect(rows).toHaveCount(4)
+      // clientHeight: the last row drops its bottom rule, which is not a taller row.
+      const heights = await rows.evaluateAll(els => els.map(e => e.clientHeight))
+      expect(Math.max(...heights) - Math.min(...heights)).toBeLessThanOrEqual(0.5)
+      expect(Math.max(...heights)).toBeLessThanOrEqual(40)
+      const taskX = await page.locator('[data-testid^="slice-row-"] [data-cell="task"]')
+        .evaluateAll(els => els.map(e => e.getBoundingClientRect().left))
+      expect(Math.max(...taskX) - Math.min(...taskX)).toBeLessThanOrEqual(1)
 
-    const longest = page.getByTestId('slice-title-S4')
-    expect(await longest.evaluate(el => el.scrollWidth > el.clientWidth)).toBe(true)
-    expect(await longest.evaluate(el => getComputedStyle(el).textOverflow)).toBe('ellipsis')
-    await expect(page.locator('[data-testid="slice-row-S4"] [data-cell="title"]'))
-      .toHaveAttribute('title', TITLES[3])
-    await expect(page.getByTestId('slice-tests-S1')).toHaveText('3 tests')
-    await expect(page.getByTestId('slice-tests-S1'))
-      .toHaveAttribute('title', 'test_slice_0_a\ntest_slice_0_b\ntest_slice_0_c')
-  })
-}
+      const longest = page.getByTestId('slice-title-S4')
+      expect(await longest.evaluate(el => el.scrollWidth > el.clientWidth)).toBe(true)
+      expect(await longest.evaluate(el => getComputedStyle(el).textOverflow)).toBe('ellipsis')
+      await expect(page.locator('[data-testid="slice-row-S4"] [data-cell="title"]'))
+        .toHaveAttribute('title', TITLES[3])
+      await expect(page.getByTestId('slice-tests-S1')).toHaveText('3 tests')
+      await expect(page.getByTestId('slice-tests-S1'))
+        .toHaveAttribute('title', 'test_slice_0_a\ntest_slice_0_b\ntest_slice_0_c')
+    })
+  }
+})
 
 test('test_slices_card_has_header_and_branch_footer', async ({ page }) => {
   await openFeature(page)

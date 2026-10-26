@@ -20,9 +20,9 @@ async function authed(page) {
   return { Authorization: `Bearer ${token}` }
 }
 
-async function capture(page, headers, title) {
+async function capture(page, headers, title, extra = {}) {
   const resp = await page.request.post(`${API_BASE}/api/tasks`,
-    { headers, data: { title, body: mark() } })
+    { headers, data: { title, body: mark(), ...extra } })
   expect(resp.status()).toBe(201)
   return (await resp.json()).task.id
 }
@@ -34,8 +34,17 @@ async function setDeps(page, headers, taskId, dependsOn) {
   return resp.json()
 }
 
-async function openGraph(page, nodeId) {
-  await page.goto('/tasks?view=graph')
+// Scoped to a feature of its own: past the lane graph's node cap an unfocused
+// graph draws no nodes, and a full run leaves well over that many open tasks.
+async function newFeature(page, headers) {
+  const resp = await page.request.post(`${API_BASE}/api/features`,
+    { headers, data: { title: `${mark()} feature` } })
+  expect(resp.ok()).toBeTruthy()
+  return (await resp.json()).id
+}
+
+async function openGraph(page, feature, nodeId) {
+  await page.goto(`/tasks?view=graph&feature_id=${feature}`)
   await expect(page.getByTestId(`graph-node-${nodeId}`)).toBeVisible()
 }
 
@@ -43,13 +52,14 @@ test.describe('/tasks — a dependency edge carries a kind', () => {
   test('the lane graph draws both kinds, and an unmet one of either blocks',
     async ({ page }) => {
       const headers = await authed(page)
-      const strict = await capture(page, headers, `${mark()} strict dep`)
-      const loose = await capture(page, headers, `${mark()} loose dep`)
-      const dependent = await capture(page, headers, `${mark()} dependent`)
+      const scope = { feature_id: await newFeature(page, headers) }
+      const strict = await capture(page, headers, `${mark()} strict dep`, scope)
+      const loose = await capture(page, headers, `${mark()} loose dep`, scope)
+      const dependent = await capture(page, headers, `${mark()} dependent`, scope)
       await setDeps(page, headers, dependent,
         [strict, { id: loose, kind: 'after' }])
 
-      await openGraph(page, dependent)
+      await openGraph(page, scope.feature_id, dependent)
 
       const requires = page.getByTestId(`graph-edge-${dependent}-${strict}`)
       const after = page.getByTestId(`graph-edge-${dependent}-${loose}`)

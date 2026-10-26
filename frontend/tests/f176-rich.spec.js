@@ -387,7 +387,8 @@ test('test_task_body_uses_rich', async ({ page }) => {
   await expect(page.getByTestId('task-body-area')).toHaveCount(0)
   await expect(rich.locator('h2')).toHaveText('Goal')
   await expect(rich.locator('strong')).toHaveText('it')
-  await expect(page.getByTestId('editor-mode-rich')).toHaveAttribute('aria-pressed', 'true')
+  await expect(editor(page).filter({ has: rich }).getByTestId('editor-mode-rich'))
+    .toHaveAttribute('aria-pressed', 'true')
 
   await caretAtEnd(rich)
   await page.keyboard.type('!')
