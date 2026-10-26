@@ -1,0 +1,71 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "regin Feature Pipeline：spec → tasks → runs → done-claim → defects",
+    "locale": "zh-CN",
+    "output": "regin-pipeline.html",
+    "quality_profile": "showcase",
+    "legend": {
+      "entries": {
+        "frontend": { "label": "人工入口" },
+        "backend": { "label": "执行步骤" },
+        "security": { "label": "人工关卡 / 缺陷" },
+        "messagebus": { "label": "事件触发" },
+        "database": { "label": "生命周期事件" }
+      }
+    }
+  },
+  "lanes": [
+    { "id": "operator", "label": "操作者" },
+    { "id": "ledger", "label": "Feature 行 · feature_events" },
+    { "id": "tasks", "label": "Tasks DAG" },
+    { "id": "runs", "label": "Agent 运行" },
+    { "id": "defects", "label": "Defects", "variant": "exception" }
+  ],
+  "phases": [
+    { "id": "spec", "label": "Spec", "fromCol": 0, "toCol": 0 },
+    { "id": "plan", "label": "切片 + 落表", "fromCol": 1, "toCol": 2, "variant": "emphasis" },
+    { "id": "run", "label": "Arm + 运行", "fromCol": 3, "toCol": 4 },
+    { "id": "claim", "label": "Done-claim", "fromCol": 5, "toCol": 5, "variant": "dashed" }
+  ],
+  "groups": [
+    { "id": "fix_loop", "label": "返工一轮", "lane": "defects", "fromCol": 4, "toCol": 5, "variant": "security" }
+  ],
+  "mainPath": ["write_spec", "slice", "transcribe", "arm", "run", "finish", "ship", "shipped"],
+  "nodes": [
+    { "id": "write_spec", "lane": "operator", "col": 0, "type": "frontend", "label": "写 Spec", "sublabel": "feature new --spec", "tag": "features.body" },
+    { "id": "specced", "lane": "ledger", "col": 0, "type": "database", "label": "specced", "sublabel": "追加事件" },
+    { "id": "slice", "lane": "tasks", "col": 1, "type": "backend", "label": "切片校验", "sublabel": "task slice-check", "tag": "0 problems" },
+    { "id": "transcribe", "lane": "tasks", "col": 2, "type": "backend", "label": "落表", "sublabel": "task transcribe", "tag": "agent_tasks + deps" },
+    { "id": "arm", "lane": "operator", "col": 3, "type": "security", "label": "Arm 任务", "sublabel": "选 provider", "tag": "人工动作" },
+    { "id": "build_started", "lane": "ledger", "col": 3, "type": "database", "label": "build_started", "sublabel": "首次 run 写入" },
+    { "id": "run", "lane": "runs", "col": 3, "type": "backend", "label": "Agent 运行", "sublabel": "Claude SDK / Kimi ACP·tmux" },
+    { "id": "deps", "lane": "tasks", "col": 4, "type": "messagebus", "label": "依赖触发", "sublabel": "requires / after" },
+    { "id": "finish", "lane": "runs", "col": 4, "type": "backend", "label": "task finish", "sublabel": "agent 自报结果" },
+    { "id": "ship", "lane": "operator", "col": 5, "type": "security", "label": "Ship", "sublabel": "feature ship", "tag": "done-claim" },
+    { "id": "shipped", "lane": "ledger", "col": 5, "type": "database", "label": "shipped", "sublabel": "rounds = 1 + restarted" },
+    { "id": "defect", "lane": "defects", "col": 5, "type": "security", "label": "Defect 申报", "sublabel": "blame → shipped 事件" },
+    { "id": "fix", "lane": "defects", "col": 4, "type": "backend", "label": "fix 任务", "sublabel": "close 需 --check" }
+  ],
+  "edges": [
+    { "id": "spec-event", "from": "write_spec", "to": "specced", "variant": "dashed", "role": "branch" },
+    { "id": "spec-slice", "from": "write_spec", "to": "slice", "label": "slice 表", "variant": "emphasis" },
+    { "id": "slice-transcribe", "from": "slice", "to": "transcribe" },
+    { "id": "transcribe-arm", "from": "transcribe", "to": "arm", "label": "建议参数" },
+    { "id": "arm-run", "from": "arm", "to": "run", "label": "launch", "variant": "emphasis" },
+    { "id": "run-event", "from": "run", "to": "build_started", "variant": "dashed", "role": "async" },
+    { "id": "run-finish", "from": "run", "to": "finish" },
+    { "id": "finish-deps", "from": "finish", "to": "deps", "label": "settle", "variant": "dashed", "role": "branch" },
+    { "id": "finish-ship", "from": "finish", "to": "ship", "label": "切片全部完成", "variant": "emphasis" },
+    { "id": "ship-event", "from": "ship", "to": "shipped" },
+    { "id": "escape", "from": "shipped", "to": "defect", "label": "逃逸", "variant": "security", "role": "error" },
+    { "id": "defect-fix", "from": "defect", "to": "fix" },
+    { "id": "fix-rerun", "from": "fix", "to": "run", "label": "restarted · 轮次+1", "variant": "dashed", "role": "return" }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "只认声明", "items": ["事件只追加不改写，stage 与 rounds 都是对 feature_events 的查询", "run 结束 ≠ done-claim；只有 ship 写 shipped"] },
+    { "dot": "rose", "title": "返工计数", "items": ["defect 的 blame 指针指向当时的最后事件", "fix run 启动于 shipped/escaped 时追加 restarted，rounds +1"] },
+    { "dot": "cyan", "title": "事件驱动的 DAG", "items": ["requires 等成功，after 等任意结束", "入库时拒绝环；不靠轮询"] }
+  ]
+}

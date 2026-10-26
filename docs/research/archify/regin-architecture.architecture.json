@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "regin 系统架构：Workbench · Runs · Observability · Guidance",
+    "locale": "zh-CN",
+    "output": "regin-architecture.html",
+    "quality_profile": "showcase",
+    "legend": {
+      "entries": {
+        "external": { "label": "人 / 外部 Agent" },
+        "frontend": { "label": "前端" },
+        "backend": { "label": "regin 服务端" },
+        "database": { "label": "SQLite 存储" },
+        "messagebus": { "label": "Hook / MCP 通道" },
+        "security": { "label": "规则引擎" },
+        "cloud": { "label": "Provider 技能目录" }
+      }
+    }
+  },
+  "components": [
+    { "id": "operator", "type": "external", "label": "操作者", "sublabel": "浏览器 / 手机", "pos": [40, 200], "size": [160, 64] },
+    { "id": "spa", "type": "frontend", "label": "Vue 3 SPA", "sublabel": "/pipeline /live /trace", "pos": [300, 200], "size": [160, 64] },
+    { "id": "api", "type": "backend", "label": "Flask API", "sublabel": "web/blueprints · :8321", "pos": [560, 200], "size": [160, 64], "tag": "regin serve" },
+    { "id": "regin_db", "type": "database", "label": "regin.db", "sublabel": "features · tasks · spans", "pos": [560, 380], "size": [160, 64] },
+    { "id": "launcher", "type": "backend", "label": "Run 控制面", "sublabel": "lib/tasks · agent_sdk", "pos": [880, 200], "size": [160, 64], "tag": "launch + steer" },
+    { "id": "skills_dir", "type": "cloud", "label": "Provider skills 目录", "sublabel": "patterns 部署", "pos": [1200, 40], "size": [160, 64] },
+    { "id": "agent", "type": "external", "label": "Agent CLI", "sublabel": "claude · kimi", "pos": [1200, 200], "size": [160, 64] },
+    { "id": "hooks", "type": "messagebus", "label": "hook_manager", "sublabel": "python -m hook_manager", "pos": [1200, 380], "size": [160, 64] },
+    { "id": "rules", "type": "security", "label": "规则引擎", "sublabel": "Grit · Radon · bundle", "pos": [1200, 560], "size": [160, 64] },
+    { "id": "mcp", "type": "messagebus", "label": "MCP 服务", "sublabel": "regin · memory", "pos": [1500, 200], "size": [160, 64] },
+    { "id": "memory_db", "type": "database", "label": "regin_memory.db", "sublabel": "lessons · topics", "pos": [1500, 40], "size": [160, 64] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Agent 进程及其 hook 子进程", "wraps": ["agent", "hooks", "rules"] }
+  ],
+  "connections": [
+    { "id": "operator-spa", "from": "operator", "to": "spa", "label": "HTTPS", "variant": "emphasis" },
+    { "id": "spa-api", "from": "spa", "to": "api", "label": "/api JSON", "variant": "emphasis" },
+    { "id": "api-db", "from": "api", "to": "regin_db", "label": "SQLModel" },
+    { "id": "api-launcher", "from": "api", "to": "launcher", "label": "arm · steer · answer", "variant": "emphasis" },
+    { "id": "launcher-agent", "from": "launcher", "to": "agent", "label": "SDK · ACP · tmux", "variant": "emphasis" },
+    { "id": "skills-agent", "from": "skills_dir", "to": "agent", "label": "加载 skills", "variant": "dashed" },
+    { "id": "agent-hooks", "from": "agent", "to": "hooks", "label": "hook 事件" },
+    { "id": "hooks-db", "from": "hooks", "to": "regin_db", "label": "spans · turn_usage" },
+    { "id": "hooks-rules", "from": "hooks", "to": "rules", "label": "PostToolUse 检查", "variant": "security" },
+    { "id": "agent-mcp", "from": "agent", "to": "mcp", "label": "MCP 调用" },
+    { "id": "mcp-memory", "from": "mcp", "to": "memory_db", "label": "recall" },
+    { "id": "mcp-db", "from": "mcp", "to": "regin_db", "label": "pipeline 工具", "variant": "dashed", "fromSide": "bottom", "toSide": "bottom", "via": [[1580, 680], [640, 680]] }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "Workbench + Runs", "items": ["feature → slices → tasks DAG 存在 regin.db", "Claude 走 Agent SDK，Kimi 走 ACP 或 tmux pane", "/live 通过 Agent Bridge 向运行中的 agent 注入消息与回答"] },
+    { "dot": "cyan", "title": "Observability", "items": ["hook 事件与 SDK 消息投影成同一种 span", "trace 只追加，去重与合并在读取时完成", "send_to_user 落 inbox，高优先级推送 webhook / Telegram / Lark"] },
+    { "dot": "rose", "title": "Guidance", "items": ["patterns 部署成 provider skills", "规则引擎在 PostToolUse 拦截违规", "agent memory 独立 DB，按需召回进 prompt"] }
+  ]
+}
