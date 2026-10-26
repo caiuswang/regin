@@ -111,7 +111,7 @@ async function submit() {
         id="nd-symptom"
         v-model="symptom"
         :feature="featureId ? Number(featureId) : null"
-        :expandable="false" :outline="false"
+        :expandable="false" :outline="false" mode-scope="compose"
         preview-testid="new-defect-symptom"
         class="nd-symptom"
         data-testid="new-defect-symptom"

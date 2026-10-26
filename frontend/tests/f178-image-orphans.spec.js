@@ -5,7 +5,10 @@
 import { test, expect } from './auth-fixture.js'
 
 test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => localStorage.setItem('regin_editor_mode', 'source'))
+  await page.addInitScript(() => {
+    localStorage.setItem('regin_editor_mode', 'source')
+    localStorage.setItem('regin_editor_mode:compose', 'source')
+  })
 })
 
 const PNG_B64 =

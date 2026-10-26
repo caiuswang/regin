@@ -16,7 +16,10 @@ import { BASELINE_TRACE } from './helpers/fixtures.js'
 
 // The rich face is the default editor now; these specs drive the source one.
 test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => localStorage.setItem('regin_editor_mode', 'source'))
+  await page.addInitScript(() => {
+    localStorage.setItem('regin_editor_mode', 'source')
+    localStorage.setItem('regin_editor_mode:compose', 'source')
+  })
 })
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')

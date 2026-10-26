@@ -20,6 +20,7 @@ function watchConsole(page) {
 // `f178-dialogs.spec.js`'s to test.
 const FLAT_VIEW = {
   regin_editor_mode: 'source',
+  'regin_editor_mode:compose': 'source',
   'regin.tasks.group': 'none',
   'regin.tasks.status': '',
   'regin.tasks.archived': '',

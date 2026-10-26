@@ -226,7 +226,7 @@ async function declare() {
           v-model="body"
           :project="projectId ? Number(projectId) : null"
           :images="images" :attach="attach"
-          :expandable="false" :outline="false"
+          :expandable="false" :outline="false" mode-scope="compose"
           preview-testid="declare-body-rich"
           class="nf-body"
           data-testid="declare-body"
