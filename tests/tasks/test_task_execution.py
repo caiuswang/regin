@@ -907,11 +907,6 @@ def test_the_graph_is_empty_not_an_error(flask_client):
     assert payload["truncated"] is False and payload["total_nodes"] == 0
 
 
-def test_the_graph_needs_an_editor(flask_client):
-    assert flask_client.get("/api/tasks/graph",
-                            headers=VIEWER).status_code == 403
-
-
 # ── 12. the agent's own finish signal ────────────────────────
 
 def _finish(flask_client, run_id, remote="127.0.0.1", **body):

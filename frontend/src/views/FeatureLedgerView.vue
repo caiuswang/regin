@@ -29,7 +29,7 @@ import { usePipelineCreate } from '../composables/usePipelineCreate'
 import { useTaskShortcuts } from '../composables/useTaskShortcuts'
 import { useBreakpoint } from '../composables/useBreakpoint'
 import {
-  DEFECTS_ANCHOR, IMAGES_ANCHOR, LEDGER_ANCHORS, RELATED_ANCHOR, SESSIONS_ANCHOR, SLICES_ANCHOR,
+  DEFECTS_ANCHOR, GRAPH_ANCHOR, IMAGES_ANCHOR, LEDGER_ANCHORS, RELATED_ANCHOR, SESSIONS_ANCHOR, SLICES_ANCHOR,
   SPEC_ANCHOR, TASKS_ANCHOR, reveal,
 } from '../utils/featureLinks'
 import { reopenMessage, shipMessage } from '../utils/featureConfirm'
@@ -41,6 +41,7 @@ import FeatureBranch from '../components/features/FeatureBranch.vue'
 import FeatureDefects from '../components/features/FeatureDefects.vue'
 import FeatureEvidence from '../components/features/FeatureEvidence.vue'
 import FeatureFigures from '../components/features/FeatureFigures.vue'
+import FeatureGraphPreview from '../components/features/FeatureGraphPreview.vue'
 import FeatureRelated from '../components/features/FeatureRelated.vue'
 import FeatureProjectPicker from '../components/features/FeatureProjectPicker.vue'
 import FeatureImages from '../components/features/FeatureImages.vue'
@@ -69,8 +70,11 @@ const loadError = ref('')
 const refreshing = ref(false)
 const refreshFailed = ref('')
 const tasksCard = ref(null)
+const graphPreview = ref(null)
 const defectsCard = ref(null)
 const taskCount = ref(null)
+// The preview's own node count: the nav entry is drawn exactly when the card is.
+const graphCount = ref(0)
 const declaring = ref(false)
 const writeFailed = ref('')
 const undeclareFailed = ref('')
@@ -129,8 +133,11 @@ async function load({ quiet = false } = {}) {
 watch(featureId, () => { taskCount.value = null; load() }, { immediate: true })
 // The cards read their own lists, so a write made through the shell's dialogs
 // (or anywhere else) reaches them only through this frame.
+// The Tasks card and the graph preview draw one task set, so a write that
+// moves one moves both.
+const reloadTasks = () => Promise.all([tasksCard.value?.load(), graphPreview.value?.reload()])
 const reloadAll = () => Promise.all([
-  load({ quiet: true }), tasksCard.value?.load(), defectsCard.value?.load(),
+  load({ quiet: true }), reloadTasks(), defectsCard.value?.load(),
 ])
 usePipelineLive(reloadAll)
 
@@ -179,6 +186,9 @@ const sections = computed(() => {
   if (!l) return []
   const t = taskCount.value
   return [
+    ...(graphCount.value > 0
+      ? [{ key: 'graph', anchor: GRAPH_ANCHOR, label: 'Graph', count: String(graphCount.value) }]
+      : []),
     { key: 'spec', anchor: SPEC_ANCHOR, label: 'Spec',
       count: (l.body || '').trim() ? null : 'empty' },
     { key: 'related', anchor: RELATED_ANCHOR, label: 'Related', count: relatedCount(l) },
@@ -305,7 +315,7 @@ async function undeclare(row) {
 async function onSlicesChanged(fresh) {
   if (fresh) {
     ledger.value = fresh
-    tasksCard.value?.load()
+    reloadTasks()
     return
   }
   await onDefectsChanged()
@@ -314,7 +324,7 @@ async function onSlicesChanged(fresh) {
 // Not `load()`: that rebinds the image list, re-fetching every blob and
 // dropping thumbnails the operator just added.
 async function onDefectsChanged() {
-  tasksCard.value?.load()
+  reloadTasks()
   try {
     ledger.value = await api.get(`/features/${featureId.value}`)
   } catch (e) {
@@ -420,6 +430,8 @@ function onDeclared() {
       >{{ writeFailed }}</p>
 
       <FeatureFigures :ledger="ledger" />
+
+      <FeatureGraphPreview ref="graphPreview" :feature-id="ledger.id" @counted="graphCount = $event" />
 
       <FeatureSpec
         :feature-id="ledger.id"
@@ -534,7 +546,7 @@ function onDeclared() {
 <style scoped>
 .ledger.is-editor-focus > :deep(:not(:has(.md-editor.is-focus))) { display: none; }
 /* A jump lands the section under the sticky index, not behind it. */
-.ledger :deep(:is(#feature-spec, #feature-related, #slices, #feature-images, #feature-tasks,
+.ledger :deep(:is(#feature-graph, #feature-spec, #feature-related, #slices, #feature-images, #feature-tasks,
                   #feature-defects, #feature-sessions)) {
     scroll-margin-top: 3.25rem;
 }

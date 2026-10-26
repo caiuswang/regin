@@ -7,6 +7,11 @@
 //
 // Lanes, their done/total, the chain count and the hidden-lane count are the
 // server's (`/api/tasks/graph?lanes=1`); this view only places boxes.
+//
+// `readonly` draws the same graph with no writer on it — no actions, handles,
+// picker or edge removal — so a page that only previews it never issues a
+// write. `compact` sizes it for a card: a lone lane loses its head (the page
+// already names the feature), the viewport is short, and it fits once on load.
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
@@ -25,7 +30,10 @@ const props = defineProps({
   params: { type: Object, required: true },
   open: { type: Boolean, default: true },
   find: { type: String, default: '' },
+  readonly: { type: Boolean, default: false },
+  compact: { type: Boolean, default: false },
 })
+const emit = defineEmits(['loaded'])
 
 const ZOOM_STEP = 0.2
 const ZOOM_MIN = 0.4
@@ -38,9 +46,10 @@ const zoom = ref(1)
 const viewport = ref(null)
 const stage = ref(null)
 
+const laneHeads = computed(() => !(props.compact && (graph.body.value?.lanes.length ?? 0) <= 1))
 const layout = computed(() => {
   const b = graph.body.value
-  return b ? layoutLanes(b.lanes, b.nodes, b.edges) : null
+  return b ? layoutLanes(b.lanes, b.nodes, b.edges, { laneW: laneHeads.value ? LANE_W : 0 }) : null
 })
 
 const needle = computed(() => props.find.trim().replace(/^#/, '').toLowerCase())
@@ -61,7 +70,10 @@ const hovered = ref(null)
 const hoveredEdge = ref(null)
 
 function nodeClass(node) {
-  return [`tlg-node tlg-${tag(node)}`, { 'is-found': matches.value.has(node.id) }]
+  return [`tlg-node tlg-${tag(node)}`, {
+    'is-found': matches.value.has(node.id),
+    'is-fix-open': node.fixes_open_defects?.length > 0,
+  }]
 }
 
 function edgeClass(edge) {
@@ -113,7 +125,20 @@ const footer = computed(() => {
   return `${chains} · ${n} feature ${n === 1 ? 'lane' : 'lanes'} hidden (no open tasks)`
 })
 
-const canWrite = api.getStoredUser()?.role !== 'viewer'
+const canWrite = !props.readonly && api.getStoredUser()?.role !== 'viewer'
+
+// Fit once per scope, on its first drawing: a later reload must not undo a
+// zoom the reader chose.
+let fitted = false
+watch(scope, () => { fitted = false })
+watch(() => graph.body.value, (body) => {
+  if (!body) return
+  emit('loaded', body)
+  if (props.compact && !fitted && body.nodes.length) {
+    fitted = true
+    nextTick(fit)
+  }
+})
 const sheet = ref(null)
 
 async function afterWrite() {
@@ -222,8 +247,11 @@ defineExpose({ reload: graph.load })
     </p>
     <p v-else-if="!graph.body.value" class="tlg-note">Loading the graph…</p>
     <p v-else-if="graph.body.value.truncated" class="tlg-note" role="status" data-testid="task-graph-truncated">
-      {{ graph.body.value.total_nodes }} tasks is too many to draw. Keep “Open chains only”
-      on, pick a project, or narrow the filters.
+      <template v-if="readonly">{{ graph.body.value.total_nodes }} tasks is too many to preview — open the full graph to narrow it.</template>
+      <template v-else>
+        {{ graph.body.value.total_nodes }} tasks is too many to draw. Keep “Open chains only”
+        on, pick a project, or narrow the filters.
+      </template>
     </p>
     <p v-else-if="!layout.nodes.length" class="tlg-note" data-testid="task-graph-empty">
       <template v-if="narrowed && open">No open chains match these filters — turn off “Open chains only” to see finished tasks.</template>
@@ -247,7 +275,7 @@ defineExpose({ reload: graph.load })
           Drag a handle onto a task to link · click a line to remove
         </span>
       </div>
-      <div ref="viewport" class="tlg-viewport">
+      <div ref="viewport" class="tlg-viewport" :class="{ 'is-compact': compact }">
         <div
           class="tlg-canvas"
           :style="{ width: `${layout.width * zoom}px`, height: `${layout.height * zoom}px` }"
@@ -264,7 +292,7 @@ defineExpose({ reload: graph.load })
               :style="{ top: `${lane.top}px`, height: `${lane.height}px` }"
               :data-testid="`graph-lane-${lane.key}`"
             >
-              <div class="tlg-lane-head" data-pl-part="lane-head" :style="{ width: `${LANE_W}px` }">
+              <div v-if="laneHeads" class="tlg-lane-head" data-pl-part="lane-head" :style="{ width: `${LANE_W}px` }">
                 <span class="tlg-lane-ref" data-pl-part="meta-label">{{ lanePrefix(lane) }}</span>
                 <span class="tlg-lane-title" :title="lane.title">{{ lane.title }}</span>
                 <span class="tlg-lane-bar" data-pl-part="meter" aria-hidden="true">
@@ -299,28 +327,30 @@ defineExpose({ reload: graph.load })
                 :data-kind="edge.kind"
                 :data-blocking="edge.blocking ? '' : undefined"
               />
-              <path
-                v-for="edge in layout.edges"
-                :key="`hit-${edge.key}`"
-                :d="edge.path"
-                class="tlg-edge-hit"
-                :data-testid="`graph-edge-hit-${edge.key}`"
-                @mouseenter="hoveredEdge = edge.key"
-                @mouseleave="hoveredEdge = null"
-                @click="removeEdge(edge)"
-              />
-              <g
-                v-for="edge in layout.edges"
-                :key="`remove-${edge.key}`"
-                class="tlg-edge-remove"
-                :class="{ 'is-visible': hoveredEdge === edge.key && !saving }"
-                :transform="`translate(${edge.midX}, ${edge.midY})`"
-                :data-testid="`graph-edge-remove-${edge.key}`"
-                @click="removeEdge(edge)"
-              >
-                <circle r="7" />
-                <path d="M4,4 L-4,-4 M-4,4 L4,-4" />
-              </g>
+              <template v-if="canWrite">
+                <path
+                  v-for="edge in layout.edges"
+                  :key="`hit-${edge.key}`"
+                  :d="edge.path"
+                  class="tlg-edge-hit"
+                  :data-testid="`graph-edge-hit-${edge.key}`"
+                  @mouseenter="hoveredEdge = edge.key"
+                  @mouseleave="hoveredEdge = null"
+                  @click="removeEdge(edge)"
+                />
+                <g
+                  v-for="edge in layout.edges"
+                  :key="`remove-${edge.key}`"
+                  class="tlg-edge-remove"
+                  :class="{ 'is-visible': hoveredEdge === edge.key && !saving }"
+                  :transform="`translate(${edge.midX}, ${edge.midY})`"
+                  :data-testid="`graph-edge-remove-${edge.key}`"
+                  @click="removeEdge(edge)"
+                >
+                  <circle r="7" />
+                  <path d="M4,4 L-4,-4 M-4,4 L4,-4" />
+                </g>
+              </template>
               <path
                 v-if="dragPath"
                 :d="dragPath"
@@ -339,6 +369,7 @@ defineExpose({ reload: graph.load })
               :style="{ left: `${node.x}px`, top: `${node.y}px`, width: `${NODE_W}px`, height: `${NODE_H}px` }"
               :busy="busyId === node.id"
               :can-write="canWrite"
+              :readonly="readonly"
               @handle-down="edgeDrag.start"
               @handle-click="edgeDrag.click"
               @hover="id => (hovered = id)"
@@ -359,14 +390,14 @@ defineExpose({ reload: graph.load })
       </div>
     </template>
     <TaskEdgePicker
-      v-if="picker"
+      v-if="picker && canWrite"
       :task="picker.task"
       :direction="picker.direction"
       :open="true"
       @close="closePicker"
       @saved="onPickerSaved"
     />
-    <TaskSheets :sheet="sheet" @close="sheet = null" @done="sheetDone" />
+    <TaskSheets v-if="!readonly" :sheet="sheet" @close="sheet = null" @done="sheetDone" />
   </div>
 </template>
 
@@ -391,6 +422,7 @@ defineExpose({ reload: graph.load })
     padding-bottom: 3rem;
     overflow: auto;
 }
+.tlg-viewport.is-compact { max-height: 360px; }
 .tlg-canvas { position: relative; }
 .tlg-stage {
     position: absolute;
@@ -499,6 +531,10 @@ defineExpose({ reload: graph.load })
     stroke: var(--color-danger);
     stroke-width: 1.5;
     stroke-linecap: round;
+}
+.tlg-node.is-fix-open {
+    --tlg-accent: var(--color-warning);
+    border-color: var(--color-warning);
 }
 .tlg-node.is-found { box-shadow: 0 0 0 3px var(--color-ring); }
 .tlg-node.is-drop-target {
