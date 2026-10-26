@@ -93,9 +93,38 @@ async function release($: EngineInterface, toolUseId: string) {
   if (exitCode !== 0) $.ui.log(`regin-permit: release exited ${exitCode}: ${stderr}`, { to: 'debug' })
 }
 
+// `setting` and `decider` arrive on engines newer than the types this mod is
+// checked against, so they are read off the verdict rather than typed.
+const VERDICT_KEYS = ['decision', 'reason', 'rule', 'hook', 'setting', 'decider', 'ceiling'] as const
+
+// Above post_event's worst case (3 attempts × 500ms + backoff) and the CLI's
+// start-up, well under the 30s default a hung regin would otherwise cost.
+const REPORT_MS = 5_000
+
+// regin stamps this onto the call's tool span as `attributes.permission`. Only
+// the trace reads it, so a failed report is a debug line, never the verdict.
+// Awaited: nothing documents un-awaited `$` work surviving the hook's return.
+async function reportDecision($: EngineInterface, e: ToolCheckInput, toolUseId: string, verdict: ToolCheckResult) {
+  const fields = verdict as unknown as Record<string, unknown>
+  const record: Record<string, unknown> = { tool_use_id: toolUseId, agentId: e.agentId ?? null }
+  for (const key of VERDICT_KEYS) if (fields[key] !== undefined) record[key] = fields[key]
+  try {
+    const home = await reginHome($)
+    const session = await $.session.id()
+    const { exitCode, stderr } = await $.process.run(
+      [`${home}/.venv/bin/python`, `${home}/cli/regin.py`, 'trace', 'decision', '--session', session],
+      { cwd: home, stdin: JSON.stringify(record), timeoutMs: REPORT_MS },
+    )
+    if (exitCode !== 0) $.ui.log(`regin-permit: trace decision exited ${exitCode}: ${stderr}`, { to: 'debug' })
+  } catch (err) {
+    $.ui.log(`regin-permit: trace decision failed: ${String(err)}`, { to: 'debug' })
+  }
+}
+
 export const register: Register = on => {
   on('tool.check', async ($, e, next) => {
     const asked = await next(e)
+    if (e.tool_use_id) await reportDecision($, e, e.tool_use_id, asked)
     if (asked.decision !== 'ask' || !e.tool_use_id || PERSON_REQUIRED.has(e.tool)) return asked
     return holdForRegin($, e, e.tool_use_id, asked)
   }).catch(($, e, next) => next(e))

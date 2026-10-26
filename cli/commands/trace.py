@@ -226,6 +226,29 @@ def cmd_spawn(
         raise typer.Exit(1)
 
 
+@trace_app.command("decision",
+                   help="Record one tool.check verdict (JSON on stdin: "
+                        "tool_use_id, decision, reason, rule, hook, setting, "
+                        "decider, agentId) as the call's attributes.permission")
+def cmd_decision(
+    session: str = typer.Option(..., "--session",
+                                help="The session the call was decided in."),
+) -> None:
+    import sys
+
+    from pydantic import ValidationError
+
+    from lib.trace.tool_decision import DecisionRecord, record_decision
+    try:
+        record = DecisionRecord.model_validate_json(sys.stdin.read() or "{}")
+    except ValidationError as exc:
+        print(f"invalid decision: {exc}", file=sys.stderr)
+        raise typer.Exit(2)
+    if not record_decision(session, record):
+        print("decision not ingested (is `regin serve` running?)", file=sys.stderr)
+        raise typer.Exit(1)
+
+
 @trace_app.command("backfill-tokens",
                    help="Populate per-turn usage rows from on-disk transcripts for existing sessions")
 def cmd_backfill_tokens(

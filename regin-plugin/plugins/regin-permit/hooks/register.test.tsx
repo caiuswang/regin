@@ -16,10 +16,12 @@ function done({ exitCode, stdout = '' }: Exit) {
 }
 
 // The engine bottom: core's verdict for every check, and each regin process
-// answered by its op (`bridge hold` / `bridge release`).
-function engine(on: On, verdict: object, ops: Record<string, (r: Run) => Exit | Promise<Exit>>) {
+// answered by its op (`bridge hold` / `bridge release`). Every real call's
+// verdict report (`trace decision`) is kept apart in `decisions`.
+function engine(on: On, verdict: object, ops: Record<string, (r: Run) => Exit | Promise<Exit>>, reportExit = 0) {
   mock.env(on, ENV)
   const runs: Run[] = []
+  const decisions: { argv: readonly string[]; record: Record<string, unknown>; timeoutMs?: number }[] = []
   const notified: string[] = []
   on('session.id', () => ({ value: 'sess-1' }))
   on('ui.log', () => ({ value: undefined }) as never)
@@ -27,13 +29,17 @@ function engine(on: On, verdict: object, ops: Record<string, (r: Run) => Exit | 
   on('ui.notify', (_$, e) => { notified.push(e.text); return { value: { isSent: false, reason: 'no-channel' } } as never })
   on('ui.render', ($, e) => { const { Box } = $.ui.resolve(e); return <Box key="engine" /> })
   on('process.run', async (_$, e) => {
+    if (e.argv[2] === 'trace' && e.argv[3] === 'decision') {
+      decisions.push({ argv: e.argv, record: JSON.parse(e.init?.stdin ?? '{}'), timeoutMs: e.init?.timeoutMs })
+      return done({ exitCode: reportExit })
+    }
     const run = { argv: e.argv, stdin: e.init?.stdin, timeoutMs: e.init?.timeoutMs }
     runs.push(run)
     const op = ops[String(e.argv[3])]
     if (!op) throw new Error(`unexpected process ${e.argv.join(' ')}`)
     return done(await op(run))
   })
-  return { runs, notified }
+  return { runs, notified, decisions }
 }
 
 const check = (tool = 'Bash', tool_use_id: string | null = 'T1') =>
@@ -137,4 +143,51 @@ test('a hold the platform kills at its ceiling falls back to the native dialog',
   engine(on, ASK, { hold: () => { throw new Error('timed out') } })
   expect(await $.tool.check(check())).toEqual(ASK)
   expect(await releaseButtons($ as never)).toEqual([])
+})
+
+const REPORT = [...PY, 'trace', 'decision', '--session', 'sess-1']
+
+// CC 2.1.296 hands a hook only decision / reason / rule / hook / ceiling and
+// drops any other key from a verdict, `decider` included: what this engine
+// can say about who decided is the rule as written.
+test('test_tool_check_records_decider', async ($, on) => {
+  const { decisions } = engine(on, { decision: 'allow', rule: 'Bash(git status)', decider: 'rule' }, {})
+
+  expect(await $.tool.check(check())).toEqual({ decision: 'allow', rule: 'Bash(git status)' })
+  expect(decisions).toEqual([{
+    argv: REPORT,
+    record: { tool_use_id: 'T1', agentId: null, decision: 'allow', rule: 'Bash(git status)' },
+    timeoutMs: 5_000,
+  }])
+})
+
+test('test_tool_check_decision_carries_agent_id', async ($, on) => {
+  const { decisions } = engine(on, { decision: 'deny', reason: 'rule', hook: 'PreToolUse' }, {})
+
+  await $.tool.check({ ...check(), agentId: 'a1' } as never)
+
+  expect(decisions.map(d => d.record)).toEqual([
+    { tool_use_id: 'T1', agentId: 'a1', decision: 'deny', reason: 'rule', hook: 'PreToolUse' },
+  ])
+})
+
+test('a held call reports the engine verdict it was held on', async ($, on) => {
+  const { decisions } = engine(on, ASK, { hold: () => decided('allow') })
+
+  expect(await $.tool.check(check())).toEqual({ decision: 'allow' })
+  expect(decisions.map(d => d.record)).toEqual([{ tool_use_id: 'T1', agentId: null, ...ASK }])
+})
+
+test('a query without a tool_use_id reports nothing', async ($, on) => {
+  const { decisions } = engine(on, { decision: 'allow' }, {})
+
+  await $.tool.check(check('Bash', null))
+  expect(decisions).toEqual([])
+})
+
+test('a failing report still returns the verdict', async ($, on) => {
+  const { decisions } = engine(on, { decision: 'allow' }, {}, 1)
+
+  expect(await $.tool.check(check())).toEqual({ decision: 'allow' })
+  expect(decisions).toHaveLength(1)
 })

@@ -38,6 +38,7 @@ from __future__ import annotations
 from lib.trace.agent_spawn import AGENT_SPAWN_SPAN
 from lib.trace.pending_spans import parse_naive_ts as _merge_ts
 from lib.trace.projection import _graft_orphans
+from lib.trace.tool_decision import stamp_tool_decisions
 from lib.trace.merge_anchors import _absorb_slash_command_expansions, _attrs
 from lib.trace.merge_gates import (
     _collapse_open_gates,
@@ -241,6 +242,7 @@ def merge_spans(
     # Last: they read the survivors, and stamp attributes no earlier rule keys on.
     spans = _stamp_tool_batches(spans)
     spans = _link_background_tasks(spans)
+    spans = stamp_tool_decisions(spans)
     # Lineage for claude_subagents' parent_agent_id stamp, not a tree node.
     spans = [s for s in spans if s.get('name') != AGENT_SPAWN_SPAN]
     return _graft_orphans(spans)
