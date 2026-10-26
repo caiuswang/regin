@@ -46,17 +46,17 @@ def _emit_span(
     command_source: str,
     command_args: str,
 ) -> None:
-    from lib.hook_plugin import post_span, post_event  # type: ignore
+    from lib.hook_plugin import post_event, post_span, stamp_source_prompt_id  # type: ignore
     post_span(
         trace_id=payload.session_id,
         name='skill.invoke',
-        attributes={
+        attributes=stamp_source_prompt_id({
             'skill_id': command_name,
             'file_path': file_path,
             'command_source': command_source,
             'command_args': command_args,
             'found': True,
-        },
+        }, payload.raw),
     )
     post_event('skill_reads', {
         'skill_id': command_name,

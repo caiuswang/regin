@@ -109,15 +109,16 @@ def test_legacy_tool_without_source_prompt_falls_to_current_prompt(tmp_db):
     assert by_id['toolC']['parent_id'] == P2_SPAN
 
 
-def test_source_prompt_no_matching_anchor_falls_to_current_prompt(tmp_db):
-    """When no anchor carries the matching prompt_id, rung 0 does not fire; the
-    tool span falls to the chronological fallback (current prompt), unchanged."""
+def test_source_prompt_no_matching_anchor_stays_root(tmp_db):
+    """When no prompt carries the matching prompt_id, the span stays a root:
+    a span with an id never takes the chronological parent, which would be a
+    guess the id already contradicts."""
     _two_prompts(tmp_db)
     _insert(tmp_db, 'toolD', 'tool.Edit', '2026-06-04T13:00:15',
             attrs={'tool_name': 'Edit', 'tool_use_id': 'tu_d'},
             source_prompt_id='pr-no-such-anchor')
     by_id = _project()
-    assert by_id['toolD']['parent_id'] == P2_SPAN
+    assert by_id['toolD']['parent_id'] is None
 
 
 TURN1 = 'turn-live-attributed-0001'

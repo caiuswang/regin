@@ -3,24 +3,8 @@ nested subagents, and mark rewound branches."""
 
 from __future__ import annotations
 
-from datetime import datetime
-
 from lib.trace.pending_spans import is_agent_scoped_prompt
 from lib.trace.projection_agents import AGENT_ROOT_KEY, _owning_start_id
-
-
-# A `turn` span emitted on UserPromptSubmit fires in the same hook
-# invocation as the new `prompt` span, so its timestamp lands a handful
-# of milliseconds BEFORE the new prompt's timestamp. In older data (and
-# in races where handler ordering slips), the turn sorts ahead of the
-# new prompt in `_graft_orphans` and gets attached to the PREVIOUS
-# prompt — widening that prompt's envelope to the next user input and
-# inflating its duration by the entire user-idle gap. Any turn whose
-# start_time is within this window of a LATER prompt's start_time is
-# re-attributed to the later prompt. 1 s is comfortably larger than
-# handler-chain jitter (ms) and comfortably smaller than any real
-# per-tool response cadence, so it can't re-attach a legitimate turn.
-_TURN_LOOKAHEAD_SECONDS = 1.0
 
 
 _SESSION_LIFECYCLE_NAMES = frozenset({'session.start', 'session.end'})
@@ -96,21 +80,30 @@ def _build_prompt_by_turn(out: list[dict]) -> dict[str, str]:
 
 
 def _build_prompt_by_source_id(out: list[dict]) -> dict[str, str]:
-    """prompt_id value → prompt anchor span_id, learned from the
-    `prompt` anchors that carry an `attributes.prompt_id` (stamped from the
-    transcript's `promptId` by the turn_trace poster). The join partner for a
-    tool span's `source_prompt_id`: the hook envelope mirrors the same
-    `promptId` value onto every tool span, so this lets a NULL-parent tool
-    nest under its issuing prompt by CLI ground truth. Legacy anchors emitted
-    before the stamp carry no `prompt_id` and never enter this map."""
+    """prompt_id value → prompt span_id: the join partner for any hook span's
+    `source_prompt_id` (the envelope `prompt_id` every live hook stamps).
+
+    A real anchor keys on `attributes.prompt_id` (the transcript's `promptId`,
+    stamped by the turn_trace poster). Until that anchor lands, the live
+    PENDING placeholder stands in under its own `source_prompt_id` — the
+    serve-time merge only drops a placeholder once its anchor exists, so the
+    window never holds a placeholder whose anchor is also present and the
+    real anchor always wins. Legacy anchors emitted before the stamp carry no
+    `prompt_id` and never enter this map."""
     by_pid: dict[str, str] = {}
+    standins: dict[str, str] = {}
     for s in out:
-        if s['name'] != 'prompt':
+        if s['name'] != 'prompt' or is_agent_scoped_prompt(s):
             continue
-        pid = (s.get('attributes') or {}).get('prompt_id')
+        attrs = s.get('attributes') or {}
+        pid = attrs.get('prompt_id')
         if isinstance(pid, str) and pid:
             by_pid[pid] = s['span_id']
-    return by_pid
+        elif _is_pending(s):
+            spid = _source_prompt_id_of(s)
+            if spid:
+                standins.setdefault(spid, s['span_id'])
+    return {**standins, **by_pid}
 
 
 def _rung0_source_prompt_parent(
@@ -246,6 +239,13 @@ def _graft_orphans_under_prompt(sorted_spans: list[dict], by_id: dict,
     """Graft each orphan span under the most recent `prompt`, or under
     `anchor` until one appears. Mutates the dicts in `by_id` in place.
 
+    An orphan carrying a `source_prompt_id` never takes the time-ordered
+    parent: it joins the prompt that id names by value, and stays a root
+    when no prompt in the window carries that id. A submit-time span (`turn`,
+    `memory.recall`) sorts a few ms ahead of its own anchor, so the
+    "most recent prompt" is the PREVIOUS one — exactly the misparent the id
+    exists to prevent.
+
     A live PENDING placeholder (promptlive-…) acts as a real prompt here: it
     starts at submit time, so it only becomes `current_prompt` for spans that
     come AFTER it — its own turn's in-flight tools/response, which haven't yet
@@ -256,16 +256,24 @@ def _graft_orphans_under_prompt(sorted_spans: list[dict], by_id: dict,
     applies: assistant/tool spans now carry deterministic write-time parents, so
     a completed turn's spans are never orphans the placeholder could capture.
     First-class boundary spans never anchor orphans."""
+    prompt_by_source_id = _build_prompt_by_source_id(list(by_id.values()))
     current_prompt = anchor
     for span in sorted_spans:
         resolved = by_id[span['span_id']]
         if resolved['name'] == 'prompt' and not is_agent_scoped_prompt(resolved):
             current_prompt = resolved
-        elif resolved['name'] in _FIRST_CLASS_BOUNDARY_NAMES:
+        elif resolved['name'] in _FIRST_CLASS_BOUNDARY_NAMES or resolved.get('parent_id'):
             continue
-        elif (current_prompt is not None and resolved is not current_prompt
-                and not resolved.get('parent_id')):
+        elif _source_prompt_id_of(resolved) and resolved['name'] not in _RESP_THINK_ANCHOR_NAMES:
+            _graft_by_source_prompt_id(resolved, prompt_by_source_id)
+        elif current_prompt is not None and resolved is not current_prompt:
             resolved['parent_id'] = current_prompt['span_id']
+
+
+def _graft_by_source_prompt_id(span: dict, prompt_by_source_id: dict[str, str]) -> None:
+    target = prompt_by_source_id.get(_source_prompt_id_of(span))
+    if target and target != span['span_id']:
+        span['parent_id'] = target
 
 
 def _graft_conversation_roots(out: list[dict], conv_span_id: str) -> None:
@@ -288,49 +296,6 @@ def _heal_dangling_parents(out: list[dict], by_id: dict) -> None:
         pid = s.get('parent_id')
         if pid and pid not in valid_ids:
             s['parent_id'] = None
-
-
-def _attach_turn_to_following_prompt(
-    turn_span: dict, s_start_dt: datetime, prompts_by_start: list[dict],
-) -> None:
-    for p in prompts_by_start:
-        try:
-            p_start_dt = datetime.fromisoformat(p['start_time'])
-        except (TypeError, ValueError):
-            continue
-        delta = (p_start_dt - s_start_dt).total_seconds()
-        if 0 <= delta < _TURN_LOOKAHEAD_SECONDS:
-            turn_span['parent_id'] = p['span_id']
-            return
-
-
-# Spans that fire on UserPromptSubmit a few ms BEFORE the new prompt's
-# anchor lands, so a chronological graft would wrongly attach them to the
-# PREVIOUS prompt. `turn`: the per-turn usage marker; `memory.recall`: the
-# `<recalled_experience>` injection span (emitted by the memory_recall
-# handler, which runs before prompt_trace). Both carry no deterministic
-# parent, so they need this chronological nudge onto the following prompt.
-_SUBMIT_LOOKAHEAD_NAMES = frozenset({'turn', 'memory.recall'})
-
-
-def _relabel_turns_by_lookahead(out: list[dict]) -> None:
-    """Re-attribute submit-time spans that landed a few ms before a LATER
-    prompt back onto that prompt. See `_TURN_LOOKAHEAD_SECONDS` and
-    `_SUBMIT_LOOKAHEAD_NAMES`. These spans carry no deterministic parent,
-    so this chronological nudge stays."""
-    prompts_by_start = sorted(
-        (s for s in out if s['name'] == 'prompt' and not _is_pending(s)
-         and not is_agent_scoped_prompt(s)),
-        key=lambda s: s['start_time'],
-    )
-    for s in out:
-        if s['name'] not in _SUBMIT_LOOKAHEAD_NAMES:
-            continue
-        try:
-            s_start_dt = datetime.fromisoformat(s['start_time'])
-        except (TypeError, ValueError):
-            continue
-        _attach_turn_to_following_prompt(s, s_start_dt, prompts_by_start)
 
 
 def _subagent_starts_by_agent(out: list[dict]) -> dict[str, list[dict]]:
@@ -503,15 +468,13 @@ def _graft_orphans(spans: list[dict]) -> list[dict]:
          spans with a turn_uuid nest under `resp-`/`think-`/prompt anchor
          by deterministic id existence (the write-time parents from
          turn_trace usually mean there's nothing left to do here).
-      4. `_graft_orphans_under_prompt` — chronological FALLBACK for the
-         spans the ladder couldn't place (attachments, rule.check,
-         permission.request, local commands, …): nest under the current
-         real prompt, or under `_fallback_orphan_anchor` where a trace has
-         no prompt at all. Harmless to the bug-prone spans because step 3 and
-         the write-time posters already parented them — this only touches
-         genuinely turn-less session events.
-      5. `turn`-span lookahead re-attribution
-      6. subagent re-parent by agent_id
+      4. `_graft_orphans_under_prompt` — FALLBACK for the spans the ladder
+         couldn't place: a span carrying `source_prompt_id` joins that
+         prompt by value or stays a root; only a span with no id (legacy
+         rows, providers whose envelope has none) nests chronologically
+         under the current real prompt, or under `_fallback_orphan_anchor`
+         where a trace has no prompt at all.
+      5. subagent re-parent by agent_id
     """
     if not spans:
         return spans
@@ -526,7 +489,6 @@ def _graft_orphans(spans: list[dict]) -> list[dict]:
     _heal_dangling_parents(out, by_id)
     _ladder_orphans_by_turn(out, by_id)
     _graft_orphans_under_prompt(sorted_spans, by_id, _fallback_orphan_anchor(out))
-    _relabel_turns_by_lookahead(out)
     _reparent_subagents(out)
     # Last: override the parentage above for discarded branches so abandoned
     # prompts collapse under their `rewind` marker instead of sitting as

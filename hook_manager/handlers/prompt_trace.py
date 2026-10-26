@@ -123,15 +123,15 @@ def _emit_placeholder(payload: HookPayload, text: str) -> None:
     `turn_trace`. The store is append-only, so this placeholder coexists with
     its real `prompt-<uuid>` anchor; the serve-time merge drops it (matched by
     text hash) once the anchor lands — see lib/trace/merge.py."""
-    from lib.hook_plugin import post_span  # type: ignore
+    from lib.hook_plugin import post_span, stamp_source_prompt_id  # type: ignore
     from lib.trace.pending_spans import prompt_placeholder_id  # type: ignore
 
-    attributes = {
+    attributes = stamp_source_prompt_id({
         'text': text,
         'chars': len(text),
         'slash_command': text.split()[0] if text.startswith('/') else None,
         'live_placeholder': True,
-    }
+    }, payload.raw)
     post_span(
         trace_id=payload.session_id,
         name='prompt',

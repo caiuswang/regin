@@ -29,11 +29,9 @@ def handle(payload: HookPayload) -> HookResponse | None:
         return None  # memory must never block a tool call
     if not block:
         return None
-    # Record the injection on the trace so it shows in the session detail.
-    # PreToolUse fires mid-turn, so this span chronologically grafts under the
-    # active prompt (it is NOT a submit-time span). Best-effort inside.
     raw = payload.raw or {}
     emit_skill_experience_span(
         payload.session_id, skill_id, block, mems,
-        agent_id=raw.get('agent_id'), agent_type=raw.get('agent_type'))
+        agent_id=raw.get('agent_id'), agent_type=raw.get('agent_type'),
+        prompt_id=raw.get('prompt_id'))
     return HookResponse(suppress_output=True, additional_context=block)

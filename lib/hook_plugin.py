@@ -468,6 +468,21 @@ def set_active_agent_type(value: str | None) -> None:
     _active_agent_type = value.strip() if isinstance(value, str) and value.strip() else None
 
 
+def stamp_source_prompt_id(attrs: dict, raw: dict | None) -> dict:
+    """Copy the hook envelope's `prompt_id` (Claude Code 2.1.195+) onto
+    `attrs['source_prompt_id']` and return `attrs`.
+
+    Named `source_prompt_id`, not `prompt_id`, because `lib/trace/merge.py`
+    already uses `prompt_id` for an internal integer ordinal. Only live-event
+    spans call this: a transcript-derived span posted from a Stop hook may
+    belong to an earlier prompt than the envelope that happened to carry it,
+    so it must take its id from the transcript instead."""
+    prompt_id = (raw or {}).get('prompt_id')
+    if isinstance(prompt_id, str) and prompt_id:
+        attrs['source_prompt_id'] = prompt_id
+    return attrs
+
+
 def build_span(
     trace_id: str,
     name: str,

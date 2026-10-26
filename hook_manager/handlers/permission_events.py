@@ -100,8 +100,8 @@ def _maybe_resolve_push(payload: HookPayload) -> None:
 
 
 def _emit_span(payload: HookPayload, name: str, status: str = 'OK') -> None:
-    from lib.hook_plugin import post_span  # type: ignore
-    attrs = _build_perm_attrs(payload)
+    from lib.hook_plugin import post_span, stamp_source_prompt_id  # type: ignore
+    attrs = stamp_source_prompt_id(_build_perm_attrs(payload), payload.raw)
     tu_id = attrs.get('tool_use_id')
     # A pending `permission.request` gets a deterministic id keyed on the
     # gated call's tool_use_id so `ingest_session_spans` can retire it when

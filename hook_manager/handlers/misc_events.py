@@ -133,11 +133,11 @@ def _safe_emit(
     span_id: str | None = None,
 ) -> None:
     try:
-        from lib.hook_plugin import post_span  # type: ignore
+        from lib.hook_plugin import post_span, stamp_source_prompt_id  # type: ignore
         post_span(
             trace_id=payload.session_id,
             name=name,
-            attributes=attrs,
+            attributes=stamp_source_prompt_id(attrs, payload.raw),
             span_id=span_id,
         )
     except Exception:

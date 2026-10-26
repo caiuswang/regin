@@ -126,13 +126,11 @@ def _skill_experience(payload: HookPayload, cfg) -> str:
         name.lstrip("/"), payload.session_id,
         query=_recall_query(payload.prompt or ""))
     if block:
-        # Trace the skill-experience inject as its own `memory.recall` span so
-        # it shows in the session detail. Fires on UserPromptSubmit, so the
-        # `memory.recall` submit-time lookahead nests it under this prompt.
         raw = payload.raw or {}
         emit_skill_experience_span(
             payload.session_id, name, block, mems,
-            agent_id=raw.get('agent_id'), agent_type=raw.get('agent_type'))
+            agent_id=raw.get('agent_id'), agent_type=raw.get('agent_type'),
+            prompt_id=raw.get('prompt_id'))
     return block
 
 
@@ -330,11 +328,11 @@ def _emit_recall_span(payload: HookPayload, block: str, hits, mode: str,
     Emitted whenever anything was injected, including a topic-only route
     that recalled no memory (`hit_count` 0, `topic` set). Parentless on
     purpose: it fires on UserPromptSubmit before the `prompt-<uuid>`
-    anchor exists, so the serve-time graft (plus the `memory.recall`
-    lookahead in `lib/trace/projection.py`) nests it under the prompt it
-    was injected into — the same treatment `turn` spans get.
+    anchor exists, so the serve-time graft value-joins its
+    `source_prompt_id` to that anchor's `prompt_id` — the same treatment
+    `turn` spans get.
     """
-    from lib.hook_plugin import post_span  # type: ignore
+    from lib.hook_plugin import post_span, stamp_source_prompt_id  # type: ignore
 
     attributes: dict = {
         'block': block,
@@ -364,7 +362,7 @@ def _emit_recall_span(payload: HookPayload, block: str, hits, mode: str,
         if agent_type:
             attributes['agent_type'] = agent_type
     post_span(trace_id=payload.session_id, name='memory.recall',
-              attributes=attributes)
+              attributes=stamp_source_prompt_id(attributes, raw))
 
 
 def _recall(payload: HookPayload):

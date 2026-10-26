@@ -153,14 +153,14 @@ def _maybe_notify_plan(payload: HookPayload, plan_text: str | None) -> None:
 
 
 def _emit_exit_span(payload: HookPayload, plan_name: str | None = None) -> None:
-    from lib.hook_plugin import post_span  # type: ignore
+    from lib.hook_plugin import post_span, stamp_source_prompt_id  # type: ignore
     attrs: dict = {}
     if plan_name:
         attrs['plan_name'] = plan_name
     post_span(
         trace_id=payload.session_id,
         name='plan.exit',
-        attributes=attrs,
+        attributes=stamp_source_prompt_id(attrs, payload.raw),
     )
 
 
@@ -173,7 +173,7 @@ def _emit_plan_op_span(payload: HookPayload, plan_filename: str, op: str,
     PlanSession row that follows is a read-optimized cache for the
     sessions list query.
     """
-    from lib.hook_plugin import post_span  # type: ignore
+    from lib.hook_plugin import post_span, stamp_source_prompt_id  # type: ignore
     span_name = 'plan.write' if op == 'write' else 'plan.update'
     attrs: dict = {
         'plan_filename': plan_filename,
@@ -186,7 +186,7 @@ def _emit_plan_op_span(payload: HookPayload, plan_filename: str, op: str,
     post_span(
         trace_id=payload.session_id,
         name=span_name,
-        attributes=attrs,
+        attributes=stamp_source_prompt_id(attrs, payload.raw),
     )
 
 

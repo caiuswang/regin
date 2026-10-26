@@ -129,15 +129,8 @@ def _attach_origin_attrs(attrs: dict, raw: dict) -> None:
         if agent_type:
             attrs['agent_type'] = agent_type
 
-    # `prompt_id` (Claude Code 2.1.195+) is the per-submission UUID stamped on
-    # every payload, correlating this tool call to the user prompt/turn that
-    # spawned it. Stored as `source_prompt_id` — NOT `prompt_id` — because
-    # `lib/trace/merge.py` already uses `prompt_id` for an unrelated internal
-    # integer ordinal. Only truthy values are kept, so pre-2.1.195 payloads add
-    # nothing.
-    prompt_id = raw.get('prompt_id')
-    if prompt_id:
-        attrs['source_prompt_id'] = prompt_id
+    from lib.hook_plugin import stamp_source_prompt_id  # type: ignore
+    stamp_source_prompt_id(attrs, raw)
 
 
 def _record_agent_message(payload, tool_input: dict, attrs: dict,

@@ -147,13 +147,14 @@ def skill_experience_block(skill_id: str, session_id: Optional[str], *,
 def emit_skill_experience_span(trace_id: Optional[str], skill_id: str,
                                block: str, mems: list[dict], *,
                                agent_id: Optional[str] = None,
-                               agent_type: Optional[str] = None) -> None:
+                               agent_type: Optional[str] = None,
+                               prompt_id: Optional[str] = None) -> None:
     """Record an injected `<skill_experience>` block as a `memory.recall` span
     (marked `source='skill_experience'`) so the trace detail shows exactly what
     was fed to the prompt — the same machinery that traces `<recalled_experience>`.
     Reusing the `memory.recall` name means the existing trace UI (MemoryRecallRow)
-    and the projection submit-time lookahead render and place it with no extra
-    wiring. Gated by `trace_recall` like the generic recall span, and fully
+    renders it with no extra wiring; `prompt_id` (the hook envelope's) lets the
+    projection place it under its prompt by value. Gated by `trace_recall` like the generic recall span, and fully
     best-effort: tracing the inject must never block the inject."""
     from lib.settings import settings
     if not (trace_id and block) or not settings.agent_memory.trace_recall:
@@ -175,9 +176,10 @@ def emit_skill_experience_span(trace_id: Optional[str], skill_id: str,
         if agent_type:
             attributes['agent_type'] = agent_type
     try:
-        from lib.hook_plugin import post_span  # type: ignore
+        from lib.hook_plugin import post_span, stamp_source_prompt_id  # type: ignore
         post_span(trace_id=trace_id, name='memory.recall',
-                  attributes=attributes)
+                  attributes=stamp_source_prompt_id(
+                      attributes, {'prompt_id': prompt_id}))
     except Exception:
         pass  # tracing the inject must never block the inject
 

@@ -99,20 +99,21 @@ def _turn_span_attrs(payload: HookPayload, model: str) -> dict:
 
 def _post_turn_model_span(payload: HookPayload, model: str,
                           marks_boundary: bool = True) -> None:
-    from lib.hook_plugin import post_span  # type: ignore
+    from lib.hook_plugin import post_span, stamp_source_prompt_id  # type: ignore
+    attrs = (_turn_span_attrs(payload, model) if marks_boundary
+             else {'model': model})
     post_span(
         trace_id=payload.session_id,
         name='turn',
-        attributes=(_turn_span_attrs(payload, model) if marks_boundary
-                    else {'model': model}),
+        attributes=stamp_source_prompt_id(attrs, payload.raw),
     )
 
 
 def _turn_span_wanted(payload: HookPayload, model: str, last_turn: str | None) -> bool:
     """Whether this event should post a `turn` model span.
 
-    A prompt always does — the projection's submit-lookahead uses that span to
-    find where a prompt's activity begins. A `Stop` only does when the main
+    A prompt always does — the projection joins that span to its prompt by
+    `source_prompt_id` to find where a prompt's activity begins. A `Stop` only does when the main
     transcript actually moved since the last one: Kimi fires a parent-session
     `Stop` a few hundred ms before every `SubagentStop`, and those carry the
     same shape as a real main-agent stop, so an unconditional post minted one

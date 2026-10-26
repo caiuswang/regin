@@ -35,7 +35,7 @@ def _task_field(raw: dict, flat_key: str, nested_key: str):
 
 
 def _emit_span(payload: HookPayload, name: str) -> None:
-    from lib.hook_plugin import post_span  # type: ignore
+    from lib.hook_plugin import post_span, stamp_source_prompt_id  # type: ignore
     attrs: dict = {}
     raw = payload.raw
     task_id = _task_field(raw, 'task_id', 'id')
@@ -51,5 +51,5 @@ def _emit_span(payload: HookPayload, name: str) -> None:
     post_span(
         trace_id=payload.session_id,
         name=name,
-        attributes=attrs,
+        attributes=stamp_source_prompt_id(attrs, payload.raw),
     )

@@ -61,7 +61,7 @@ def _emit_pending(payload: HookPayload, tool: str, tu_id: str) -> None:
     The union fixes name/span_id/status; the tool-specific attrs below are this
     producer's own enrichment."""
     from lib.agent_events import ToolCall, to_span  # type: ignore
-    from lib.hook_plugin import post_span  # type: ignore
+    from lib.hook_plugin import post_span, stamp_source_prompt_id  # type: ignore
     from lib.trace.pending_spans import gate_key  # type: ignore
 
     span = to_span(ToolCall(
@@ -78,6 +78,7 @@ def _emit_pending(payload: HookPayload, tool: str, tu_id: str) -> None:
     if key:
         span['attributes']['gate_key'] = key
     _enrich_attrs(span['attributes'], payload, tool)
+    stamp_source_prompt_id(span['attributes'], payload.raw)
     post_span(**span)
 
 

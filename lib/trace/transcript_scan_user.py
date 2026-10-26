@@ -255,6 +255,9 @@ class _UserEntryScanMixin:
         self.command_prompt_texts[euuid] = f'{name} {args}' if args else name
         if isinstance(ts, str) and ts:
             self.prompt_timestamps.setdefault(euuid, ts)
+        pid = entry_n.get('prompt_id')
+        if isinstance(pid, str) and pid:
+            self.prompt_ids.setdefault(euuid, pid)
 
     def _collect_bash_input(self, entry_n: dict, lc_text: str, euuid: str) -> None:
         # `!ls` → command_name `!ls`. The leading `!` distinguishes a bash

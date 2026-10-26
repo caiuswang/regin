@@ -173,12 +173,13 @@ Four passes. Each is idempotent and never mutates the input list.
    current prompt as parent. `session.*` is explicitly excluded from
    this pass so a trailing `session.end` never nests inside the last
    prompt.
-3. **Turn re-attribution.** Scan every `turn` span; if its
-   `start_time` falls within `_TURN_LOOKAHEAD_SECONDS` (1 s) *before*
-   a later prompt's start, re-attach to that later prompt. This
-   repairs historical data written before the priority fix in §6, and
-   protects against any future handler emitting close-to-new-prompt
-   spans on `UserPromptSubmit`.
+3. **Prompt-id join.** An orphan carrying `source_prompt_id` (every live
+   hook span stamps the envelope `prompt_id`) skips step 2's
+   "current prompt" and joins the prompt whose `attributes.prompt_id`
+   holds the same value — or the live PENDING placeholder carrying it,
+   until the anchor lands. No match leaves it a root. Only id-less
+   spans (pre-2.1.195 rows, providers with no envelope id) take the
+   chronological parent.
 4. **Subagent reparenting.** Build a map
    `agent_id → subagent.start.span_id`. Any non-`subagent.start` span
    whose `attributes.agent_id` matches an entry in that map has its
@@ -314,10 +315,9 @@ prompt    2026-04-24T12:50:25.768136  (prompt #2 — 9 ms later)
    strictly **after** the new prompt's; sorted order puts the new
    prompt first; the iterator advances `current_prompt` to #2 before
    processing the turn.
-2. **`lib/trace/projection.py`** — new pass in `_graft_orphans` that
-   re-attaches any `turn` span landing within `_TURN_LOOKAHEAD_SECONDS`
-   (1 s) *before* a later prompt. Repairs sessions already stored
-   with the old ordering, no backfill required.
+2. **`lib/trace/projection_graft.py`** — the `turn` span carries the
+   envelope `prompt_id` as `source_prompt_id`, and the graft joins it to
+   its prompt by that value rather than by timestamp order.
 
 **Regression tests.**
 

@@ -21,7 +21,7 @@ def handle(payload: HookPayload) -> HookResponse | None:
 
 
 def _emit_span(payload: HookPayload) -> None:
-    from lib.hook_plugin import post_span  # type: ignore
+    from lib.hook_plugin import post_span, stamp_source_prompt_id  # type: ignore
     attrs: dict = {}
     cwd = payload.cwd or payload.raw.get('cwd') or payload.raw.get('new_cwd')
     if cwd:
@@ -32,5 +32,5 @@ def _emit_span(payload: HookPayload) -> None:
     post_span(
         trace_id=payload.session_id,
         name='cwd.changed',
-        attributes=attrs,
+        attributes=stamp_source_prompt_id(attrs, payload.raw),
     )

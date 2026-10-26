@@ -78,7 +78,7 @@ def is_pending_span_id(span_id) -> bool:
 # A subagent's launch-prompt span carries name=='prompt' but is agent-scoped:
 # id `prompt-sa-<agent_id>`, attributes.agent_id set. The main-conversation
 # prompt-anchor machinery (ceiling, stale-blocker cutoff, orphan grafting,
-# turn-lookahead) must EXCLUDE these, or a subagent prompt fired mid-run acts
+# prompt_id value-join) must EXCLUDE these, or a subagent prompt fired mid-run acts
 # as a main turn anchor — dropping the user's live placeholder and grafting
 # main orphans under the subagent subtree.
 SUBAGENT_PROMPT_PREFIX = 'prompt-sa-'

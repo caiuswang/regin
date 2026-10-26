@@ -310,23 +310,36 @@ def test_graft_orphans_leaves_compact_boundaries_at_root_without_conversation():
     assert cpost.get('parent_id') is None
 
 
-def test_graft_orphans_reattaches_turn_span_near_next_prompt():
-    """A `turn` span emitted on UserPromptSubmit fires a few
-    milliseconds BEFORE the new `prompt` span. Without re-attribution,
-    it sorts ahead of the new prompt and widens the PREVIOUS prompt's
-    envelope to include the entire user-idle gap between the two
-    prompts. The projection must re-attach such turn spans to the
-    next prompt so the previous prompt's duration reflects only its
-    own AI-response time, not the time until the user types again."""
+def test_graft_orphans_nests_memory_recall_under_its_prompt_by_id():
+    """A `memory.recall` span fires on UserPromptSubmit, a few ms ahead of its
+    own prompt's anchor, so the most recent prompt by time is the PREVIOUS one.
+    Its envelope `source_prompt_id` names the prompt it was injected into."""
+    spans = [
+        {'span_id': 'p1', 'parent_id': None, 'name': 'prompt',
+         'attributes': {'prompt_id': 'pid-1'},
+         'start_time': '2026-01-01T00:00:00.000000', 'end_time': None,
+         'duration_ms': 0},
+        {'span_id': 'mr', 'parent_id': None, 'name': 'memory.recall',
+         'attributes': {'hit_count': 2, 'source_prompt_id': 'pid-2'},
+         'start_time': '2026-01-01T00:01:29.992000', 'end_time': None,
+         'duration_ms': 0},
+        {'span_id': 'p2', 'parent_id': None, 'name': 'prompt',
+         'attributes': {'prompt_id': 'pid-2'},
+         'start_time': '2026-01-01T00:01:30.000000', 'end_time': None,
+         'duration_ms': 0},
+    ]
+    by_id = {s['span_id']: s for s in app_module._graft_orphans(spans)}
+    assert by_id['mr']['parent_id'] == 'p2'
+
+
+def test_graft_orphans_idless_turn_span_stays_chronological():
+    """A `turn` span with no `source_prompt_id` (pre-2.1.195 data, or a
+    provider whose envelope has none) takes the most recent prompt by time —
+    there is no lookahead window any more."""
     spans = [
         {'span_id': 'p1', 'parent_id': None, 'name': 'prompt',
          'start_time': '2026-01-01T00:00:00.000000', 'end_time': None,
          'duration_ms': 0},
-        {'span_id': 't1', 'parent_id': None, 'name': 'tool.Read',
-         'start_time': '2026-01-01T00:00:01.000000', 'end_time': None,
-         'duration_ms': 0},
-        # Turn span fires 8 ms before the new prompt — classic
-        # UserPromptSubmit handler-chain pattern.
         {'span_id': 'turn', 'parent_id': None, 'name': 'turn',
          'start_time': '2026-01-01T00:01:29.992000', 'end_time': None,
          'duration_ms': 0},
@@ -334,38 +347,8 @@ def test_graft_orphans_reattaches_turn_span_near_next_prompt():
          'start_time': '2026-01-01T00:01:30.000000', 'end_time': None,
          'duration_ms': 0},
     ]
-    out = app_module._graft_orphans(spans)
-    by_id = {s['span_id']: s for s in out}
-    assert by_id['turn']['parent_id'] == 'p2', (
-        "turn landing within 1 s before p2 must reattach to p2, not p1"
-    )
-    assert by_id['t1']['parent_id'] == 'p1'
-
-
-def test_graft_orphans_reattaches_memory_recall_to_following_prompt():
-    """A `memory.recall` span is emitted by the memory_recall handler on
-    UserPromptSubmit — which runs BEFORE prompt_trace — so it sorts a few
-    ms ahead of its own prompt's anchor. Like `turn` spans, it must
-    re-attach to the FOLLOWING prompt (the one it was injected into), not
-    the previous prompt the chronological graft would otherwise pick."""
-    spans = [
-        {'span_id': 'p1', 'parent_id': None, 'name': 'prompt', 'attributes': {},
-         'start_time': '2026-01-01T00:00:00.000000', 'end_time': None,
-         'duration_ms': 0},
-        # Injection span fires 8 ms before the new prompt's anchor.
-        {'span_id': 'mr', 'parent_id': None, 'name': 'memory.recall',
-         'attributes': {'hit_count': 2},
-         'start_time': '2026-01-01T00:01:29.992000', 'end_time': None,
-         'duration_ms': 0},
-        {'span_id': 'p2', 'parent_id': None, 'name': 'prompt', 'attributes': {},
-         'start_time': '2026-01-01T00:01:30.000000', 'end_time': None,
-         'duration_ms': 0},
-    ]
-    out = app_module._graft_orphans(spans)
-    by_id = {s['span_id']: s for s in out}
-    assert by_id['mr']['parent_id'] == 'p2', (
-        "memory.recall landing within 1 s before p2 must nest under p2"
-    )
+    by_id = {s['span_id']: s for s in app_module._graft_orphans(spans)}
+    assert by_id['turn']['parent_id'] == 'p1'
 
 
 def test_graft_orphans_nests_subagent_tool_spans_under_subagent_start():

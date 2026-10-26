@@ -33,11 +33,12 @@ def handle(payload: HookPayload) -> HookResponse | None:
 
 
 def _emit_span(payload: HookPayload, skill_id: str, file_path: str) -> None:
-    from lib.hook_plugin import post_span, post_event  # type: ignore
+    from lib.hook_plugin import post_event, post_span, stamp_source_prompt_id  # type: ignore
     post_span(
         trace_id=payload.session_id,
         name='skill.launch',
-        attributes={'skill_id': skill_id, 'file_path': file_path, 'found': True},
+        attributes=stamp_source_prompt_id(
+            {'skill_id': skill_id, 'file_path': file_path, 'found': True}, payload.raw),
     )
     post_event('skill_reads', {
         'skill_id': skill_id,

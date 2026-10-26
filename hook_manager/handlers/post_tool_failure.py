@@ -120,6 +120,8 @@ def _emit_span(payload: HookPayload, tool: str, error: str, error_dropped: int, 
     if tool == 'Bash':
         _capture_bash(attrs, tool_input)
     _tag_subagent(attrs, payload.raw or {})
+    from lib.hook_plugin import stamp_source_prompt_id  # type: ignore
+    stamp_source_prompt_id(attrs, payload.raw)
     post_span(
         trace_id=payload.session_id,
         name='tool.failure',

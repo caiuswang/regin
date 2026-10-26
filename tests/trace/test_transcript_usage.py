@@ -1365,6 +1365,25 @@ def test_slash_command_with_expansion_anchors_its_own_turn(tmp_path):
     assert all(lc.command_name != "/review" for lc in u.local_commands)
 
 
+def test_slash_command_anchor_carries_its_prompt_id(tmp_path):
+    # The hook envelope's prompt_id joins live spans to this anchor by value,
+    # so a slash-command turn must carry the echo entry's promptId like a
+    # typed prompt does.
+    echo = _command_echo("cmd", "/review", "2026-05-20T10:01:00Z", parent=None)
+    echo["promptId"] = "pid-review"
+    path = _write(
+        tmp_path,
+        echo,
+        _meta_expansion("exp", "You are an expert code reviewer...",
+                        "2026-05-20T10:01:01Z", parent="cmd"),
+        _assistant(input_tokens=10, uuid="a1", parent="exp",
+                   timestamp="2026-05-20T10:01:05Z"),
+    )
+    u = read_usage(path)
+    assert _turn_by_assistant(u, "a1").prompt_uuid == "cmd"
+    assert u.prompt_ids["cmd"] == "pid-review"
+
+
 def test_display_command_without_expansion_stays_local(tmp_path):
     # /clear has no isMeta expansion and no in-turn response; the following
     # typed prompt opens the next turn. /clear must NOT anchor and must stay

@@ -557,12 +557,12 @@ def _emit_rule_check_span(
         if agent_type:
             attributes['agent_type'] = agent_type
     try:
-        from lib.hook_plugin import post_span  # type: ignore
+        from lib.hook_plugin import post_span, stamp_source_prompt_id  # type: ignore
         post_span(
             trace_id=trace_id,
             span_id=span_id,
             name='rule.check',
-            attributes=attributes,
+            attributes=stamp_source_prompt_id(attributes, raw),
         )
     except Exception:
         pass

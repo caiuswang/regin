@@ -1905,8 +1905,8 @@ def test_a_model_switch_posts_even_on_the_same_turn(isolated_state):
 
 
 def test_a_prompt_always_posts(isolated_state):
-    """The projection's submit-lookahead finds a prompt's first activity via
-    this span, so the gate must never suppress it."""
+    """The projection finds a prompt's first activity via this span (joined
+    by `source_prompt_id`), so the gate must never suppress it."""
     assert _wanted('Stop', 'kimi-code/k3', 'turn-a') is True
     assert _wanted('UserPromptSubmit', 'kimi-code/k3', 'turn-a') is True
     assert _wanted('UserPromptSubmit', 'kimi-code/k3', 'turn-a') is True
