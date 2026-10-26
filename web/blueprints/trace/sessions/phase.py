@@ -67,8 +67,13 @@ def _idle_phase(dt, ended) -> str:
     return 'working' if dt <= WORKING_WINDOW_SEC else 'idle'
 
 
-def _main_phase(act, now, ended) -> str:
+def _main_phase(act, now, ended, turn=None) -> str:
     """Main-agent phase. Only `ended` demotes a blocker.
+
+    `turn` is the phase the session's regin-bridge mod reported
+    (`agent_bridge.phase_state`). When present it alone decides working vs
+    idle and span age is never read: a turn the mod saw start is in flight
+    until the mod sees it complete, however long it stays silent.
 
     Silence is NOT evidence against a blocker that is the session's newest
     span: the agent cannot emit anything until a human answers, so the stale
@@ -80,11 +85,15 @@ def _main_phase(act, now, ended) -> str:
 
     The cost is deliberate: a session hard-killed while parked keeps claiming
     attention until `session.end` arrives or it is closed by hand."""
-    last = _roster_ts(act.get('last_ts')) if act else None
-    dt = (now - last).total_seconds() if last else None
     kind = _waiting_kind(act) if act else None
     if kind and not ended:
         return 'waiting-permission' if kind == 'permission' else 'waiting-input'
+    if turn is not None:
+        if ended:
+            return 'ended'
+        return 'idle' if turn.phase == 'idle' else 'working'
+    last = _roster_ts(act.get('last_ts')) if act else None
+    dt = (now - last).total_seconds() if last else None
     return _idle_phase(dt, ended)
 
 
@@ -138,7 +147,7 @@ def _screen_phase(state, span_phase: str) -> str | None:
 
 def _session_phase(by_aid: dict, roster, ended: bool,
                    main_override: str | None = None,
-                   screen=None) -> tuple:
+                   screen=None, turn=None) -> tuple:
     """(rollup phase, agent_phase map). Main from its own activity; each
     subagent from its roster status. `by_aid` is the shared per-agent activity
     map (main under None) so no third scan is needed.
@@ -146,6 +155,10 @@ def _session_phase(by_aid: dict, roster, ended: bool,
     `screen` is the parsed terminal frame (`agent_bridge.screen_state`) when
     one could be read, and outranks the span-derived verdict for the same
     reason `main_override` does — see `_screen_phase`.
+
+    `turn` is the mod-reported phase (see `_main_phase`); while it is present
+    the screen is not consulted, since it only ever arbitrated the age-derived
+    verdicts the events replace.
 
     `main_override` is the live runner's own verdict for a session regin
     launched (`agent_sdk.run_phase`), and it *replaces* the span-derived one
@@ -158,7 +171,8 @@ def _session_phase(by_aid: dict, roster, ended: bool,
     session always rolls up to 'ended': once the session itself ended nothing
     can be genuinely waiting, so a ghost unstopped subagent (rolled up as
     inactive-stale) must not mask the 'ended' verdict."""
-    agent_phase = {'main': _main_agent_phase(by_aid, ended, main_override, screen)}
+    agent_phase = {'main': _main_agent_phase(by_aid, ended, main_override,
+                                             screen, turn)}
     for r in roster:
         aid = r['agent_id']
         agent_phase[aid] = _phase_from_roster(
@@ -169,8 +183,10 @@ def _session_phase(by_aid: dict, roster, ended: bool,
     return _phase_rollup(votes) or agent_phase['main'], agent_phase
 
 
-def _main_agent_phase(by_aid, ended, main_override, screen):
-    span_phase = _main_phase(by_aid.get(None), datetime.now(), ended)
+def _main_agent_phase(by_aid, ended, main_override, screen, turn=None):
+    span_phase = _main_phase(by_aid.get(None), datetime.now(), ended, turn)
+    if turn is not None:
+        return main_override or span_phase
     # The screen only arbitrates between working/idle/inactive-stale. It never
     # overrides 'ended' (a settled session's pane can still show the last frame
     # of a finished turn) nor either 'waiting-' verdict, which come from a
@@ -299,6 +315,19 @@ def _live_child_of(trace_id: str) -> str | None:
         get_activity_logger("bridge").error(
             "bridge_successor_read_failed", exc_info=True)
         return None
+
+
+def _mod_turn_phase(group):
+    """The mod-reported phase of the first alias with a connected listener."""
+    from lib.settings import settings
+    if not settings.agent_bridge.enabled:
+        return None
+    from lib.agent_bridge import phase_state
+    for tid in group:
+        turn = phase_state.current(tid)
+        if turn is not None:
+            return turn
+    return None
 
 
 def _screen_state_mod():
@@ -432,9 +461,15 @@ def _session_summary(trace_id: str, roster=None, activity=None) -> dict:
         roster, activity, ended = _roster_with_activity(trace_id)
     screen = _live_screen_state(trace_id, group)
     _record_screen_retry(group, screen)
+    turn = _mod_turn_phase(group)
     phase, agent_phase = _session_phase(activity, roster, status == 'ended',
-                                        _owned_run_phase(trace_id), screen)
+                                        _owned_run_phase(trace_id), screen,
+                                        turn)
     return {
+        # The regin-bridge mod's own report of the main loop — thinking, tool
+        # or idle — while its listener is connected; null otherwise, and then
+        # `phase` falls back to the screen and span heuristics.
+        'turn_phase': turn.phase if turn else None,
         # What the real terminal says is happening right now — the verb,
         # turn elapsed, tokens streamed and in-flight tool the operator would
         # read off the pane. Null whenever the screen could not be read, which

@@ -93,8 +93,14 @@ def _unregister(listener: Listener) -> None:
         held = _listeners.get(listener.session_id, [])
         if listener in held:
             held.remove(listener)
-        if not held:
+        last = not held
+        if last:
             _listeners.pop(listener.session_id, None)
+    if last:
+        # Events missed while no mod was connected cannot be replayed, so a
+        # phase kept across the gap would outlive the turn it describes.
+        from lib.agent_bridge import phase_state
+        phase_state.forget(listener.session_id)
     # Removal under the lock comes first, so no offer can land after the
     # drain: a frame still queued here was reported delivered and was not.
     stranded = listener.close()

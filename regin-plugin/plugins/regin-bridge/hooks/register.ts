@@ -53,6 +53,59 @@ async function abortRunning($: EngineInterface) {
   }
 }
 
+export type PhaseEvent = {
+  event: 'turn.start' | 'turn.step' | 'tool.call' | 'turn.complete'
+  turn_id?: string
+  reason?: string
+}
+
+// Only the newest event matters to regin's phase machine, so reports are
+// coalesced: one `regin bridge phase` in flight, and whatever arrived meanwhile
+// collapses into the latest. That keeps them in order without holding the turn
+// on a CLI start per model request.
+let pendingPhase: PhaseEvent | null = null
+// Kept beside the TURN state so tool.call can tag its report without an
+// awaited read that could land after the turn's completion was queued.
+let mainTurn: string | null = null
+let sendingPhase = false
+
+export function reportPhase($: EngineInterface, ev: PhaseEvent) {
+  pendingPhase = ev
+  if (!sendingPhase) void drainPhase($)
+}
+
+async function drainPhase($: EngineInterface) {
+  sendingPhase = true
+  try {
+    while (pendingPhase) {
+      const ev = pendingPhase
+      pendingPhase = null
+      // One more attempt for a lost report, unless a newer event replaced it:
+      // a lost turn.complete would otherwise hold the session at working
+      // until the next turn starts.
+      if (!(await sendPhase($, ev)) && !pendingPhase) await sendPhase($, ev)
+    }
+  } finally {
+    sendingPhase = false
+  }
+}
+
+async function sendPhase($: EngineInterface, ev: PhaseEvent): Promise<boolean> {
+  try {
+    const home = await reginHome($)
+    const session = await $.session.id()
+    const { exitCode, stderr } = await $.process.run(
+      [`${home}/.venv/bin/python`, `${home}/cli/regin.py`, 'bridge', 'phase', '--session', session],
+      { cwd: home, stdin: JSON.stringify(ev) },
+    )
+    if (exitCode === 0) return true
+    $.ui.log(`regin-bridge: phase exited ${exitCode}: ${stderr}`, { to: 'debug' })
+  } catch (err) {
+    $.ui.log(`regin-bridge: phase failed: ${String(err)}`, { to: 'debug' })
+  }
+  return false
+}
+
 // Without the child the bridge falls back to tmux on its own, so a listener
 // that fails is a debug line, never an error in the person's session.
 function ended($: EngineInterface, err: unknown) {
@@ -78,11 +131,23 @@ export const register: Register = on => {
     return started
   })
   on('turn.start', async ($, e, next) => {
+    mainTurn = e.turnId
+    reportPhase($, { event: 'turn.start', turn_id: e.turnId })
     await $.state.set(TURN, e.turnId)
+    return next(e)
+  })
+  on('turn.step', async function* ($, e, next) {
+    if (!e.agentId) reportPhase($, { event: 'turn.step', turn_id: e.turnId })
+    return yield* next(e)
+  })
+  on('tool.call', async ($, e, next) => {
+    if (!e.agentId) reportPhase($, { event: 'tool.call', ...(mainTurn ? { turn_id: mainTurn } : {}) })
     return next(e)
   })
   on('turn.complete', async ($, e, next) => {
     if (!e.agentId) {
+      if (mainTurn === e.turnId) mainTurn = null
+      reportPhase($, { event: 'turn.complete', turn_id: e.turnId, reason: e.reason })
       const { value } = await $.state.get(TURN)
       if (value === e.turnId) await $.state.set(TURN, null)
     }

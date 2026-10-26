@@ -41,7 +41,7 @@ from lib.auth import get_current_user, require_editor
 from lib.settings import settings
 from lib.agent_bridge import (store, delivery, commands, files, ansi_html,
                               attachments, attach, mod_channel,
-                              mod_hold)
+                              mod_hold, phase_state)
 from lib import agent_sdk, live_session
 from lib.agent_sdk import registry as sdk_registry
 from lib.tasks import message_gate
@@ -917,6 +917,25 @@ def api_bridge_listen():
     peer = request.environ.get("werkzeug.socket")
     return Response(mod_channel.ndjson_stream(session_id, peer),
                     mimetype="application/x-ndjson")
+
+
+@bridge_bp.route('/api/bridge/phase', methods=['POST'])
+@require_bridge_token
+def api_bridge_phase():
+    """Feed one main-loop turn event of `session_id` to its phase machine."""
+    payload = request.get_json(silent=True) or {}
+    session_id = payload.get("session_id")
+    event = payload.get("event")
+    if not (isinstance(session_id, str) and session_id
+            and event in phase_state.EVENTS):
+        return jsonify({"error": "session_id and a turn event required"}), 400
+    turn_id = payload.get("turn_id")
+    reason = payload.get("reason")
+    phase = phase_state.record(
+        session_id, event,
+        turn_id if isinstance(turn_id, str) else None,
+        reason if isinstance(reason, str) else None)
+    return jsonify({"phase": phase.phase})
 
 
 @bridge_bp.route('/api/bridge/hold', methods=['GET'])

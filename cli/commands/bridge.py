@@ -183,5 +183,38 @@ def cmd_release(
     raise typer.Exit(0 if released else 1)
 
 
+def parse_phase_event(raw: str) -> dict | None:
+    """The `{event, turn_id?, reason?}` on stdin, or None when malformed."""
+    try:
+        ev = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(ev, dict) or not isinstance(ev.get("event"), str):
+        return None
+    return {k: ev[k] for k in ("event", "turn_id", "reason") if k in ev}
+
+
+@bridge_app.command("phase", help="Report one main-loop turn event (JSON on stdin) to the session's phase.")
+def cmd_phase(
+    session: str = typer.Option(..., "--session", help="The session (trace) id."),
+    url: Optional[str] = typer.Option(
+        None, "--url", help="regin server base URL (default: the local server)."),
+) -> None:
+    ev = parse_phase_event(sys.stdin.read())
+    if ev is None:
+        print("bridge phase: stdin is not a turn event {event}", file=sys.stderr)
+        raise typer.Exit(1)
+    try:
+        with _client(url) as client:
+            resp = client.post("/api/bridge/phase", timeout=5,
+                               json={"session_id": session, **ev})
+    except httpx.HTTPError as exc:
+        print(f"bridge phase: {exc}", file=sys.stderr)
+        raise typer.Exit(1)
+    if resp.status_code != 200:
+        print(f"bridge phase refused: HTTP {resp.status_code}", file=sys.stderr)
+        raise typer.Exit(1)
+
+
 def register(app: typer.Typer) -> None:
     app.add_typer(bridge_app)

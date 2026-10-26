@@ -30,6 +30,7 @@ from web.blueprints.trace import trace_bp
 from web.blueprints.trace.sessions import (
     _RUN_ORIGINS,
     _alias_group_ids,
+    _mod_turn_phase,
     _owned_run_phase,
     _roster_with_activity,
     _session_phase,
@@ -291,7 +292,8 @@ def _phase_of(row) -> str:
     roster, activity, ended = _roster_with_activity(row.trace_id)
     phase, _agent_phase = _session_phase(
         activity, roster, row.status == 'ended' or ended,
-        _owned_run_phase(row.trace_id))
+        _owned_run_phase(row.trace_id),
+        turn=_mod_turn_phase(_alias_group_ids(row.trace_id)))
     return phase
 
 

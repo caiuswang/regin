@@ -22,7 +22,8 @@ from web.blueprints.trace.sessions.map_view import (  # noqa: F401
     _bridge_reachability, _is_live_tool_row, _kept_map_attrs,
 )
 from web.blueprints.trace.sessions.phase import (  # noqa: F401
-    _PHASE_PRECEDENCE, _main_phase, _owned_run_phase, _phase_from_roster,
+    _PHASE_PRECEDENCE, _main_phase, _mod_turn_phase, _owned_run_phase,
+    _phase_from_roster,
     _phase_rollup, _session_phase, _session_repo_name, _session_summary,
     _waiting_kind,
 )
