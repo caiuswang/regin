@@ -20,6 +20,12 @@
 // halfway down a long spec; Cancel, or leaving the page, asks before throwing
 // an edited draft away.
 //
+// A paste uploads at once, so the bytes exist before the spec that cites them
+// does. An edit therefore owns what it pasted: Cancel or leaving the page
+// detaches it, and a save detaches every picture the edit pasted or opened
+// citing that the saved text no longer names. An image only the Images card
+// ever attached is never cited, so no edit of the prose can take it away.
+//
 // A tracked feature's spec lives in its issue, and Refresh overwrites
 // `features.body` with the issue's text — so an edit here would be lost on the
 // next refresh. The card is read-only there and points at the tracker instead;
@@ -27,7 +33,7 @@
 //
 // A long spec carries its own outline, in the editor and, past a handful of
 // headings, beside Edit in the read view.
-import { computed, ref } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import api from '../../api'
 import Button from '../ui/Button.vue'
 import Card from '../Card.vue'
@@ -39,7 +45,7 @@ import { OUTLINE_MIN } from '../../editor/outline.js'
 import { useDiscardGuard } from '../../composables/useDiscardGuard'
 import { imageFilesFrom } from '../../utils/imageFiles'
 import { SPEC_ANCHOR } from '../../utils/featureLinks'
-import { IMAGE_REF_HINT, resolveImageRefs } from '../../utils/taskBodyImages'
+import { IMAGE_REF_HINT, imageRefsIn, resolveImageRefs } from '../../utils/taskBodyImages'
 
 const props = defineProps({
   featureId: { type: Number, required: true },
@@ -51,6 +57,8 @@ const props = defineProps({
   // the references written back into the text are made of — and why any
   // other image in the same paste was refused.
   attach: { type: Function, default: null },
+  // Removes the attachment at an `idx` from the shared list and the server.
+  detach: { type: Function, default: null },
   tracked: { type: Boolean, default: false },
   tracker: { type: String, default: '' },
   externalUrl: { type: String, default: null },
@@ -79,8 +87,36 @@ const headingIn = (entry) => bodyView.value?.$el?.querySelector(`#${entry.id}`) 
 
 const rendered = computed(() => resolveImageRefs(props.body, props.images))
 
+// The `idx` the open edit attached through the spec, and those the text cited
+// when it was opened — together, every picture a save may have orphaned.
+let pasted = new Set()
+let cited = new Set()
+
+async function attachHere(source) {
+  const result = await props.attach(source)
+  for (const idx of result?.taken || []) pasted.add(idx)
+  return result
+}
+
+async function detachAll(idxs) {
+  for (const idx of idxs) await props.detach?.(idx)
+}
+
+// Leaving takes the page's image list with it, so the bytes go straight to the
+// server under the id the edit was opened on.
+function abandon(featureId) {
+  if (!editing.value) return
+  for (const idx of pasted) api.del(`/features/${featureId}/images/${idx}`)
+  pasted = new Set()
+  editing.value = false
+}
+onUnmounted(() => abandon(props.featureId))
+watch(() => props.featureId, (_, before) => abandon(before))
+
 function start() {
   draft.value = props.body || ''
+  pasted = new Set()
+  cited = imageRefsIn(draft.value)
   error.value = ''
   editing.value = true
 }
@@ -91,6 +127,9 @@ async function cancel() {
   if (!(await confirmDiscard())) return
   editing.value = false
   error.value = ''
+  const dropped = pasted
+  pasted = new Set()
+  await detachAll(dropped)
 }
 
 async function save() {
@@ -104,6 +143,10 @@ async function save() {
     return
   }
   editing.value = false
+  const kept = imageRefsIn(draft.value)
+  const orphaned = [...new Set([...pasted, ...cited])].filter(idx => !kept.has(idx))
+  pasted = new Set()
+  await detachAll(orphaned)
   // The parent re-seats the whole ledger from the response, so what the page
   // shows after a save is what the server stored — never the local draft.
   emit('saved', res)
@@ -116,7 +159,7 @@ async function takeImages(source, event) {
   error.value = ''
   let result
   try {
-    result = await props.attach(source)
+    result = await attachHere(source)
   } catch (e) {
     error.value = e?.message || 'could not attach the image'
     return
@@ -176,7 +219,7 @@ async function onDrop(e) {
     <template v-if="editing && !tracked">
       <MarkdownEditor
         ref="area"
-        v-model="draft" :project="project" :feature="featureId" :images="images" :attach="attach"
+        v-model="draft" :project="project" :feature="featureId" :images="images" :attach="attach && attachHere"
         preview-testid="feature-spec-rich" :title="title" outline
         class="fs-editor"
         :rows="14" spellcheck="false"

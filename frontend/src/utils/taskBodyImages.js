@@ -15,6 +15,11 @@ const IMAGE_REF = /!\[([^\]]*)\]\(image:(\d+)\)/g
 
 export const IMAGE_REF_HINT = 'Embed an attachment with ![](image:0) — the index is on each thumbnail.'
 
+/** Every `idx` an `![](image:N)` in `markdown` names. */
+export function imageRefsIn(markdown) {
+  return new Set([...(markdown || '').matchAll(IMAGE_REF)].map(m => Number(m[2])))
+}
+
 export function imageRef(idx) {
   return `![](image:${idx})`
 }

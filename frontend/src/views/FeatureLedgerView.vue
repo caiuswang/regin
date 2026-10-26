@@ -90,6 +90,10 @@ async function attachToSpec(source) {
   const taken = await addImages(source)
   return { taken, error: imagesError.value }
 }
+async function detachFromSpec(idx) {
+  const item = imageItems.value.find(i => i.idx === idx && !i.pending)
+  if (item) await removeImage(item)
+}
 const { confirm } = useConfirm()
 
 const user = api.getStoredUser()
@@ -423,6 +427,7 @@ function onDeclared() {
         :images="imageItems"
         :can-write="canWrite"
         :attach="attachToSpec"
+        :detach="detachFromSpec"
         :tracked="!ledger.stage_live"
         :tracker="ledger.origin"
         :external-url="ledger.external_url"
