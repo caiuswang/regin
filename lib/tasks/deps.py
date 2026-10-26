@@ -347,6 +347,7 @@ def node(task: AgentTask, blocked_by: list[int]) -> dict:
         "feature_id": task.feature_id,
         "title": task.title,
         "status": task.status,
+        "kind": task.kind,
         "blocked": bool(blocked_by),
         "blocked_by": blocked_by,
         "runnable": task.status == TASK_STATUS_ARMED and not blocked_by,

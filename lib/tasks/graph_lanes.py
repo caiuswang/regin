@@ -122,8 +122,8 @@ def _hidden_lanes(scoped: dict[int, AgentTask], ask: LaneQuery) -> int:
 
 def _drawing(kept: list[AgentTask], keep: set[int], edges, unmet) -> dict:
     return {
-        "nodes": rows.schedules(rows.live_runs(
-            [deps.node(t, sorted(unmet.get(t.id, []))) for t in kept])),
+        "nodes": rows.fix_defects(rows.schedules(rows.live_runs(
+            [deps.node(t, sorted(unmet.get(t.id, []))) for t in kept]))),
         "edges": [{"task_id": a, "depends_on_id": b, "kind": kind,
                    "blocking": b in unmet.get(a, [])}
                   for a, b, kind in edges if a in keep and b in keep],

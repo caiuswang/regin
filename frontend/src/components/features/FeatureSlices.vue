@@ -1,6 +1,7 @@
 <script setup>
 // The spec's slice table, read by the server exactly as `regin task
-// slice-check` / `transcribe` read it: the refusal verbatim, or each row beside
+// slice-check` / `transcribe` read it: the spec's problems (each with its line)
+// or the refusal verbatim, and each row beside
 // the task transcription made of it. The three verbs are the CLI's, over the
 // same `lib/tasks` functions, so the ledger and a terminal cannot slice one
 // spec two ways.
@@ -46,6 +47,9 @@ const rows = computed(() => report.value?.rows || [])
 const ideas = computed(() => rows.value.filter(r => r.task_status === 'idea'))
 const canTail = computed(() => props.canWrite && !props.tracked && report.value?.tail_missing)
 const canTranscribe = computed(() => props.canWrite && report.value?.sliceable)
+// The spec reader's problems — the list slice-check and transcribe refuse on.
+const problems = computed(() => report.value?.problems || [])
+const coverage = computed(() => report.value?.scenarios || { covered: 0, total: 0 })
 
 // One writer at a time, and a refusal lands here beside the verbs (I6).
 async function send(verb, path) {
@@ -103,6 +107,9 @@ async function onArmed() {
       <div>
         <h2 class="card-header fs-title">Slices</h2>
         <p class="fs-sub">the spec's slice table — transcribe it into tasks, then arm them</p>
+        <p v-if="problems.length" class="fs-coverage" data-testid="slices-coverage">
+          {{ coverage.covered }}/{{ coverage.total }} scenarios covered
+        </p>
       </div>
       <div v-if="report" class="fs-verbs">
         <Button
@@ -126,7 +133,13 @@ async function onArmed() {
       <li v-for="r in refusedRows" :key="r.n"><b>{{ r.n }}</b> — {{ r.reason }}</li>
     </ul>
 
-    <div v-if="report?.refusal" class="fs-refusal" data-testid="slices-refusal">
+    <ul v-if="problems.length" class="fs-refusal fs-problems" data-testid="slices-problems">
+      <li v-for="(p, i) in problems" :key="i" :data-code="p.code">
+        <span class="fs-line">{{ p.line != null ? `L${p.line}` : '—' }}</span>
+        <code>{{ p.code }}</code> <b>{{ p.subject }}</b> — {{ p.message }}
+      </li>
+    </ul>
+    <div v-else-if="report?.refusal" class="fs-refusal" data-testid="slices-refusal">
       <p>{{ report.refusal.message }}</p>
       <ul v-if="report.refusal.missing.length > 1">
         <li v-for="m in report.refusal.missing" :key="m">{{ m }}</li>
@@ -143,6 +156,10 @@ async function onArmed() {
       >
         <span class="fs-n">{{ r.n }}</span>
         <span class="fs-name">{{ r.title }}</span>
+        <span
+          v-if="r.tests?.length" class="fs-meta" :title="r.tests.join('\n')"
+          :data-testid="`slice-tests-${r.n}`"
+        >{{ r.tests.length }} tests</span>
         <span v-if="r.depends_on.length" class="fs-meta">after {{ r.depends_on.join(', ') }}</span>
         <span class="fs-meta">{{ r.base }}</span>
         <router-link
@@ -182,6 +199,9 @@ async function onArmed() {
     padding: 0.35rem 0.5rem;
 }
 .fs-refusal ul, .fs-refused { list-style: disc; padding-left: 1.4rem; }
+.fs-coverage { font-size: 11.5px; color: var(--color-amber-800); margin-top: 0.15rem; }
+.fs-problems { list-style: none; display: flex; flex-direction: column; gap: 0.15rem; }
+.fs-line { font-family: var(--font-mono, monospace); color: var(--color-fg-subtle); margin-right: 0.35rem; }
 .fs-row { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
 .fs-n { font-family: var(--font-mono, monospace); font-size: 11.5px; color: var(--color-fg-faint); flex: none; }
 .fs-name { font-size: 0.8125rem; flex: 1 1 12rem; min-width: 0; color: var(--color-fg); }

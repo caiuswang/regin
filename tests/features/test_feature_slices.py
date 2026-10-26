@@ -24,9 +24,16 @@ runner = CliRunner()
 
 ACCEPTANCE = """## Acceptance
 
-- test_a
-- test_b
-- test_c
+```gherkin
+Scenario: test_a
+  Then a
+
+Scenario: test_b
+  Then b
+
+Scenario: test_c
+  Then c
+```
 """
 
 HEADER = ("| # | Slice | Delivers | Spec refs | Tests | Depends on | Base | "
@@ -88,7 +95,8 @@ def _assert_refusals_are_verbatim(client) -> None:
                      + HEADER + ROWS)
     body = _report(client, prose)
     assert body["sliceable"] is False
-    assert body["refusal"]["missing"][0].startswith("no Acceptance section")
+    assert body["refusal"]["missing"][0].startswith("no_acceptance")
+    assert [p["code"] for p in body["problems"]] == ["no_acceptance"]
     # The table is still shown while the spec is fixed.
     assert [r["n"] for r in body["rows"]] == ["S1", "S2", "S3"]
 
@@ -104,7 +112,7 @@ def _assert_rows_carry_their_tasks(client) -> None:
     assert (body["sliceable"], body["refusal"], body["tail_missing"]) == (
         True, None, True)
     assert body["rows"][1] == {
-        "n": "S2", "title": "runner", "depends_on": ["S1"],
+        "n": "S2", "title": "runner", "depends_on": ["S1"], "tests": ["test_b"],
         "base": "f9/integration", "skill": "goal-verified-treenav",
         "task_id": None, "task_status": None}
 

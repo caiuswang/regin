@@ -319,6 +319,22 @@ def spec_cmd(
         typer.echo(str(exc), err=True)
         raise typer.Exit(2)
     typer.echo(f"#{row.id}  spec {len(row.body or '')} characters")
+    if row.body:
+        from lib.specs.reader import problems_summary  # noqa: PLC0415
+        _echo_problems(problems_summary(row.body))
+
+
+def _echo_problems(summary: dict) -> None:
+    """What slicing will say about the draft just stored — told, not enforced."""
+    if not summary["count"]:
+        typer.echo("problems: 0 — slice-check would accept this spec")
+        return
+    typer.echo(f"problems: {summary['count']} — slice-check would refuse; first "
+               f"{len(summary['first'])}:")
+    for problem in summary["first"]:
+        where = f"L{problem['line']} " if problem["line"] is not None else ""
+        typer.echo(f"  {where}{problem['code']} {problem['subject']}: "
+                   f"{problem['message']}")
 
 
 @feature_app.command("image")

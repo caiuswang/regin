@@ -985,6 +985,28 @@ def _refuse_with_open_defects(task_id: int, run_id: int) -> None:
         blocking=ids)
 
 
+def _refuse_with_missing_tests(task_id: int, run_id: int) -> None:
+    """A build slice reported done whose named tests do not exist is refused."""
+    from lib.tasks import slice_tests  # noqa: PLC0415 — slice_tests imports transcribe
+
+    try:
+        missing, root = slice_tests.missing_tests(task_id, run_id)
+    except slice_tests.CheckoutGone as exc:
+        raise RunRefused(
+            f"task #{task_id}: {exc}. Finish from the worktree the run used, "
+            "or with --status failed.") from None
+    if not missing:
+        return
+    log.warn("task_run_finish_refused", run_id=run_id, task_id=task_id,
+             missing_tests=",".join(missing))
+    raise RunRefused(
+        f"task #{task_id} names {len(missing)} acceptance test(s) that do not "
+        f"exist in {root}: {', '.join(missing)}. Write them (a pytest "
+        "`def test_…` or a JS `test('test_… …')`), then finish again; if the "
+        "slice cannot deliver them, finish with --status failed.",
+        blocking=missing)
+
+
 def finish_run(run_id: int, *, status: str = RUN_STATUS_DONE,
                reason: str = "", in_server: bool = True,
                task_id: Optional[int] = None) -> dict:
@@ -1023,6 +1045,7 @@ def finish_run(run_id: int, *, status: str = RUN_STATUS_DONE,
                 "fired": []}
     if status == RUN_STATUS_DONE:
         _refuse_with_open_defects(task_id, run_id)
+        _refuse_with_missing_tests(task_id, run_id)
     # Before the default is substituted: only what the AGENT actually wrote is
     # a report. "agent signalled finish" is regin talking to itself.
     if reason.strip():

@@ -36,6 +36,7 @@ from lib.features import sync as sync_module
 from lib.refs import backlinks
 from lib.tasks import feature_slices
 from lib.tasks.integrations import IntegrationError
+from lib.specs.reader import problems_summary
 from lib.tasks.transcribe import TranscribeRefused
 from lib.tasks.query import FilterRejected
 from lib.utils.pagination import clamp_page, clamp_size
@@ -176,7 +177,10 @@ def api_feature_edit(feature_id):
     except feature_store.FeatureError as exc:
         return jsonify({"error": str(exc),
                         "field": getattr(exc, "field", None)}), 400
-    return jsonify(_ledger_body(feature_id))
+    out = _ledger_body(feature_id)
+    if "body" in payload:
+        out["spec_problems"] = problems_summary(payload["body"] or "")
+    return jsonify(out)
 
 
 @features_bp.route("/api/features/<int:feature_id>/branches")
@@ -346,7 +350,9 @@ def _slices_call(fn, *args, ok_status: int = 200):
         result = fn(*args)
     except feature_store.FeatureError as exc:
         return jsonify({"error": str(exc)}), 404
-    except (feature_slices.SlicesRefused, TranscribeRefused) as exc:
+    except feature_slices.SlicesRefused as exc:
+        return jsonify({"error": str(exc), "problems": exc.problems}), 409
+    except TranscribeRefused as exc:
         return jsonify({"error": str(exc)}), 409
     except feature_slices.SlicesRejected as exc:
         return jsonify({"error": str(exc)}), 400

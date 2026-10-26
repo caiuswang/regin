@@ -118,8 +118,10 @@ def feature_set_spec(feature_id: int, spec: str) -> dict:
     _common.feature(feature_id)
     if not spec.strip():
         raise ValueError("the spec given is empty — nothing written")
+    from lib.specs.reader import problems_summary
     row = store.set_body(feature_id, spec)
-    return {"id": row.id, "spec_chars": len(row.body or "")}
+    return {"id": row.id, "spec_chars": len(row.body or ""),
+            "problems": problems_summary(row.body or "")}
 
 
 def _set_fields(feature_id: int, title, project, branch) -> None:

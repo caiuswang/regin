@@ -8,12 +8,11 @@ plan rather than transcribing one.
 Two refusals live here, and both are refusals of the *spec*, not of the
 table's syntax (that belongs to `slice_table`):
 
-A spec with no falsifiable acceptance item cannot be sliced at all. A
-slice's `tests` column holds the *names* of acceptance tests, so a spec
-that names none has nothing to put there — slicing it would produce rows
-whose verification is a sentence of prose, which is the thing the whole
-pipeline exists to stop. The refusal names what is missing, because "this
-spec is not ready" is not actionable against a thousand-line document.
+A spec whose `lib.specs.read_spec` reports any problem cannot be sliced:
+no Gherkin acceptance, a scenario with no test name, a malformed table, or
+a table that does not give every acceptance name to exactly one build
+slice. The refusal lists every problem with its line, because "this spec
+is not ready" is not actionable against a thousand-line document.
 
 A schema change belongs to exactly one slice. Two slices both editing
 `db/schema.sql` and both adding an alembic revision is the migration
@@ -23,32 +22,14 @@ so it is refused while it is still a table, when moving it costs an edit.
 
 from __future__ import annotations
 
-import re
 from typing import Iterable, Optional, Sequence
 
 from lib.activity_log import get_activity_logger
-from lib.tasks.slice_table import (
-    SliceRow, SliceTableError, parse_slice_table, table_bounds)
+from lib.specs.problems import Problem
+from lib.specs.reader import read_spec
+from lib.tasks.slice_table import SliceRow, table_bounds
 
 log = get_activity_logger("tasks")
-
-#: A heading that opens the spec's falsifiable section. Matched as whole
-#: words, so "## Acceptance" and "### 验收" count and "## Unacceptable
-#: latency" does not — a substring match let any heading containing the
-#: letters hijack the scan.
-ACCEPTANCE_HEADING_RE = re.compile(
-    r"(?:^|[^0-9a-z])(?:acceptance|验收)(?:[^0-9a-z]|$)", re.IGNORECASE)
-
-#: A bare `test_…` token anywhere in the acceptance section names a test.
-TEST_NAME_RE = re.compile(r"\btest_[0-9a-z_]+\b")
-
-#: A Gherkin scenario's title is a test name too, once transcribed to
-#: `test_<snake_case>`: spec-notation lets Acceptance be Gherkin, and a
-#: titled scenario is as falsifiable as a `test_` token. Only the title is
-#: read — a paragraph of prose still names nothing a runner can be handed.
-SCENARIO_RE = re.compile(
-    r"^\s*(?:Scenario(?: Outline)?|Example):\s*(.+?)\s*$")
-_SLUG_WORD_RE = re.compile(r"[0-9a-z]+")
 
 #: Text that claims a slice changes the database's shape. Slicing reads the
 #: `delivers` cell for these because that cell is where a slice says what it
@@ -102,135 +83,28 @@ class SlicingRefusal(ValueError):
     """
 
     def __init__(self, message: str, missing: Optional[Sequence[str]] = None,
-                 rows: Optional[Sequence[str]] = None) -> None:
+                 rows: Optional[Sequence[str]] = None,
+                 problems: Optional[Sequence[Problem]] = None) -> None:
         super().__init__(message)
         self.missing: list[str] = list(missing or ())
         self.rows: list[str] = list(rows or ())
+        self.problems: list[Problem] = list(problems or ())
+
+    @property
+    def reason(self) -> str:
+        return "problems" if self.problems else "schema"
 
 
-_FENCE_RE = re.compile(r"^\s*(```|~~~)")
-
-
-def _heading_levels(body: str) -> list[int]:
-    """Per line, its markdown heading level — 0 for anything that is not one.
-
-    Fenced code is not markdown, and a spec's acceptance section is mostly
-    fenced Gherkin whose comments start with `#`. Reading `# R1` inside a
-    ```gherkin block as an h1 ends the section at its first line, which is
-    how a spec full of named scenarios reads as naming none.
-    """
-    levels: list[int] = []
-    fenced = False
-    for line in body.splitlines():
-        if _FENCE_RE.match(line):
-            fenced = not fenced
-            levels.append(0)
-            continue
-        if fenced:
-            levels.append(0)
-            continue
-        stripped = line.lstrip()
-        hashes = len(stripped) - len(stripped.lstrip("#"))
-        levels.append(hashes if 0 < hashes <= 6 else 0)
-    return levels
-
-
-def _acceptance_sections(body: str) -> list[str]:
-    lines = body.splitlines()
-    levels = _heading_levels(body)
-    sections: list[str] = []
-    for index, line in enumerate(lines):
-        level = levels[index]
-        if not level or not ACCEPTANCE_HEADING_RE.search(line.lstrip("#")):
-            continue
-        collected: list[str] = []
-        for offset, following in enumerate(lines[index + 1:], start=index + 1):
-            if 0 < levels[offset] <= level:
-                break
-            collected.append(following)
-        sections.append("\n".join(collected))
-    return sections
-
-
-def _scenario_test_names(title: str) -> list[str]:
-    """The test names a scenario title yields — its `test_` tokens, else its slug."""
-    explicit = TEST_NAME_RE.findall(title)
-    if explicit:
-        return explicit
-    words = _SLUG_WORD_RE.findall(title.lower())
-    return ["test_" + "_".join(words)] if words else []
-
-
-def _section_test_names(section: str) -> list[str]:
-    seen: dict[str, None] = {}
-    for line in section.splitlines():
-        scenario = SCENARIO_RE.match(line)
-        names = (_scenario_test_names(scenario.group(1)) if scenario
-                 else TEST_NAME_RE.findall(line))
-        for name in names:
-            seen.setdefault(name, None)
-    return list(seen)
-
-
-def acceptance_section(body: str) -> Optional[str]:
-    """The spec's acceptance section verbatim, or None if it has none.
-
-    A spec may carry more than one — a superseded draft kept above the real
-    one, an "Acceptance of risk" aside. The section that *names tests* wins,
-    because taking the first match refused a sliceable spec on the strength
-    of a heading somebody left behind.
-    """
-    sections = _acceptance_sections(body)
-    if not sections:
-        return None
-    for names_tests in (TEST_NAME_RE.search, _section_test_names):
-        for section in sections:
-            if names_tests(section):
-                return section
-    return sections[0]
+def _problems_refusal(problems: Sequence[Problem]) -> SlicingRefusal:
+    lines = [problem.render() for problem in problems]
+    return SlicingRefusal(
+        f"this spec cannot be sliced — {len(lines)} problem(s):\n  "
+        + "\n  ".join(lines), missing=lines, problems=problems)
 
 
 def acceptance_test_names(body: str) -> list[str]:
     """Every acceptance test the spec names, in order, deduplicated."""
-    section = acceptance_section(body)
-    if section is None:
-        return []
-    return _section_test_names(section)
-
-
-def _acceptance_missing(body: str) -> tuple[list[str], list[str]]:
-    """(test names, what is missing) — exactly one of the two is non-empty."""
-    if not (body or "").strip():
-        return [], ["the spec is empty"]
-    if acceptance_section(body) is None:
-        return [], [
-            "no Acceptance section — a spec is sliceable when it says, in a "
-            "section named Acceptance, what would falsify it"]
-    names = acceptance_test_names(body)
-    if names:
-        return names, []
-    return [], [
-        "the Acceptance section names no test — a slice's Tests column "
-        "holds test names, so give it test_… names or titled Gherkin "
-        "`Scenario:` lines, not a paragraph of prose"]
-
-
-def _acceptance_refusal(missing: list[str]) -> SlicingRefusal:
-    return SlicingRefusal(
-        "this spec cannot be sliced: " + "; ".join(missing), missing=missing)
-
-
-def check_spec_is_sliceable(body: str) -> list[str]:
-    """Refuse a spec that names no falsifiable acceptance item.
-
-    Returns the test names when the spec is sliceable, so the caller that
-    checked does not have to scan the document twice.
-    """
-    names, missing = _acceptance_missing(body)
-    if names:
-        return names
-    log.write("slicing_refused", reason="acceptance", missing=len(missing))
-    raise _acceptance_refusal(missing)
+    return list(dict.fromkeys(read_spec(body).acceptance_names))
 
 
 def _claims_schema(row: SliceRow) -> bool:
@@ -270,15 +144,18 @@ def check_schema_ownership(rows: Sequence[SliceRow]) -> Optional[str]:
 
 
 def check_slicing(spec_body: str) -> list[SliceRow]:
-    """The whole first-pass gate: a sliceable spec with a sound table.
+    """The whole first-pass gate: a spec whose `read_spec` problems are none,
+    and whose table gives a schema change to at most one slice.
 
-    Wholesale, in the order a human can act on: a spec with no acceptance
-    item is refused before its table is read, because rewriting the table
-    of a spec that cannot be sliced is wasted work.
+    Every problem at once, with its line, so one round of edits can fix the
+    spec — the same list `preview` and the slices report carry, because all
+    three read it from `read_spec`.
     """
-    check_spec_is_sliceable(spec_body)
-    rows = parse_slice_table(spec_body)
-    check_schema_ownership(rows)
+    rows, refusal = preview(spec_body)
+    if refusal is not None:
+        log.write("slicing_refused", reason=refusal.reason,
+                  problems=len(refusal.problems))
+        raise refusal
     return rows
 
 
@@ -289,13 +166,10 @@ def preview(spec_body: str) -> tuple[list[SliceRow], Optional[SlicingRefusal]]:
     `next_step` — where a `slicing_refused` activity row per read would
     record a page view as if an operator had tried to slice.
     """
-    _, missing = _acceptance_missing(spec_body)
-    if missing:
-        return [], _acceptance_refusal(missing)
-    try:
-        rows = parse_slice_table(spec_body)
-    except SliceTableError as exc:
-        return [], SlicingRefusal(str(exc), missing=[str(exc)])
+    doc = read_spec(spec_body)
+    rows = doc.slices or []
+    if doc.problems:
+        return rows, _problems_refusal(doc.problems)
     owners = slices_owning_schema(rows)
     if len(owners) > 1:
         return rows, _schema_refusal(owners)

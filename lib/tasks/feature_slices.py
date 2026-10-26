@@ -30,7 +30,8 @@ from lib.tasks import runs, store
 from lib.tasks.capture import CaptureRejected
 from lib.tasks.commands import CommandsError, load_project_commands
 from lib.tasks.slice_table import SliceRow, SliceTableError, parse_slice_table
-from lib.tasks.slicing import SlicingRefusal, append_rows, preview
+from lib.specs.reader import read_spec
+from lib.tasks.slicing import SlicingRefusal, append_rows, check_slicing, preview
 from lib.tasks.tail import has_tail, tail_slice_rows
 from lib.tasks.transcribe import (
     Transcription, TranscribeRefused, arm_proposal, branch_for, check_graph,
@@ -41,7 +42,13 @@ log = get_activity_logger("tasks")
 
 
 class SlicesRefused(ValueError):
-    """The feature's state refuses the verb — the request itself was sound."""
+    """The feature's state refuses the verb — the request itself was sound.
+
+    `problems` carries the spec's `read_spec` problems when that is why."""
+
+    def __init__(self, message: str, problems=()) -> None:
+        super().__init__(message)
+        self.problems = [p.to_dict() for p in problems]
 
 
 class SlicesRejected(ValueError):
@@ -72,21 +79,26 @@ def _refusal(body: str, rows: list[SliceRow]) -> Optional[dict]:
 
 
 def report(feature_id: int) -> dict:
-    """The feature's `SlicesReport`: whether its spec slices, and each row
-    beside the task transcription made of it.
+    """The feature's `SlicesReport`: whether its spec slices, its problems,
+    and each row beside the task transcription made of it.
 
-    The rows are read even when slicing is refused for want of an acceptance
-    section, so a table the author has already written stays visible while
-    the reason it cannot be transcribed is fixed.
+    The rows are read even when slicing is refused, so a table the author has
+    already written stays visible while the reason it cannot be transcribed
+    is fixed. `problems` is `read_spec`'s list — the one slice-check, preview
+    and transcribe refuse on.
     """
     feature = feature_store.require(feature_id)
     body = feature.body or ""
+    doc = read_spec(body)
     rows = _rows_or_empty(body)
     refusal = _refusal(body, rows)
     tasks = existing_slices(feature_id, rows) if rows else {}
+    covered, total = doc.coverage()
     return {
         "sliceable": refusal is None,
         "refusal": refusal,
+        "problems": [problem.to_dict() for problem in doc.problems],
+        "scenarios": {"covered": covered, "total": total},
         "tail_missing": bool(rows) and not has_tail(rows),
         "rows": [_row_view(row, tasks.get(row.n)) for row in rows],
     }
@@ -96,6 +108,7 @@ def _row_view(row: SliceRow, task: Optional[AgentTask]) -> dict:
     return {
         "n": row.n, "title": row.title,
         "depends_on": [str(dep) for dep in row.depends_on],
+        "tests": list(row.tests),
         "base": row.base, "skill": row.skill,
         "task_id": task.id if task is not None else None,
         "task_status": task.status if task is not None else None,
@@ -158,12 +171,18 @@ def append_tail(feature_id: int, *, base: Optional[str] = None,
 
 def transcribe_feature(feature_id: int, *,
                        branch_prefix: Optional[str] = None) -> Transcription:
-    """`regin task transcribe`, for any caller."""
+    """`regin task transcribe`, for any caller — CLI, MCP, API and the UI
+    button all land here, so the slicing gate runs on every path before a
+    single task is written."""
     feature = feature_store.require(feature_id)
     if not (feature.body or "").strip():
         raise SlicesRefused(
             f"feature #{feature_id} has no spec — the slice table is the plan "
             "and there is nowhere else to read it from")
+    try:
+        check_slicing(feature.body)
+    except SlicingRefusal as exc:
+        raise SlicesRefused(str(exc), exc.problems) from exc
     return transcribe(
         feature_id, feature.body,
         branch_prefix=branch_prefix or default_branch_prefix(feature_id))

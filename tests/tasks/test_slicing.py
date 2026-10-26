@@ -6,12 +6,11 @@ import dataclasses
 
 import pytest
 
+from lib.specs.reader import read_spec
 from lib.tasks.slice_table import parse_slice_table
 from lib.tasks.slicing import (
-    SlicingRefusal, acceptance_section, acceptance_test_names,
-    check_schema_ownership,
-    check_slicing, check_spec_is_sliceable, render_slice_table,
-    slices_owning_schema)
+    SlicingRefusal, acceptance_test_names, check_schema_ownership,
+    check_slicing, render_slice_table, slices_owning_schema)
 
 HEADER = "| # | Slice | Delivers | Spec refs | Tests | Depends on | Base |"
 DIVIDER = "|---|---|---|---|---|---|---|"
@@ -21,21 +20,28 @@ def _table(*rows: str) -> str:
     return "\n".join(["**Base: `master`**", "", HEADER, DIVIDER, *rows])
 
 
+def _codes(body: str) -> list[str]:
+    return [problem.code for problem in read_spec(body).problems]
+
+
 ACCEPTANCE = """
 ## Acceptance
 
 ```gherkin
-Scenario: test_the_reader_refuses_a_missing_key
+Scenario: test_a
   Given a table with only two keys
   Then  it refuses
 
-Scenario: test_the_draft_is_not_written
+Scenario: test_b
   Then  no file is created
+
+Scenario: test_c
+  Then  it runs
 ```
 """
 
 SPEC = ACCEPTANCE + "\n## Work slices\n\n" + _table(
-    "| S0 | contracts | the two contracts | R1 | test_a | — | `master` |",
+    "| S0 | contracts | the two contracts | R1 | test_a, test_b | — | `master` |",
     "| S1 | runner | R4 in full | R4 | test_c | S0 | integration |",
 )
 
@@ -46,10 +52,7 @@ def test_a_sliceable_spec_yields_its_rows():
 
 
 def test_acceptance_test_names_are_read_in_order():
-    assert acceptance_test_names(SPEC) == [
-        "test_the_reader_refuses_a_missing_key",
-        "test_the_draft_is_not_written",
-    ]
+    assert acceptance_test_names(SPEC) == ["test_a", "test_b", "test_c"]
 
 
 def test_slicing_refuses_a_spec_without_named_tests():
@@ -57,77 +60,71 @@ def test_slicing_refuses_a_spec_without_named_tests():
     prose = """
 ## Acceptance
 
-The feature is done when the operator is happy with it and the table reads
+The feature is done when the operator is happy with it and test_a reads
 well. It should feel fast.
 
 ## Work slices
 """ + _table("| S0 | contracts | the two contracts | R1 | test_a | — | m |")
     with pytest.raises(SlicingRefusal) as caught:
         check_slicing(prose)
-    assert caught.value.missing
-    assert "names no test" in caught.value.missing[0]
-    assert "test_" in str(caught.value)
+    assert [p.code for p in caught.value.problems] == ["no_acceptance"]
+    assert "gherkin" in str(caught.value)
 
 
 GHERKIN_ACCEPTANCE = """
 ## Acceptance
+
+```gherkin
 Feature: production Python complexity
 
   Scenario: no production function at radon grade C or worse
     When I run radon
     Then it prints no block lines
 
-  Scenario Outline: 1.1 — the list is readable
-    Then no file exceeds 1000 lines
+  Scenario Outline: 1.1 the list is readable
+    Then no file exceeds <n> lines
+
+    Examples:
+      | n    |
+      | 1000 |
+```
 
 ## Build vehicle
 """
 
 
-def test_a_gherkin_scenario_title_is_a_test_name():
-    """spec-notation lets Acceptance be Gherkin; its titles are the names."""
-    assert check_spec_is_sliceable(GHERKIN_ACCEPTANCE) == [
+def test_an_ascii_scenario_title_slugs_to_its_test_name():
+    assert acceptance_test_names(GHERKIN_ACCEPTANCE) == [
         "test_no_production_function_at_radon_grade_c_or_worse",
         "test_1_1_the_list_is_readable",
     ]
 
 
 def test_an_explicit_test_name_in_a_scenario_title_wins_over_its_slug():
-    body = ("## Acceptance\n\nScenario: test_reader_refuses — the reader "
-            "refuses a missing key\n  Then it refuses\n")
+    body = ("## Acceptance\n\n```gherkin\nScenario: test_reader_refuses — "
+            "the reader refuses a missing key\n  Then it refuses\n```\n")
     assert acceptance_test_names(body) == ["test_reader_refuses"]
 
 
-def test_an_explicit_test_name_section_beats_a_titled_scenario_draft():
-    body = ("## Acceptance (superseded)\n\nScenario: we discussed whether it "
-            "should feel fast\n\n## Acceptance\n\n- test_real_one\n")
-    assert acceptance_test_names(body) == ["test_real_one"]
-
-
-def test_a_scenario_title_with_no_ascii_word_names_no_test():
-    body = "## 验收\n\nScenario: 侧边栏只有一个\n  Then 通过\n"
-    with pytest.raises(SlicingRefusal) as caught:
-        check_spec_is_sliceable(body)
-    assert "names no test" in caught.value.missing[0]
+def test_two_explicit_names_in_one_title_name_no_test():
+    body = ("## Acceptance\n\n```gherkin\nScenario: test_one or test_two\n"
+            "  Then it refuses\n```\n")
+    assert "no_test_name" in _codes(body)
 
 
 def test_slicing_refuses_a_spec_with_no_acceptance_section_at_all():
-    with pytest.raises(SlicingRefusal) as caught:
-        check_spec_is_sliceable("## Intent\n\nmake it nice.\n")
-    assert "no Acceptance section" in caught.value.missing[0]
+    assert _codes("## Intent\n\nmake it nice.\n")[0] == "no_acceptance"
 
 
 def test_slicing_refuses_an_empty_spec():
-    with pytest.raises(SlicingRefusal) as caught:
-        check_spec_is_sliceable("   ")
-    assert caught.value.missing == ["the spec is empty"]
+    assert _codes("   ")[0] == "no_acceptance"
 
 
-def test_a_test_name_outside_the_acceptance_section_does_not_count():
+def test_a_gherkin_block_outside_the_acceptance_section_does_not_count():
     """Only the falsifiable section counts — otherwise any mention passes."""
-    body = "## Intent\n\nwe will write test_something.\n\n## Acceptance\n\nsoon.\n"
-    with pytest.raises(SlicingRefusal):
-        check_spec_is_sliceable(body)
+    body = ("## Intent\n\n```gherkin\nScenario: test_something\n  Then x\n```"
+            "\n\n## Acceptance\n\nsoon.\n")
+    assert _codes(body)[0] == "no_acceptance"
 
 
 def test_slicing_refuses_two_slices_owning_one_schema_change():
@@ -150,7 +147,7 @@ def test_one_slice_owning_the_schema_change_is_accepted():
     body = ACCEPTANCE + "\n" + _table(
         "| S0 | store | a new alembic revision for the runs table | R1 | "
         "test_a | — | master |",
-        "| S1 | reader | reads it | R2 | test_b | S0 | integration |",
+        "| S1 | reader | reads it | R2 | test_b, test_c | S0 | integration |",
     )
     rows = check_slicing(body)
     assert check_schema_ownership(rows) == "S0"
@@ -195,7 +192,7 @@ Scenario: test_second_rule
 ```
 
 ## Work slices
-""" + _table("| S0 | a | b | R1 | test_first_rule | — | master |")
+""" + _table("| S0 | a | b | R1 | test_first_rule, test_second_rule | — | master |")
     assert acceptance_test_names(body) == ["test_first_rule",
                                            "test_second_rule"]
     assert [row.n for row in check_slicing(body)] == ["S0"]
@@ -221,7 +218,8 @@ Scenario: test_the_real_one
 
 
 def test_a_heading_merely_containing_the_word_is_not_the_section():
-    assert acceptance_section("# Unacceptable latency\n\ntest_bogus\n") is None
+    body = "# Unacceptable latency\n\n```gherkin\nScenario: test_bogus\n  Then x\n```\n"
+    assert _codes(body)[0] == "no_acceptance"
 
 
 def test_a_slice_disclaiming_a_schema_change_is_not_an_owner():
@@ -258,7 +256,7 @@ def test_the_rendered_table_carries_the_schema_owner():
         "| # | Slice | Delivers | Spec refs | Tests | Schema | Depends on | Base |",
         "|---|---|---|---|---|---|---|---|",
         "| S0 | store | holds the runs table | R1 | test_a | yes | — | master |",
-        "| S1 | reader | reads it | R2 | test_b | — | S0 | integration |",
+        "| S1 | reader | reads it | R2 | test_b, test_c | — | S0 | integration |",
     ])
     rows = check_slicing(body)
     assert slices_owning_schema(rows) == ["S0"]

@@ -504,8 +504,9 @@ def cmd_slice_check(
         rows = check_slicing(row.body or "")
     except SlicingRefusal as refusal:
         typer.echo(f"task slice-check: {refusal}", err=True)
-        for reason in refusal.missing:
-            typer.echo(f"  - {reason}", err=True)
+        if not refusal.problems:
+            for reason in refusal.missing:
+                typer.echo(f"  - {reason}", err=True)
         raise typer.Exit(code=1)
     except SliceTableError as broken:
         typer.echo(f"task slice-check: {broken}", err=True)
