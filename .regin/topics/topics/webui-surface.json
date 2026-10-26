@@ -49,10 +49,6 @@
       "path": "frontend/src/views/AuditView.vue"
     },
     {
-      "path": "frontend/src/views/DashboardView.vue",
-      "tier": "reference"
-    },
-    {
       "path": "frontend/src/views/ExperimentDetailView.vue",
       "tier": "reference"
     },

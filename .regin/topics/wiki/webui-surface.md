@@ -33,7 +33,7 @@ The sidebar is built from the `navGroups` computed in `AppLayout.vue:62`; the sa
 
 The sidebar shows only landing links; detail routes are reached by navigating in. Full route→view bindings in `router.js`: `/repos/:name` RepoDetailView, `/repos/:name/topics` RepoTopicsView, `/repos/:name/topics/compare` RevisionCompareView, `/patterns/:slug` PatternDetailView, `/skills/:id` SkillDetailView, `/rules/:id` RuleDetailView, `/experiments/:id` ExperimentDetailView, `/plans/:filename` PlanDetailView.
 
-**Not in the sidebar** (reachable by URL / menu): `/` DashboardView (landing) · `/login` LoginView (public) · `/account` UsersView (opened from the sidebar user pill) · `/ds` DesignSystemView (component gallery) · any unmatched path → NotFoundView.
+**Not in the sidebar** (reachable by URL / menu): `/` (redirects to `/overview`, the Pipeline) · `/login` LoginView (public) · `/account` UsersView (opened from the sidebar user pill) · `/ds` DesignSystemView (component gallery) · any unmatched path → NotFoundView.
 
 ### `/trace` is a nested route
 

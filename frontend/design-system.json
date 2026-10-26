@@ -1610,7 +1610,6 @@
     "views": [
       "src/views/ApiKeysView.vue",
       "src/views/AuditView.vue",
-      "src/views/DashboardView.vue",
       "src/views/DefectsView.vue",
       "src/views/DesignSystemView.vue",
       "src/views/ExperimentDetailView.vue",

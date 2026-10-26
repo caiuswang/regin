@@ -15,6 +15,6 @@ const route = useRoute()
         </p>
       </div>
     </div>
-    <router-link to="/" class="text-link">← Back to the dashboard</router-link>
+    <router-link to="/" class="text-link">← Back to the Pipeline</router-link>
   </div>
 </template>

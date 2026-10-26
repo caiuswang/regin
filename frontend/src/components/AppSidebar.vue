@@ -52,7 +52,7 @@ function linkName(link) {
       <router-link
         to="/"
         class="sb-brand-mark no-underline focus-visible:outline-2 focus-visible:outline-blue-500"
-        aria-label="regin — dashboard"
+        aria-label="regin — Pipeline"
       >r</router-link>
       <div v-if="!collapsed" class="min-w-0 flex-1">
         <router-link to="/" class="sb-brand-name no-underline focus-visible:outline-2 focus-visible:outline-blue-500">regin</router-link>

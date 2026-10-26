@@ -1,36 +1,24 @@
 """Unit tests for web.blueprints.meta JSON API.
 
-Covers /api/status, /api/doctor, /api/dashboard, /api/repos/<name>.
+Covers /api/status, /api/doctor, /api/repos/<name>.
 All endpoints are unauthenticated.
 """
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import pytest
 
 from lib.orm import SessionLocal
-from lib.orm.models import Branch, PatternDeployment, PatternDoc, Repo, Tag
+from lib.orm.models import Branch, PatternDeployment, PatternDoc, Repo
 
 
 @pytest.fixture
 def stubbed_deps(monkeypatch):
-    """Replace heavy external deps with no-op stubs at the blueprint binding."""
     from web.blueprints import meta as meta_bp
-    from lib import settings as settings_mod
-    monkeypatch.setattr(meta_bp, "_ss", type("X", (), {
-        "list_states": staticmethod(lambda: iter([])),
-    })())
-    monkeypatch.setattr(meta_bp, "load_rules_index",
-                        lambda: {"rules": []})
     monkeypatch.setattr(meta_bp, "run_checks", lambda: {"ok": True})
-    # Block auto-discovery of bundles from the user's real patterns dir so
-    # tests don't see engine-rule counts from the developer's installed
-    # frontend-style-convention bundle.
-    monkeypatch.setattr(settings_mod.settings, "bundle_autoload", False)
-    # Likewise neutralise any non-grit rule engine the developer has
-    # configured (e.g. radon for python) — its rules would otherwise leak
-    # into the dashboard's rules.total.
-    monkeypatch.setattr(meta_bp.rule_engines, "all_engines", lambda: [])
 
 
 def _seed_repo(name: str = "r1", with_branch: bool = True) -> int:
@@ -95,44 +83,28 @@ def test_doctor_returns_run_checks_output(
     assert resp.get_json() == {"ok": True}
 
 
-# ── GET /api/dashboard ───────────────────────────────────────
+# ── Retired Dashboard (F182) ─────────────────────────────────
 
-def test_dashboard_returns_stats_envelope(
-        flask_client, tmp_db, stubbed_deps):
-    alpha_id = _seed_repo("alpha")
-
-    with SessionLocal() as session:
-        session.add(PatternDoc(
-            slug="pat1", title="P1",
-            file_path="pat1/SKILL.md", category="procedure",
-            content_hash="0" * 64,
-        ))
-        session.add(PatternDeployment(
-            pattern_slug="pat1", scope="project", project_id=alpha_id,
-            deployed_path="/alpha/.claude/skills/pat1",
-        ))
-        session.add(Tag(name="extra-tag", category="concept"))
-        session.commit()
-
-    resp = flask_client.get("/api/dashboard")
-    assert resp.status_code == 200
-    body = resp.get_json()
-
-    # Required top-level keys.
-    assert {"repos", "stats"} <= set(body.keys())
-
-    # Repos list.
-    assert len(body["repos"]) == 1
-    assert body["repos"][0]["pattern_count"] == 1
-
-    # Stats bundle shape.
-    stats = body["stats"]
-    assert stats["total_repos"] == 1
-    assert stats["total_patterns"] == 1
-    assert stats["skills"]["total"] == 0
-    assert stats["rules"]["total"] == 0
+def test_api_dashboard_is_gone(flask_client, tmp_db):
+    assert flask_client.get("/api/dashboard").status_code == 404
 
 
+def test_no_dashboard_references():
+    root = Path(__file__).resolve().parents[2]
+    needle = re.compile(r"""DashboardView|name:\s*['"]dashboard['"]|api/dashboard""")
+    docs_site = root / "tests" / "docs"
+    this_file = Path(__file__).resolve()
+    hits = []
+    for base in ("frontend/src", "web", "tests"):
+        for path in (root / base).rglob("*"):
+            if not path.is_file() or path.suffix not in {".py", ".js", ".vue", ".ts", ".html"}:
+                continue
+            if path.resolve() == this_file or docs_site in path.parents:
+                continue
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            hits += [f"{path.relative_to(root)}:{n}" for n, line in enumerate(text.splitlines(), 1)
+                     if needle.search(line)]
+    assert hits == []
 
 
 def test_repo_detail_unknown_returns_404(flask_client, tmp_db):

@@ -8,16 +8,11 @@ test.describe('Navigation', () => {
   })
 })
 
-test.describe('Dashboard', () => {
-  test('loads dashboard with stat cards', async ({ page }) => {
+test.describe('Home', () => {
+  test('root lands on the Pipeline overview', async ({ page }) => {
     await page.goto('/')
-    await expect(page.locator('h1')).toHaveText('Dashboard')
-    await expect(page.locator('.stat-card')).not.toHaveCount(0)
-  })
-
-  test('shows repositories section', async ({ page }) => {
-    await page.goto('/')
-    await expect(page.locator('.stat-card', { hasText: 'Repos registered' })).toBeVisible()
+    await expect(page).toHaveURL(/\/overview(\?.*)?$/)
+    await expect(page.getByTestId('overview')).toBeVisible()
   })
 })
 

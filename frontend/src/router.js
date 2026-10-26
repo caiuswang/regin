@@ -1,6 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
-const DashboardView = () => import('./views/DashboardView.vue')
 const ReposView = () => import('./views/ReposView.vue')
 const RepoDetailView = () => import('./views/RepoDetailView.vue')
 const RepoTopicsView = () => import('./views/RepoTopicsView.vue')
@@ -49,7 +48,7 @@ const NotFoundView = () => import('./views/NotFoundView.vue')
 
 const routes = [
   { path: '/login', name: 'login', component: LoginView, meta: { public: true } },
-  { path: '/', name: 'dashboard', component: DashboardView },
+  { path: '/', redirect: (to) => ({ path: '/overview', query: to.query, hash: to.hash }) },
   { path: '/repos', name: 'repos', component: ReposView },
   { path: '/repos/:name', name: 'repo-detail', component: RepoDetailView },
   { path: '/repos/:name/topics', name: 'repo-topics', component: RepoTopicsView },
@@ -160,12 +159,12 @@ router.beforeEach(async (to) => {
   if (!token) return { name: 'login' }
   // Trace (session list + transcripts) is admin-only — the backend enforces
   // this via ADMIN_API_ENDPOINTS; redirect non-admins here so a deep link
-  // lands on the dashboard instead of a 403 error page.
+  // lands on the Pipeline instead of a 403 error page.
   if (to.path === '/trace' || to.path.startsWith('/trace/')
       || to.path.startsWith('/terminal/')) {
     let role = null
     try { role = JSON.parse(localStorage.getItem('regin_auth_user') || 'null')?.role } catch { /* ignore */ }
-    if (role !== 'admin') return { name: 'dashboard' }
+    if (role !== 'admin') return { path: '/overview' }
   }
   return true
 })
