@@ -141,6 +141,39 @@ def _write_end_requested(conn, run_id: int, value: bool) -> bool:
     return was
 
 
+def release_for_resume(trace_ids) -> list[int]:
+    """Lift the seal off the task attempts whose session an operator resumes.
+
+    The seal guards the session the attempt launched, and only while it is
+    closing; the resume route refuses a session that is still live, so by here
+    that session is over. Left in place, the seal would refuse every send to
+    the continuation and a tmux `Stop` would end it after its first turn. The
+    run's settled status is untouched.
+    """
+    ids = sorted({t for t in trace_ids if t})
+    if not ids:
+        return []
+    marks = ",".join("?" for _ in ids)
+    conn = get_connection()
+    released = []
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        rows = conn.execute(
+            f"SELECT id FROM agent_task_runs WHERE trace_id IN ({marks})",
+            ids).fetchall()
+        released = [r["id"] for r in rows
+                    if _write_end_requested(conn, r["id"], False)]
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    for run_id in released:
+        log.write("task_run_seal_released_for_resume", run_id=run_id)
+    return released
+
+
 def _attempt(conn, trace_id: str) -> Optional[dict]:
     row = conn.execute(_ATTEMPT_SQL, (trace_id,)).fetchone()
     if row is None:
@@ -193,11 +226,27 @@ def record_tmux_send(trace_id: str, body: str,
     return row_id, sealed
 
 
-def refused_send(row_id: int, sealed: dict) -> dict:
-    """The `SendRefused` body a sealed run's send answers with."""
+def _resume_inputs(trace_id: str) -> dict:
+    """What `POST /api/agent-runs` needs to continue `trace_id`: the CLI
+    resolves a resumed id against the directory the session ran in."""
+    from lib.orm import SessionLocal  # noqa: PLC0415
+    from lib.orm.models.trace import Session as SessionModel  # noqa: PLC0415
+
+    with SessionLocal() as session:
+        row = session.get(SessionModel, trace_id) if trace_id else None
+        return {"session_id": trace_id,
+                "cwd": (row.cwd if row else None) or "",
+                "model": (row.model if row else None) or ""}
+
+
+def refused_send(row_id: int, sealed: dict, trace_id: str = "") -> dict:
+    """The `SendRefused` body a sealed run's send answers with. `resume`
+    carries what continuing this same conversation takes, beside the task
+    comment that hands the text to the next run instead."""
     return {"delivered": False, "reason": "run_sealed",
             "detail": ("This task run has reported finished and its session "
-                       "is closing, so the message was not sent. Post it as "
-                       "a task comment and the next run will receive it."),
+                       "is closing, so the message was not sent. Resume the "
+                       "session to keep the same conversation, or post it as "
+                       "a task comment for the next run."),
             "task_id": sealed["task_id"], "run_id": sealed["run_id"],
-            "id": row_id}
+            "id": row_id, "resume": _resume_inputs(trace_id)}

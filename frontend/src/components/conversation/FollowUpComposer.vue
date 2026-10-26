@@ -50,7 +50,7 @@ const props = defineProps({
 // Expanded state is a model so a host with its own trigger can drive it while
 // this component — and therefore the draft — stays mounted across the flip.
 const open = defineModel('open', { type: Boolean, default: false })
-const emit = defineEmits(['sent'])
+const emit = defineEmits(['sent', 'resumed'])
 const { jumpTo } = useSuccessorJump()
 const bubbleWide = ref(false)
 const draft = ref('')
@@ -211,6 +211,15 @@ async function send() {
 
 const refused = useRefusedSend()
 watch(() => props.sessionId, () => refused.clear())
+
+async function resumeRefused() {
+  if (!(await refused.resumeWith(draft.value.trim()))) return
+  draft.value = ''
+  images.clear()
+  phase.value = 'delivered'
+  detail.value = 'session resumed — your message is its next prompt'
+  emit('resumed')
+}
 
 async function postRefusedAsComment() {
   if (!(await refused.postAsComment(draft.value.trim()))) return
@@ -442,7 +451,7 @@ onUnmounted(() => {
           @click="collapse"
         ><Icon name="x" :size="14" /></Button>
       </div>
-      <RefusedSendNotice :refused="refused" @post="postRefusedAsComment" />
+      <RefusedSendNotice :refused="refused" @post="postRefusedAsComment" @resume="resumeRefused" />
       <div class="followup-field">
         <ComposerHighlight ref="hlComp" class="followup-hl" :text="draft" />
         <Textarea

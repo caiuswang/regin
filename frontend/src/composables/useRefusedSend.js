@@ -2,15 +2,17 @@ import { ref } from 'vue'
 import api from '../api'
 
 // A send to a task run that has already reported finished is refused with
-// `reason: 'run_sealed'` and the task it belongs to. The text has nowhere left
-// to go in this session, so the composer offers to post it as a comment on
-// that task instead: an open thread is what the task's next run reads back
-// as its <followup>.
+// `reason: 'run_sealed'` and the task it belongs to. Two ways on, because they
+// answer different wishes: resume the same conversation with the draft as its
+// next prompt (the resume lifts the seal server-side), or post the draft as a
+// task comment, which the task's NEXT run reads back as its <followup> — a
+// fresh conversation, not this one.
 export function useRefusedSend() {
   const refusal = ref(null)
   const posting = ref(false)
   const postError = ref('')
   const posted = ref(null)
+  const resuming = ref(false)
 
   function take(res) {
     posted.value = null
@@ -24,6 +26,37 @@ export function useRefusedSend() {
     posted.value = null
     postError.value = ''
     posting.value = false
+    resuming.value = false
+  }
+
+  // Resolves true once the continuation is launched with `text` as its first
+  // prompt. Refused while the sealed session is still closing — the server
+  // will not run two processes on one conversation — and that refusal is
+  // shown as is.
+  async function resumeWith(text) {
+    const r = refusal.value
+    if (!r?.resume?.session_id || resuming.value || posting.value || !text) return false
+    resuming.value = true
+    postError.value = ''
+    let res = null
+    try {
+      res = await api.post('/agent-runs', {
+        resume: r.resume.session_id,
+        cwd: r.resume.cwd || undefined,
+        model: r.resume.model || undefined,
+        prompt: text,
+      })
+    } catch (e) {
+      res = { launched: false, detail: e?.message }
+    }
+    resuming.value = false
+    if (refusal.value !== r) return false
+    if (!res?.launched) {
+      postError.value = res?.detail || res?.error || res?.msg || 'the session was not resumed'
+      return false
+    }
+    refusal.value = null
+    return true
   }
 
   // Resolves true once the comment exists; the caller owns the draft and
@@ -53,5 +86,5 @@ export function useRefusedSend() {
     return true
   }
 
-  return { refusal, posting, postError, posted, take, clear, postAsComment }
+  return { refusal, posting, resuming, postError, posted, take, clear, postAsComment, resumeWith }
 }

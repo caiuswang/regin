@@ -23,7 +23,7 @@ from lib.agent_sdk import client, resumable, store, supervisor, worktree
 from lib.providers import registry as provider_registry
 from lib.providers.base import provider_for_trace
 from lib.settings import settings
-from lib.tasks import skill_catalog, slots
+from lib.tasks import message_gate, skill_catalog, slots
 from lib import workspaces
 
 agent_runs_bp = Blueprint('agent_runs', __name__)
@@ -396,6 +396,7 @@ def _launch_terminal(payload: dict, prompt: str):
     except (_BadRequest, worktree.WorktreeRefused) as exc:
         return jsonify({"error": str(exc)}), 400
     made = {"worktree": created_worktree} if created_worktree else {}
+    _release_task_seal(payload, params)
     try:
         launched = terminal_launch.launch_terminal(
             role=_caller_role(), cwd=params["cwd"], model=params["model"],
@@ -427,6 +428,17 @@ def api_launch_agent_run():
     return _launch_sdk(payload, prompt)
 
 
+def _release_task_seal(payload: dict, params: dict) -> None:
+    """A resume is the operator continuing a conversation a task run's report
+    sealed, so the seal must not outlive it (`message_gate.release_for_resume`).
+    Every id the resume touched is passed, since the attempt may be recorded
+    under the run's own id or the CLI session's."""
+    if params["resume"]:
+        message_gate.release_for_resume(
+            [_text(payload, "resume", _ID_MAX), params["resume"],
+             params["trace_id"]])
+
+
 def _launch_sdk(payload: dict, prompt: str):
     if not settings.agent_sdk.enabled:
         return jsonify({"launched": False, "detail": "agent_sdk disabled"})
@@ -442,6 +454,7 @@ def _launch_sdk(payload: dict, prompt: str):
     # already on disk by now, and an operator told only "refused" would go
     # looking for a directory nothing mentioned. A retry reuses it.
     made = {"worktree": created_worktree} if created_worktree else {}
+    _release_task_seal(payload, params)
     runner = provider.channel_launcher()
     if runner is not None:
         return _launch_on_channel(provider, runner, prompt, params, made)

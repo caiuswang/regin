@@ -67,6 +67,7 @@ async function refuseSends(page, traceId, taskId) {
       delivered: false, reason: 'run_sealed',
       detail: 'This task run has reported finished and its session is closing, so the message was not sent. Post it as a task comment and the next run will receive it.',
       task_id: taskId, run_id: 7, id: 99,
+      resume: { session_id: traceId, cwd: '/tmp/d345-wt', model: 'claude-opus-5-5' },
     } })
   })
   return sends
@@ -91,6 +92,42 @@ test('test_send_after_seal_is_refused_and_draft_kept', async ({ page }) => {
   await expect(page.getByTestId('refused-send-detail')).toContainText('reported finished')
   await expect(page.getByTestId('refused-send-post-comment')).toHaveText('Post as task comment')
   await expect(page.getByTestId('followup-status')).toContainText('not sent')
+})
+
+test('D345: a refused send can resume the same session with the draft', async ({ page }) => {
+  const { traceId } = await seedSession(page)
+  await refuseSends(page, traceId, 4242)
+  const launches = []
+  await page.route('**/api/agent-runs', (route) => {
+    launches.push(route.request().postDataJSON())
+    return route.fulfill({ json: { launched: true, trace_id: traceId } })
+  })
+  await page.goto(`/trace/sessions/${traceId}?view=conversation`)
+  await typeAndSend(page)
+
+  await page.getByTestId('refused-send-resume').click()
+
+  await expect.poll(() => launches.length).toBe(1)
+  expect(launches[0]).toEqual({
+    resume: traceId, cwd: '/tmp/d345-wt', model: 'claude-opus-5-5', prompt: DRAFT,
+  })
+  await expect(page.getByTestId('refused-send')).toHaveCount(0)
+})
+
+test('D345: a refused resume keeps the draft and says why', async ({ page }) => {
+  const { traceId } = await seedSession(page)
+  await refuseSends(page, traceId, 4242)
+  await page.route('**/api/agent-runs', route => route.fulfill({
+    status: 400, json: { error: 'that run is still live — stop it before resuming' },
+  }))
+  await page.goto(`/trace/sessions/${traceId}?view=conversation`)
+  await typeAndSend(page)
+
+  await page.getByTestId('refused-send-resume').click()
+
+  await expect(page.getByTestId('refused-send-error')).toContainText('still live')
+  await expect(page.getByTestId('followup-textarea')).toHaveValue(DRAFT)
+  await expect(page.getByTestId('refused-send-resume')).toBeEnabled()
 })
 
 test('an ordinary send failure offers no task comment', async ({ page }) => {

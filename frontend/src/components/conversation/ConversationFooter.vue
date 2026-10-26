@@ -40,6 +40,7 @@ defineEmits(['sent', 'resumed'])
     :turn-number="turnNumber"
     :context="context"
     @sent="$emit('sent')"
+    @resumed="$emit('resumed')"
   />
   <ResumeSessionBar
     v-else-if="context.canResume"

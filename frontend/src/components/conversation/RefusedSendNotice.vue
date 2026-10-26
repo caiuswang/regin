@@ -5,7 +5,7 @@ import Button from '../ui/Button.vue'
 defineProps({
   refused: { type: Object, required: true },
 })
-const emit = defineEmits(['post'])
+const emit = defineEmits(['post', 'resume'])
 </script>
 
 <template>
@@ -19,9 +19,17 @@ const emit = defineEmits(['post'])
       <p class="refused-send-detail" data-testid="refused-send-detail">{{ refused.refusal.value.detail }}</p>
       <div class="flex flex-wrap items-center gap-2">
         <Button
+          v-if="refused.refusal.value.resume?.session_id"
+          variant="primary"
+          size="sm"
+          :disabled="refused.resuming.value || refused.posting.value"
+          data-testid="refused-send-resume"
+          @click="emit('resume')"
+        >{{ refused.resuming.value ? 'Resuming…' : 'Resume session & send' }}</Button>
+        <Button
           variant="secondary"
           size="sm"
-          :disabled="refused.posting.value"
+          :disabled="refused.posting.value || refused.resuming.value"
           data-testid="refused-send-post-comment"
           @click="emit('post')"
         >{{ refused.posting.value ? 'Posting…' : 'Post as task comment' }}</Button>

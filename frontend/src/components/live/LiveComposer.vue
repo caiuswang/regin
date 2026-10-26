@@ -184,6 +184,14 @@ async function send() {
 const refused = useRefusedSend()
 watch(() => props.sessionId, () => refused.clear())
 
+async function resumeRefused() {
+  if (!(await refused.resumeWith(draft.value.trim()))) return
+  draft.value = ''
+  images.clear()
+  phase.value = 'delivered'
+  detail.value = 'session resumed — your message is its next prompt'
+}
+
 async function postRefusedAsComment() {
   if (!(await refused.postAsComment(draft.value.trim()))) return
   draft.value = ''
@@ -442,7 +450,7 @@ function onKeydown(e) {
       <Icon name="arrow-up" :size="15" />
     </Button>
   </div>
-  <RefusedSendNotice :refused="refused" @post="postRefusedAsComment" />
+  <RefusedSendNotice :refused="refused" @post="postRefusedAsComment" @resume="resumeRefused" />
   <div class="live-bridge-row">
     <div
       class="live-bridge-meta"
