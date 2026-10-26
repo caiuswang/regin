@@ -356,6 +356,23 @@ html[data-pl-theme="pixel"] [data-pl-part="node"][data-pl-tag="running"] {
     box-shadow: inset var(--pl-node-edge) 0 0 var(--pl-node-hue);
 }
 
+/* The fix mark is an outline, never a fill (R7): amber line and ink while the
+   task still owes an open defect, the rule colour once they are all closed. */
+html[data-pl-theme="pixel"] [data-pl-part="node"] [data-pl-part="fix-mark"] {
+    border-color: var(--pl-rule);
+    border-radius: 0;
+    background: var(--pl-paper);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="node"] [data-pl-part="fix-mark"][data-open] {
+    border-color: var(--pl-warn-line);
+    color: var(--pl-warn);
+}
+
+html[data-pl-theme="pixel"] [data-pl-part="node"]:has([data-pl-part="fix-mark"][data-open]) {
+    border-color: var(--pl-warn-line);
+}
+
 html[data-pl-theme="pixel"] [data-pl-part="node"][data-found] {
     box-shadow: inset var(--pl-node-edge) 0 0 var(--pl-node-hue), 0 0 0 3px var(--pl-action);
 }

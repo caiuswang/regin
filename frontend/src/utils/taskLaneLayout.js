@@ -118,9 +118,10 @@ function edgePath(from, to) {
 /**
  * `{ lanes, nodes, edges, width, height }` in CSS pixels. `nodes` carry
  * `x`, `y` and `column`; `edges` carry an SVG `path`, `blocking`, and
- * `settled` (their source is done).
+ * `settled` (their source is done). `laneW` is the lane-head gutter; 0 when
+ * the head is not drawn.
  */
-export function layoutLanes(lanes = [], nodes = [], edges = []) {
+export function layoutLanes(lanes = [], nodes = [], edges = [], { laneW = LANE_W } = {}) {
   const depth = depths(nodes, edges)
   const row = stackRows(nodes, depth)
   const placedBands = bands(lanes, nodes, row)
@@ -129,7 +130,7 @@ export function layoutLanes(lanes = [], nodes = [], edges = []) {
     ...n,
     column: depth.get(n.id),
     row: row.get(n.id),
-    x: LANE_W + COL_GAP + depth.get(n.id) * (NODE_W + COL_GAP),
+    x: laneW + COL_GAP + depth.get(n.id) * (NODE_W + COL_GAP),
     y: (top.get(laneKey(n.feature_id)) ?? 0) + LANE_PAD + row.get(n.id) * (NODE_H + ROW_GAP),
   }]))
   const drawn = edges
@@ -155,7 +156,7 @@ export function layoutLanes(lanes = [], nodes = [], edges = []) {
     lanes: placedBands,
     nodes: [...placed.values()],
     edges: drawn,
-    width: LANE_W + COL_GAP + columns * (NODE_W + COL_GAP),
+    width: laneW + COL_GAP + columns * (NODE_W + COL_GAP),
     height: last ? last.top + last.height : 0,
   }
 }

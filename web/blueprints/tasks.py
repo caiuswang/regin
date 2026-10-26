@@ -752,7 +752,7 @@ def _lane_graph(cap):
 
 
 @tasks_bp.route('/api/tasks/graph', methods=['GET'])
-@require_editor
+@require_auth
 def api_task_graph():
     """The DAG, as a neighbourhood rather than a corpus.
 
@@ -771,8 +771,9 @@ def api_task_graph():
     if (request.args.get("lanes") or "").strip() == "1":
         return _lane_graph(cap)
     status = (request.args.get("status") or "").strip()
-    return jsonify(deps.graph(root=root, depth=depth, status=status or None,
-                              cap=cap))
+    body = deps.graph(root=root, depth=depth, status=status or None, cap=cap)
+    task_rows.fix_defects(body["nodes"])
+    return jsonify(body)
 
 
 # ── issue trackers ───────────────────────────────────────────

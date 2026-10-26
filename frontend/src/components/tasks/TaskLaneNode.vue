@@ -6,6 +6,10 @@
 // Hover reveals Drawio-style connection handles. Edges run left to right, so
 // the left handle reaches upstream (this task waits for another) and the right
 // handle reaches downstream (another task waits for this one).
+//
+// `readonly` drops the action and the handles: the box is only a link to the
+// task.
+import { computed } from 'vue'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
 import TaskPrimaryAction from './TaskPrimaryAction.vue'
@@ -13,13 +17,28 @@ import TaskScheduleChip from './TaskScheduleChip.vue'
 import TaskStatusIcon from './TaskStatusIcon.vue'
 import { taskTitle } from '../../utils/taskTitle.js'
 
-defineProps({
+const props = defineProps({
   node: { type: Object, required: true },
   tag: { type: String, required: true },
   busy: { type: Boolean, default: false },
   canWrite: { type: Boolean, default: true },
+  readonly: { type: Boolean, default: false },
 })
 const emit = defineEmits(['verb', 'hover', 'handle-down', 'handle-click'])
+
+// The open defects lead: they are what the task still owes. A task whose
+// defects are all closed keeps a neutral mark of what it fixed.
+const fixes = computed(() => {
+  const open = props.node.fixes_open_defects || []
+  const ids = open.length ? open : (props.node.fixes_defects || [])
+  if (!ids.length) return null
+  return {
+    open: open.length > 0,
+    label: ids.length === 1 ? `fixes #${ids[0]}` : `fixes ${ids.length}`,
+    title: `Fixes ${ids.map(id => `#${id}`).join(', ')}`,
+  }
+})
+const showAction = computed(() => !props.readonly && (props.node.action || props.node.waits_on != null))
 </script>
 
 <template>
@@ -39,7 +58,7 @@ const emit = defineEmits(['verb', 'hover', 'handle-down', 'handle-click'])
       <TaskStatusIcon :status="node.status" :size="12" />
       <span class="tln-id" data-pl-part="row-id">#{{ node.id }}</span>
       <TaskScheduleChip :task="node" compact />
-      <span v-if="!node.action && node.waits_on == null" class="tlg-node-tag" data-pl-part="meta-label">{{ tag }}</span>
+      <span v-if="!showAction" class="tlg-node-tag" data-pl-part="meta-label">{{ tag }}</span>
       <TaskPrimaryAction
         v-else
         class="tln-action"
@@ -51,7 +70,16 @@ const emit = defineEmits(['verb', 'hover', 'handle-down', 'handle-click'])
       />
     </span>
     <router-link :to="`/tasks/${node.id}`" class="tln-title" :title="taskTitle(node)">{{ taskTitle(node) }}</router-link>
-    <template v-if="canWrite">
+    <span
+      v-if="fixes"
+      class="tln-fixes"
+      :class="{ 'is-open': fixes.open }"
+      :title="fixes.title"
+      data-pl-part="fix-mark"
+      :data-testid="`graph-node-fixes-${node.id}`"
+      :data-open="fixes.open ? '' : undefined"
+    >{{ fixes.label }}</span>
+    <template v-if="canWrite && !readonly">
       <Button
         v-for="side in ['left', 'right']"
         :key="side"
@@ -105,6 +133,26 @@ const emit = defineEmits(['verb', 'hover', 'handle-down', 'handle-click'])
     content: "";
     position: absolute;
     inset: 0;
+}
+.tln-fixes {
+    position: absolute;
+    top: -0.5625rem;
+    right: 0.5rem;
+    z-index: 2;
+    padding: 0 0.375rem;
+    font-size: 0.625rem;
+    font-weight: 600;
+    line-height: 1rem;
+    color: var(--color-fg-muted);
+    white-space: nowrap;
+    background: var(--color-surface-2);
+    border: 1px solid var(--color-border-strong);
+    border-radius: 999px;
+}
+.tln-fixes.is-open {
+    color: var(--color-warning-strong);
+    background: var(--color-warning-soft);
+    border-color: var(--color-warning);
 }
 .tln-handle {
     position: absolute;
