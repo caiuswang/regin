@@ -83,7 +83,10 @@ test("a comment's block structure survives", async ({ page }) => {
   expect(second.y).toBeGreaterThan(first.y + first.height - 1)
 })
 
+// The composer opens on the rich face (F180 #3); its Source face still holds
+// the bytes as typed.
 test('the composer still edits source', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('regin_editor_mode:compose', 'source'))
   await stub(page, [thread(1, [RESOLUTION])])
   await page.goto('/tasks/80')
 
