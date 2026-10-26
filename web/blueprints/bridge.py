@@ -43,6 +43,8 @@ from lib.agent_bridge import (store, delivery, commands, files, ansi_html,
                               attachments, attach, mod_channel,
                               mod_hold)
 from lib import agent_sdk, live_session
+from lib.agent_sdk import registry as sdk_registry
+from lib.tasks import message_gate
 
 bridge_bp = Blueprint('bridge', __name__)
 
@@ -118,7 +120,9 @@ def api_bridge_post_message():
         return jsonify({"error": "session_id required"}), 400
     sender = _clip_sender(payload.get("sender"))
     trace_id, refusal = _resolve_trace_id(session_id)
-    row_id = store.record_bridge_message(trace_id, text, sender, pending=True)
+    row_id, sealed = message_gate.record_tmux_send(trace_id, text, sender)
+    if sealed is not None:
+        return jsonify(message_gate.refused_send(row_id, sealed))
     if refusal is not None:
         store.mark_delivered(row_id, False, refusal["detail"])
         return jsonify({**refusal, "id": row_id})
@@ -184,12 +188,24 @@ def _sdk_send(trace_id: str, raw_text, body: str, sender: str | None):
     message, while the agent gets the prompt intact.
     """
     row_id = store.record_bridge_message(trace_id, body, sender)
+    attempt = message_gate.task_attempt(sdk_registry.owning_run(trace_id))
+    if attempt is not None and attempt["sealed"]:
+        return _refused(row_id, attempt)
     text = _sdk_prompt_text(raw_text)
     delivered, detail = _sdk_deliver(trace_id, text,
                                      attachments.for_sdk(trace_id, text),
                                      row_id)
+    if detail == sdk_registry.SEALED_DETAIL and attempt is not None:
+        return _refused(row_id, attempt)
     store.mark_delivered(row_id, delivered, detail)
     return jsonify({"delivered": delivered, "detail": detail, "id": row_id})
+
+
+def _refused(row_id: int, attempt: dict):
+    """A send to a task run whose report sealed it: the row is closed as
+    refused and the composer is told which task to comment on instead."""
+    store.mark_delivered(row_id, False, sdk_registry.SEALED_DETAIL)
+    return jsonify(message_gate.refused_send(row_id, attempt))
 
 
 def _with_image_paths(trace_id: str, text: str) -> str:
@@ -266,7 +282,9 @@ def api_session_bridge_send(trace_id):
                                           or trace_id)
     # The inbox row and its /live chip belong to the session that will answer
     # the prompt, which is the page the operator is about to be on.
-    row_id = store.record_bridge_message(target, text, sender, pending=True)
+    row_id, sealed = message_gate.record_tmux_send(target, text, sender)
+    if sealed is not None:
+        return jsonify(message_gate.refused_send(row_id, sealed))
     # Keystrokes cannot carry an image, so each staged one is written to the
     # host and named by path. The `[Image #N]` markers stay in the text
     # alongside those paths: the path is what the agent opens, the marker is

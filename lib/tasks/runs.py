@@ -57,7 +57,8 @@ from lib.orm.models.tasks import (
     TASK_STATUS_RUNNING,
 )
 from lib.settings import settings
-from lib.tasks import deps, run_ending, schedules, store, tmux_runs
+from lib.tasks import (deps, message_gate, run_ending, schedules, store,
+                       tmux_runs)
 from lib.tasks.run_announce import (
     TASK_READY_TRACE, _announce_broken_chains, _announce_stuck)
 from lib.tasks.run_prompt import (
@@ -1046,6 +1047,37 @@ def finish_run(run_id: int, *, status: str = RUN_STATUS_DONE,
     if status == RUN_STATUS_DONE:
         _refuse_with_open_defects(task_id, run_id)
         _refuse_with_missing_tests(task_id, run_id)
+    gate = _gate_messages(task_id, run_id)
+    try:
+        result = _report_and_settle(task_id, run_id, status, reason, in_server)
+    except BaseException:
+        gate.undo()
+        raise
+    run_ending.request_end(run_id)
+    return result
+
+
+def _gate_messages(task_id: int, run_id: int) -> message_gate.Gate:
+    """Refuse the report while an operator message is still owed to the
+    model; seal a `one_shot` attempt in the same step (`message_gate`)."""
+    gate = message_gate.check(_attempt_view(run_id))
+    if not gate.pending:
+        return gate
+    log.warn("task_run_finish_refused", run_id=run_id, task_id=task_id,
+             pending_messages=len(gate.pending))
+    raise RunRefused(message_gate.refusal_text(gate.pending))
+
+
+def _attempt_view(run_id: int) -> dict:
+    with SessionLocal() as session:
+        row = session.get(AgentTaskRun, run_id)
+        return {"id": run_id, "trace_id": row.trace_id if row else None,
+                "params": store._decode_params(row.params_json if row
+                                               else None)}
+
+
+def _report_and_settle(task_id: int, run_id: int, status: str, reason: str,
+                       in_server: bool) -> dict:
     # Before the default is substituted: only what the AGENT actually wrote is
     # a report. "agent signalled finish" is regin talking to itself.
     if reason.strip():
@@ -1054,9 +1086,7 @@ def finish_run(run_id: int, *, status: str = RUN_STATUS_DONE,
     reopen_for_agent_report(run_id)
     # After the settle: an idle SDK session ends the moment it is closed, and
     # its completion callback must find the report already written.
-    result = _settle_report(task_id, run_id, status, reason, in_server)
-    run_ending.request_end(run_id)
-    return result
+    return _settle_report(task_id, run_id, status, reason, in_server)
 
 
 def _settle_report(task_id: int, run_id: int, status: str, reason: str,

@@ -25,9 +25,7 @@ class _QueueMixin:
         reason: it is already on its way to the CLI.
         """
         with self._queue_lock:
-            self._queue_seq += 1
-            item = _Queued(id=f"q{self._queue_seq}", text=text,
-                           images=list(images or []), row_id=row_id)
+            item = self._new_item(text, images, row_id)
             if waiting:
                 self._pending.append(item)
         self._prompts.put_nowait(item)
@@ -37,6 +35,61 @@ class _QueueMixin:
         log.write("sdk_prompt_enqueued", trace_id=self.trace_id,
                   prompt_id=item.id, row_id=row_id, chars=len(text),
                   waiting=waiting)
+
+    def _new_item(self, text: str, images: list | None,
+                  row_id: int | None) -> "_Queued":
+        """A fresh queue record. Caller holds `_queue_lock`."""
+        self._queue_seq += 1
+        return _Queued(id=f"q{self._queue_seq}", text=text,
+                       images=list(images or []), row_id=row_id)
+
+    def admit(self, text: str, *, images: list | None = None,
+              row_id: int | None = None) -> "_Queued | None":
+        """Accept an operator prompt from any thread, or None once sealed.
+
+        The record joins `_pending` here, under the lock `seal_if_idle` holds,
+        rather than when the loop later runs the enqueue: a prompt the seal
+        could not yet see would be acked to the operator and then run after
+        the report that sealed the run was accepted. The loop only carries it
+        into `_prompts` (`deliver_admitted`).
+        """
+        with self._queue_lock:
+            if self._sealed:
+                return None
+            item = self._new_item(text, images, row_id)
+            self._pending.append(item)
+        return item
+
+    def deliver_admitted(self, item: "_Queued") -> None:
+        """Hand an admitted record to the pump. Must run on this loop."""
+        self._prompts.put_nowait(item)
+        log.write("sdk_prompt_enqueued", trace_id=self.trace_id,
+                  prompt_id=item.id, row_id=item.row_id, chars=len(item.text),
+                  waiting=True)
+
+    def withdraw(self, item: "_Queued") -> None:
+        """Take back an admitted record the loop never received."""
+        with self._queue_lock:
+            if item in self._pending:
+                self._pending.remove(item)
+
+    def seal_if_idle(self) -> list[dict]:
+        """Seal the queue when nothing waits in it; return what waits if not.
+        Any thread. Serialized with `admit` by `_queue_lock`."""
+        with self._queue_lock:
+            if self._pending:
+                return [{'id': q.id, 'text': q.text} for q in self._pending]
+            self._sealed = True
+        return []
+
+    @property
+    def sealed(self) -> bool:
+        with self._queue_lock:
+            return self._sealed
+
+    def unseal(self) -> None:
+        with self._queue_lock:
+            self._sealed = False
 
     def _report_drop(self, item: "_Queued", reason: str) -> None:
         """Record a prompt the session accepted and will never run.

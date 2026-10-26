@@ -117,6 +117,10 @@ class _Parked(NamedTuple):
 # been showing a composer for a couple of seconds longer than it should.
 _PARKED_DETAIL = "prompt queued — session is still starting"
 
+# The detail a send to a run whose `task finish` sealed it is refused with;
+# `web/blueprints/bridge.py` keys its `SendRefused` answer off it.
+SEALED_DETAIL = "refused: run sealed"
+
 _MISSING = object()
 _ANSWER_KINDS = frozenset({'question'})
 _DECISION_KINDS = frozenset({'plan', 'tool'})
@@ -689,9 +693,11 @@ def submit_prompt(trace_id: str, text: str, images: list | None = None,
     """
     handle = _acp_handle(trace_id)
     if handle is not None:
-        if handle.enqueue(text):
+        if handle.enqueue(text, row_id=row_id):
             log.write("sdk_prompt_queued", trace_id=trace_id, row_id=row_id)
             return True, "prompt queued"
+        if handle.sealed:
+            return False, SEALED_DETAIL
         return False, "agent session is no longer running"
     # Parked before the closed-channel refusal: resuming a session this
     # process once ran reserves an id that `was_owned` still names.
@@ -707,16 +713,59 @@ def submit_prompt(trace_id: str, text: str, images: list | None = None,
     if runner is None:
         return False, refusal
     if getattr(runner, "is_stopping", False):
-        return False, "agent session is stopping"
+        # A run its report sealed is closing because of that report; the
+        # caller is owed that reason, not the generic one.
+        return False, (SEALED_DETAIL if getattr(runner, "sealed", False)
+                       else "agent session is stopping")
+    item = runner.admit(text, images=images, row_id=row_id)
+    if item is None:
+        return False, SEALED_DETAIL
     try:
-        runner.loop.call_soon_threadsafe(
-            functools.partial(runner.enqueue, text, images=images,
-                              row_id=row_id))
+        runner.loop.call_soon_threadsafe(runner.deliver_admitted, item)
     except RuntimeError as exc:
+        runner.withdraw(item)
         log.error("sdk_prompt_queue_failed", trace_id=trace_id, detail=str(exc))
         return False, "agent session is no longer running"
     log.write("sdk_prompt_queued", trace_id=trace_id, row_id=row_id)
     return True, "prompt queued"
+
+
+def seal_if_idle(trace_id: str) -> list[dict]:
+    """Seal a live run's queue against further operator prompts when it is
+    empty; otherwise return what waits in it (`{id, text}`). A run this
+    process cannot reach holds no queue, so there is nothing to seal."""
+    handle = _acp_handle(trace_id)
+    if handle is not None:
+        return handle.seal_if_idle()
+    run_id = owning_run(trace_id)
+    with _lock:
+        runner = _runs.get(run_id)
+    if runner is None:
+        return []
+    return runner.seal_if_idle()
+
+
+def is_sealed(trace_id: str) -> bool:
+    handle = _acp_handle(trace_id)
+    if handle is not None:
+        return handle.sealed
+    run_id = owning_run(trace_id)
+    with _lock:
+        runner = _runs.get(run_id)
+    return bool(getattr(runner, "sealed", False))
+
+
+def unseal(trace_id: str) -> None:
+    """Undo `seal_if_idle` for a report that failed after sealing."""
+    handle = _acp_handle(trace_id)
+    if handle is not None:
+        handle.unseal()
+        return
+    run_id = owning_run(trace_id)
+    with _lock:
+        runner = _runs.get(run_id)
+    if runner is not None:
+        runner.unseal()
 
 
 def queued_prompts(trace_id: str) -> list[dict]:

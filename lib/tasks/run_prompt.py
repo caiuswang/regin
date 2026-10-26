@@ -119,7 +119,7 @@ def _defects_order(task_id: Optional[int]) -> str:
 
 
 def _finish_block(run_id: Optional[int], task_id: int, linked: bool = False,
-                  base: str = "") -> str:
+                  base: str = "", one_shot: bool = False) -> str:
     """The `<finish>` instruction appended to a run's launch prompt.
 
     The command is written out literally, not left to an env var, so a session
@@ -136,11 +136,15 @@ def _finish_block(run_id: Optional[int], task_id: int, linked: bool = False,
     finished on an unmerged branch releases its dependents onto a base that
     does not carry it. The base branch is named when the run was armed with
     one; without it the instruction still stands, unnamed.
+
+    `one_shot` (Auto close) decides what the agent is told about its session
+    after the report: it closes after that turn, or it stays open.
     """
     from lib.prompts import render_surface  # noqa: PLC0415
     from lib.prompts.surfaces.tasks import (  # noqa: PLC0415
         FINISH_BASE_UNNAMED_SURFACE_ID, FINISH_ORDER_LINKED_SURFACE_ID,
-        FINISH_ORDER_NATIVE_SURFACE_ID, FINISH_SURFACE_ID)
+        FINISH_ORDER_NATIVE_SURFACE_ID, FINISH_SESSION_CLOSES_SURFACE_ID,
+        FINISH_SESSION_STAYS_SURFACE_ID, FINISH_SURFACE_ID)
 
     if linked:
         order = render_surface(FINISH_ORDER_LINKED_SURFACE_ID, {})
@@ -150,9 +154,13 @@ def _finish_block(run_id: Optional[int], task_id: int, linked: bool = False,
         order = render_surface(FINISH_ORDER_NATIVE_SURFACE_ID,
                                {"target": target})
     order += _defects_order(task_id)
+    session_end = render_surface(
+        FINISH_SESSION_CLOSES_SURFACE_ID if one_shot
+        else FINISH_SESSION_STAYS_SURFACE_ID, {})
     return "\n\n" + render_surface(
         FINISH_SURFACE_ID,
-        {"order": order, "finish_cmd": _finish_command(task_id, run_id)})
+        {"session_end": session_end, "order": order,
+         "finish_cmd": _finish_command(task_id, run_id)})
 
 
 def _tracker_block(feature) -> str:
@@ -551,7 +559,8 @@ def _prompt(task: dict, run_id: Optional[int],
     from lib.prompts.surfaces.tasks import LAUNCH_SURFACE_ID  # noqa: PLC0415
 
     finish = _finish_block(run_id, task["id"], linked=remote,
-                           base=_armed_base(params))
+                           base=_armed_base(params),
+                           one_shot=bool((params or {}).get("one_shot")))
     prompt = render_surface(LAUNCH_SURFACE_ID, {
         "invocation": _invocation(params or {}),
         "body": text[:PROMPT_MAX],

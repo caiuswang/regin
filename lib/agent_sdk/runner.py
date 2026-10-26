@@ -124,6 +124,7 @@ class AgentRunner(_StreamMixin, _ParkMixin, _QueueMixin):
         # operator is holding the UI open for. Never held across an `await`.
         self._queue_lock = threading.Lock()
         self._queue_seq = 0
+        self._sealed = False
         # The per-run override wins over the install default: it is the model
         # this run was actually launched on, and it is known here — before the
         # first assistant message reveals one. Seeding it means the run row and
