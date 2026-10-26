@@ -1,11 +1,11 @@
 """S11 — migrate + doctor on a copy of this install's DB.
 
-F181 carries one schema change (0048: `cache_creation_1h_tokens` on
+F181 carries one schema change (0049: `cache_creation_1h_tokens` on
 `turn_usage` and `sessions`, `context_composition` dropped), so the bar is that
 the project's own `migrate` exits 0 against a backup copy of the install DB,
 doctor's schema check on that copy reports nothing missing, and the copy then
-holds what 0048 promises. The copy keeps the run from stamping the shared DB
-the main worktree uses, which runs master and cannot resolve 0048.
+holds what 0049 promises. The copy keeps the run from stamping the shared DB
+the main worktree uses, which runs master and cannot resolve 0049.
 """
 
 from __future__ import annotations
@@ -103,7 +103,7 @@ def _doctor_findings(db: Path) -> list[dict]:
     return [item for item in after["items"] if not item["present"]]
 
 
-def _assert_0048_applied(db: Path) -> None:
+def _assert_0049_applied(db: Path) -> None:
     for table in ("turn_usage", "sessions"):
         assert "cache_creation_1h_tokens" in _columns(db, table), table
     assert not _query(db, "SELECT name FROM sqlite_master "
@@ -122,4 +122,4 @@ def test_migrate_leaves_no_schema_finding(tmp_path):
 
     findings = _doctor_findings(copy)
     assert not findings, f"{copy} is behind after migrate: {findings}"
-    _assert_0048_applied(copy)
+    _assert_0049_applied(copy)

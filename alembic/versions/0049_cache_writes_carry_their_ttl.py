@@ -7,11 +7,8 @@ against the 5m write's 1.25x, so pricing needs the split, not just the total.
 `context_composition` never had a writer after 2026-06 and nothing reads it;
 `db/schema.sql` never declared it, so only long-lived installs carry it.
 
-Numbered 0048, not 0047: 0047 is held by an in-flight revision that had not
-landed when this one was cut.
-
-Revision ID: 0048
-Revises: 0046
+Revision ID: 0049
+Revises: 0048
 """
 
 from __future__ import annotations
@@ -21,8 +18,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0048"
-down_revision: Union[str, Sequence[str], None] = "0046"
+revision: str = "0049"
+down_revision: Union[str, Sequence[str], None] = "0048"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
