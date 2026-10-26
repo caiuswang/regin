@@ -84,7 +84,7 @@ The feature's spec is the description this task was cut from, and this run is wh
 
   {{spec_cmd}}
 
-Revise it in place as the design now stands; do not append a changelog of this run. Leave it alone when the work simply did what it already said.{{images}}
+Revise it in place as the design now stands; do not append a changelog of this run. Leave it alone when the work simply did what it already said. A Scenario you add needs its test name in the Tests column of the one build slice that delivers it — the command prints the problems slicing would raise; leave that at 0.{{images}}
 </feature>"""
 
 _FEATURE_IMAGES_BODY = """The spec cites the feature's images as `![](image:N)` (the feature holds: {{indices}}). They are NOT attached to this prompt — when the work needs one, fetch it; the command writes the image to a file and prints the path, which you then read:

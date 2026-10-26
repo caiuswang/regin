@@ -136,7 +136,9 @@ def _reference_feature(feature_id: int, named: str) -> str:
         "\n"
         "Revise it in place as the design now stands; do not append a "
         "changelog of this run. Leave it alone when the work simply did what "
-        "it already said.\n"
+        "it already said. A Scenario you add needs its test name in the "
+        "Tests column of the one build slice that delivers it — the command "
+        "prints the problems slicing would raise; leave that at 0.\n"
         "</feature>"
     )
 
