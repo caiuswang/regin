@@ -35,6 +35,7 @@ property the read path relies on.
 
 from __future__ import annotations
 
+from lib.trace.agent_spawn import AGENT_SPAWN_SPAN
 from lib.trace.pending_spans import parse_naive_ts as _merge_ts
 from lib.trace.projection import _graft_orphans
 from lib.trace.merge_anchors import _absorb_slash_command_expansions, _attrs
@@ -240,4 +241,6 @@ def merge_spans(
     # Last: they read the survivors, and stamp attributes no earlier rule keys on.
     spans = _stamp_tool_batches(spans)
     spans = _link_background_tasks(spans)
+    # Lineage for claude_subagents' parent_agent_id stamp, not a tree node.
+    spans = [s for s in spans if s.get('name') != AGENT_SPAWN_SPAN]
     return _graft_orphans(spans)

@@ -203,6 +203,29 @@ def cmd_span(
     print(_json.dumps(out, indent=2, ensure_ascii=False))
 
 
+@trace_app.command("spawn",
+                   help="Record one agent.spawn (JSON on stdin: agentId, "
+                        "parentAgentId, tool_use_id, subagentType) as the "
+                        "agent's lineage")
+def cmd_spawn(
+    session: str = typer.Option(..., "--session",
+                                help="The session the agent was spawned in."),
+) -> None:
+    import sys
+
+    from pydantic import ValidationError
+
+    from lib.trace.agent_spawn import SpawnRecord, record_spawn
+    try:
+        record = SpawnRecord.model_validate_json(sys.stdin.read() or "{}")
+    except ValidationError as exc:
+        print(f"invalid spawn: {exc}", file=sys.stderr)
+        raise typer.Exit(2)
+    if not record_spawn(session, record):
+        print("spawn not ingested (is `regin serve` running?)", file=sys.stderr)
+        raise typer.Exit(1)
+
+
 @trace_app.command("backfill-tokens",
                    help="Populate per-turn usage rows from on-disk transcripts for existing sessions")
 def cmd_backfill_tokens(

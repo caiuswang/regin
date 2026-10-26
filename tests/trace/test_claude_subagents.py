@@ -474,3 +474,67 @@ def test_reconcile_links_child_trace_id_without_a_meta_file(tmp_db, claude_home)
     for agent_id in ("aaa111", "bbb222"):
         assert attrs[f"start-{agent_id}"]["child_trace_id"] == f"sa-{agent_id}"
         assert "launch_tool_use_id" not in attrs[f"stop-{agent_id}"]
+
+
+def _seed_spawn_record(db_path, agent_id: str, parent_agent_id) -> None:
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute(
+            "INSERT INTO session_spans (trace_id, span_id, name, start_time, attributes) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (_SID, f"agentspawn-{agent_id}", "agent.spawn", "2026-06-01T00:00:19",
+             json.dumps({"spawn_agent_id": agent_id,
+                         "spawn_parent_agent_id": parent_agent_id})),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_subagent_parent_comes_from_spawn_record(tmp_db, claude_home):
+    """The same ambiguous-owner layout the inference drops: with a spawn
+    record the child is parented as recorded instead of being dropped."""
+    sub = claude_home / "-proj-hash" / _SID / "subagents"
+    _write_spawning_transcript(sub / "agent-ownerC.jsonl", "toolu_dup")
+    _write_spawning_transcript(sub / "agent-ownerD.jsonl", "toolu_dup")
+    _write_subagent_transcript(sub / "agent-childE.jsonl", "claude-opus-4-8")
+    _write_meta(sub / "agent-childE.meta.json", tool_use_id="toolu_dup", spawn_depth=2)
+    _seed_minimal_session(tmp_db, ["childE"])
+    _seed_spawn_record(tmp_db, "childE", "ownerD")
+
+    result = reconcile_claude_subagents(_SID)
+    assert result["nested_parented"] == 1
+    assert _parent_agent_id_of(tmp_db, "start-childE") == "ownerD"
+    assert _parent_agent_id_of(tmp_db, "agentspawn-childE") is None
+
+
+def test_spawn_record_overrides_meta_inference(tmp_db, claude_home):
+    """A record naming the main loop (no parent) wins over a meta edge that
+    would have resolved to a sibling."""
+    sub = claude_home / "-proj-hash" / _SID / "subagents"
+    _write_spawning_transcript(sub / "agent-aaa111.jsonl", "toolu_spawn_child")
+    _write_subagent_transcript(sub / "agent-ddd444.jsonl", "claude-opus-4-8")
+    _write_meta(sub / "agent-ddd444.meta.json",
+                tool_use_id="toolu_spawn_child", spawn_depth=2)
+    _seed_minimal_session(tmp_db, ["ddd444"])
+    _seed_spawn_record(tmp_db, "ddd444", None)
+
+    result = reconcile_claude_subagents(_SID)
+    assert result["nested_parented"] == 0
+    assert _parent_agent_id_of(tmp_db, "start-ddd444") is None
+
+
+def test_subagent_without_spawn_record_uses_meta_inference(tmp_db, claude_home):
+    """A record for one agent leaves the others on the meta inference."""
+    sub = claude_home / "-proj-hash" / _SID / "subagents"
+    _write_spawning_transcript(sub / "agent-aaa111.jsonl", "toolu_spawn_child")
+    _write_subagent_transcript(sub / "agent-ddd444.jsonl", "claude-opus-4-8")
+    _write_meta(sub / "agent-ddd444.meta.json",
+                tool_use_id="toolu_spawn_child", spawn_depth=2)
+    _seed_minimal_session(tmp_db, ["ddd444", "bbb222"])
+    _seed_spawn_record(tmp_db, "bbb222", "aaa111")
+
+    result = reconcile_claude_subagents(_SID)
+    assert result["nested_parented"] == 2
+    assert _parent_agent_id_of(tmp_db, "start-ddd444") == "aaa111"
+    assert _parent_agent_id_of(tmp_db, "start-bbb222") == "aaa111"

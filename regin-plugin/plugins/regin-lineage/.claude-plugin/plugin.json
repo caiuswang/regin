@@ -1,0 +1,1 @@
+{ "name": "regin-lineage", "version": "0.1.0", "description": "Hands each subagent spawn's agentId, parent and launching tool call to regin, which uses it as the agent's parent instead of inferring one", "author": { "name": "regin" } }

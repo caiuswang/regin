@@ -200,32 +200,44 @@ def _drop_cyclic_parents(parents: dict[str, str]) -> dict[str, str]:
     return {c: p for c, p in parents.items() if c not in dropped}
 
 
-def _resolve_parent_agents(agents: list[tuple[str, str]]) -> dict[str, str]:
-    """child agent_id → spawning parent agent_id, for depth>=2 agents only.
+def _resolve_parent_agents(agents: list[tuple[str, str]],
+                           recorded: dict[str, str | None] | None = None,
+                           ) -> dict[str, str]:
+    """child agent_id → spawning parent agent_id, for nested agents only.
 
-    ``subagents/`` is a flat namespace even for nested spawns; the true
-    agent→agent edge is a child's ``meta.json.toolUseId`` matched against the
-    ``tool_use`` block ids of a sibling agent's transcript. Depth-1 agents (and
+    An agent with a spawn record (``lib.trace.agent_spawn``) takes its parent
+    from the record — a ``None`` parent there means the main loop spawned it.
+
+    Without one, the edge is inferred: ``subagents/`` is a flat namespace even
+    for nested spawns, so a child's ``meta.json.toolUseId`` is matched against
+    the ``tool_use`` block ids of a sibling agent's transcript. Depth-1 agents (and
     any whose ``toolUseId`` resolves to no sibling) are omitted — they keep the
     flat 'under main' behavior. A ``toolUseId`` appearing in more than one
     sibling transcript resolves to no one (ambiguous owner), and any
     self-reference or cycle among the resolved edges is dropped — precision
     over recall throughout."""
-    metas: dict[str, dict] = {agent_id: _read_agent_meta(path) for agent_id, path in agents}
+    recorded = recorded or {}
     owner_by_tool_use, ambiguous = _tool_use_owners(agents)
     parents: dict[str, str] = {}
-    for agent_id, _path in agents:
-        meta = metas.get(agent_id) or {}
-        depth = meta.get('spawnDepth')
-        tool_use_id = meta.get('toolUseId')
-        if not isinstance(depth, int) or depth < 2 or not isinstance(tool_use_id, str):
-            continue
-        if tool_use_id in ambiguous:
-            continue
-        parent = owner_by_tool_use.get(tool_use_id)
+    for agent_id, path in agents:
+        if agent_id in recorded:
+            parent = recorded[agent_id]
+        else:
+            parent = _inferred_parent(_read_agent_meta(path), owner_by_tool_use, ambiguous)
         if parent and parent != agent_id:
             parents[agent_id] = parent
     return _drop_cyclic_parents(parents)
+
+
+def _inferred_parent(meta: dict, owner_by_tool_use: dict[str, str],
+                     ambiguous: set[str]) -> str | None:
+    depth = meta.get('spawnDepth')
+    tool_use_id = meta.get('toolUseId')
+    if not isinstance(depth, int) or depth < 2 or not isinstance(tool_use_id, str):
+        return None
+    if tool_use_id in ambiguous:
+        return None
+    return owner_by_tool_use.get(tool_use_id)
 
 
 def _stamp_parent_agent(conn, trace_id: str, agent_id: str,
@@ -246,10 +258,12 @@ def _stamp_parent_agent(conn, trace_id: str, agent_id: str,
 
 def _reparent_nested_agents(conn, trace_id: str,
                             agents: list[tuple[str, str]]) -> int:
-    """Stamp ``parent_agent_id`` for every depth>=2 agent whose spawning agent
+    """Stamp ``parent_agent_id`` for every nested agent whose spawning agent
     resolves. Returns the count of agents stamped (>=1 span updated)."""
+    from lib.trace.agent_spawn import spawn_parents
+    recorded = spawn_parents(conn, trace_id)
     stamped = 0
-    for agent_id, parent_agent_id in _resolve_parent_agents(agents).items():
+    for agent_id, parent_agent_id in _resolve_parent_agents(agents, recorded).items():
         if _stamp_parent_agent(conn, trace_id, agent_id, parent_agent_id) > 0:
             stamped += 1
     return stamped

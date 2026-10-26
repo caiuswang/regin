@@ -46,6 +46,11 @@
       "name": "regin-permit",
       "source": "./plugins/regin-permit",
       "description": "Mod: holds a permission ask while regin's web card allows or denies it; release or an unreachable regin hands it back to the native dialog"
+    },
+    {
+      "name": "regin-lineage",
+      "source": "./plugins/regin-lineage",
+      "description": "Mod: hands each subagent spawn's agentId, parentAgentId and launching tool call to regin (agent.spawn), which records it as the agent's lineage"
     }
   ]
 }
