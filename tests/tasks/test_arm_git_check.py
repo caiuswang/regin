@@ -29,8 +29,13 @@ EDITOR = {"Authorization": f"Bearer {create_token(2, 'ed', 'editor')}"}
 
 SLICED_SPEC = """## Acceptance
 
-- test_a
-- test_b
+```gherkin
+Scenario: test_a
+  Then a
+
+Scenario: test_b
+  Then b
+```
 
 ## Work slices
 

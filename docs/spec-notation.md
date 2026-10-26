@@ -70,8 +70,16 @@ spec lives.
 ### Acceptance
 Gherkin, or test names. Each item maps to a test that runs. An acceptance item
 you cannot phrase as Given/When/Then is not an acceptance item — it is a wish.
-Title each `Scenario:` — slicing reads the title as the test's name
-(`test_<snake_case_title>`), so an untitled Given/When/Then block names no test.
+Slicing reads only ```gherkin fences under an `Acceptance` / `验收` heading,
+and each `Scenario:` title yields the test's name; an untitled Given/When/Then
+block names no test and is refused:
+
+| Scenario title | Test name |
+|---|---|
+| exactly one whitespace-separated word — after trimming wrapping backticks, quotes, brackets and `,.;:`（full-width too）— is a `test_…` identifier (`空段落键入 / 打开菜单 — test_slash_opens_on_empty_paragraph`) | that word |
+| two or more such words | none — refused as `no_test_name` (ambiguous) |
+| no such word, title all ASCII | `test_` + the title's ASCII alphanumeric runs, lower-cased, joined by `_` |
+| no such word, title has any non-ASCII character (a Chinese title) | none — refused as `no_test_name`: add an explicit `test_…` word to the title |
 
 ## Relation to doc-hygiene
 

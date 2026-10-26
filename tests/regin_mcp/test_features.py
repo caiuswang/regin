@@ -12,7 +12,7 @@ from lib.orm.models.features import FeatureEvent
 from lib.orm.models.trace import Session as TraceSession
 
 SPEC = (
-    "## Acceptance\n\n- test_a\n- test_b\n\n## Work slices\n\n"
+    "## Acceptance\n\n```gherkin\nScenario: test_a\n  Then a\n\nScenario: test_b\n  Then b\n```\n\n## Work slices\n\n"
     "| # | Slice | Delivers | Spec refs | Tests | Depends on | Base | "
     "Skill | Verify |\n|---|---|---|---|---|---|---|---|---|\n"
     "| S1 | contracts | the contracts | R1 | test_a | — | f9/integration | "

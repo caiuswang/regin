@@ -22,16 +22,33 @@ Run the gate before you write a word of the table:
 .venv/bin/python cli/regin.py task slice-check --feature <ID>
 ```
 
-Exit 0 means the spec is sliceable and its existing table parses. Exit 1
-prints every reason on stderr. Two refusals are yours to respect:
+Exit 0 means the spec has no problems. Exit 1 prints every problem on
+stderr, each with its spec line and a code (`no_acceptance`,
+`untitled_block`, `gherkin_syntax`, `no_test_name`, `duplicate_name`,
+`table_shape`, `uncovered`, `double_owned`, `not_an_acceptance_name`).
+Transcribe refuses on the same list, on every path. The ones that are yours
+to respect:
 
 | Refusal | What it means | What you do |
 |---|---|---|
-| The spec names no acceptance test | Its acceptance is prose — no `test_…` name and no titled Gherkin `Scenario:` — there is nothing to put in a slice's Tests column | **Stop and report what is missing.** Do not invent test names; a name you made up is a slice verified against your own guess |
+| `no_acceptance` / `untitled_block` / `no_test_name` | The acceptance is prose, a ```gherkin block has steps but no `Scenario:`, or a title yields no test name (rule below) | **Stop and report what is missing.** Do not invent test names; a name you made up is a slice verified against your own guess |
+| `uncovered` / `double_owned` | An acceptance name is in no build slice's Tests, or in two | Give each acceptance name to exactly one build slice. Tail rows (integrate / migrate / verify) may re-list names; they do not count as owners |
+| `not_an_acceptance_name` | A build slice's Tests holds something that is not an acceptance name (`live check: B1–B8`, `test_x（单测版）`, a spec file name) | Tests holds acceptance names only — put the rest in Delivers |
 | Two slices own one schema change | Two slices both claim a migration | Give the migration to **one** slice and make the others depend on it |
 
 A spec whose acceptance section is a paragraph of "it should feel fast" is
 not a spec you slice badly — it is a spec you refuse, naming the section.
+
+Only ```gherkin fences under a heading that starts with `Acceptance` or
+`验收` are read, through gherkin's own parser — a bare `test_…` word in
+prose names nothing. Each `Scenario:` title yields its test name:
+
+| Scenario title | Test name |
+|---|---|
+| exactly one whitespace-separated word — after trimming wrapping backticks, quotes, brackets and `,.;:`（full-width too）— is a `test_…` identifier (`空段落键入 / 打开菜单 — test_slash_opens_on_empty_paragraph`) | that word |
+| two or more such words | none — refused as `no_test_name` (ambiguous) |
+| no such word, title all ASCII | `test_` + the title's ASCII alphanumeric runs, lower-cased, joined by `_` |
+| no such word, title has any non-ASCII character (a Chinese title) | none — refused as `no_test_name`: add an explicit `test_…` word to the title |
 
 ## G-SURFACE — before you slice, not after
 
@@ -72,7 +89,7 @@ carry the base and both are load-bearing:
 | `Delivers` | what this slice delivers |
 | `Schema` | a tick (`yes`) on the one slice that owns the install-wide schema move, blank on every other. Naming a migration in `Delivers` also counts — either way, two owners is a refusal |
 | `Spec refs` | the Rules / Acceptance paragraph numbers |
-| `Tests` | acceptance test **names**, not descriptions — a `test_…` token, or a `Scenario:` title as `task slice-check` transcribes it (`test_<snake_case_title>`) |
+| `Tests` | acceptance test **names**, not descriptions — each the name a ```gherkin `Scenario:` under Acceptance derives (rule below), split on `,` or `、` |
 | `Depends on` | other slice ids. `S3` means this slice consumes S3's result and parks if S3 fails; `S3 (after)` means ordering only — it runs once S3 has stopped, succeeded or not |
 | `Base` | branch name. A human fills it when reviewing the spec; a machine cannot derive it |
 | `Skill` | optional; defaults to `goal-verified-treenav` |
