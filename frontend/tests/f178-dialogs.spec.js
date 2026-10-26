@@ -137,6 +137,43 @@ test('test_task_composer_uses_rich_editor', async ({ page }) => {
   expect(own.scroll).toBe(own.client)
 })
 
+test('test_new_defect_dialog_uses_rich_editor', async ({ page }) => {
+  let sent = null
+  await page.route(/\/api\/defects(\?.*)?$/, (route) => {
+    if (route.request().method() === 'POST') {
+      sent = route.request().postDataJSON()
+      return route.fulfill({ status: 201, json: { ok: true, defect: { id: 9001 } } })
+    }
+    return route.fulfill({ json: { items: [], population: 0,
+      pagination: { total: 0, page: 0, size: 50, has_next: false, has_prev: false } } })
+  })
+  await page.goto('/defects')
+  await page.locator('#pipeline-actions [data-testid="defect-new"]').click()
+
+  const dialog = page.getByTestId('new-defect')
+  const face = dialog.getByTestId('new-defect-symptom')
+  await expect(face).toHaveAttribute('contenteditable', 'true')
+  await expect(dialog.getByTestId('editor-mode-rich')).toHaveAttribute('aria-pressed', 'true')
+  await expect(dialog.getByTestId('editor-expand')).toHaveCount(0)
+  await expect(dialog.getByTestId('editor-head')).toHaveCSS('position', 'static')
+  // No image item: a defect's screenshots go to the dialog's strip, not the text.
+  await face.click()
+  await page.keyboard.type('/imag')
+  await expect(page.getByTestId('slash-menu')).toHaveCount(0)
+  await page.keyboard.press('ControlOrMeta+a')
+  await page.keyboard.press('Backspace')
+
+  await page.keyboard.type('## Steps')
+  await page.keyboard.press('Enter')
+  await page.keyboard.type('click **Save**')
+  await expect(face.locator('h2')).toHaveText('Steps')
+  await expect(face.locator('strong')).toHaveText('Save')
+
+  await page.keyboard.press('ControlOrMeta+Enter')
+  await expect.poll(() => sent).not.toBeNull()
+  expect(sent.symptom).toBe('## Steps\n\nclick **Save**')
+})
+
 test('test_dialog_esc_closes_overlay_first', async ({ page }) => {
   await openComposer(page)
   const dialog = page.getByTestId('task-composer')

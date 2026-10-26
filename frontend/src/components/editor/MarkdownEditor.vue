@@ -32,10 +32,10 @@
 // failure is the host's to show, reported as `attach-error`.
 //
 // A host passing `outline` gets the rich face's headings listed (`Outline`):
-// a rail in the focus layout's left margin when that margin is wide enough
-// to hold one (measured, since the sidebar's width is the page's to decide),
-// otherwise an Outline button in the head once there are enough headings to
-// need one. The rail sits beside the 84ch column, never inside it.
+// a gutter rail on the left of the full-width focus column when the column is
+// wide enough to give one up (measured, since the sidebar's width is the
+// page's to decide), otherwise an Outline button in the head once there are
+// enough headings to need one. The text never runs under the rail.
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, useSlots } from 'vue'
 import Button from '../ui/Button.vue'
 import EditorToolbar from './EditorToolbar.vue'
@@ -117,13 +117,15 @@ const { layout, setLayout } = useEditorLayout({
   enabled: () => !props.verbatim && props.expandable,
 })
 
-// The rail is stuck just under the stuck head, whose height wraps with the
-// toolbar, and is as wide as the column's left margin allows (the pane's own
-// padding excluded). Both are measured as they change rather than guessed.
+// The focus column spans the pane, so the rail is a gutter cut from its left
+// edge: offered once the column keeps COLUMN_MIN beside it, as wide as what is
+// left over allows. It is stuck just under the stuck head, whose height wraps
+// with the toolbar; both are measured as they change rather than guessed.
 const SCROLLER = '.content-scroll'
 const RAIL_MIN = 160
 const RAIL_MAX = 224
 const RAIL_GAP = 16
+const COLUMN_MIN = 640
 const headHeight = ref(0)
 const railRoom = ref(0)
 const railWidth = computed(() => Math.min(RAIL_MAX, railRoom.value - RAIL_GAP))
@@ -151,13 +153,11 @@ let sizes = null
 
 function measure() {
   headHeight.value = head.value?.offsetHeight ?? 0
-  const scroller = root.value?.closest(SCROLLER)
-  if (!scroller || layout.value !== 'focus') {
+  if (!root.value?.closest(SCROLLER) || layout.value !== 'focus') {
     railRoom.value = 0
     return
   }
-  const pad = parseFloat(getComputedStyle(scroller).paddingLeft) || 0
-  railRoom.value = root.value.getBoundingClientRect().left - scroller.getBoundingClientRect().left - scroller.clientLeft - pad
+  railRoom.value = root.value.clientWidth - COLUMN_MIN
 }
 
 onMounted(() => {
@@ -223,7 +223,7 @@ function listeners(all) {
 <template>
   <div
     ref="root"
-    :class="['md-editor', `is-${mode}`, `is-${layout}`, { 'is-contained': !expandable }, $attrs.class]"
+    :class="['md-editor', `is-${mode}`, `is-${layout}`, { 'is-contained': !expandable, 'has-rail': outlineAs === 'rail' }, $attrs.class]"
     :style="[$attrs.style, { '--me-head-h': `${headHeight}px`, '--me-rail-w': `${railWidth}px` }]"
     :data-mode="mode" :data-layout="layout" data-testid="markdown-editor"
   >
@@ -313,11 +313,12 @@ function listeners(all) {
 
 <style scoped>
 .md-editor { margin-top: 0.75rem; }
-.md-editor.is-focus { position: relative; max-width: 84ch; margin-inline: auto; }
-/* In the focus column's left margin, stuck under the stuck head. */
+.md-editor.is-focus { position: relative; }
+.md-editor.is-focus.has-rail { padding-left: calc(var(--me-rail-w, 0px) + 16px); }
+/* In the focus column's left gutter, stuck under the stuck head. */
 .me-rail {
     position: absolute; top: var(--me-head-h, 0px); bottom: 0;
-    right: calc(100% + 16px); width: var(--me-rail-w, 0px);
+    left: 0; width: var(--me-rail-w, 0px);
 }
 .me-rail > :deep(.ol-rail) {
     position: sticky; top: calc(var(--me-head-h, 0px) - 1.5rem + 0.5rem);

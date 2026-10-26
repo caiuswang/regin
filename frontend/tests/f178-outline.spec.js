@@ -64,11 +64,11 @@ test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => window.localStorage.removeItem('regin_editor_mode'))
 })
 
-// The rail needs the column's left margin to hold it: with the sidebar open
-// that is a 1680px window; at 1440 the margin is ~110px and the head's button
-// stands in for it.
+// The rail is a gutter cut from the full-width focus column, offered while
+// the column keeps 640px beside it: with the sidebar open a 1440px window
+// has room, a 1024px one does not and the head's button stands in for it.
 test('test_outline_rail_in_focus', async ({ page }) => {
-  await page.setViewportSize({ width: 1680, height: 900 })
+  await page.setViewportSize({ width: 1440, height: 900 })
   await stubFeature(page, spec(8))
   await openEditor(page)
   await page.getByTestId('editor-expand').click()
@@ -78,21 +78,23 @@ test('test_outline_rail_in_focus', async ({ page }) => {
   await expect(items).toHaveCount(8)
   await expect(items.nth(0)).toHaveText('Part 0')
 
-  // Beside the 84ch column, not over it, and inside the pane.
+  // Left of the text, not under it, inside the pane; the text runs on to the
+  // column's right edge rather than stopping short of it.
   const geo = await page.evaluate(() => {
     const r = (el) => el.getBoundingClientRect()
     const ed = document.querySelector('[data-testid="markdown-editor"]')
+    const text = document.querySelector('[data-testid="feature-spec-rich"]')
     const nav = document.querySelector('[data-testid="outline-rail"]')
     const pane = document.querySelector('.content-scroll')
     return {
-      edLeft: r(ed).left, edWidth: r(ed).width, maxWidth: parseFloat(getComputedStyle(ed).maxWidth),
+      edRight: r(ed).right, textLeft: r(text).left, textRight: r(text).right,
       railLeft: r(nav).left, railRight: r(nav).right,
       paneLeft: r(pane).left + parseFloat(getComputedStyle(pane).paddingLeft),
     }
   })
-  expect(geo.railRight).toBeLessThanOrEqual(geo.edLeft)
+  expect(geo.railRight).toBeLessThanOrEqual(geo.textLeft)
   expect(geo.railLeft).toBeGreaterThanOrEqual(geo.paneLeft)
-  expect(geo.edWidth).toBeLessThanOrEqual(geo.maxWidth + 0.5)
+  expect(Math.abs(geo.textRight - geo.edRight)).toBeLessThanOrEqual(1)
 
   await items.nth(5).click()
   const heading = face(page).locator('h2').nth(5)
@@ -126,7 +128,7 @@ test('test_outline_rail_in_focus', async ({ page }) => {
 })
 
 test('test_outline_rail_in_focus — no headings says so', async ({ page }) => {
-  await page.setViewportSize({ width: 1680, height: 900 })
+  await page.setViewportSize({ width: 1440, height: 900 })
   await stubFeature(page, 'just a paragraph')
   await openEditor(page)
   await page.getByTestId('editor-expand').click()
@@ -134,8 +136,8 @@ test('test_outline_rail_in_focus — no headings says so', async ({ page }) => {
   await expect(rail(page).getByTestId('outline-item')).toHaveCount(0)
 })
 
-test('test_outline_rail_in_focus — a margin too narrow for it gets the button instead', async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 900 })
+test('test_outline_rail_in_focus — a column too narrow for it gets the button instead', async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 900 })
   await stubFeature(page, spec(8))
   await openEditor(page)
   await page.getByTestId('editor-expand').click()

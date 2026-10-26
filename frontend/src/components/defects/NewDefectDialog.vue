@@ -11,7 +11,7 @@ import api from '../../api'
 import Button from '../ui/Button.vue'
 import Dialog from '../ui/Dialog.vue'
 import Textarea from '../ui/Textarea.vue'
-import RefTextarea from '../refs/RefTextarea.vue'
+import MarkdownEditor from '../editor/MarkdownEditor.vue'
 import FeaturePicker from '../pipeline/FeaturePicker.vue'
 import PlGlyph from '../pipeline/PlGlyph.vue'
 import TaskImageStrip from '../tasks/TaskImageStrip.vue'
@@ -107,14 +107,19 @@ async function submit() {
     <template #mark><PlGlyph kind="defect.wild" :scale="2" /></template>
     <form class="nd-form" data-testid="new-defect" @submit.prevent="submit" @paste="onPaste">
       <label class="nd-label" for="nd-symptom" data-pl-part="field-label">Symptom</label>
-      <RefTextarea
+      <MarkdownEditor
         id="nd-symptom"
         v-model="symptom"
-        :feature="featureId"
-        :rows="4"
+        :feature="featureId ? Number(featureId) : null"
+        :expandable="false" :outline="false"
+        preview-testid="new-defect-symptom"
+        class="nd-symptom"
         data-testid="new-defect-symptom"
         data-pl-part="input"
+        aria-label="Defect symptom markdown"
+        :rows="4"
         placeholder="What you saw, and where"
+        @submit="submit"
       />
 
       <span class="nd-label" data-pl-part="field-label">Feature <span class="nd-optional">(optional — none sends it to triage)</span></span>
@@ -162,6 +167,7 @@ async function submit() {
 <style scoped>
 .nd-form { display: flex; flex-direction: column; gap: 0.35rem; }
 .nd-label { font-size: 11.5px; font-weight: 600; color: var(--color-fg-subtle); margin-top: 0.4rem; }
+.nd-symptom { margin-top: 0; }
 .nd-optional { font-weight: 400; color: var(--color-fg-faint); }
 .nd-project { margin: 0; font-size: 11.5px; color: var(--color-fg-muted); }
 .nd-fail { margin-top: 0.5rem; font-size: 12px; color: var(--color-danger); }

@@ -190,20 +190,19 @@ test('test_focus_mode', async ({ page }) => {
   await expect(page.locator('[data-testid="feature-spec"] ~ *').filter({ visible: true })).toHaveCount(0)
   await expect(page.getByTestId('editor-focus-title')).toHaveText(TITLE)
   await expect(page.getByTestId('editor-collapse')).toBeVisible()
-  const width = await editor(page).evaluate((el) => {
-    const cs = getComputedStyle(el)
-    return { width: el.getBoundingClientRect().width, max: cs.maxWidth, font: parseFloat(cs.fontSize) }
-  })
-  expect(width.max).not.toBe('none')
-  expect(width.width).toBeLessThanOrEqual(parseFloat(width.max) + 0.5)
-  // 84ch is under 84 em-widths of the editor's font: centred, not card-wide.
-  expect(width.width).toBeLessThan(84 * width.font)
+  // The column spans the pane: the editor sits as far from either edge as the
+  // card's own padding puts it, and the face runs to its right edge — no
+  // margin left idle beside the text (an outline rail, if any, is a gutter
+  // cut from the column's left).
+  expect(await editor(page).evaluate((el) => getComputedStyle(el).maxWidth)).toBe('none')
   const ed = await box(editor(page))
   const pane = await box(scroller(page))
   const paneWidth = await scroller(page).evaluate((sc) => sc.clientWidth)
   const leftGap = ed.left - pane.left
   const rightGap = pane.left + paneWidth - (ed.left + ed.width)
   expect(Math.abs(leftGap - rightGap)).toBeLessThanOrEqual(2)
+  const fb = await box(face(page))
+  expect(Math.abs(fb.left + fb.width - (ed.left + ed.width))).toBeLessThanOrEqual(1)
   expect(await inScroller(page, block)).toBe(true)
   const { scroll, client } = await noInnerScroll(face(page))
   expect(scroll).toBe(client)

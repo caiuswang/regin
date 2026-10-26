@@ -171,6 +171,29 @@ test('test_table_edit_serializes_table', async ({ page }) => {
     .toBe('intro\n\n| a   | b   |\n| --- | --- |\n| 1   | 2   |\n| z   |     |\n\noutro')
 })
 
+test('test_table_delete_row_tool', async ({ page }) => {
+  const patches = await stub(page, 'intro\n\n| a | b |\n|---|-|\n| 1 | 2 |\n| 3 | 4 |\n\noutro')
+  await openRich(page)
+  await face(page).locator('td', { hasText: '1' }).click()
+
+  // Each table tool draws its own glyph: delete row is not insert row less a
+  // stroke, which is how it went unseen beside the others.
+  const glyphs = await page.locator('[data-testid^="editor-tool-"][data-testid$="_after"], [data-testid^="editor-tool-"][data-testid$="_delete"]')
+    .evaluateAll((els) => els.map((el) => [...el.querySelectorAll('path')].map((p) => p.getAttribute('d')).join('|')))
+  expect(glyphs).toHaveLength(5)
+  expect(new Set(glyphs).size).toBe(5)
+  for (const [ins, del] of [['row_after', 'row_delete'], ['column_after', 'column_delete']]) {
+    const d = async (kind) => (await tool(page, kind).locator('path').evaluateAll((ps) => ps.map((p) => p.getAttribute('d'))))
+    const [a, b] = [await d(ins), await d(del)]
+    expect(b.every((path) => a.includes(path))).toBe(false)
+  }
+
+  await tool(page, 'row_delete').click()
+  await expect(face(page).locator('tr')).toHaveCount(2)
+  expect(await save(page, patches))
+    .toBe('intro\n\n| a   | b   |\n| --- | --- |\n| 3   | 4   |\n\noutro')
+})
+
 test('test_markdown_input_rules', async ({ page }) => {
   const patches = await stub(page, '')
   await openRich(page)
