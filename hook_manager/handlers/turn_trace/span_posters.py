@@ -57,6 +57,7 @@ def _build_usage_row(
         'output_tokens': turn.output_tokens,
         'cache_read_tokens': turn.cache_read_tokens,
         'cache_creation_tokens': turn.cache_creation_tokens,
+        'cache_creation_1h_tokens': turn.cache_creation_1h_tokens,
         'context_used_tokens': turn.context_used,
         'request_id': turn.request_id,
         'effort_level': effort_level,

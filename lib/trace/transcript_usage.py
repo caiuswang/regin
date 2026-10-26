@@ -456,7 +456,8 @@ class _TranscriptScan(_UserEntryScanMixin, _FinalizeScanMixin):
                 or builder.cache_read_tokens or builder.cache_creation_tokens):
             return
         (builder.input_tokens, builder.output_tokens,
-         builder.cache_read_tokens, builder.cache_creation_tokens) = _usage_tokens(usage)
+         builder.cache_read_tokens, builder.cache_creation_tokens,
+         builder.cache_creation_1h_tokens) = _usage_tokens(usage)
 
     @staticmethod
     def _accumulate_text_and_thinking(builder: _TurnBuilder, content: object) -> None:

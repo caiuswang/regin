@@ -41,7 +41,7 @@ log = get_activity_logger("trace_ingest")
 # itself (the live schema's trace-child tables).
 _CHILD_TABLES = (
     "session_spans", "session_trace_map", "turn_usage", "prompt_images",
-    "session_repos", "context_composition", "agent_messages",
+    "session_repos", "agent_messages",
     "session_grades", "bridge_panes", "bridge_messages",
 )
 
@@ -49,7 +49,6 @@ _CHILD_TABLES = (
 # small metadata tables) are kept so history + analytics stay intact.
 _DETAIL_TABLES = (
     "session_spans", "session_trace_map", "turn_usage", "prompt_images",
-    "context_composition",
 )
 
 

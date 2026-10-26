@@ -258,6 +258,9 @@ class Session(Base, table=True):
         sa_column=Column("created_at", Text, nullable=False,
                          server_default=text("(datetime('now'))")),
     )
+    # The 1h-TTL share of `cache_creation_tokens`, summed from turn_usage.
+    cache_creation_1h_tokens: Optional[int] = Field(
+        default=None, sa_column=Column("cache_creation_1h_tokens", Integer))
 
 
 class TurnUsage(Base, table=True):
@@ -320,6 +323,13 @@ class TurnUsage(Base, table=True):
         default=None,
         sa_column=Column("created_at", Text, nullable=False,
                          server_default=text("(datetime('now'))")),
+    )
+    # The 1h-TTL share of `cache_creation_tokens` (2x-input writes); the
+    # remainder bills at the 5m rate.
+    cache_creation_1h_tokens: int = Field(
+        default=0,
+        sa_column=Column("cache_creation_1h_tokens", Integer, nullable=False,
+                         server_default=text("0")),
     )
 
 

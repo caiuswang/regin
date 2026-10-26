@@ -67,6 +67,8 @@ def turn_usage_row(
         'output_tokens': int(usage.get('output_tokens') or 0),
         'cache_read_tokens': cache_read,
         'cache_creation_tokens': cache_creation,
+        'cache_creation_1h_tokens': int(
+            usage.get('cache_creation_1h_tokens') or 0),
         'context_used_tokens': (
             context_used if context_used is not None
             else input_tokens + cache_read + cache_creation

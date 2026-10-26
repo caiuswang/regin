@@ -40,6 +40,8 @@ class TurnUsage:
     output_tokens: int
     cache_read_tokens: int
     cache_creation_tokens: int
+    # The 1h-TTL share of `cache_creation_tokens` (the rest is 5m).
+    cache_creation_1h_tokens: int = 0
     # Turn provenance — used by hook_manager.handlers.turn_trace to
     # emit a stable, idempotent per-turn span (the transcript writes
     # these fields at the top level of each assistant entry).

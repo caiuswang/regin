@@ -167,13 +167,19 @@ def _neutral_usage(raw) -> dict:
     rename happens here rather than leaking a provider key downstream.
     """
     usage = raw if isinstance(raw, dict) else {}
+    split = usage.get('cache_creation')
+    split = split if isinstance(split, dict) else {}
+    split_1h = _int(split.get('ephemeral_1h_input_tokens'))
+    creation = _int(usage.get('cache_creation_input_tokens')
+                    or usage.get('cache_creation_tokens')) or (
+        _int(split.get('ephemeral_5m_input_tokens')) + split_1h)
     return {
         'input_tokens': _int(usage.get('input_tokens')),
         'output_tokens': _int(usage.get('output_tokens')),
         'cache_read_tokens': _int(usage.get('cache_read_input_tokens')
                                   or usage.get('cache_read_tokens')),
-        'cache_creation_tokens': _int(usage.get('cache_creation_input_tokens')
-                                      or usage.get('cache_creation_tokens')),
+        'cache_creation_tokens': creation,
+        'cache_creation_1h_tokens': min(split_1h, creation),
     }
 
 

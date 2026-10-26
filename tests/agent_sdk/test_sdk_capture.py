@@ -190,6 +190,7 @@ def test_result_usage_is_normalized_off_the_provider_key_names():
     assert event.usage == {
         "input_tokens": 10, "output_tokens": 3,
         "cache_read_tokens": 400, "cache_creation_tokens": 50,
+        "cache_creation_1h_tokens": 0,
     }
 
 

@@ -109,6 +109,7 @@ def _agent_totals(usage) -> tuple[float, int, int]:
                 output_tokens=out_tok,
                 cache_read_tokens=cache_r,
                 cache_creation_tokens=cache_w,
+                cache_creation_1h_tokens=int(turn.cache_creation_1h_tokens or 0),
             ),
             context_tokens=in_tok + cache_r + cache_w,
         )

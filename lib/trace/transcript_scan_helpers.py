@@ -122,6 +122,7 @@ class _TurnBuilder:
     output_tokens: int = 0
     cache_read_tokens: int = 0
     cache_creation_tokens: int = 0
+    cache_creation_1h_tokens: int = 0
     uuid: str | None = None
     timestamp: str | None = None
     request_id: str | None = None
@@ -588,6 +589,7 @@ def _builder_to_turn_usage(
         output_tokens=builder.output_tokens,
         cache_read_tokens=builder.cache_read_tokens,
         cache_creation_tokens=builder.cache_creation_tokens,
+        cache_creation_1h_tokens=builder.cache_creation_1h_tokens,
         uuid=builder.uuid,
         timestamp=builder.timestamp,
         request_id=builder.request_id,

@@ -12,6 +12,10 @@ Schema (from `https://models.dev/api.json`):
             "cache_write": <USD per 1M tokens>,
         } } } } }
 
+`cache_write` is the 5-minute-TTL write rate. A 1-hour write bills at 2x
+input; the catalogue may publish it as `cache_write_1h`, otherwise it is
+derived from `input`.
+
 Disk cache lives 24h under `$XDG_CACHE_HOME/regin/`. Network failures
 degrade silently to `None` — pricing must never block ingest.
 
@@ -56,6 +60,8 @@ class TokenBreakdown:
     output_tokens: int = 0
     cache_read_tokens: int = 0
     cache_creation_tokens: int = 0
+    # The 1h-TTL share of `cache_creation_tokens`; the remainder is 5m.
+    cache_creation_1h_tokens: int = 0
 
 
 def _cache_path() -> Path:
@@ -314,6 +320,9 @@ def model_rates(model: str | None) -> dict | None:
 
 
 _RATE_KEYS = ('input', 'output', 'cache_read', 'cache_write')
+# Not in `_RATE_KEYS`: no catalogue shard publishes it today, and counting it
+# toward `_rate_completeness` would rank shards on a key none of them carry.
+_TIERED_KEYS = _RATE_KEYS + ('cache_write_1h',)
 
 
 def _best_context_tier(tiers: list, context_tokens: int) -> dict | None:
@@ -344,13 +353,13 @@ def _rates_for_context(rates: dict, context_tokens: int | None) -> dict:
     200K). Below the lowest threshold — or when no tiers are published —
     the top-level rates apply, so this is a no-op for flat models.
     """
-    eff = {k: rates.get(k) for k in _RATE_KEYS}
+    eff = {k: rates.get(k) for k in _TIERED_KEYS}
     tiers = rates.get('tiers')
     if not context_tokens or not isinstance(tiers, list):
         return eff
     tier = _best_context_tier(tiers, context_tokens)
     if tier:
-        for k in _RATE_KEYS:
+        for k in _TIERED_KEYS:
             if tier.get(k) is not None:
                 eff[k] = tier[k]
     return eff
@@ -373,13 +382,31 @@ def cost_components(model: str | None, breakdown: TokenBreakdown,
         return None
     eff = _rates_for_context(rates, context_tokens)
     return {
+        **_input_side_costs(eff, breakdown),
+        'cache_write': _cache_write_cost(eff, breakdown),
+    }
+
+
+def _input_side_costs(eff: dict, breakdown: TokenBreakdown) -> dict:
+    return {
         'input': (eff.get('input') or 0) * breakdown.input_tokens / 1_000_000,
         'output': (eff.get('output') or 0) * breakdown.output_tokens / 1_000_000,
         'cache_read': (eff.get('cache_read') or 0)
         * breakdown.cache_read_tokens / 1_000_000,
-        'cache_write': (eff.get('cache_write') or 0)
-        * breakdown.cache_creation_tokens / 1_000_000,
     }
+
+
+def _cache_write_cost(eff: dict, breakdown: TokenBreakdown) -> float:
+    """5m writes at `cache_write`, 1h writes at `cache_write_1h` (or 2x input
+    when the catalogue does not publish it)."""
+    one_hour = min(breakdown.cache_creation_1h_tokens,
+                   breakdown.cache_creation_tokens)
+    five_min = breakdown.cache_creation_tokens - one_hour
+    rate_1h = eff.get('cache_write_1h')
+    if rate_1h is None:
+        rate_1h = 2 * (eff.get('input') or 0)
+    return ((eff.get('cache_write') or 0) * five_min
+            + rate_1h * one_hour) / 1_000_000
 
 
 def cost(model: str | None, breakdown: TokenBreakdown,

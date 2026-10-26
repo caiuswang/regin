@@ -42,6 +42,7 @@ def _insert_one_turn_row(conn, r, trace_id, turn_uuid, timestamp) -> None:
     output_tokens = int(r.get('output_tokens') or 0)
     cache_read_tokens = int(r.get('cache_read_tokens') or 0)
     cache_creation_tokens = int(r.get('cache_creation_tokens') or 0)
+    cache_creation_1h_tokens = int(r.get('cache_creation_1h_tokens') or 0)
     context_used_tokens = int(r.get('context_used_tokens') or 0)
     model = r.get('model')
     row_cost: float | None = None
@@ -51,6 +52,7 @@ def _insert_one_turn_row(conn, r, trace_id, turn_uuid, timestamp) -> None:
             output_tokens=output_tokens,
             cache_read_tokens=cache_read_tokens,
             cache_creation_tokens=cache_creation_tokens,
+            cache_creation_1h_tokens=cache_creation_1h_tokens,
         ), context_tokens=context_used_tokens)
     except Exception:
         row_cost = None
@@ -61,8 +63,8 @@ def _insert_one_turn_row(conn, r, trace_id, turn_uuid, timestamp) -> None:
             trace_id, turn_uuid, turn_index, timestamp, model,
             input_tokens, output_tokens, cache_read_tokens,
             cache_creation_tokens, context_used_tokens, request_id,
-            cost_usd, effort_level, reasoning_tokens
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            cost_usd, effort_level, reasoning_tokens, cache_creation_1h_tokens
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(trace_id, turn_uuid) DO UPDATE SET
             turn_index = excluded.turn_index,
             timestamp  = excluded.timestamp,
@@ -71,6 +73,7 @@ def _insert_one_turn_row(conn, r, trace_id, turn_uuid, timestamp) -> None:
             output_tokens         = excluded.output_tokens,
             cache_read_tokens     = excluded.cache_read_tokens,
             cache_creation_tokens = excluded.cache_creation_tokens,
+            cache_creation_1h_tokens = excluded.cache_creation_1h_tokens,
             context_used_tokens   = excluded.context_used_tokens,
             request_id            = COALESCE(excluded.request_id,
                                             turn_usage.request_id),
@@ -93,6 +96,7 @@ def _insert_one_turn_row(conn, r, trace_id, turn_uuid, timestamp) -> None:
             row_cost,
             r.get('effort_level'),
             r.get('reasoning_tokens'),
+            cache_creation_1h_tokens,
         ),
     )
 
@@ -232,12 +236,13 @@ def _refresh_one_session_aggregates(conn, tid: str) -> None:
                SUM(cache_read_tokens), SUM(cache_creation_tokens),
                MAX(context_used_tokens),
                COUNT(*),
-               SUM(cost_usd)
+               SUM(cost_usd),
+               SUM(cache_creation_1h_tokens)
         FROM turn_usage WHERE trace_id = ?
     """, (tid,)).fetchone()
     if not row or row[5] == 0:
         return
-    (in_tot, out_tot, cread, ccreate, peak, _cnt, cost_tot) = row
+    (in_tot, out_tot, cread, ccreate, peak, _cnt, cost_tot, ccreate_1h) = row
     main_rows = _main_turn_rows(conn, tid)
     main_ctx = [r[1] for r in main_rows if isinstance(r[1], int)]
     peak_main = max(main_ctx) if main_ctx else None
@@ -259,6 +264,7 @@ def _refresh_one_session_aggregates(conn, tid: str) -> None:
         UPDATE sessions SET
             input_tokens = ?, output_tokens = ?,
             cache_read_tokens = ?, cache_creation_tokens = ?,
+            cache_creation_1h_tokens = ?,
             peak_context_tokens = ?,
             peak_main_context_tokens = ?,
             live_context_tokens = ?,
@@ -266,7 +272,7 @@ def _refresh_one_session_aggregates(conn, tid: str) -> None:
             cost_usd = ?,
             model = COALESCE(model, ?)
         WHERE trace_id = ?
-    """, (in_tot, out_tot, cread, ccreate, peak, peak_main, live, window,
+    """, (in_tot, out_tot, cread, ccreate, ccreate_1h, peak, peak_main, live, window,
           cost_tot, model, tid))
 
 

@@ -117,17 +117,20 @@ def _turn_usage_row(aid: str, idx: int, turn, default_model: str | None) -> dict
     out_tok = int(turn.output_tokens or 0)
     cache_r = int(turn.cache_read_tokens or 0)
     cache_w = int(turn.cache_creation_tokens or 0)
+    cache_w_1h = int(turn.cache_creation_1h_tokens or 0)
     ctx = in_tok + cache_r + cache_w
     model = turn.model or default_model
     usd = price_cost(model, TokenBreakdown(
         input_tokens=in_tok, output_tokens=out_tok,
         cache_read_tokens=cache_r, cache_creation_tokens=cache_w,
+        cache_creation_1h_tokens=cache_w_1h,
     ), context_tokens=ctx) if model else None
     return {
         "turn_uuid": f"{aid}:{turn.uuid or idx}", "turn_index": idx,
         "timestamp": turn.timestamp or "", "model": model,
         "input_tokens": in_tok, "output_tokens": out_tok,
         "cache_read_tokens": cache_r, "cache_creation_tokens": cache_w,
+        "cache_creation_1h_tokens": cache_w_1h,
         "context_used_tokens": ctx, "cost_usd": usd,
     }
 
@@ -153,15 +156,19 @@ def _set_session_cost(run_id: str, agents_dir: Path, agent_ids: list[str]) -> No
         conn.executemany(
             "INSERT OR REPLACE INTO turn_usage (trace_id, turn_uuid, turn_index, "
             "timestamp, model, input_tokens, output_tokens, cache_read_tokens, "
-            "cache_creation_tokens, context_used_tokens, cost_usd) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "cache_creation_tokens, cache_creation_1h_tokens, "
+            "context_used_tokens, cost_usd) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [(run_id, r["turn_uuid"], r["turn_index"], r["timestamp"], r["model"],
               r["input_tokens"], r["output_tokens"], r["cache_read_tokens"],
-              r["cache_creation_tokens"], r["context_used_tokens"], r["cost_usd"])
+              r["cache_creation_tokens"], r["cache_creation_1h_tokens"],
+              r["context_used_tokens"], r["cost_usd"])
              for r in rows])
         conn.execute(
-            "UPDATE sessions SET cost_usd = ? WHERE trace_id = ?",
-            (sum(r["cost_usd"] or 0.0 for r in rows), run_id))
+            "UPDATE sessions SET cost_usd = ?, cache_creation_1h_tokens = ? "
+            "WHERE trace_id = ?",
+            (sum(r["cost_usd"] or 0.0 for r in rows),
+             sum(r["cache_creation_1h_tokens"] for r in rows), run_id))
         conn.commit()
     finally:
         conn.close()

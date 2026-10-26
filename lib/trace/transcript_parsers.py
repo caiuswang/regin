@@ -187,8 +187,21 @@ def _assistant_message(entry: dict) -> tuple[str | None, dict]:
     return None, {}
 
 
-def _usage_tokens(usage: dict) -> tuple[int, int, int, int]:
-    """Return (input, output, cache_read, cache_creation) from mixed schemas."""
+def _cache_creation_split(usage_n: dict) -> tuple[int, int]:
+    """(5m, 1h) cache-write tokens from `usage.cache_creation`, zeros when
+    the transcript predates the split."""
+    split = _normalize_dict_keys(usage_n.get('cache_creation'))
+    return (int(split.get('ephemeral_5m_input_tokens') or 0),
+            int(split.get('ephemeral_1h_input_tokens') or 0))
+
+
+def _usage_tokens(usage: dict) -> tuple[int, int, int, int, int]:
+    """Return (input, output, cache_read, cache_creation, cache_creation_1h)
+    from mixed schemas.
+
+    `cache_creation` is every cache write regardless of TTL; the 1h share is
+    split out because it bills at 2x input against the 5m write's 1.25x.
+    """
     usage_n = _normalize_dict_keys(usage)
     input_tokens = int(
         usage_n.get('input_tokens')
@@ -205,12 +218,14 @@ def _usage_tokens(usage: dict) -> tuple[int, int, int, int]:
         or usage_n.get('cache_read_tokens')
         or 0
     )
+    split_5m, split_1h = _cache_creation_split(usage_n)
     cache_creation_tokens = int(
         usage_n.get('cache_creation_input_tokens')
         or usage_n.get('cache_creation_tokens')
-        or 0
+        or split_5m + split_1h
     )
-    return input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens
+    return (input_tokens, output_tokens, cache_read_tokens,
+            cache_creation_tokens, min(split_1h, cache_creation_tokens))
 
 
 def _truncate_utf8(text: str, max_bytes: int) -> tuple[str, bool]:

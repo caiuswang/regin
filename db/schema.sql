@@ -436,7 +436,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     cost_usd              REAL,
     active_work_ms        INTEGER,
     cwd           TEXT,                -- starting cwd from the session.start span
-    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    cache_creation_1h_tokens INTEGER      -- 1h-TTL share of cache_creation_tokens
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_last_seen ON sessions(last_seen DESC);
 CREATE INDEX IF NOT EXISTS idx_sessions_title_nocase ON sessions(title COLLATE NOCASE);
@@ -486,6 +487,7 @@ CREATE TABLE IF NOT EXISTS turn_usage (
     effort_level           TEXT,
     request_id             TEXT,
     created_at             TEXT NOT NULL DEFAULT (datetime('now')),
+    cache_creation_1h_tokens INTEGER NOT NULL DEFAULT 0,  -- 1h-TTL share of cache_creation_tokens
     PRIMARY KEY (trace_id, turn_uuid)
 );
 CREATE INDEX IF NOT EXISTS idx_turn_usage_trace_ts ON turn_usage(trace_id, timestamp);

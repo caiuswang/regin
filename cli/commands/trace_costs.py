@@ -126,6 +126,7 @@ def _turn_row_cost(r) -> float | None:
         output_tokens=r['output_tokens'] or 0,
         cache_read_tokens=r['cache_read_tokens'] or 0,
         cache_creation_tokens=r['cache_creation_tokens'] or 0,
+        cache_creation_1h_tokens=r['cache_creation_1h_tokens'] or 0,
     ), context_tokens=r['context_used_tokens'] or 0)
 
 
@@ -145,7 +146,8 @@ def _recompute_turn_costs(conn, trace: str | None, dry_run: bool,
         scope.append(trace)
     rows = conn.execute(f"""
         SELECT trace_id, turn_uuid, model, input_tokens, output_tokens,
-               cache_read_tokens, cache_creation_tokens, context_used_tokens
+               cache_read_tokens, cache_creation_tokens,
+               cache_creation_1h_tokens, context_used_tokens
         FROM turn_usage WHERE {where}
     """, scope).fetchall()
 

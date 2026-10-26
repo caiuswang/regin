@@ -178,7 +178,8 @@ def _session_bill_cost(conn, trace_id: str) -> dict:
     out = {'input': 0.0, 'output': 0.0, 'cache_read': 0.0, 'cache_write': 0.0}
     rows = conn.execute(
         "SELECT model, input_tokens, output_tokens, cache_read_tokens, "
-        "cache_creation_tokens, context_used_tokens FROM turn_usage "
+        "cache_creation_tokens, cache_creation_1h_tokens, "
+        "context_used_tokens FROM turn_usage "
         "WHERE trace_id = ?",
         (trace_id,),
     ).fetchall()
@@ -190,6 +191,8 @@ def _session_bill_cost(conn, trace_id: str) -> dict:
                 output_tokens=int(r['output_tokens'] or 0),
                 cache_read_tokens=int(r['cache_read_tokens'] or 0),
                 cache_creation_tokens=int(r['cache_creation_tokens'] or 0),
+                cache_creation_1h_tokens=int(
+                    r['cache_creation_1h_tokens'] or 0),
             ),
             context_tokens=int(r['context_used_tokens'] or 0),
         )
