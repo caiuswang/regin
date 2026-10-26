@@ -32,6 +32,7 @@ class ClaudeProvider(AgentProvider):
     experimental = False
     display_name = "Claude Code"
     supports_guard_entries = True
+    supports_mods = True
     capabilities = ProviderCapabilities(
         skills=True,
         hooks=True,

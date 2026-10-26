@@ -627,3 +627,25 @@ def test_hook_wiring_items_survives_a_failing_provider(monkeypatch):
     items = doctor._hook_wiring_items(_StubProvider())
     assert items[0]["present"] is False
     assert "wiring read failed" in items[0]["install_hint"]
+
+
+def test_doctor_flags_disabled_mod(tmp_path, monkeypatch):
+    import lib.providers as providers
+    from lib import doctor, mods_wiring
+    from lib.providers.claude import ClaudeProvider
+
+    path = tmp_path / 'settings.json'
+    provider = ClaudeProvider({'hook_settings_path': path})
+    mods_wiring.install_mods(provider, str(path))
+    data = json.loads(path.read_text())
+    data['enabledPlugins']['regin-permit@regin-local'] = False
+    path.write_text(json.dumps(data))
+    monkeypatch.setattr(providers, 'list_visible_provider_ids', lambda: ['claude'])
+    monkeypatch.setattr(providers, 'build_provider', lambda pid: provider)
+
+    items = {i['id']: i for i in doctor._hook_wiring_items(provider)}
+    permit = items['mod_claude_regin-permit']
+    assert permit['present'] is False and permit['status_text'] == 'disabled'
+    assert 'regin hooks repair' in permit['install_hint']
+    assert items['mod_claude_regin-bridge']['present'] is True
+    assert items['mod_claude_marketplace']['present'] is True

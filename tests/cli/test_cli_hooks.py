@@ -185,3 +185,80 @@ def test_repair_survives_a_malformed_config(env):
     status = hooks_wiring.wiring_status(env.provider, str(env.path))
     assert status['hook_manager']['stale_events'] == []
     assert status['hook_manager']['malformed_events'] == ['PreToolUse']
+
+
+def _mod_keys():
+    from lib import mods_wiring
+    return {f'{n}@regin-local' for n in mods_wiring.mod_names()}
+
+
+def test_hooks_install_enables_regin_mods(env):
+    from lib import mods_wiring
+    env.path.write_text(json.dumps({'enabledPlugins': {'other@elsewhere': True}}))
+    result, _ = env.run('install', '--provider', 'claude')
+    assert result.exit_code == 0
+    data = json.loads(env.path.read_text())
+    assert data['extraKnownMarketplaces']['regin-local'] == {
+        'source': {'source': 'directory', 'path': str(mods_wiring.marketplace_root())}}
+    plugin_dirs = {p.name for p in (mods_wiring.marketplace_root() / 'plugins').iterdir()
+                   if (p / '.claude-plugin').is_dir()}
+    assert {f'{n}@regin-local' for n in plugin_dirs} <= _mod_keys()
+    assert all(data['enabledPlugins'][k] is True for k in _mod_keys())
+    assert data['enabledPlugins']['other@elsewhere'] is True
+    _, out = env.run('status', '--json')
+    mods = next(r for r in json.loads(out) if r['hook'] == 'mods')
+    assert mods['installed'] and not mods['stale']
+
+
+def test_hooks_status_reports_missing_mod(env):
+    env.run('install', '--provider', 'claude')
+    data = json.loads(env.path.read_text())
+    del data['enabledPlugins']['regin-bridge@regin-local']
+    env.path.write_text(json.dumps(data))
+
+    result, out = env.run('status')
+    assert result.exit_code == 0
+    assert 'claude mods missing: regin-bridge' in out
+    _, out = env.run('status', '--json')
+    mods = next(r for r in json.loads(out) if r['hook'] == 'mods')
+    assert mods['stale'] and mods['missing'] == ['regin-bridge']
+
+    result, _ = env.run('repair')
+    assert result.exit_code == 0
+    assert json.loads(env.path.read_text())['enabledPlugins']['regin-bridge@regin-local'] is True
+    _, out = env.run('repair')
+    assert 'nothing to repair' in out
+
+
+def test_status_mods_not_installed_on_a_bare_settings_file(env):
+    _, out = env.run('status', '--json')
+    mods = next(r for r in json.loads(out) if r['hook'] == 'mods')
+    assert mods['installed'] is False and mods['stale'] is False
+
+
+def test_install_only_debug_leaves_mods_alone(env):
+    env.run('install', '--provider', 'claude', '--only-debug')
+    assert 'enabledPlugins' not in json.loads(env.path.read_text())
+
+
+def test_repair_leaves_a_marketplace_of_another_checkout_alone(env):
+    env.run('install', '--provider', 'claude')
+    data = json.loads(env.path.read_text())
+    data['extraKnownMarketplaces']['regin-local']['source']['path'] = '/other/regin-plugin'
+    del data['enabledPlugins']['regin-bridge@regin-local']
+    env.path.write_text(json.dumps(data))
+    before = env.path.read_text()
+
+    result, out = env.run('repair')
+    assert result.exit_code == 1
+    assert '/other/regin-plugin' in out and 'regin hooks adopt --provider claude' in out
+    assert env.path.read_text() == before
+    result, _ = env.run('install', '--provider', 'claude')
+    assert result.exit_code == 1
+    assert env.path.read_text() == before
+
+    result, _ = env.run('adopt', '--provider', 'claude')
+    assert result.exit_code == 0
+    _, out = env.run('status', '--json')
+    mods = next(r for r in json.loads(out) if r['hook'] == 'mods')
+    assert mods['marketplace_registered'] and not mods['stale'] and not mods['foreign_events']

@@ -97,6 +97,9 @@ class AgentProvider:
     # then does install split fail_closed handlers into their own entries;
     # elsewhere they keep running inside the shared hook_manager entry.
     supports_guard_entries: bool = False
+    # Whether regin's own mods (`regin-plugin/plugins/*`, the `regin-local`
+    # marketplace) can be installed into this harness's settings file.
+    supports_mods: bool = False
     # On-disk transcript schema tag. The parser itself is `parse_transcript`
     # (a provider method); turn_trace only uses this to gate the Claude-shaped
     # enrichment that has no Kimi analogue (session-title span + the cheap

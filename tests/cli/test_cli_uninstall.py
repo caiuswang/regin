@@ -144,7 +144,7 @@ def test_uninstall_removes_owned_artifacts_and_keeps_data(installed, run):
     code, out = run("hooks", "status", "--json")
     assert code == 0, out
     rows = json.loads(out[out.index("["):])
-    assert len(rows) == 4
+    assert len(rows) == 5  # claude: hook_manager, debug, mods; kimi: hook_manager, debug
     assert [r for r in rows if r["installed"]] == []
 
     assert not (installed["skills"] / "alpha").exists()

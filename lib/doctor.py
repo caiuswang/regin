@@ -625,7 +625,46 @@ def _hook_wiring_items(active_provider) -> list[dict]:
         malformed = _malformed_hooks_item(provider, status)
         if malformed is not None:
             items.append(malformed)
+        items.extend(_mod_items(provider, active))
     return items
+
+
+def _mod_item(provider, name: str, state: str, active: bool) -> dict:
+    base = {'id': f'mod_{provider.provider_id}_{name}',
+            'label': f'{provider.provider_id}: mod {name}',
+            'optional': not active}
+    if state == 'enabled':
+        return {**base, 'present': True, 'version': 'enabled'}
+    if state == 'disabled':
+        return {**base, 'present': False, 'status_text': 'disabled',
+                'install_hint': f'{name}@regin-local is false in enabledPlugins — run '
+                                f'`regin hooks repair --provider {provider.provider_id}`'}
+    return {**base, 'present': False,
+            'install_hint': f'run `regin hooks install --provider {provider.provider_id}`'}
+
+
+def _mod_items(provider, active: bool) -> list[dict]:
+    """One row per regin mod: a disabled mod and a missing one are both a
+    mod that never loads, but only the row can say which."""
+    from lib import mods_wiring
+
+    if not mods_wiring.supports_mods(provider):
+        return []
+    status = mods_wiring.mods_status(str(provider.hook_settings_path()))
+    states = {**{n: 'enabled' for n in status['enabled']},
+              **{n: 'disabled' for n in status['disabled']},
+              **{n: 'missing' for n in status['missing']}}
+    market = {'id': f'mod_{provider.provider_id}_marketplace',
+              'label': f'{provider.provider_id}: {mods_wiring.MARKETPLACE} marketplace',
+              'optional': not active, 'present': status['marketplace_registered']}
+    if status['foreign_roots']:
+        market.update(status_text='other checkout', install_hint=(
+            f"registered to {status['foreign_roots'][0]} — if that checkout moved here, run "
+            f'`regin hooks adopt --provider {provider.provider_id}`'))
+    elif not market['present']:
+        market['install_hint'] = (f'not registered at {mods_wiring.marketplace_root()} — run '
+                                  f'`regin hooks install --provider {provider.provider_id}`')
+    return [market, *(_mod_item(provider, n, states[n], active) for n in mods_wiring.mod_names())]
 
 
 def run_checks() -> dict:

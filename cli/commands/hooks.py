@@ -16,7 +16,7 @@ import json as _json
 import typer
 
 from cli.output import echo, error, table
-from lib import hooks_wiring
+from lib import hooks_wiring, mods_wiring
 from lib.providers import build_provider, list_provider_ids, list_visible_provider_ids
 from lib.providers.mcp_registration import trust_hint
 
@@ -28,6 +28,7 @@ hooks_app = typer.Typer(
 )
 
 _KINDS = ('hook_manager', 'debug')
+_INSTALLERS = {**hooks_wiring.INSTALLERS, 'mods': mods_wiring.install_mods}
 
 
 @hooks_app.callback()
@@ -91,6 +92,9 @@ def _status_rows(providers) -> list[dict]:
             continue
         for kind in _KINDS:
             rows.append({'provider': provider.provider_id, 'hook': kind, **wiring[kind]})
+        if mods_wiring.supports_mods(provider):
+            rows.append({'provider': provider.provider_id, 'hook': 'mods',
+                         **mods_wiring.mods_status(_settings_path(provider))})
     return rows
 
 
@@ -141,6 +145,9 @@ def cmd_status(
           _foreign_label(r), _repair_label(r)) for r in rows],
         headers=('PROVIDER', 'HOOK', 'STATE', 'ROUTED', 'OTHER CHECKOUT', 'NEEDS REPAIR'),
     )
+    for row in rows:
+        if row['hook'] == 'mods':
+            _echo_mod_gaps(row)
     if any(r['stale'] for r in rows):
         echo("\nSome wiring is out of date — run `regin hooks repair`.")
     if any(r['foreign_events'] for r in rows):
@@ -148,6 +155,14 @@ def cmd_status(
              "would add a second entry beside it. Run `regin hooks adopt` to take it over.")
     for hint in filter(None, map(trust_hint, targets)):
         echo(f"\n{hint}")
+
+
+def _echo_mod_gaps(row: dict) -> None:
+    """Name each mod that will not load — the table's one cell cannot say
+    which are absent from `enabledPlugins` and which the user switched off."""
+    for state in ('missing', 'disabled'):
+        if row[state]:
+            echo(f"\n{row['provider']} mods {state}: {', '.join(row[state])}")
 
 
 def _apply(action, providers, kinds: tuple[str, ...]) -> int:
@@ -186,7 +201,10 @@ def cmd_install(
     debug: bool = typer.Option(False, "--debug", help="Also install the debug payload logger."),
     only_debug: bool = typer.Option(False, "--only-debug", help="Install only the debug hook."),
 ) -> None:
-    failed = _apply(hooks_wiring.INSTALLERS, _targets(provider, every), _kinds(debug, only_debug))
+    targets = _targets(provider, every)
+    failed = _apply(hooks_wiring.INSTALLERS, targets, _kinds(debug, only_debug))
+    if not only_debug:
+        failed += _apply(_INSTALLERS, [p for p in targets if mods_wiring.supports_mods(p)], ('mods',))
     if failed:
         raise typer.Exit(1)
 
@@ -216,7 +234,11 @@ def cmd_adopt(
     checkout and a genuine second one are indistinguishable on disk, so taking
     over has to be asked for.
     """
-    failed = _apply(hooks_wiring.ADOPTERS, _targets(provider, every), _kinds(debug, only_debug))
+    targets = _targets(provider, every)
+    failed = _apply(hooks_wiring.ADOPTERS, targets, _kinds(debug, only_debug))
+    if not only_debug:
+        mods = [p for p in targets if mods_wiring.supports_mods(p)]
+        failed += _apply({'mods': mods_wiring.adopt_mods}, mods, ('mods',))
     if failed:
         raise typer.Exit(1)
 
@@ -244,7 +266,7 @@ def cmd_repair(
 
 def _adopt_command(rows: list[dict]) -> str:
     providers = sorted({r['provider'] for r in rows})
-    kinds = {r['hook'] for r in rows}
+    kinds = {r['hook'] for r in rows} - {'mods'} or {'hook_manager'}
     scope = f"--provider {providers[0]}" if len(providers) == 1 else '--all'
     flags = {frozenset({'hook_manager'}): '', frozenset({'debug'}): ' --only-debug'}
     return f"regin hooks adopt {scope}{flags.get(frozenset(kinds), ' --debug')}"
@@ -272,7 +294,7 @@ def _repair_rows(stale: list[dict], providers: dict) -> int:
     for row in stale:
         target = providers[row['provider']]
         try:
-            result = hooks_wiring.INSTALLERS[row['hook']](target, _settings_path(target))
+            result = _INSTALLERS[row['hook']](target, _settings_path(target))
         except Exception as exc:  # noqa: BLE001 — one bad config must not
             failures += 1              # abort the remaining providers
             error(f"  {row['provider']}/{row['hook']}: repair failed — {exc}")
