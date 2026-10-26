@@ -275,7 +275,7 @@ test('test_defect_edit_paste_attaches_image', async ({ page }) => {
   expect(posts[0].body.data_b64).toBeTruthy()
   await expect(page.getByTestId('defect-image-thumb')).toHaveCount(2)
   await expect(page.getByRole('status')).toContainText('1 image attached')
-  await expect(field).toHaveValue('reworded, not saved yet')
+  await expect(field).toHaveValue('reworded, not saved yet\n![](image:2)\n')
 
   // A reload that brings back the same images must not re-pull them.
   const before = imageGets
@@ -283,6 +283,79 @@ test('test_defect_edit_paste_attaches_image', async ({ page }) => {
   await expect(page.getByRole('status')).toContainText('#7 edited')
   await expect(page.getByTestId('defect-image-thumb')).toHaveCount(2)
   expect(imageGets).toBe(before)
+  expect(posts.at(-1)).toMatchObject({ method: 'PATCH', body: { symptom: 'reworded, not saved yet\n![](image:2)' } })
+})
+
+/** A defect whose PATCH stores the symptom and whose image routes record DELETEs. */
+async function stubSymptomImages(page) {
+  const state = { row: defect(7, { ...ATTRIBUTED, symptom: 'broken', images: [{ idx: 1 }] }) }
+  const posts = await stubDetail(page, state, (path, body) => {
+    if (path.endsWith('/images')) {
+      const idx = Math.max(0, ...state.row.images.map(i => i.idx)) + 1
+      state.row = { ...state.row, images: [...state.row.images, { idx }] }
+      return { status: 201, json: { image: { idx } } }
+    }
+    if (body?.symptom) state.row = { ...state.row, symptom: body.symptom }
+    return { defect: state.row }
+  })
+  const deleted = []
+  await page.route(/\/api\/defects\/7\/images\/\d+$/, (route) => {
+    const idx = Number(route.request().url().split('/').pop())
+    if (route.request().method() !== 'DELETE') return route.fulfill({ body: PNG, contentType: 'image/png' })
+    deleted.push(idx)
+    state.row = { ...state.row, images: state.row.images.filter(i => i.idx !== idx) }
+    return route.fulfill({ json: { ok: true } })
+  })
+  return { state, posts, deleted }
+}
+
+test('test_defect_symptom_pasted_image_is_cited_and_drawn', async ({ page }) => {
+  const { deleted } = await stubSymptomImages(page)
+  await page.goto('/defects/7')
+  await page.getByTestId('defect-symptom-7').click()
+  const field = page.getByTestId('defect-edit-field-7')
+  await field.evaluate((el) => { el.focus(); el.setSelectionRange(6, 6) })
+
+  await pasteInto(field, { png: PNG })
+  await expect(field).toHaveValue('broken\n![](image:2)\n')
+  await page.getByTestId('defect-edit-submit-7').click()
+  await expect(page.getByRole('status')).toContainText('#7 edited')
+
+  const img = page.getByTestId('defect-symptom-7').getByTestId('defect-symptom-image')
+  await expect(img).toHaveCount(1)
+  await expect(img).toHaveAttribute('data-idx', '2')
+  await expect(img).toHaveAttribute('src', /^blob:/)
+  await expect(page.getByTestId('defect-symptom-7')).toContainText('broken')
+  expect(deleted).toEqual([])
+})
+
+test('test_defect_symptom_cancel_detaches_the_pasted_image', async ({ page }) => {
+  const { deleted } = await stubSymptomImages(page)
+  await page.goto('/defects/7')
+  await page.getByTestId('defect-symptom-7').click()
+  const field = page.getByTestId('defect-edit-field-7')
+  await pasteInto(field, { png: PNG })
+  await expect(field).toHaveValue(/!\[\]\(image:2\)/)
+  await expect(page.getByTestId('defect-image-thumb')).toHaveCount(2)
+
+  await page.getByTestId('defect-edit-cancel-7').click()
+  await expect.poll(() => deleted).toEqual([2])
+  await expect(page.getByTestId('defect-image-thumb')).toHaveCount(1)
+})
+
+test('test_defect_symptom_save_detaches_a_pasted_image_no_longer_cited', async ({ page }) => {
+  const { deleted } = await stubSymptomImages(page)
+  await page.goto('/defects/7')
+  await page.getByTestId('defect-symptom-7').click()
+  const field = page.getByTestId('defect-edit-field-7')
+  await pasteInto(field, { png: PNG })
+  await expect(field).toHaveValue(/!\[\]\(image:2\)/)
+
+  await field.fill('broken, reworded')
+  await page.getByTestId('defect-edit-submit-7').click()
+  await expect(page.getByRole('status')).toContainText('#7 edited')
+  await expect.poll(() => deleted).toEqual([2])
+  await expect(page.getByTestId('defect-image-thumb')).toHaveCount(1)
 })
 
 test('test_defect_paste_text_posts_nothing', async ({ page }) => {

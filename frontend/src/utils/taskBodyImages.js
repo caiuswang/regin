@@ -20,6 +20,19 @@ export function imageRefsIn(markdown) {
   return new Set([...(markdown || '').matchAll(IMAGE_REF)].map(m => Number(m[2])))
 }
 
+/** `text` cut into `{ text }` runs and the `{ idx, alt }` references between them. */
+export function splitImageRefs(text) {
+  const out = []
+  let at = 0
+  for (const m of (text || '').matchAll(IMAGE_REF)) {
+    if (m.index > at) out.push({ text: text.slice(at, m.index) })
+    out.push({ idx: Number(m[2]), alt: m[1] })
+    at = m.index + m[0].length
+  }
+  if (at < (text || '').length) out.push({ text: text.slice(at) })
+  return out
+}
+
 export function imageRef(idx) {
   return `![](image:${idx})`
 }

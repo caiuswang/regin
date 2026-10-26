@@ -9,20 +9,29 @@
 // Read-only. A defect is a claim about the past and its evidence is part of
 // the claim — correcting it is `defects reattribute` or a new report, not a
 // quiet swap of the picture underneath a blame that was already assigned.
-import { onMounted, ref, watch } from 'vue'
+//
+// A row that also lets its symptom cite these pictures hands its own list in
+// as `items`, so the strip and the inline pictures are one fetch and agree on
+// what is attached.
+import { computed, onMounted, ref, watch } from 'vue'
 import Button from '../ui/Button.vue'
 import Dialog from '../ui/Dialog.vue'
 import { useAttachedImages } from '../../composables/useAttachedImages.js'
 
 const props = defineProps({
   defect: { type: Object, required: true },
+  items: { type: Array, default: null },
 })
 
-const { items, bind } = useAttachedImages('defects')
+const own = useAttachedImages('defects')
+const items = computed(() => props.items ?? own.items.value)
 const zoomed = ref(null)
 
-onMounted(() => bind(props.defect))
-watch([() => props.defect.id, () => props.defect.images?.length], () => bind(props.defect))
+function bindOwn() {
+  if (!props.items) own.bind(props.defect)
+}
+onMounted(bindOwn)
+watch([() => props.defect.id, () => props.defect.images?.length], bindOwn)
 </script>
 
 <template>

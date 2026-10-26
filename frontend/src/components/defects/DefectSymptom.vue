@@ -4,21 +4,30 @@
 //
 // Edited as source only (`verbatim`): a symptom is quoted input, shown as
 // typed (defect-symptom-verbatim), so a rich face would edit a rendering Save
-// never produces.
-import { computed, nextTick, ref } from 'vue'
+// never produces. The one exception is `![](image:N)`: a pasted screenshot is
+// written into the wording as that reference at the caret and drawn in place
+// once the row is open, because "this, here" is what a reporter means by it.
+//
+// The paste uploads at once, so the edit owns what it pasted: Cancel or
+// leaving mid-edit detaches it, and Save detaches whatever the saved wording
+// no longer cites. Evidence the defect already carried is never touched.
+import { computed, nextTick, onUnmounted, ref } from 'vue'
 import api from '../../api'
 import { refusalOf, runRemedy } from '../../composables/useDefectRemedy'
 import { useConfirm } from '../../composables/useConfirm'
-import { imageFilesFrom, toBase64 } from '../../utils/imageFiles'
+import { imageFilesFrom } from '../../utils/imageFiles'
+import { imageRefsIn } from '../../utils/taskBodyImages'
 import Button from '../ui/Button.vue'
-import RefInlineText from '../refs/RefInlineText.vue'
 import MarkdownEditor from '../editor/MarkdownEditor.vue'
 import DefectRefusal from './DefectRefusal.vue'
+import DefectSymptomText from './DefectSymptomText.vue'
 
 const props = defineProps({
   defect: { type: Object, required: true },
   canWrite: { type: Boolean, default: false },
   clamped: { type: Boolean, default: false },
+  // The row's `useAttachedImages('defects')`, shared with its evidence strip.
+  images: { type: Object, required: true },
 })
 const emit = defineEmits(['changed'])
 
@@ -32,19 +41,42 @@ const field = ref(null)
 const editable = computed(() => props.canWrite && !props.clamped)
 const blank = computed(() => !value.value.trim())
 
+const shown = computed(() => (props.clamped ? null : props.images.items.value))
+const attachedIdx = computed(() => (props.defect.images || []).map(img => img.idx))
+
+let pasted = new Set()
+
+async function detach(idxs) {
+  let removed = 0
+  for (const idx of idxs) {
+    const item = props.images.items.value.find(i => i.idx === idx)
+    if (item && await props.images.remove(item)) removed += 1
+  }
+  return removed
+}
+
+onUnmounted(() => {
+  if (!editing.value) return
+  for (const idx of pasted) api.del(`/defects/${props.defect.id}/images/${idx}`)
+})
+
 async function start(e) {
   // A reference inside the wording is a link, not a request to edit.
   if (!editable.value || e?.target?.closest?.('a')) return
   value.value = props.defect.symptom
+  pasted = new Set()
   refusal.value = null
   editing.value = true
   await nextTick()
   field.value?.textarea?.focus()
 }
 
-function cancel() {
+async function cancel() {
   editing.value = false
   refusal.value = null
+  const dropped = pasted
+  pasted = new Set()
+  if (await detach(dropped)) emit('changed', `#${props.defect.id}: unsaved image removed.`)
 }
 
 async function save() {
@@ -60,6 +92,10 @@ async function save() {
       return
     }
     editing.value = false
+    const kept = imageRefsIn(symptom)
+    const orphaned = [...pasted].filter(idx => !kept.has(idx))
+    pasted = new Set()
+    await detach(orphaned)
     emit('changed', `#${props.defect.id} edited.`)
   } catch (e) {
     refusal.value = refusalOf(e?.message || String(e))
@@ -69,24 +105,23 @@ async function save() {
 }
 
 // A screenshot pasted while correcting the wording is evidence for this
-// defect, written at once; a text paste is left to the field.
+// defect, written at once and cited at the caret; a text paste is left to
+// the field.
 async function onPaste(e) {
-  const files = imageFilesFrom(e.clipboardData)
-  if (!files.length) return
+  if (!imageFilesFrom(e.clipboardData).length) return
   e.preventDefault()
   busy.value = true
+  let taken
   try {
-    for (const file of files) {
-      const data_b64 = await toBase64(file)
-      const body = await api.post(`/defects/${props.defect.id}/images`, { data_b64 })
-      if (body?.ok === false) {
-        refusal.value = refusalOf(body)
-        return
-      }
-    }
-    emit('changed', `#${props.defect.id}: ${files.length} image${files.length === 1 ? '' : 's'} attached.`)
+    taken = await props.images.add(e.clipboardData)
   } finally {
     busy.value = false
+  }
+  for (const idx of taken) pasted.add(idx)
+  field.value?.insertImages(taken, e)
+  if (props.images.error.value) refusal.value = refusalOf(props.images.error.value)
+  if (taken.length) {
+    emit('changed', `#${props.defect.id}: ${taken.length} image${taken.length === 1 ? '' : 's'} attached.`)
   }
 }
 
@@ -142,13 +177,13 @@ async function onRemedy(remedy) {
     :data-testid="`defect-symptom-${defect.id}`"
     @click="start"
     @keydown.enter.self.prevent="start"
-  ><RefInlineText :text="defect.symptom" /></p>
+  ><DefectSymptomText :text="defect.symptom" :items="shown" :attached="attachedIdx" /></p>
   <p
     v-else
     class="symptom" :class="{ 'symptom-clamped': clamped }" data-pl-part="symptom"
     :title="clamped ? defect.symptom : undefined"
     :data-testid="`defect-symptom-${defect.id}`"
-  ><RefInlineText :text="defect.symptom" /></p>
+  ><DefectSymptomText :text="defect.symptom" :items="shown" :attached="attachedIdx" /></p>
 </template>
 
 <style scoped>
@@ -167,4 +202,5 @@ async function onRemedy(remedy) {
 .ds-edit .ds-field { margin-top: 0; }
 .ds-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
 .ds-hint { font-size: 11px; color: var(--color-fg-faint); }
+
 </style>

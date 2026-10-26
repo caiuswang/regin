@@ -5,13 +5,14 @@
 // no ellipsis. `regin defects list` truncates at 88 characters because a
 // terminal line is finite; a page is not, and the wording is the whole
 // evidence a reader needs to decide which feature caused it.
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import Button from '../ui/Button.vue'
 import Icon from '../ui/Icon.vue'
 import DefectActions from './DefectActions.vue'
 import DefectImages from './DefectImages.vue'
 import DefectSymptom from './DefectSymptom.vue'
 import PlGlyph from '../pipeline/PlGlyph.vue'
+import { useAttachedImages } from '../../composables/useAttachedImages.js'
 import { shortDate } from '../../utils/ledgerFormat'
 import { utcTitle } from '../../utils/time.js'
 import { reopenedLabel } from '../../utils/pipelineFormat'
@@ -33,6 +34,11 @@ const props = defineProps({
 const emit = defineEmits(['changed'])
 
 const open = ref(!props.collapsible)
+// One list for the evidence strip and the pictures the symptom cites, bound
+// only once the row is open: a collapsed row draws neither.
+const images = useAttachedImages('defects')
+watch([open, () => props.defect.id, () => props.defect.images?.length],
+      () => { if (open.value) images.bind(props.defect) }, { immediate: true })
 const heldOut = computed(() => ['snoozed', 'declined'].includes(props.defect.queue_position))
 // An open report nobody has blamed is the list's call to action (R7: framed, not filled).
 const unblamed = computed(() => props.defect.status === 'open' && !props.defect.feature_id)
@@ -99,7 +105,7 @@ const unblamed = computed(() => props.defect.status === 'open' && !props.defect.
       </Button>
     </div>
 
-    <DefectSymptom :defect="defect" :can-write="canWrite" :clamped="!open"
+    <DefectSymptom :defect="defect" :can-write="canWrite" :clamped="!open" :images="images"
                    @changed="(msg, info) => emit('changed', msg, info)" />
 
     <template v-if="open">
@@ -107,7 +113,7 @@ const unblamed = computed(() => props.defect.status === 'open' && !props.defect.
     <!-- Only when the row really carries evidence: binding costs one
          authenticated fetch per picture, and a list of reports that mostly
          have none should pay nothing for them. -->
-    <DefectImages v-if="defect.images?.length" :defect="defect" />
+    <DefectImages v-if="defect.images?.length" :defect="defect" :items="images.items.value" />
 
     <dl class="facts" data-pl-part="facts">
       <template v-if="defect.suspect_paths.length">
