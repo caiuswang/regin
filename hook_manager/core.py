@@ -61,6 +61,11 @@ SPEC_EVENTS: frozenset[str] = frozenset({
     'PostCompact',
     'Elicitation',
     'ElicitationResult',
+    'PreModelSwitch',
+    'PostModelSwitch',
+    'PostToolBatch',
+    'DirectoryAdded',
+    'MessageDisplay',
 })
 
 # Events whose stdout the harness reads as *data* rather than as a hook
@@ -69,7 +74,9 @@ SPEC_EVENTS: frozenset[str] = frozenset({
 # as a directory name and the harness then fails to chdir into
 # `<repo>/{"suppressOutput": true}`. The runner writes nothing for these; a
 # hook that supplies no path leaves the harness on its built-in git-worktree
-# provisioning.
+# provisioning. PostModelSwitch takes plain-text stdout as model context, but a
+# JSON object still parses as an ordinary response, and MessageDisplay reads
+# only `hookSpecificOutput.displayContent` — neither belongs here.
 STDOUT_IS_DATA: frozenset[str] = frozenset({
     'WorktreeCreate',
 })
@@ -89,6 +96,8 @@ BLOCKABLE_VIA_EXIT_2: frozenset[str] = frozenset({
     'WorktreeCreate',
     'Elicitation',
     'ElicitationResult',
+    'PreModelSwitch',
+    'PostToolBatch',
 })
 
 

@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PostModelSwitch hook payload",
+  "type": "object",
+  "additionalProperties": true,
+  "x-claude-versions": [],
+  "properties": {
+    "from_model": {
+      "type": "string"
+    },
+    "to_model": {
+      "type": "string"
+    },
+    "requested_model": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source": {
+      "type": "string"
+    },
+    "context_tokens": {
+      "type": "number"
+    },
+    "prompt_cache_warm": {
+      "type": "boolean"
+    },
+    "cache_ttl": {
+      "type": "string"
+    },
+    "estimated_cache_write_usd": {
+      "type": "number"
+    },
+    "pricing": {
+      "type": "string"
+    },
+    "agent_type": {
+      "type": "string"
+    }
+  },
+  "required": []
+}

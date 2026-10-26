@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MessageDisplay hook payload",
+  "type": "object",
+  "additionalProperties": true,
+  "x-claude-versions": [],
+  "properties": {
+    "turn_id": {
+      "type": "string"
+    },
+    "message_id": {
+      "type": "string"
+    },
+    "index": {
+      "type": "integer"
+    },
+    "final": {
+      "type": "boolean"
+    },
+    "delta": {
+      "type": "string"
+    },
+    "agent_type": {
+      "type": "string"
+    }
+  },
+  "required": []
+}

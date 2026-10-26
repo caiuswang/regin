@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DirectoryAdded hook payload",
+  "type": "object",
+  "additionalProperties": true,
+  "x-claude-versions": [],
+  "properties": {
+    "directory": {
+      "type": "string"
+    },
+    "source": {
+      "type": "string"
+    },
+    "agent_type": {
+      "type": "string"
+    }
+  },
+  "required": []
+}

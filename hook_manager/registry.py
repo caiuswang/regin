@@ -123,6 +123,7 @@ file_changed        = _safe_import('file_changed')
 memory_recall       = _safe_import('memory_recall')
 rule_check          = _safe_import('rule_check')
 misc_events         = _safe_import('misc_events')
+model_switch        = _safe_import('model_switch')
 permission_events   = _safe_import('permission_events')
 plan_trace          = _safe_import('plan_trace')
 post_tool_failure   = _safe_import('post_tool_failure')
@@ -133,6 +134,7 @@ session_lifecycle   = _safe_import('session_lifecycle')
 shell_lifecycle     = _safe_import('shell_lifecycle')
 skill_invoke        = _safe_import('skill_invoke')
 skill_experience    = _safe_import('skill_experience')
+tool_batch          = _safe_import('tool_batch')
 skill_launch        = _safe_import('skill_launch')
 skill_read          = _safe_import('skill_read')
 subagent_lifecycle  = _safe_import('subagent_lifecycle')
@@ -628,6 +630,24 @@ REGISTRY: list[Handler] = [
         kind='trace',
         priority=50,
         fn=misc_events.config_change,
+    ),
+    Handler(
+        name='model_switch',
+        label='Model Switch',
+        summary='Records a mid-session change of model as a model.switch span.',
+        events=['PostModelSwitch'],
+        kind='trace',
+        priority=50,
+        fn=model_switch.handle,
+    ),
+    Handler(
+        name='tool_batch',
+        label='Tool Batch',
+        summary='Records the tool_use_ids of one parallel tool batch.',
+        events=['PostToolBatch'],
+        kind='trace',
+        priority=50,
+        fn=tool_batch.handle,
     ),
     # WorktreeCreate/WorktreeRemove stay unregistered, and install no longer
     # wires WorktreeCreate at all (`core.STDOUT_IS_DATA`): the harness reads

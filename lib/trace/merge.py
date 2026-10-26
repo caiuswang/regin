@@ -135,9 +135,7 @@ def _background_attrs(attrs: dict, notification: dict | None, bash: dict) -> dic
     merged = {**attrs,
               _BG_STATUS: note.get('status') or _BG_RUNNING,
               'background_ended_at': ended}
-    source_id = notification.get('id')
-    if source_id is not None:
-        merged[DERIVED_FROM_ID_KEY] = source_id
+    merged = _derived_from(merged, notification.get('id'))
     for src, dst in (('summary', 'background_summary'),
                      ('output_file', 'background_output_file')):
         value = note.get(src)
@@ -147,6 +145,57 @@ def _background_attrs(attrs: dict, notification: dict | None, bash: dict) -> dic
     if elapsed is not None:
         merged['background_elapsed_ms'] = elapsed
     return merged
+
+
+TOOL_BATCH_SPAN = 'batch.tools'
+
+
+def _derived_from(attrs: dict, source_id) -> dict:
+    """Keep the newest source row: one span can be enriched by two joins, and
+    the watermark test is only right against the later of them."""
+    if source_id is None:
+        return attrs
+    prev = attrs.get(DERIVED_FROM_ID_KEY)
+    if isinstance(prev, int) and isinstance(source_id, int) and prev > source_id:
+        return attrs
+    return {**attrs, DERIVED_FROM_ID_KEY: source_id}
+
+
+def _tool_batch_members(spans: list[dict]) -> dict:
+    """`{tool_use_id: batch.tools row}` for every batch in the window."""
+    members: dict = {}
+    for s in spans:
+        if s.get('name') != TOOL_BATCH_SPAN:
+            continue
+        ids = _attrs(s).get('tool_use_ids')
+        for tu_id in ids if isinstance(ids, list) else ():
+            if isinstance(tu_id, str) and tu_id:
+                members[tu_id] = s
+    return members
+
+
+def _stamp_tool_batches(spans: list[dict]) -> list[dict]:
+    """Stamp `tool_batch_id` on each tool span a PostToolBatch row lists, and
+    drop the batch rows: they exist to carry the grouping, not to render.
+
+    Joined on `tool_use_id` equality, so two batches can never be confused by
+    their timing. A tool span no batch names is left untouched.
+    """
+    members = _tool_batch_members(spans)
+    if not members:
+        return spans
+    out = []
+    for s in spans:
+        if s.get('name') == TOOL_BATCH_SPAN:
+            continue
+        attrs = _attrs(s)
+        batch = members.get(attrs.get('tool_use_id'))
+        if batch is None or not str(s.get('name') or '').startswith('tool.'):
+            out.append(s)
+            continue
+        stamped = {**attrs, 'tool_batch_id': _attrs(batch).get('tool_batch_id')}
+        out.append({**s, 'attributes': _derived_from(stamped, batch.get('id'))})
+    return out
 
 
 def merge_spans(
@@ -188,6 +237,7 @@ def merge_spans(
     spans = _drop_stale_blockers(spans, prompt_id_ceiling=prompt_id_ceiling,
                                  births=births)
     spans = _demote_stale_pending(spans, session_activity=session_activity)
-    # Last: it reads the survivors, and stamps attributes no earlier rule keys on.
+    # Last: they read the survivors, and stamp attributes no earlier rule keys on.
+    spans = _stamp_tool_batches(spans)
     spans = _link_background_tasks(spans)
     return _graft_orphans(spans)

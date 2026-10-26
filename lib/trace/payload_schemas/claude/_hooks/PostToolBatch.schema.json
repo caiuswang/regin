@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PostToolBatch hook payload",
+  "type": "object",
+  "additionalProperties": true,
+  "x-claude-versions": [],
+  "properties": {
+    "tool_calls": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "tool_name": {
+            "type": "string"
+          },
+          "tool_input": {
+            "type": "object"
+          },
+          "tool_use_id": {
+            "type": "string"
+          },
+          "tool_response": {
+            "type": [
+              "string",
+              "array",
+              "object"
+            ]
+          }
+        }
+      }
+    },
+    "agent_type": {
+      "type": "string"
+    }
+  },
+  "required": []
+}
