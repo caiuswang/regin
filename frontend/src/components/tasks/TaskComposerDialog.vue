@@ -185,7 +185,7 @@ function reset() {
           id="task-body" ref="bodyArea" v-model="draft.body" data-pl-part="input"
           :project="draft.project_id ? Number(draft.project_id) : null"
           :images="images" :attach="attach"
-          :expandable="false" :outline="false"
+          :expandable="false" :outline="false" mode-scope="compose"
           preview-testid="task-body-compose-rich"
           class="tc-body"
           aria-label="Task details markdown"

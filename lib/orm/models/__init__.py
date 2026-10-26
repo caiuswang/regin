@@ -10,7 +10,7 @@ from __future__ import annotations
 from lib.orm.models.agent_messages import AgentMessage, RateLimitAlert
 from lib.orm.models.agent_runs import AgentRun, AgentRunSession
 from lib.orm.models.api_keys import ApiKey
-from lib.orm.models.comments import Comment, CommentThread
+from lib.orm.models.comments import Comment, CommentImage, CommentThread
 from lib.orm.models.defects import Defect, DefectImage
 from lib.orm.models.features import SessionFeature
 from lib.orm.models.grades import SessionGrade
@@ -47,6 +47,7 @@ __all__ = [
     "AgentTask",
     "ApiKey",
     "Comment",
+    "CommentImage",
     "CommentThread",
     "Defect",
     "DefectImage",

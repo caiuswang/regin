@@ -318,7 +318,10 @@ test('the rich face opens and edits without a Tiptap or Vue warning', async ({ p
 })
 
 test('test_legacy_specs_pass_in_source_mode', async ({ page }) => {
-  await page.addInitScript(() => localStorage.setItem('regin_editor_mode', 'source'))
+  await page.addInitScript(() => {
+    localStorage.setItem('regin_editor_mode', 'source')
+    localStorage.setItem('regin_editor_mode:compose', 'source')
+  })
   const patches = await stub(page, 'old')
   await page.goto(`/features/${FEATURE}`)
   await page.getByTestId('feature-spec-edit').click()

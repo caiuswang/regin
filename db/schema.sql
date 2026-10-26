@@ -1399,7 +1399,25 @@ CREATE TABLE IF NOT EXISTS comments (
     author_id   INTEGER,
     body        TEXT NOT NULL,
     created_at  TEXT NOT NULL,
-    updated_at  TEXT NOT NULL
+    updated_at  TEXT NOT NULL,
+    image_high_water INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS ix_comments_thread ON comments(thread_id);
+
+-- Pictures posted with one comment. Owned by the comment, not the task:
+-- `![](image:N)` in a comment resolves only among that comment's images.
+CREATE TABLE IF NOT EXISTS comment_images (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    comment_id INTEGER NOT NULL REFERENCES comments(id) ON DELETE CASCADE,
+    idx        INTEGER NOT NULL,
+    media_type TEXT NOT NULL,
+    bytes      BLOB NOT NULL,
+    byte_size  INTEGER NOT NULL,
+    sha256     TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    CONSTRAINT uq_comment_images_idx UNIQUE (comment_id, idx)
+);
+
+CREATE INDEX IF NOT EXISTS ix_comment_images_comment_id
+    ON comment_images(comment_id);

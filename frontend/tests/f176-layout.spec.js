@@ -137,7 +137,10 @@ test('test_inline_grows_and_toolbar_sticks — a phone pane does not scroll side
 })
 
 test('test_source_textarea_autogrows', async ({ page }) => {
-  await page.addInitScript(() => localStorage.setItem('regin_editor_mode', 'source'))
+  await page.addInitScript(() => {
+    localStorage.setItem('regin_editor_mode', 'source')
+    localStorage.setItem('regin_editor_mode:compose', 'source')
+  })
   const patches = await stub(page, LONG)
   await open(page)
   await expect(input(page)).toHaveValue(LONG)

@@ -44,6 +44,7 @@ from flask import Blueprint, Response, g, jsonify, request
 from sqlmodel import func, select
 
 from lib.activity_log import get_activity_logger
+from lib.comments import images as comment_images
 from lib.comments import store as comments
 from lib.auth import get_current_user, require_auth, require_editor, require_scope
 from lib.orm import SessionLocal
@@ -811,23 +812,45 @@ def api_add_task_comment(task_id: int):
 
     A bare `{"body": …}` starting a new thread is the common case — the
     alternative made an operator perform two requests to say one thing.
+
+    `images` ride the same request and land in the comment's transaction.
+    Everything is checked before a thread is opened, so a refused post leaves
+    no row of any kind behind.
     """
     if store.get_task(task_id) is None:
         return _unknown_task()
     payload = request.get_json(silent=True) or {}
     thread_id = payload.get("thread_id")
+    body = payload.get("body") or ""
     user = get_current_user()
     try:
+        staged = comment_images.check_post(body, payload.get("images"))
+        comments.check_body(body, bool(staged))
         thread = _thread_for(task_id, thread_id, user)
         if thread is None:
             return jsonify({"error": "unknown thread"}), 404
         comment = comments.add_comment(
-            thread["id"], body=payload.get("body") or "",
+            thread["id"], body=body, images=staged,
             author_id=user["id"] if user else None)
+    except comment_images.ImagesRejected as exc:
+        return jsonify({"error": str(exc), "field": "images"}), 400
     except comments.CommentRejected as exc:
         return jsonify({"error": str(exc), "field": exc.field}), 400
     return jsonify({"thread": {**thread, "comments": comments.comments_for(
         thread["id"])}, "comment": comment}), 201
+
+
+@tasks_bp.route('/api/comments/<int:comment_id>/images/<int:idx>')
+@require_auth
+def api_get_comment_image(comment_id: int, idx: int):
+    """Serve one comment image as raw bytes. A comment is written once and
+    its images with it, so a (comment, idx) pair never changes bytes."""
+    found = comment_images.get_bytes(comment_id, idx)
+    if found is None:
+        return jsonify({"error": "unknown image"}), 404
+    data, media_type = found
+    return Response(data, mimetype=media_type,
+                    headers={"Cache-Control": "private, max-age=86400"})
 
 
 def _thread_for(task_id: int, thread_id, user):
