@@ -93,6 +93,10 @@ class AgentProvider:
     # hook_manager runner branches on this so we never print Claude-only fields
     # into a Kimi session (where `{"suppressOutput": true}` would render raw).
     hook_output_format: str = "claude"
+    # Whether the harness honours per-hook `if` + `onFailure: "block"`. Only
+    # then does install split fail_closed handlers into their own entries;
+    # elsewhere they keep running inside the shared hook_manager entry.
+    supports_guard_entries: bool = False
     # On-disk transcript schema tag. The parser itself is `parse_transcript`
     # (a provider method); turn_trace only uses this to gate the Claude-shaped
     # enrichment that has no Kimi analogue (session-title span + the cheap

@@ -31,6 +31,7 @@ class ClaudeProvider(AgentProvider):
     provider_id = "claude"
     experimental = False
     display_name = "Claude Code"
+    supports_guard_entries = True
     capabilities = ProviderCapabilities(
         skills=True,
         hooks=True,

@@ -13,6 +13,16 @@ worrying about committing them.
 `registry.py` loads `custom_registry.py` via `_load_custom_handlers()` with
 try/except; a missing or broken custom_registry never brings down the
 standard hooks.
+
+Guards (`fail_closed=True`): on Claude Code, install gives each guard its own
+hook entry with `onFailure: "block"`, so a guard that crashes or times out
+blocks the tool call instead of letting it through; an exception inside the
+guard is turned into a deny. `matcher` is written as that entry's `if`
+(permission-rule syntax), so the harness only spawns the guard for matching
+calls — keep it at least as broad as `predicate`, or the guard never runs.
+The shared trace entry stays fail-open and skips guards. Run
+`regin hooks repair` after adding or removing one. Other providers have no
+`onFailure`, so there guards keep running, fail-open, in the shared entry.
 """
 
 from __future__ import annotations
@@ -43,6 +53,8 @@ CUSTOM_HANDLERS: list[Handler] = [
     #     events=['PreToolUse'],
     #     kind='gate',
     #     priority=20,
+    #     fail_closed=True,
+    #     matcher='Bash(git commit*)',
     #     fn=make_commit_guard(_MY_GUARDED_REPOS),
     # ),
 
@@ -76,6 +88,8 @@ CUSTOM_HANDLERS: list[Handler] = [
     #     events=['PreToolUse'],
     #     kind='gate',
     #     priority=10,
+    #     fail_closed=True,
+    #     matcher='Bash',
     #     predicate=match_tool('Bash'),
     #     fn=block_mvn_handle,
     # ),

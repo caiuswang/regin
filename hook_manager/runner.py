@@ -7,6 +7,7 @@ import os
 import sys
 import time
 import traceback
+from dataclasses import replace
 from datetime import datetime
 from typing import Sequence
 
@@ -112,10 +113,12 @@ def run(
     stdin_text: str,
     stdout,
     agent_type: str | None = None,
+    guard: str | None = None,
 ) -> int:
     """Core runner (pure w.r.t. I/O — stdin and stdout are explicit).
 
-    Returns the process exit code."""
+    `guard` names the one fail_closed handler a guard entry runs; without it
+    this is the shared, fail-open entry. Returns the process exit code."""
     data = _parse_stdin(event_hint, stdin_text, agent_type, stdout)
     if data is None:
         return 0
@@ -135,8 +138,12 @@ def run(
 
     agent_id = getattr(payload.resolved_provider, 'provider_id', None)
     _stash_agent_type(agent_id or agent_type)
-    matching = _matching_handlers(handlers, payload, agent_id)
-    merged = merge_responses(_dispatch_all(matching, payload, agent_id))
+    if guard is not None:
+        matching = _guard_entry_handlers(handlers, payload, agent_id, guard)
+    else:
+        matching = _shared_entry_handlers(_matching_handlers(handlers, payload, agent_id), payload)
+    merged = merge_responses(_dispatch_all(matching, payload, agent_id,
+                                           fail_closed=guard is not None))
 
     # Decide exit code: only use 2 for events where the spec says so.
     exit_code = merged.exit_code
@@ -172,20 +179,46 @@ def _matching_handlers(handlers: Sequence[Handler], payload: HookPayload,
     )
 
 
+def _shared_entry_handlers(matching: list[Handler], payload: HookPayload) -> list[Handler]:
+    """Guards leave the shared entry only where the harness gives them one
+    of their own — on any other provider that would leave them never running."""
+    if getattr(payload.resolved_provider, 'supports_guard_entries', False):
+        return [h for h in matching if not h.fail_closed]
+    return matching
+
+
+def _guard_entry_handlers(handlers: Sequence[Handler], payload: HookPayload,
+                          agent_id: str | None, guard: str) -> list[Handler]:
+    """The one guard a guard entry runs, with its predicate moved inside `fn`.
+
+    `Handler.matches` reads a raising predicate as "no match", which here
+    would let the call through — so the predicate runs where its exception
+    reaches the fail-closed dispatch instead.
+    """
+    def strict(h: Handler) -> Handler:
+        return replace(h, predicate=lambda _p: True,
+                       fn=lambda p: h.fn(p) if h.predicate(p) else None)
+    return [strict(h) for h in filter_enabled(handlers, agent_type=agent_id)
+            if h.fail_closed and h.name == guard
+            and ('*' in h.events or payload.event in h.events)]
+
+
 def _dispatch_all(matching: list[Handler], payload: HookPayload,
-                  agent_id: str | None) -> list[HookResponse]:
+                  agent_id: str | None, fail_closed: bool = False) -> list[HookResponse]:
     # Activity-log dispatcher trace. Lazy import so `python -m hook_manager
     # --help` and other fast paths don't pay the loguru cost.
     from lib.activity_log import get_activity_logger
     hooks_log = get_activity_logger("hooks").bind(
         event=payload.event, agent_type=agent_id, pid=os.getpid(),
     )
-    responses = (_dispatch(h, payload, hooks_log) for h in matching)
+    responses = (_dispatch(h, payload, hooks_log, fail_closed) for h in matching)
     return [r for r in responses if r is not None]
 
 
-def _dispatch(h: Handler, payload: HookPayload, hooks_log) -> HookResponse | None:
-    """Run one handler, logging failures and slowness. Never raises."""
+def _dispatch(h: Handler, payload: HookPayload, hooks_log,
+              fail_closed: bool = False) -> HookResponse | None:
+    """Run one handler, logging failures and slowness. Never raises; on a
+    guard entry a failure becomes a deny rather than silence."""
     r = None
     t0 = time.monotonic()
     try:
@@ -199,12 +232,20 @@ def _dispatch(h: Handler, payload: HookPayload, hooks_log) -> HookResponse | Non
         hooks_log.error("handler_failed", exc_info=True,
                         handler=h.name, elapsed_ms=round(elapsed_ms, 2),
                         error_type=type(exc).__name__)
+        if fail_closed:
+            r = _guard_failed(h.name, exc)
     if elapsed_ms > _SLOW_HANDLER_MS:
         _log_slow(h.name, payload.event, elapsed_ms, payload)
         hooks_log.warn("handler_slow",
                        handler=h.name, elapsed_ms=round(elapsed_ms, 2),
                        threshold_ms=_SLOW_HANDLER_MS)
     return r
+
+
+def _guard_failed(name: str, exc: BaseException) -> HookResponse:
+    reason = f'Guard {name!r} failed ({type(exc).__name__}: {exc}); blocking because it is fail-closed.'
+    return HookResponse(decision='block', decision_reason=reason,
+                        permission_decision='deny', permission_reason=reason, exit_code=2)
 
 
 def _write_response(out_format, event, merged, exit_code, stdout) -> None:
@@ -240,6 +281,7 @@ def main(argv: list[str] | None = None) -> int:
     from .registry import REGISTRY  # late import so tests can swap in
     args = argv if argv is not None else sys.argv[1:]
     event_hint, agent_type = _parse_args(args)
+    guard = _guard_arg(args)
     # Drained even when ignored: the CLI writes the payload to this process's
     # stdin, and exiting without reading it hands the writer a broken pipe.
     stdin_text = sys.stdin.read()
@@ -247,7 +289,17 @@ def main(argv: list[str] | None = None) -> int:
     # the row is never created rather than filtered back out afterwards.
     if os.environ.get(PROBE_ENV):
         return 0
-    return run(event_hint, REGISTRY, stdin_text, sys.stdout, agent_type=agent_type)
+    return run(event_hint, REGISTRY, stdin_text, sys.stdout,
+               agent_type=agent_type, guard=guard)
+
+
+def _guard_arg(args: list[str]) -> str | None:
+    for i, arg in enumerate(args):
+        if arg == '--guard' and i + 1 < len(args):
+            return args[i + 1]
+        if arg.startswith('--guard='):
+            return arg.split('=', 1)[1]
+    return None
 
 
 def _parse_args(args: list[str]) -> tuple[str, str | None]:

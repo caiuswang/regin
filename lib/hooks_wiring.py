@@ -32,6 +32,8 @@ DEBUG_TIMEOUT = 10
 DEBUG_LABEL = 'debug'
 
 _HOOK_MANAGER_CMD_RE = re.compile(r'(^|\s)-m\s+hook_manager(?:\s|$)')
+_GUARD_ARG_RE = re.compile(r'(^|\s)--guard(?:\s|=)')
+GUARD_ON_FAILURE = 'block'
 # The script name, extension included: `adopt` deletes what this matches, so a
 # user's own `hook_payload_debug_wrapper.sh` must not look like our hook.
 _DEBUG_SCRIPT_TOKEN = 'hook_payload_debug.py'
@@ -117,6 +119,37 @@ def hook_manager_command(event_name: str, provider) -> str:
     )
 
 
+def guard_hook_command(event_name: str, provider, guard_name: str) -> str:
+    return f"{hook_manager_command(event_name, provider)} --guard {shlex.quote(guard_name)}"
+
+
+def _guard_handlers() -> list:
+    from hook_manager.registry import REGISTRY
+    return [h for h in REGISTRY if getattr(h, 'fail_closed', False)]
+
+
+def expected_guard_hooks(provider) -> dict[str, list[dict]]:
+    """event → the guard hook dicts install writes, one entry each.
+
+    Empty for a provider whose harness has no `onFailure`: there the guards
+    stay inside the shared entry, and writing a second one would run them
+    twice. A guard listing `*` is wired to every routed event.
+    """
+    if not getattr(provider, 'supports_guard_entries', False) or is_toml_provider(provider):
+        return {}
+    routed = hook_manager_events(provider)
+    out: dict[str, list[dict]] = {}
+    for h in _guard_handlers():
+        events = routed if '*' in h.events else [e for e in h.events if e in routed]
+        for event in events:
+            hook = {'type': 'command', 'command': guard_hook_command(event, provider, h.name),
+                    'timeout': HOOK_MANAGER_TIMEOUT, 'onFailure': GUARD_ON_FAILURE}
+            if h.matcher:
+                hook['if'] = h.matcher
+            out.setdefault(event, []).append(hook)
+    return out
+
+
 def hook_manager_events(provider) -> tuple[str, ...]:
     """Events install routes to hook_manager for this provider.
 
@@ -155,6 +188,10 @@ def _runs_hook_manager(command) -> bool:
     return isinstance(command, str) and bool(_HOOK_MANAGER_CMD_RE.search(command))
 
 
+def _runs_guard(command) -> bool:
+    return _runs_hook_manager(command) and bool(_GUARD_ARG_RE.search(command))
+
+
 def _runs_debug_hook(command) -> bool:
     return isinstance(command, str) and _DEBUG_SCRIPT_TOKEN in command
 
@@ -171,6 +208,16 @@ def _other_checkout(command: str) -> bool:
 
 
 def is_hook_manager_command(command: str) -> bool:
+    """Ours, and the shared entry — a guard entry is a different hook whose
+    `if`/`onFailure` a refresh to the shared command would silently strip."""
+    return _runs_hook_manager(command) and not _runs_guard(command) and _ours_prefix(command)
+
+
+def is_guard_hook_command(command: str) -> bool:
+    return _runs_guard(command) and _ours_prefix(command)
+
+
+def _is_any_hook_manager_command(command: str) -> bool:
     return _runs_hook_manager(command) and _ours_prefix(command)
 
 
@@ -547,14 +594,74 @@ def _kind_specs(provider) -> dict[str, dict]:
     }
 
 
+def _installed_guard_hooks(provider, settings_path: str) -> dict[str, list[dict]]:
+    if is_toml_provider(provider):
+        return {}
+    hooks = read_json_settings(settings_path).get('hooks')
+    if not isinstance(hooks, dict):
+        return {}
+    out: dict[str, list[dict]] = {}
+    for event, entries in hooks.items():
+        if isinstance(entries, list):
+            found = [h for h in hook_entries(entries) if is_guard_hook_command(h.get('command', ''))]
+            if found:
+                out[event] = found
+    return out
+
+
+_GUARD_FIELDS = ('timeout', 'onFailure', 'if')
+
+
+def _guard_event_drift(want: list[dict], have: list[dict]) -> tuple[bool, bool]:
+    """(stale, missing) for one event's guard hooks."""
+    expected = {h['command']: h for h in want}
+    commands = [h.get('command') for h in have]
+    missing = any(c not in commands for c in expected)
+    stale = (len(set(commands)) != len(commands)
+             or any(c not in expected for c in commands)
+             or any(h.get(f) != expected[h['command']].get(f)
+                    for h in have if h.get('command') in expected for f in _GUARD_FIELDS))
+    return stale, missing
+
+
+def guard_drift(provider, settings_path: str) -> dict[str, list[str]]:
+    """Guard entries install would add, rewrite, or retract, by event."""
+    expected = expected_guard_hooks(provider)
+    installed = _installed_guard_hooks(provider, settings_path)
+    stale, missing = [], []
+    for event in sorted(set(expected) | set(installed)):
+        is_stale, is_missing = _guard_event_drift(expected.get(event, []), installed.get(event, []))
+        if is_stale:
+            stale.append(event)
+        if is_missing:
+            missing.append(event)
+    return {'stale': stale, 'missing': missing}
+
+
+def _with_guards(status: dict, provider, settings_path: str) -> dict:
+    """Fold guard drift into the hook_manager row: install writes both, so
+    repair (which keys off this row) must see a missing guard as stale."""
+    drift = guard_drift(provider, settings_path)
+    stale = sorted(set(status['stale_events']) | set(drift['stale']))
+    missing = sorted(set(status['missing_events']) | set(drift['missing']))
+    return {**status,
+            'expected_guards': expected_guard_hooks(provider),
+            'guard_stale_events': drift['stale'],
+            'guard_missing_events': drift['missing'],
+            'stale_events': stale,
+            'missing_events': missing,
+            'stale': status['installed'] and bool(stale or missing)}
+
+
 def wiring_status(provider, settings_path: str) -> dict:
     """Full install-vs-disk report for one provider's hook wiring."""
     malformed = malformed_events(provider, settings_path)
     specs = _kind_specs(provider)
+    hook_manager = _kind_status(provider, settings_path, specs['hook_manager'], malformed)
     return {
         'provider': provider.provider_id,
         'settings_path': settings_path,
-        'hook_manager': _kind_status(provider, settings_path, specs['hook_manager'], malformed),
+        'hook_manager': _with_guards(hook_manager, provider, settings_path),
         'debug': _kind_status(provider, settings_path, specs['debug'],
                               [e for e in malformed if e in DEBUG_EVENTS]),
     }
@@ -662,11 +769,72 @@ def _retract_unwired_routes(hooks: dict) -> int:
     return removed
 
 
+def _strip_guards(hooks: dict, expected: dict[str, list[dict]]) -> int:
+    """Drop guard hooks install no longer writes, and repeat copies."""
+    removed = 0
+    for event in list(hooks):
+        entries = hooks[event]
+        if not isinstance(entries, list):
+            continue
+        wanted = {h['command'] for h in expected.get(event, [])}
+        seen: set[str] = set()
+
+        def unwanted(command, wanted=wanted, seen=seen) -> bool:
+            if not is_guard_hook_command(command):
+                return False
+            if command not in wanted or command in seen:
+                return True
+            seen.add(command)
+            return False
+        filtered, dropped = _strip_event(entries, unwanted)
+        removed += dropped
+        if filtered or not dropped:
+            hooks[event] = filtered
+        else:
+            del hooks[event]
+    return removed
+
+
+def _refresh_guard(hook: dict, want: dict) -> bool:
+    changed = False
+    for field_name in _GUARD_FIELDS:
+        if want.get(field_name) == hook.get(field_name):
+            continue
+        changed = True
+        if field_name in want:
+            hook[field_name] = want[field_name]
+        else:
+            hook.pop(field_name, None)
+    return changed
+
+
+def _sync_guard_entries(hooks: dict, provider) -> tuple[int, int, int]:
+    """Give every guard its own fail-closed entry; (added, updated, retracted)."""
+    expected = expected_guard_hooks(provider)
+    retracted = _strip_guards(hooks, expected)
+    added = updated = 0
+    for event, wanted in expected.items():
+        entries = hooks.setdefault(event, [])
+        if not isinstance(entries, list):
+            continue
+        present = {h.get('command'): h for h in hook_entries(entries)
+                   if is_guard_hook_command(h.get('command', ''))}
+        for want in wanted:
+            if want['command'] in present:
+                updated += _refresh_guard(present[want['command']], want)
+            else:
+                entries.append({'hooks': [dict(want)]})
+                added += 1
+    return added, updated, retracted
+
+
 def _json_install_hook_manager(provider, settings_path: str) -> dict:
     data = read_json_settings(settings_path)
     hooks = data.setdefault('hooks', {})
     added, updated = _merge_hook_manager_blocks(hooks, hook_manager_events(provider), provider)
     retracted = _retract_unwired_routes(hooks)
+    g_added, g_updated, g_retracted = _sync_guard_entries(hooks, provider)
+    added, updated, retracted = added + g_added, updated + g_updated, retracted + g_retracted
     if added == 0 and updated == 0 and retracted == 0:
         return {'ok': True, 'msg': 'Hook manager already installed'}
     write_json_settings(data, settings_path)
@@ -781,6 +949,8 @@ def remove_entries(provider, settings_path: str, kind: str) -> int:
     only rewritten when something was removed. Returns how many went.
     """
     is_ours = _kind_specs(provider)[kind]['is_ours']
+    if kind == 'hook_manager':
+        is_ours = _is_any_hook_manager_command
     if is_toml_provider(provider):
         label = kimi_hooks.DEFAULT_LABEL if kind == 'hook_manager' else DEBUG_LABEL
         return _remove_toml_entries(settings_path, is_ours, label)

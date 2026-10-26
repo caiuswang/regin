@@ -363,6 +363,14 @@ class Handler:
     label: Optional[str] = None
     summary: Optional[str] = None
     match_hint: Optional[str] = None
+    # A guard: installed as its own entry with `onFailure: "block"` on
+    # providers that support it, so a crash or timeout blocks the tool call
+    # instead of letting it through. The shared trace entry stays fail-open
+    # and never runs it there.
+    fail_closed: bool = False
+    # Claude Code permission-rule syntax (`Bash(git commit*)`), written as the
+    # guard entry's `if` so the harness only spawns the guard for those calls.
+    matcher: Optional[str] = None
 
     def matches(self, payload: HookPayload) -> bool:
         if '*' not in self.events and payload.event not in self.events:
