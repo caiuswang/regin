@@ -13,7 +13,10 @@ import { test, expect } from './auth-fixture.js'
 // The declare dialog's Spec field is filled as a textarea: the rich face is
 // `f178-dialogs.spec.js`'s to test.
 test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => localStorage.setItem('regin_editor_mode', 'source'))
+  await page.addInitScript(() => {
+    localStorage.setItem('regin_editor_mode', 'source')
+    localStorage.setItem('regin_editor_mode:compose', 'source')
+  })
 })
 
 function ledger(over = {}) {

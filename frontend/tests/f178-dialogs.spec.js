@@ -207,7 +207,7 @@ test('test_dialog_esc_closes_overlay_first — a block source box keeps its Esc'
 })
 
 test('test_legacy_dialog_specs_pass_in_source_mode', async ({ page }) => {
-  await page.addInitScript(() => localStorage.setItem('regin_editor_mode', 'source'))
+  await page.addInitScript(() => localStorage.setItem('regin_editor_mode:compose', 'source'))
   await stubFeatures(page)
   await page.goto('/features')
   await page.getByTestId('declare-feature').click()

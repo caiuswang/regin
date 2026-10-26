@@ -5,6 +5,12 @@
  */
 import { test, expect } from './auth-fixture.js'
 
+// The step dialog's Instructions are filled as a textarea: the rich face is
+// `f180-dialogs.spec.js`'s to test.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('regin_editor_mode:compose', 'source'))
+})
+
 function ledger() {
   return {
     id: 242, title: 'Feature workbench', origin: 'native',

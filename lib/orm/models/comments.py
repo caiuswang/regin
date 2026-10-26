@@ -19,7 +19,10 @@ from __future__ import annotations
 
 from typing import Optional
 
-from sqlmodel import Column, Field, ForeignKey, Integer, String, Text
+from sqlmodel import (
+    Column, Field, ForeignKey, Integer, LargeBinary, String, Text,
+    UniqueConstraint,
+)
 from sqlalchemy import text
 
 from lib.orm.base import Base
@@ -85,7 +88,46 @@ class Comment(Base, table=True):
     author_id: Optional[int] = Field(
         default=None, sa_column=Column("author_id", Integer))
     body: str = Field(sa_column=Column("body", Text, nullable=False))
+    #: Highest image `idx` ever issued to this comment. Comments are written
+    #: once, so it only ever equals the max of what the post carried — it is
+    #: here because `ImageSet` keys its never-reissue rule off the owner row.
+    image_high_water: int = Field(
+        default=0,
+        sa_column=Column("image_high_water", Integer, nullable=False,
+                         server_default=text("0")))
     created_at: str = Field(
         sa_column=Column("created_at", String, nullable=False))
     updated_at: str = Field(
         sa_column=Column("updated_at", String, nullable=False))
+
+
+class CommentImage(Base, table=True):
+    """A picture posted with one comment.
+
+    Its own table rather than the task's: `![](image:N)` in a comment resolves
+    only among that comment's images, so the owner has to be the comment — on
+    the task's table a comment's `image:1` and the task body's `image:1`
+    would be one row.
+    """
+
+    __tablename__ = "comment_images"
+    __table_args__ = (UniqueConstraint("comment_id", "idx",
+                                       name="uq_comment_images_idx"),
+                      {"sqlite_autoincrement": True})
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    comment_id: int = Field(
+        sa_column=Column("comment_id", Integer,
+                         ForeignKey("comments.id", ondelete="CASCADE"),
+                         nullable=False, index=True))
+    idx: int = Field(sa_column=Column("idx", Integer, nullable=False))
+    media_type: str = Field(
+        sa_column=Column("media_type", String, nullable=False))
+    bytes_: bytes = Field(
+        sa_column=Column("bytes", LargeBinary, nullable=False))
+    byte_size: int = Field(
+        sa_column=Column("byte_size", Integer, nullable=False))
+    sha256: str = Field(sa_column=Column("sha256", String, nullable=False))
+    created_at: str = Field(
+        sa_column=Column("created_at", String, nullable=False,
+                         server_default=text("(datetime('now'))")))

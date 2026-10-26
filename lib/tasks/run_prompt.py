@@ -10,6 +10,7 @@ from typing import Optional
 
 from lib.activity_log import get_activity_logger
 from lib.agent_sdk import worktree
+from lib.comments import images as comment_images
 from lib.comments import store as comments
 from lib.orm.models.comments import RESOLUTION_OPEN, SUBJECT_TASK
 from lib.orm.models.tasks import TASK_KIND_SPEC
@@ -201,7 +202,8 @@ def _followup_rows(task_id: int) -> list[tuple[int, dict]]:
                                                    row["id"]))]
 
 
-def _followup_line(thread_id: int, comment: dict, previous) -> str:
+def _followup_line(thread_id: int, comment: dict, previous,
+                   fetchable: dict[int, list[int]]) -> str:
     """One comment, labelled by who wrote it, with a blank line where one
     conversation ends and the next begins.
 
@@ -209,13 +211,22 @@ def _followup_line(thread_id: int, comment: dict, previous) -> str:
     handle the reply command takes, and a run whose oldest comments were
     dropped to fit could otherwise be shown a continuation line with no id
     anywhere above it.
+
+    A picture of this comment that the launch had no room for is named at the
+    end of its line with the call that fetches it.
     """
     gap = "\n" if previous not in (None, thread_id) else ""
+    fetch = "".join(
+        f" (image:{idx} — image_get(owner=\"comment\", "
+        f"owner_id={comment['id']}, idx={idx}))"
+        for idx in fetchable.get(comment["id"], []))
     return (f"{gap}  [thread {thread_id} · {comment['author_kind']}] "
-            f"{comment['body'].strip()}\n")
+            f"{comment['body'].strip()}{fetch}\n")
 
 
-def _followup_lines(rows: list[tuple[int, dict]]) -> tuple[list[str], int]:
+def _followup_lines(rows: list[tuple[int, dict]],
+                    fetchable: dict[int, list[int]]
+                    ) -> tuple[list[str], int]:
     """The rendered comments that fit in `FOLLOWUP_MAX`, and how many were
     dropped to make them fit.
 
@@ -227,7 +238,7 @@ def _followup_lines(rows: list[tuple[int, dict]]) -> tuple[list[str], int]:
     lines: list[str] = []
     previous = None
     for thread_id, comment in rows:
-        lines.append(_followup_line(thread_id, comment, previous))
+        lines.append(_followup_line(thread_id, comment, previous, fetchable))
         previous = thread_id
     dropped = 0
     while len(lines) > 1 and sum(len(line) for line in lines) > FOLLOWUP_MAX:
@@ -247,7 +258,9 @@ def _followup_block(task_id: int) -> str:
     Empty — not an empty block — when nothing is open, so a run of a task
     nobody commented on carries the prompt it always did.
     """
-    lines, dropped = _followup_lines(_followup_rows(task_id))
+    rows = _followup_rows(task_id)
+    _, fetchable = _comment_image_plan(task_id, rows)
+    lines, dropped = _followup_lines(rows, fetchable)
     if not lines:
         return ""
     from lib.prompts import render_surface  # noqa: PLC0415
@@ -630,12 +643,39 @@ def _launch_kwargs(params: dict) -> dict:
     return kwargs
 
 
+def _comment_image_plan(task_id: int, rows: list[tuple[int, dict]]
+                        ) -> tuple[list[tuple[int, int]], dict[int, list[int]]]:
+    """Which open-thread comment images ride the launch, and which are left
+    for the run to fetch: `([(comment_id, idx), …], {comment_id: [idx, …]})`.
+
+    The task's own images take the `prompt_images_max_count` budget first;
+    comment images fill what is left in (thread id, comment id, idx) order — a
+    fixed order, so the prompt's fetch lines and the images actually sent are
+    two readings of one plan. `rows` are `_followup_rows`, so a resolved
+    thread contributes nothing either way.
+    """
+    room = settings.prompt_images_max_count - len(images.list_for(task_id))
+    sent: list[tuple[int, int]] = []
+    fetchable: dict[int, list[int]] = {}
+    for _, comment_id, idx in sorted(
+            (thread_id, comment["id"], image["idx"])
+            for thread_id, comment in rows
+            for image in comment.get("images") or []):
+        if len(sent) < room:
+            sent.append((comment_id, idx))
+        else:
+            fetchable.setdefault(comment_id, []).append(idx)
+    return sent, fetchable
+
+
 def _launch_images(task: dict) -> list[dict]:
-    """The task's own images — never its feature's.
+    """The task's own images, then its open threads' comment images as far as
+    the image ceiling allows — never its feature's.
 
     A feature's mockups are cited by its spec as `![](image:N)` and fetched on
     demand (`_feature_images_line`): attaching all of them made every run of a
     feature-attributed task — a defect fix, a chore — pay for pictures it never
     cited, and re-read them on every attempt (#257).
     """
-    return images.payload_for(task["id"])
+    sent, _ = _comment_image_plan(task["id"], _followup_rows(task["id"]))
+    return images.payload_for(task["id"]) + comment_images.payloads(sent)

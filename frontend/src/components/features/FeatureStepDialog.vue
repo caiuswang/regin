@@ -10,8 +10,11 @@ import { useRouter } from 'vue-router'
 import api from '../../api'
 import Button from '../ui/Button.vue'
 import Dialog from '../ui/Dialog.vue'
+import MarkdownEditor from '../editor/MarkdownEditor.vue'
 import PromptBody from '../PromptBody.vue'
-import RefTextarea from '../refs/RefTextarea.vue'
+import TaskImageStrip from '../tasks/TaskImageStrip.vue'
+import { useAttachedImages } from '../../composables/useAttachedImages.js'
+import { imageFilesFrom } from '../../utils/imageFiles'
 
 const open = defineModel('open', { type: Boolean, default: false })
 const props = defineProps({
@@ -28,12 +31,39 @@ const failed = ref('')
 const label = computed(() => props.stage?.label || 'Step')
 const isSpec = computed(() => props.stage?.role !== 'build')
 const prompt = computed(() => (props.stage?.prompt_body || '').trim())
+// The step task does not exist until Create, so a pasted image is held in the
+// browser and flushed against the id the server answers with.
+const {
+  items: images, busy: imagesBusy, error: imagesError,
+  add: addImages, remove: removeImage, flush: flushImages, reset: resetImages,
+} = useAttachedImages('tasks')
 
 watch(open, (isOpen) => {
+  resetImages()
   if (!isOpen) return
   body.value = ''
   failed.value = ''
 })
+
+const bodyArea = ref(null)
+
+async function takeImages(source, event) {
+  bodyArea.value?.insertImages(await addImages(source), event)
+}
+
+const attach = (source) => addImages(source)
+
+async function onPaste(e) {
+  if (!imageFilesFrom(e.clipboardData).length) return
+  e.preventDefault()
+  await takeImages(e.clipboardData, e)
+}
+
+async function onDrop(e) {
+  if (!imageFilesFrom(e.dataTransfer).length) return
+  e.preventDefault()
+  await takeImages(e.dataTransfer, e)
+}
 
 async function submit() {
   if (busy.value || !props.stage) return
@@ -47,6 +77,8 @@ async function submit() {
       failed.value = res?.msg || 'the step was refused'
       return
     }
+    // An existing step keeps its own body, so nothing in it would cite these.
+    if (res.created !== false) await flushImages(res.task.id)
     open.value = false
     router.push(`/tasks/${res.task.id}`)
   } catch (e) {
@@ -65,7 +97,7 @@ async function submit() {
     data-pl-part="dialog"
     data-testid="feature-step-dialog"
   >
-    <form class="fs-form" @submit.prevent="submit">
+    <form class="fs-form" @submit.prevent="submit" @paste="onPaste" @dragover.prevent @drop="onDrop">
       <div class="fs-prompt" data-testid="feature-step-prompt">
         <span class="fs-label" data-pl-part="field-label">Stage prompt</span>
         <div v-if="prompt" class="fs-prompt__body"><PromptBody :text="prompt" /></div>
@@ -76,12 +108,26 @@ async function submit() {
       <label class="fs-label" :for="`fs-body-${featureId}`" data-pl-part="field-label">
         Instructions <span class="fs-optional">(optional)</span>
       </label>
-      <RefTextarea
+      <MarkdownEditor
         :id="`fs-body-${featureId}`"
-        v-model="body" :project="project" :feature="featureId" :rows="4" :disabled="busy"
+        ref="bodyArea"
+        v-model="body" :project="project" :feature="featureId"
+        :images="images" :attach="attach"
+        :expandable="false" :outline="false" mode-scope="compose"
+        preview-testid="feature-step-body-rich"
+        :rows="4" :disabled="busy"
         :placeholder="isSpec ? 'what the spec must settle' : 'what the build must respect'"
+        aria-label="Step instructions markdown"
         data-pl-part="input"
         data-testid="feature-step-body"
+        @submit="submit"
+        @attach-error="failed = $event"
+      />
+      <TaskImageStrip
+        v-if="images.length || imagesError"
+        data-pl-part="drop"
+        :items="images" :busy="imagesBusy" :error="imagesError"
+        @pick="takeImages" @remove="removeImage"
       />
       <p v-if="failed" class="fs-fail" role="alert" data-testid="feature-step-error">{{ failed }}</p>
     </form>

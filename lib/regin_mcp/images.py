@@ -1,5 +1,7 @@
 """Image tools: attach, remove and fetch the images a feature, task or defect
-carries — the same `ImageSet` rows the web composer writes.
+carries — the same `ImageSet` rows the web composer writes. A comment's
+images can be fetched but not attached: a comment is written once, by its
+author, with its images in the same post.
 
 A feature's or task's image is cited from its body as `![](image:N)`, so
 attaching one can also place that reference; a defect's image is evidence in
@@ -14,6 +16,7 @@ from typing import Literal, Optional
 from lib.regin_mcp import _common
 
 Owner = Literal["feature", "task", "defect"]
+ReadOwner = Literal["feature", "task", "defect", "comment"]
 Place = Literal["append", "none"]
 
 _CITED = ("feature", "task")
@@ -22,6 +25,8 @@ _CITED = ("feature", "task")
 def _image_store(owner: str):
     if owner == "feature":
         from lib.features import images
+    elif owner == "comment":
+        from lib.comments import images
     elif owner == "task":
         from lib.tasks import images
     else:
@@ -29,9 +34,15 @@ def _image_store(owner: str):
     return images
 
 
+def _require_comment(comment_id: int) -> None:
+    from lib.comments import images
+    if not images.exists(comment_id):
+        raise ValueError(f"no comment {comment_id}")
+
+
 def _require_owner(owner: str, owner_id: int) -> None:
     {"feature": _common.feature, "task": _common.task,
-     "defect": _common.defect}[owner](owner_id)
+     "defect": _common.defect, "comment": _require_comment}[owner](owner_id)
 
 
 def _read_input(path: Optional[str], data_b64: Optional[str]) -> bytes:
@@ -156,11 +167,12 @@ def image_remove(owner: Owner, owner_id: int, idx: int) -> dict:
     return {"removed": True, "idx": idx}
 
 
-def image_get(owner: Owner, owner_id: int, idx: int):
+def image_get(owner: ReadOwner, owner_id: int, idx: int):
     """One image: the picture itself, plus the local file it was written to.
 
     Args:
-        owner: feature, task or defect.
+        owner: feature, task, defect or comment (a `<followup>` line names
+            the comment id of an image that was not sent with the launch).
         owner_id: The owning row's id.
         idx: The image's N.
     """

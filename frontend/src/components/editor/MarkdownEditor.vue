@@ -49,6 +49,7 @@ import { caretTarget, withCaretInsert } from '../../utils/caret'
 import { imageRefBlock } from '../../utils/taskBodyImages'
 
 defineOptions({ inheritAttrs: false })
+const STORAGE_KEYS = { document: 'regin_editor_mode', compose: 'regin_editor_mode:compose' }
 const props = defineProps({
   modelValue: { type: String, default: '' },
   project: { type: Number, default: null },
@@ -66,6 +67,9 @@ const props = defineProps({
   // layout, and a head that scrolls with the text.
   expandable: { type: Boolean, default: true },
   outline: { type: Boolean, default: false },
+  // A dialog's choice of face is remembered apart from the page editors': one
+  // Source click while drafting must not reopen every spec in source.
+  modeScope: { type: String, default: 'document', validator: (v) => ['document', 'compose'].includes(v) },
 })
 const emit = defineEmits(['update:modelValue', 'submit', 'attach-error'])
 
@@ -75,14 +79,13 @@ const MODES = [
   { id: 'rich', label: 'Rich', icon: 'eye' },
   { id: 'source', label: 'Source', icon: 'code' },
 ]
-const STORAGE_KEY = 'regin_editor_mode'
 // The first editor's split and preview both showed the rendering; it is what
 // the rich face now edits.
 const STORED = { rich: 'rich', split: 'rich', preview: 'rich', source: 'source' }
 
 function readStored() {
   try {
-    return STORED[window.localStorage.getItem(STORAGE_KEY)] ?? null
+    return STORED[window.localStorage.getItem(STORAGE_KEYS[props.modeScope])] ?? null
   } catch {
     return null
   }
@@ -94,7 +97,7 @@ const mode = computed(() => (props.verbatim ? 'source' : remembered.value ?? 'ri
 function choose(id) {
   remembered.value = id
   try {
-    window.localStorage.setItem(STORAGE_KEY, id)
+    window.localStorage.setItem(STORAGE_KEYS[props.modeScope], id)
   } catch {
     // Storage refused (private mode, quota): the choice still holds here.
   }

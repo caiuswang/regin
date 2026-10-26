@@ -22,6 +22,7 @@ from typing import Optional
 from sqlmodel import delete, select
 
 from lib.activity_log import get_activity_logger
+from lib.comments import images as comment_images
 from lib.orm import SessionLocal
 from lib.orm.models.comments import (
     AUTHOR_KINDS, AUTHOR_USER, Comment, COMMENT_BODY_MAX, CommentThread,
@@ -86,20 +87,33 @@ def open_thread(subject_kind: str, subject_id: str,
     return view
 
 
+def check_body(body: str, has_images: bool = False) -> str:
+    """The body as it will be stored, or CommentRejected.
+
+    Empty is allowed only beside an image: a screenshot is a whole comment.
+    """
+    text = (body or "").strip()
+    if not text and not has_images:
+        raise CommentRejected("a comment needs a body", "body")
+    if len(text) > COMMENT_BODY_MAX:
+        raise CommentRejected(
+            f"body exceeds {COMMENT_BODY_MAX} characters", "body")
+    return text
+
+
 def add_comment(thread_id: int, *, body: str, author_kind: str = AUTHOR_USER,
-                author_id: Optional[int] = None) -> Optional[dict]:
+                author_id: Optional[int] = None,
+                images: Optional[list] = None) -> Optional[dict]:
     """Post into a thread. None when the thread is gone.
+
+    `images` is `comment_images.check_post`'s output; they are written in the
+    comment's own transaction, so neither lands without the other.
 
     An agent's comment carries `author_kind='agent'` and a NULL `author_id`:
     the id is dropped rather than filled with a sentinel, because a sentinel
     would be indistinguishable from a user regin lost track of.
     """
-    text = (body or "").strip()
-    if not text:
-        raise CommentRejected("a comment needs a body", "body")
-    if len(text) > COMMENT_BODY_MAX:
-        raise CommentRejected(
-            f"body exceeds {COMMENT_BODY_MAX} characters", "body")
+    text = check_body(body, bool(images))
     if author_kind not in AUTHOR_KINDS:
         raise CommentRejected(
             f"author_kind must be one of {', '.join(AUTHOR_KINDS)}",
@@ -116,10 +130,15 @@ def add_comment(thread_id: int, *, body: str, author_kind: str = AUTHOR_USER,
         session.add(row)
         thread.updated_at = now
         session.add(thread)
+        session.flush()
+        comment_images.stage_in(session, row.id, images or [])
         session.commit()
         session.refresh(row)
         view = serialize_comment(row)
-    log.write("comment_added", thread_id=thread_id, comment_id=view["id"])
+    view["images"] = comment_images.views_for([view["id"]]).get(
+        view["id"], [])
+    log.write("comment_added", thread_id=thread_id, comment_id=view["id"],
+              images=len(view["images"]))
     return view
 
 
@@ -186,12 +205,17 @@ def thread_for(subject_kind: str, subject_id: str, thread_id: Optional[int],
 
 
 def comments_for(thread_id: int) -> list[dict]:
-    """One thread's comments, oldest first. Flat, always."""
+    """One thread's comments, oldest first, each with its `images`. Flat,
+    always."""
     with SessionLocal() as session:
         rows = session.exec(
             select(Comment).where(Comment.thread_id == thread_id)
             .order_by(Comment.id)).all()
-        return [serialize_comment(row) for row in rows]
+        out = [serialize_comment(row) for row in rows]
+    pictures = comment_images.views_for(c["id"] for c in out)
+    for comment in out:
+        comment["images"] = pictures.get(comment["id"], [])
+    return out
 
 
 def thread_with_comments(subject_kind: str, subject_id: str) -> list[dict]:
@@ -211,6 +235,8 @@ def delete_thread(thread_id: int) -> bool:
         row = session.get(CommentThread, thread_id)
         if row is None:
             return False
+        comment_images.delete_for_comments(session, session.exec(
+            select(Comment.id).where(Comment.thread_id == thread_id)).all())
         session.exec(delete(Comment).where(Comment.thread_id == thread_id))
         session.delete(row)
         session.commit()
@@ -235,6 +261,8 @@ def delete_for_subject(session, subject_kind: str, subject_id: str) -> int:
     ids = [row if isinstance(row, int) else row[0] for row in rows]
     if not ids:
         return 0
+    comment_images.delete_for_comments(session, session.exec(
+        select(Comment.id).where(Comment.thread_id.in_(ids))).all())
     session.exec(delete(Comment).where(Comment.thread_id.in_(ids)))
     session.exec(delete(CommentThread).where(CommentThread.id.in_(ids)))
     log.write("comment_threads_deleted_with_subject",
