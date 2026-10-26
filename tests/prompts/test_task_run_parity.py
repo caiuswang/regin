@@ -166,7 +166,7 @@ def test_followup_block_parity(monkeypatch, dropped):
     lines = ["  [user] first\n", "\n  [agent] second\n"]
     monkeypatch.setattr(run_prompt, "_followup_rows", lambda task_id: [(1, {})])
     monkeypatch.setattr(run_prompt, "_followup_lines",
-                        lambda rows: (list(lines), dropped))
+                        lambda rows, fetchable: (list(lines), dropped))
     assert runs._followup_block(1) == _reference_followup(lines, dropped)
 
 

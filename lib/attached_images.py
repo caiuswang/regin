@@ -189,6 +189,26 @@ class ImageSet:
                 return summarize(row)
         raise ValueError("too many images being attached at once — try again")
 
+    def stage_in(self, session, owner_id: int, idx: int, data: bytes,
+                 media_type: str) -> None:
+        """Add one already-checked image at `idx` to the caller's
+        transaction, for an owner row created in that same transaction.
+
+        No allocator: an owner nobody else can see yet has no taken index to
+        lose a race to, and the caller's `idx` is the one its text already
+        cites. The commit is the caller's, so the images land with the owner
+        or not at all.
+        """
+        session.add(self.model(
+            **{self.owner_field: owner_id}, idx=idx, media_type=media_type,
+            bytes_=data, byte_size=len(data),
+            sha256=hashlib.sha256(data).hexdigest()))
+        session.execute(
+            update(self.owner_model)
+            .where(self.owner_model.id == owner_id)
+            .values(image_high_water=func.max(
+                self.owner_model.image_high_water, idx)))
+
     def list_for(self, owner_id: int) -> list[dict]:
         """This owner's images in delivery order."""
         return self.summaries_for([owner_id]).get(owner_id, [])
