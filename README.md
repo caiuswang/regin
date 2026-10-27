@@ -26,11 +26,21 @@ It is organized in four layers. The first two are where you spend the day; the l
 | [Observability](#observability--what-the-agents-actually-did) | session traces, time and cost analytics, post-hoc grades, audit | `/trace`, `/audit` |
 | [Guidance](#guidance--what-steers-the-agent) | patterns & skills, rule engines in hooks, cross-session memory, topic wikis | `/patterns`, `/rules`, `/memory`, `/repos/:name/topics` |
 
+<p align="center">
+  <a href="https://regin.ccday.top/architecture#s-how-it-works"><img src="docs/images/readme-architecture.gif" width="874" alt="regin's architecture: the four layers wrap the agent CLI over regin serve, and flows such as launching a task or guarding an edit light their path part by part."></a>
+  <br><sub>The four layers around your agent, with a few flows traced through them. <a href="https://regin.ccday.top/architecture#s-how-it-works">Open the interactive version</a> to pick any of the nine.</sub>
+</p>
+
 ## Workbench — features, tasks, defects
 
 A **feature** is a row. Its spec lives on that row (or on its tracker issue when the feature is tracked remotely), and its acceptance items are named tests in the repo — red before the build, green at ship. The spec is cut into **slices**; each slice becomes a **task** with its dependencies, and tasks run in dependency order. When the work is called done, that is a **done-claim**, and anything found wrong afterwards is a **defect** declared against the feature.
 
 The number the pipeline is held to is **rounds-to-done**: one build plus each time a done-claim was walked back. Only declarations feed it — nothing is inferred from prose, branch names or timing.
+
+<p align="center">
+  <a href="https://regin.ccday.top/pipeline#s-loop"><img src="docs/images/readme-pipeline-quest.gif" width="874" alt="The feature pipeline as a pixel quest: a robot walks spec, slice, transcribe, arm, run, finish and ship; a defect escapes, the fix road leads back to run, and rounds-to-done becomes 2."></a>
+  <br><sub>One feature from spec to ship — and the round an escaped defect costs. <a href="https://regin.ccday.top/pipeline#s-loop">Play it on the site</a>: drag the levels, click one to read it.</sub>
+</p>
 
 - Dashboard: `/overview` is the Pipeline — Overview, Features and Tasks behind one tab strip; defects are reached from the Overview and the Features triage rail. `/features/:id` is a feature's ledger.
 - **Projects and workspaces** — the Pipeline is scoped to one project (a registered repo) or to a **workspace** (a root directory whose members are the repos under it; a run armed on a workspace starts in its root). `/projects/:id` holds a project's step stages, each stage's prompt, and the language its task runs write in.
