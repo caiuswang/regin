@@ -12,7 +12,9 @@ import { test, expect } from '@playwright/test'
 // carry site additions the prototype lacks: the quick-start OS switch wraps
 // its bar to a second row (#top +24, every later landing section with it) and
 // Getting started gained a Windows section (.doc-card TOC +38, #s-windows, and
-// the shift both put on every section below).
+// the shift both put on every section below). /pipeline's #s-loop also
+// carries the interactive quest map the prototype lacks (+769, and every
+// /pipeline section below it with it).
 const PROTOTYPE = {
   '/': {
     '.site-header': [0, 58],
@@ -29,16 +31,16 @@ const PROTOTYPE = {
     '.site-header': [0, 58],
     '.world-map': [82, 528],
     '.doc-card': [82, 451],
-    '#s-loop': [565, 1217],
-    '#s-example': [1830, 474],
-    '#s-spec': [2353, 156],
-    '#s-slices': [2557, 1141],
-    '#s-runs': [3745, 156],
-    '#s-defects': [3949, 714],
-    '#s-ship': [4712, 500],
-    '#s-features': [5260, 754],
-    '#s-where': [6062, 424],
-    '.prev-next': [6518, 85],
+    '#s-loop': [565, 1986],
+    '#s-example': [2599, 474],
+    '#s-spec': [3122, 156],
+    '#s-slices': [3326, 1141],
+    '#s-runs': [4514, 156],
+    '#s-defects': [4718, 714],
+    '#s-ship': [5481, 500],
+    '#s-features': [6029, 754],
+    '#s-where': [6831, 424],
+    '.prev-next': [7287, 85],
   },
   '/getting-started': {
     '.site-header': [0, 58],

@@ -5,6 +5,7 @@ import PipelineTables from '../components/pipeline/PipelineTables.vue'
 import FactTiles from '../components/pipeline/FactTiles.vue'
 import LedgerPre from '../components/pipeline/LedgerPre.vue'
 import StageHeading from '../components/pipeline/StageHeading.vue'
+import PixelQuest from '../components/quest/PixelQuest.vue'
 import { useDocSections } from '../components/docs/sections.js'
 import { PIPELINE_SECTIONS } from '../content/pipeline.js'
 import overviewShot from '../assets/shots/pixel/overview.webp'
@@ -19,6 +20,7 @@ useDocSections(() => PIPELINE_SECTIONS)
   <div class="pl-page">
     <section id="s-loop" class="pl-section is-wide">
       <h2 class="pl-h2">The loop</h2>
+      <PixelQuest />
       <p class="pl-p">The dashboard's <b>Pipeline</b> has three tabs — Overview, Features, Tasks — and a project picker that scopes all of them. The Overview draws the whole loop for one project: features in the workshop, tasks on the board, defects in the bug den, and what is waiting on you.</p>
       <BlockShot :src="overviewShot" alt="The Pipeline Overview in the Pixel theme, scoped to the regin project.">
         <code>/overview</code> scoped to <code>regin</code> — 109 features, 378 tasks and 139 defects so far.

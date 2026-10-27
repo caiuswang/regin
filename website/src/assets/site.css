@@ -1251,6 +1251,55 @@ h1, h2, h3 { text-wrap: balance; }
 .pl-ok { color: var(--green); }
 .block-note.pl-tip { border-color: var(--edge); }
 
+/* ── Pipeline quest map ───────────────────────────────── */
+
+.quest { margin: 0; display: flex; flex-direction: column; gap: 12px; }
+.quest-hud { padding: 10px 14px; border: var(--border-w) solid var(--edge); background: var(--panel-raised); color: var(--muted); }
+.quest-round { color: var(--gold); }
+.quest-stage { position: relative; border: var(--border-w) solid var(--edge); box-shadow: var(--shot-shadow); touch-action: none; }
+.quest-canvas { display: block; width: 100%; height: auto; image-rendering: pixelated; }
+
+.quest-level {
+  position: absolute; display: flex; align-items: flex-end; justify-content: center;
+  padding: 0; background: transparent; border: 0; cursor: grab; touch-action: none;
+}
+.quest-level:active { cursor: grabbing; }
+.quest-tag {
+  transform: translateY(70%); white-space: nowrap; pointer-events: none;
+  font-family: var(--font-display); font-size: clamp(8px, 0.8vw, 11px); line-height: 1;
+  padding: 4px 6px 3px; color: var(--ink); background: var(--panel);
+  border: var(--border-w) solid var(--edge);
+}
+.quest-tag b { color: var(--green); font-weight: 400; }
+.quest-level.is-boss .quest-tag b { color: var(--gold); }
+.quest-level:hover .quest-tag, .quest-level:focus-visible .quest-tag { border-color: var(--green); }
+
+.quest-panels { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; }
+.quest-dialog, .quest-log { padding: 12px 14px; border: var(--border-w) solid var(--edge); background: var(--panel-raised); min-height: 112px; }
+.quest-kicker { margin: 0 0 6px; font-family: var(--font-display); font-size: 11px; color: var(--green); }
+.quest-line { margin: 0; font-size: 17px; color: var(--soft); }
+.quest-caret { display: inline-block; width: 8px; height: 15px; margin-left: 3px; vertical-align: -2px; background: var(--green); animation: quest-blink 1s steps(1) infinite; }
+@keyframes quest-blink { 50% { opacity: 0; } }
+.quest-log ol { margin: 0; padding: 0; list-style: none; font-family: var(--font-mono); font-size: 13px; line-height: 1.7; color: var(--soft); }
+.quest-log li span { color: var(--dim); }
+.quest-log li.is-ok { color: var(--green); }
+.quest-log li.is-empty { color: var(--dim); }
+
+.quest-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin-top: 4px; }
+.quest-controls .key-primary { border: 0; cursor: pointer; padding: 10px 18px; font-size: 14px; }
+.quest-controls .key-outline { background: transparent; cursor: pointer; padding: 8px 14px; }
+.quest-hint { font-size: 14px; color: var(--muted); }
+
+@media (max-width: 639px) {
+  .quest-panels { grid-template-columns: 1fr; }
+  /* As with the track keys (G7): on a phone the tag shows its code only. */
+  .quest-name { display: none; }
+  .quest-tag { padding: 2px 4px 1px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .quest-caret { animation: none; }
+}
+
 /* ── Phone reflow, G4–G7 (F154 S6) ────────────────────── */
 
 /* Between 640 px and ~800 px "NEW FEATURE" is wider than its key; wrapping
