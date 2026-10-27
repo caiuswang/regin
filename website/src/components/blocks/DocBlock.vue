@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, defineAsyncComponent } from 'vue'
 import BlockP from './BlockP.vue'
 import BlockH3 from './BlockH3.vue'
 import BlockCode from './BlockCode.vue'
@@ -8,7 +8,9 @@ import BlockShot from './BlockShot.vue'
 import BlockList from './BlockList.vue'
 import BlockTable from './BlockTable.vue'
 
-const BY_KIND = { p: BlockP, h3: BlockH3, code: BlockCode, note: BlockNote, shot: BlockShot, list: BlockList, table: BlockTable }
+const ArchDiagram = defineAsyncComponent(() => import('../arch/ArchDiagram.vue'))
+
+const BY_KIND = { p: BlockP, h3: BlockH3, code: BlockCode, note: BlockNote, shot: BlockShot, list: BlockList, table: BlockTable, arch: ArchDiagram }
 
 const props = defineProps({
   block: { type: Object, required: true },

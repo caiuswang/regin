@@ -26,7 +26,7 @@ export const LAYERS = [
     verb: 'RUN',
     anchor: 'runs',
     to: '/runs',
-    summary: 'Launch tasks on Claude or Kimi, follow them live, steer or stop.',
+    summary: 'Launch tasks on Claude Code, Kimi or CodeBuddy, follow them live, steer or stop.',
   },
   {
     name: 'Observability',
@@ -85,10 +85,10 @@ export const PILLARS = [
       ['DONE ', ['1', 'green']],
       ['RUNNING ', ['2', 'ink']],
       ['ARMED ', ['2', 'gold']],
-      ['AGENTS ', ['CLAUDE · KIMI', 'ink']],
+      ['AGENTS ', ['CLAUDE · KIMI · CODEBUDDY', 'ink']],
     ],
     title: 'Launch the run, then steer it.',
-    body: 'Arm a task with a provider, model and launch mode, then start it from the dashboard — Claude through the Agent SDK, Kimi over ACP or tmux. **/live** follows each session: what it\'s doing, the question it\'s blocked on, with steer and Stop. Agents report back to an inbox.',
+    body: 'Arm a task with a provider, model and launch mode, then start it from the dashboard — Claude through the Agent SDK, Kimi or CodeBuddy over ACP or tmux. **/live** follows each session: what it\'s doing, the question it\'s blocked on, with steer and Stop. Agents report back to an inbox.',
     pre: [
       [['$ ', 'dim'], 'regin task list --status ""'],
       ['#473   ', ['armed  ', 'gold'], '   spec   S5 — integrate + verify'],

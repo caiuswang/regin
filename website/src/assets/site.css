@@ -1300,6 +1300,129 @@ h1, h2, h3 { text-wrap: balance; }
   .quest-caret { animation: none; }
 }
 
+/* ── Architecture diagram ─────────────────────────────── */
+
+.arch { margin: 0; display: flex; flex-direction: column; gap: 14px; }
+.arch-hud { padding: 10px 14px; border: var(--border-w) solid var(--edge); background: var(--panel-raised); color: var(--muted); }
+.arch-flows { display: flex; flex-wrap: wrap; gap: 8px; }
+.arch-flow {
+  font-family: var(--font-body); font-size: 14px; padding: 5px 10px; cursor: pointer;
+  color: var(--body); background: var(--panel); border: var(--border-w) solid var(--edge);
+}
+.arch-flow b { font-family: var(--font-display); font-size: 11px; font-weight: 400; color: var(--dim); }
+.arch-flow:hover { border-color: var(--green); }
+.arch-flow.is-on { color: var(--green-ink); background: var(--green); border-color: var(--green); }
+.arch-flow.is-on b { color: var(--green-ink); }
+
+.arch-diagram { display: flex; flex-direction: column; }
+.arch-you { display: flex; flex-direction: column; align-items: center; }
+.arch-you .arch-part { flex: none; width: 220px; align-items: center; text-align: center; }
+.arch-you-wire {
+  position: relative; padding: 6px 0 14px 14px; font-family: var(--font-display); font-size: 10px; color: var(--dim);
+  border-left: var(--border-w) solid var(--green-deep);
+}
+.arch-you-wire::after {
+  content: ""; position: absolute; left: -6px; bottom: 0;
+  border: 5px solid transparent; border-top: 6px solid var(--green-deep); border-bottom: 0;
+}
+
+.arch-system { position: relative; border: var(--border-w) solid var(--green-deep); background: var(--bg); padding: 26px 14px 14px; box-shadow: var(--shot-shadow); }
+.arch-system-tab {
+  position: absolute; top: -2px; left: -2px; margin: 0; display: flex; align-items: baseline; gap: 10px;
+  padding: 4px 10px 3px; font-size: 12px; color: var(--muted); background: var(--bg);
+  border: var(--border-w) solid var(--green-deep); border-top-color: transparent; border-left-color: transparent;
+}
+.arch-system-tab b { font-family: var(--font-display); font-weight: 400; color: var(--green-ink); background: var(--green); padding: 2px 6px 1px; margin: -4px 0 -3px -10px; }
+
+.arch-stack {
+  display: grid; grid-template-columns: 124px minmax(0, 1fr) 86px 168px;
+  border: var(--border-w) solid var(--edge);
+}
+.arch-stack .row-1 { grid-row: 1; }
+.arch-stack .row-2 { grid-row: 2; }
+.arch-stack .row-3 { grid-row: 3; }
+.arch-stack .row-4 { grid-row: 4; }
+.arch-band-label, .arch-parts { background: var(--panel); border-top: var(--border-w) solid var(--rule); }
+.arch-band-label.row-1, .arch-parts.row-1, .arch-port.row-1 { border-top: 0; }
+.arch-band-label.is-runs, .arch-parts.is-runs, .arch-band-label.is-guide, .arch-parts.is-guide { background: var(--panel-raised); }
+.arch-band-label { grid-column: 1; display: flex; flex-direction: column; justify-content: center; gap: 4px; padding: 12px; border-right: var(--border-w) solid var(--rule); }
+.arch-band-name { font-family: var(--font-display); font-size: 12px; color: var(--green); }
+.arch-band-role { font-size: 13px; color: var(--dim); }
+.arch-parts { grid-column: 2; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding: 10px; }
+.arch-port { grid-column: 3; display: flex; align-items: center; border-top: var(--border-w) solid transparent; }
+.arch-port-wire {
+  position: relative; flex: 1; height: 2px; background: var(--green-deep);
+}
+.arch-port-wire::after {
+  content: ""; position: absolute; right: 0; top: -5px;
+  border: 6px solid transparent; border-left: 7px solid var(--green-deep); border-right: 0;
+}
+.arch-port-wire i {
+  position: absolute; left: 6px; right: 10px; bottom: 6px; font-style: normal; text-align: center;
+  font-family: var(--font-display); font-size: 9px; line-height: 1.3; color: var(--muted);
+}
+.arch-agent { grid-column: 4; grid-row: 1 / 5; display: flex; padding: 12px; border-left: var(--border-w) solid var(--rule); background: var(--panel); }
+.arch-serve { grid-column: 1 / -1; grid-row: 5; display: flex; padding: 12px; border-top: var(--border-w) solid var(--edge); background: var(--green-wash); }
+
+.arch-part {
+  position: relative; flex: 1; display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
+  padding: 9px 10px; text-align: left; cursor: pointer;
+  background: var(--panel-raised); border: var(--border-w) solid var(--edge); color: var(--ink);
+  transition: opacity 0.2s ease, border-color 0.2s ease;
+}
+.arch-part:hover { border-color: var(--green); }
+.arch-part-name { font-family: var(--font-display); font-size: 11px; overflow-wrap: anywhere; }
+.arch-part-sub { font-size: 12.5px; line-height: 1.35; color: var(--muted); }
+.arch-agent .arch-part { justify-content: center; align-items: center; text-align: center; gap: 8px; border-color: var(--green); }
+.arch-agent .arch-part-name { font-size: 15px; }
+.arch-robot { position: relative; display: block; width: 45px; height: 60px; margin: 6px 0; }
+.arch-providers { display: flex; flex-direction: column; align-items: stretch; gap: 6px; width: 100%; }
+.arch-provider {
+  font-family: var(--font-display); font-size: 10px; padding: 4px 6px 3px; text-align: center;
+  color: var(--ink); background: var(--panel-raised); border: var(--border-w) solid var(--edge);
+}
+.arch-provider.is-next { color: var(--dim); background: transparent; border-style: dashed; }
+.arch-serve .arch-part { flex-direction: row; align-items: baseline; gap: 14px; background: var(--bg); border-color: var(--green-deep); }
+
+.arch-diagram.is-tracing .arch-part { opacity: 0.32; }
+.arch-diagram.is-tracing .arch-part.is-lit { opacity: 1; border-color: var(--green); }
+.arch-part.is-lit .arch-part-name { color: var(--green); }
+.arch-diagram.is-tracing .arch-part.is-current { border-color: var(--gold); }
+.arch-part.is-current .arch-part-name { color: var(--gold); }
+.arch-part.is-selected { border-color: var(--green); }
+.arch-badges { position: absolute; top: -10px; right: 6px; display: flex; gap: 3px; }
+.arch-badges b {
+  min-width: 20px; padding: 2px 4px 1px; font-family: var(--font-display); font-size: 11px; font-weight: 400;
+  text-align: center; color: var(--green-ink); background: var(--gold); border: var(--border-w) solid var(--bg);
+}
+
+.arch-panel { min-height: 120px; padding: 14px 16px; border: var(--border-w) solid var(--edge); background: var(--panel-raised); }
+.arch-panel-kicker { margin: 0 0 8px; font-family: var(--font-display); font-size: 12px; color: var(--green); }
+.arch-panel-text { margin: 0; font-size: 16px; color: var(--soft); }
+.arch-steps { margin: 0 0 12px; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; font-size: 15px; color: var(--soft); }
+.arch-steps li { display: flex; align-items: baseline; gap: 10px; }
+.arch-steps b { min-width: 20px; font-family: var(--font-display); font-size: 11px; font-weight: 400; text-align: center; color: var(--green-ink); background: var(--green); padding: 2px 4px 1px; }
+.arch-steps li.is-current b { background: var(--gold); }
+.arch-step-part { font-family: var(--font-display); font-size: 11px; color: var(--muted); min-width: 110px; }
+.arch-clear { background: transparent; cursor: pointer; padding: 6px 12px; font-size: 12px; }
+
+@media (max-width: 639px) {
+  .arch-system { padding: 26px 8px 8px; }
+  .arch-stack { display: flex; flex-direction: column; }
+  .arch-band-label { border-right: 0; padding-bottom: 0; }
+  .arch-band-label.row-1 { border-top: 0; }
+  .arch-parts { border-top: 0; grid-template-columns: minmax(0, 1fr); }
+  .arch-port { display: none; }
+  .arch-agent { order: 3; border-left: 0; border-top: var(--border-w) solid var(--rule); }
+  .arch-band-label.row-3, .arch-parts.row-3, .arch-band-label.row-4, .arch-parts.row-4 { order: 4; }
+  .arch-serve { order: 5; }
+  .arch-serve .arch-part { flex-direction: column; gap: 3px; }
+  .arch-steps li { flex-wrap: wrap; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .arch-part { transition: none; }
+}
+
 /* ── Phone reflow, G4–G7 (F154 S6) ────────────────────── */
 
 /* Between 640 px and ~800 px "NEW FEATURE" is wider than its key; wrapping

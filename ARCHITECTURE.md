@@ -10,11 +10,13 @@ This doc is the **stable map + boundaries**: module layout, database, config, au
               Workbench                      Runs                    Observability
    feature row ─▶ spec ─▶ slices ─▶ tasks ─▶ armed run ─────────▶  session trace
         ▲          (features.body)   (DAG)    Claude: Agent SDK      (spans, turns,
-        │                                     Kimi:   ACP / tmux      tokens, grades)
+        │                                     Kimi, CodeBuddy: ACP    tokens, grades)
         │                                        │  ▲                      │
    defects ◀── done-claim ◀──────────────────────┘  │ steer / stop         │
    (rounds-to-done)                    /live, agent bridge, inbox ◀────────┘
-                                                    │
+                                       (regin MCP: send_to_user + pipeline tools)
+                                                    │   mods (regin-plugin) ─▶ trace: lineage,
+                                                    │   permission verdicts, rate limits, run phase
                   Guidance (underneath every run)   ▼
    patterns & skills ─▶ provider skills dir     hook_manager ◀─ rule engines (Grit, Radon, bundles)
    agent memory, topic wikis ─▶ recalled into prompts on demand
@@ -29,13 +31,20 @@ layers follow the loop Spec → Run → Watch → Count:
   dependency DAG; a done-claim that is walked back counts a round, and defects
   are declared against the feature. See
   [Feature pipeline](#feature-pipeline-features-defects-slices).
-- **Runs** — a task is armed with a provider and launched: Claude through the
-  [Agent SDK tier](#agent-sdk-tier-regin-launched-sessions), Kimi over ACP or
-  tmux ([Provider launch capabilities](#provider-launch-capabilities-task-runs-on-a-non-claude-agent)).
+- **Runs** — a task is armed with a provider and launched: Claude Code through the
+  [Agent SDK tier](#agent-sdk-tier-regin-launched-sessions), Kimi Code and
+  CodeBuddy Code over ACP, any of them in a tmux pane
+  ([Provider launch capabilities](#provider-launch-capabilities-task-runs-on-a-non-claude-agent)).
+  A new agent is a provider adapter under `lib/providers/`, not a change to the pipeline.
   Live sessions are steered through the [Agent Bridge](#agent-bridge-humansystem--live-agent)
-  and report back through [Agent Messages](#agent-messages-send_to_user-inbox).
+  (the `regin-bridge` mod's channel, else the session's tmux pane) and report
+  back through [Agent Messages](#agent-messages-send_to_user-inbox) on the one
+  `regin` MCP server that also carries the feature / task / defect tools.
 - **Observability** — hook events and SDK messages project onto one span shape
-  and become the session trace, turn/token rollups and post-hoc grades. See
+  and become the session trace, turn/token rollups and post-hoc grades. regin's
+  **mods** — Claude Code plugins in `regin-plugin/`, wired by `regin hooks
+  install` — add what no hook carries: subagent lineage, permission verdicts,
+  rate limits, the run's phase. See
   [Turn & Token Tracing](#turn--token-tracing),
   [Skill Invocation Tracing](#skill-invocation-tracing) and
   [Session Grader](#session-grader-post-hoc-rubric-grades).
@@ -486,7 +495,7 @@ Collection (hooks, transcripts, skills) was provider-neutral first; the *launch*
 
 | Field | Meaning | Read by |
 |---|---|---|
-| `launch_modes` | `sdk` = the provider's structured channel (Claude: the Agent SDK; kimi: ACP), `tmux` = a pane. Empty = the provider cannot launch a run, and arming it is a 400 (never a silent fall-back to Claude) | `arm.py`, `runs._channel_launcher`, `tmux_runs._pane_provider`, `agent_runs._refuse_undeclared` |
+| `launch_modes` | `sdk` = the provider's structured channel (Claude: the Agent SDK; kimi, codebuddy: ACP), `tmux` = a pane. Empty = the provider cannot launch a run, and arming it is a 400 (never a silent fall-back to Claude) | `arm.py`, `runs._channel_launcher`, `tmux_runs._pane_provider`, `agent_runs._refuse_undeclared` |
 | `fields` | Which of `model`, `permission_mode`, `effort` the provider accepts. An undeclared field is a 400 naming it | `arm.py`, `agent_runs._refuse_undeclared`, the arm sheets |
 | `binary` | The executable `which` must find for the provider to be `available` | launch-options, `lib/doctor.py`, `tmux_runs._pane_provider` |
 | `pane_commands` | Foreground process names a pane running this provider reports (kimi is a node script, so `node`); the bridge pane guard admits them next to `settings.agent_bridge.allowed_pane_commands` | `lib/providers/registry.py`, bridge registration |

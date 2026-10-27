@@ -1,6 +1,6 @@
 // The prototype's CONTENT block lists (Regin Docs.dc.html), verbatim. Hash
 // links (#/x) are written as the site's history routes (/x).
-import { C, H, L, N, P, S, T } from './blocks.js'
+import { C, H, L, M, N, P, S, T } from './blocks.js'
 import { COMMAND_GROUPS } from './cli.js'
 import { DOCS_PAGES } from './docs.js'
 import arm from '../assets/shots/pixel/arm.webp'
@@ -72,7 +72,7 @@ export const GETTING_STARTED = [
 
 export const RUNS = [
   ['Arm, then launch', [
-    P('A task is **armed** with a provider, a model and a launch mode, then started. The *channel* arm runs it under `regin serve` with a typed connection (Claude through the Agent SDK, Kimi over ACP); the *pane* arm runs it in a tmux pane on regin\'s own tmux server, which survives a server restart.'),
+    P('A task is **armed** with a provider, a model and a launch mode, then started. The *channel* arm runs it under `regin serve` with a typed connection (Claude Code through the Agent SDK, Kimi and CodeBuddy over ACP); the *pane* arm runs it in a tmux pane on regin\'s own tmux server, which survives a server restart.'),
     S(arm, 'The Arm task dialog: working directory, git worktree option, agent, model, effort, permission mode, skills and launch choice.', 'Arming a task: where it runs, which agent and model, the skills it opens with, and the launch arm.'),
     P('A run settles on the agent\'s `regin task finish` report — a turn ending is not the work being done. When it settles, the tasks that depend on it are released.'),
   ]],
@@ -150,9 +150,9 @@ export const GUIDANCE = [
 
 export const ARCHITECTURE = [
   ['How it works', [
-    P('One loop — Spec → Run → Watch → Count. **Workbench** holds features and tasks, **Runs** launches and steers agents, **Observability** records what they did, **Guidance** sits under every run. Declared defects feed back into the Workbench and close the loop.'),
-    C('              Workbench                      Runs                    Observability\n   feature row ─▶ spec ─▶ slices ─▶ tasks ─▶ armed run ─────────▶  session trace\n        ▲          (features.body)   (DAG)    Claude: Agent SDK      (spans, turns,\n        │                                     Kimi:   ACP / tmux      tokens, grades)\n        │                                        │  ▲                      │\n   defects ◀── done-claim ◀──────────────────────┘  │ steer / stop         │\n   (rounds-to-done)                    /live, agent bridge, inbox ◀────────┘\n                                                    │\n                  Guidance (underneath every run)   ▼\n   patterns & skills ─▶ provider skills dir     hook_manager ◀─ rule engines\n   agent memory, topic wikis ─▶ recalled into prompts on demand'),
-    N('WARN', 'Observability, rule gates and memory injection run *inside* `hook_manager`, so they stay dormant until the dispatcher is installed — [Activate the hooks](/getting-started). Task runs from the dashboard are captured either way.'),
+    P('One loop — Spec → Run → Watch → Count. **Workbench** holds features and tasks, **Runs** launches and steers agents, **Observability** records what they did, **Guidance** sits under every run. Declared defects feed back into the Workbench and close the loop. Pick a flow below to light its path through the parts, or click a part to read what it does.'),
+    M(),
+    N('WARN', 'Observability, rule gates and memory injection run *inside* `hook_manager`, and the mods are Claude Code plugins — both stay dormant until `regin hooks install` wires them — [Activate the hooks](/getting-started). Task runs from the dashboard are captured either way.'),
   ]],
   ['Modules by layer', [
     T(['LAYER', 'MODULE', 'PURPOSE'], '110px 190px minmax(240px,1fr)', [
@@ -160,13 +160,16 @@ export const ARCHITECTURE = [
       ['Workbench', 'lib/defects/', 'Defects, triage, escapes blamed on a ship, close-with-a-check.'],
       ['Workbench', 'lib/tasks/', 'Tasks, dependency edges, slice-check / tail / transcribe, arming, releasing dependents.'],
       ['Workbench', 'lib/pipeline/', 'Tab counts under one project scope, per-project rollups.'],
+      ['Workbench', 'lib/workspaces/', 'A workspace is a root directory; its repos are the project a view or a run is scoped to.'],
       ['Runs', 'lib/agent_sdk/', 'Claude task runs via the Agent SDK: launch, turns, steer, stop.'],
-      ['Runs', 'lib/agent_acp/', 'Kimi task runs over ACP.'],
-      ['Runs', 'lib/agent_bridge/', 'Delivers a message into a live session.'],
+      ['Runs', 'lib/agent_acp/', 'Kimi and CodeBuddy task runs over ACP.'],
+      ['Runs', 'lib/agent_bridge/', 'Delivers a message into a live session — through its mod channel, else its tmux pane.'],
+      ['Runs', 'lib/regin_mcp/', 'One MCP server: send_to_user plus the feature, task and defect tools.'],
       ['Runs', 'lib/agent_messages/', 'send_to_user: Inbox, lessons into memory, push channels.'],
       ['Observability', 'lib/agent_events/', 'Producer-neutral events: hooks and SDK project onto one span shape.'],
       ['Observability', 'lib/trace/', 'Span ingest, serve-time merge, turn and token rollups, span gates.'],
       ['Observability', 'lib/grader/', 'Post-hoc session rubric grades.'],
+      ['Observability', 'regin-plugin/', 'Mods — Claude Code plugins: subagent lineage, permission verdicts, rate limits, run phase, the inbox band.'],
       ['Guidance', 'lib/patterns/ + lib/skills/', 'Procedure guides promoted to deployed skills.'],
       ['Guidance', 'lib/rule_engines/', 'GritQL, Radon and bundle engines from PostToolUse.'],
       ['Guidance', 'lib/memory/', 'Lessons: capture, recall, reflect, supersede.'],
@@ -177,7 +180,7 @@ export const ARCHITECTURE = [
     ], '580px', [1]),
   ]],
   ['One capture vocabulary', [
-    P('Two producers feed the trace. The **hook path** observes a session you drive: `hook_manager` handlers turn each hook event into an agent event. The **SDK path** drives a session regin launched. Both project through one writer into spans, so a task run and a hand-driven session render in the same viewer.'),
+    P('Two producers feed the trace. The **hook path** observes a session you drive: `hook_manager` handlers turn each hook event into an agent event. The **SDK path** drives a session regin launched. Both project through one writer into spans, so a task run and a hand-driven session render in the same viewer. **Mods** add what no hook carries — which call spawned a subagent, the verdict and rule behind a permission ask — onto the same spans.'),
     P('Spans are append-only. De-duplication, re-parenting and ordering happen on read, never by rewriting rows — a late or repeated event cannot corrupt what was stored.'),
   ]],
   ['Counts come from events', [
